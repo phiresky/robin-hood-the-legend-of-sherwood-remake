@@ -26,6 +26,21 @@ fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
 
+fn nearest_phalanx_enemy_index(distances: impl IntoIterator<Item = (usize, f32)>) -> Option<usize> {
+    // Original narrows each MaxNorm result to UWORD before comparing it.
+    // Sub-unit differences are therefore ties and preserve InsertLast order.
+    let mut nearest = None;
+    let mut minimum = 65_432_u16;
+    for (index, distance) in distances {
+        let distance = distance as u16;
+        if distance < minimum {
+            minimum = distance;
+            nearest = Some(index);
+        }
+    }
+    nearest
+}
+
 /// The forward and rightward steps used by Original's `ReconsiderPhalanx`.
 ///
 /// Both operations are aspect-aware `SBGeoVector2D` operations. In
@@ -1242,28 +1257,17 @@ impl EnemyAi {
         }
     }
 
-    /// ComputePositionBehindMyShieldBearer. Given an archer caller with
-    /// a linked shield bearer, compute the cover position
-    /// `DISTANCE_SHIELD_BEARER_ARCHER` behind that shield bearer along
-    /// their facing.
+    /// Calculate the ideal position behind a linked shield bearer without
+    /// testing whether the archer can move there.
     ///
-    /// Currently exposed as a helper for the archer
-    /// cover-behind-shield-bearer decision path; called from the
-    /// `CoverBehindShieldBearer` decision and the "already in cover"
-    /// check in `battle_decisions`.
-    ///
-    /// When the shield bearer is `AttackingRunningToPhalanx`, projects
-    /// the cover point behind their *future* slot (seek position +
-    /// shield-bearer direction) rather than their current pose, matching
-    /// the GetShieldBearerPosition behavior. Returns `None` if the
-    /// cover line crosses geometry (IsStraightMovementAutorized
-    /// failure).
-    pub fn compute_position_behind_shield_bearer(
+    /// Original's already-in-cover check performs only this position
+    /// calculation. `ComputePositionBehindMyShieldBearer` adds the movement
+    /// authorization check, but BattleDecisions calls that method only when
+    /// the archer actually needs to reposition.
+    pub(super) fn shield_bearer_cover_position(
         &self,
         shield_bearer: HumanHandle,
-        ctx: &AiContext,
         tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> Option<Position> {
         let snap = self.find_fighter(shield_bearer, tick)?;
         // Read the bearer's "shield bearer position" — when running to
@@ -1279,13 +1283,43 @@ impl EnemyAi {
             (snap.position, snap.direction)
         };
         let forward = sector_to_vector(bearer_dir);
-        // Step backwards from the shield bearer along their facing.
         let distance = archer::DISTANCE_SHIELD_BEARER_ARCHER as f32;
-        let behind = Position {
+        Some(Position {
             x: bearer_pos.x - forward.0 * distance,
             y: bearer_pos.y - forward.1 * distance * ASPECT_RATIO,
             ..bearer_pos
+        })
+    }
+
+    /// ComputePositionBehindMyShieldBearer. Given an archer caller with
+    /// a linked shield bearer, compute the cover position
+    /// `DISTANCE_SHIELD_BEARER_ARCHER` behind that shield bearer along
+    /// their facing.
+    ///
+    /// Called from the `CoverBehindShieldBearer` decision after the
+    /// unchecked already-in-cover calculation has established that the
+    /// archer really needs to move.
+    ///
+    /// When the shield bearer is `AttackingRunningToPhalanx`, projects
+    /// the cover point behind their *future* slot (seek position +
+    /// shield-bearer direction) rather than their current pose, matching
+    /// the GetShieldBearerPosition behavior. Returns `None` if the
+    /// cover line crosses geometry (IsStraightMovementAutorized
+    /// failure).
+    pub fn compute_position_behind_shield_bearer(
+        &self,
+        shield_bearer: HumanHandle,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> Option<Position> {
+        let snap = self.find_fighter(shield_bearer, tick)?;
+        let bearer_pos = if snap.current_substate == Substate::AttackingRunningToPhalanx as u32 {
+            snap.shield_bearer_seek_position
+        } else {
+            snap.position
         };
+        let behind = self.shield_bearer_cover_position(shield_bearer, tick)?;
         // Cover line must be unobstructed from the bearer.
         if let Some(g) = grid {
             let bearer_pt = crate::coordinates::MapPoint::new(bearer_pos.x, bearer_pos.y);
@@ -1614,27 +1648,23 @@ impl EnemyAi {
             let center_x = phalanx_left_pos.x + 0.5 * (rightmost_pos.x - phalanx_left_pos.x);
             let center_y = phalanx_left_pos.y + 0.5 * (rightmost_pos.y - phalanx_left_pos.y);
 
-            let mut best_handle = self.list_them[0];
-            let mut best_dist = f32::MAX;
-            for &h in &self.list_them {
-                if let Some(snap) = self.find_fighter(h, tick) {
-                    let dx = snap.position.x - center_x;
-                    let dy = (snap.position.y - center_y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    // MaxNorm(ASPECT_RATIO) — Chebyshev (L∞) — not
-                    // Euclidean. L2 would pick a different "nearest"
-                    // enemy whenever dx/dy are asymmetric.
-                    let d = dx.abs().max(dy.abs());
-                    if d < best_dist {
-                        best_dist = d;
-                        best_handle = h;
-                    }
-                }
-            }
+            let nearest_index = nearest_phalanx_enemy_index(
+                self.list_them.iter().enumerate().filter_map(|(index, &h)| {
+                    self.find_fighter(h, tick).map(|snap| {
+                        let dx = snap.position.x - center_x;
+                        let dy = (snap.position.y - center_y)
+                            * crate::position_interface::INVERSE_ASPECT_RATIO;
+                        // MaxNorm(ASPECT_RATIO) — Chebyshev (L∞) — not
+                        // Euclidean. Original then narrows that norm to UWORD
+                        // before comparing candidates.
+                        (index, dx.abs().max(dy.abs()))
+                    })
+                }),
+            )
+            .expect("phalanx Them-list entries must have fighter snapshots");
+            let best_handle = self.list_them[nearest_index];
             // Swap nearest to front
-            if let Some(idx) = self.list_them.iter().position(|&h| h == best_handle) {
-                self.list_them.swap(0, idx);
-            }
+            self.list_them.swap(0, nearest_index);
             self.base.primary_target = best_handle;
         } else {
             self.base.primary_target = 0;
@@ -3486,6 +3516,43 @@ mod tests {
             sector: None,
             level: 0,
         }
+    }
+
+    #[test]
+    fn phalanx_nearest_enemy_truncates_distance_before_tie_breaking() {
+        assert_eq!(
+            nearest_phalanx_enemy_index([(0, 120.9), (1, 120.1), (2, 121.0)]),
+            Some(0),
+            "Original UWORD narrowing keeps the first enemy within a shared integer bucket"
+        );
+        assert_eq!(
+            nearest_phalanx_enemy_index([(0, 120.9), (1, 119.9)]),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn already_in_cover_position_does_not_require_reachability() {
+        // nicouzouf Savegame_010 replay-012 frame 515: the archer is already
+        // behind Soldier 58. The direct cover corridor is obstructed, but
+        // Original only compares this ideal offset with the archer's current
+        // position and therefore keeps the relationship while shooting.
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 58,
+            position: position(1144.9557, 408.22668),
+            direction: 7,
+            current_substate: Substate::AttackingProtectingWithShield as u32,
+            ..FighterSnapshot::default()
+        });
+        let archer_position = position(1123.7424, 396.0593);
+        let cover = EnemyAi::default()
+            .shield_bearer_cover_position(58, &tick)
+            .expect("linked shield bearer has an ideal cover position");
+
+        assert!(
+            max_norm(pos_diff(&archer_position, &cover)) < archer::COVER_POINT_TOLERANCE as f32
+        );
     }
 
     #[test]

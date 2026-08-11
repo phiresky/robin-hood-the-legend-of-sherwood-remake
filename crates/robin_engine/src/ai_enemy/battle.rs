@@ -1134,12 +1134,9 @@ impl EnemyAi {
                     } else if self.shield_bearer_before_me != 0 && self.base.blood_alcohol == 0 {
                         // Already paired with a shield bearer — check if
                         // we're still in cover or need to reposition.
-                        if let Some(cover_pos) = self.compute_position_behind_shield_bearer(
-                            self.shield_bearer_before_me,
-                            ctx,
-                            tick,
-                            grid,
-                        ) {
+                        if let Some(cover_pos) =
+                            self.shield_bearer_cover_position(self.shield_bearer_before_me, tick)
+                        {
                             let diff = pos_diff(&ctx.position, &cover_pos);
                             if max_norm(diff) < archer::COVER_POINT_TOLERANCE as f32 {
                                 // Still in cover — shoot
