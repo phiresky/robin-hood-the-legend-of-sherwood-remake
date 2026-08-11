@@ -14,6 +14,18 @@ fn friend_check_look_count(frames: u16, interval: u16) -> u8 {
     (frames / interval + 1) as u8
 }
 
+/// Geometry result of Original's common `CoordinatePatrol` body.
+///
+/// The common routine chooses the formation action, but its `SetState` call
+/// is virtual in C++. Specialised owners can therefore apply the result
+/// through their own state transition before issuing the actor order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum PatrolCoordinateAction {
+    Walk { target: Position, speed_factor: f32 },
+    Run { target: Position },
+    FaceChief { target: Position },
+}
+
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -4118,14 +4130,28 @@ impl AiController {
         ctx: &AiContext,
         patrol_chief_position: Position,
     ) {
+        let Some(action) = self.prepare_patrol_coordinate(info, ctx, patrol_chief_position) else {
+            return;
+        };
+        self.apply_base_patrol_coordinate(action, ctx);
+    }
+
+    /// Run the common patrol eligibility, StopAll, and geometry portion.
+    /// State and actor-order effects remain with the virtual AI owner.
+    pub(crate) fn prepare_patrol_coordinate(
+        &mut self,
+        info: &StimulusInfo,
+        ctx: &AiContext,
+        patrol_chief_position: Position,
+    ) -> Option<PatrolCoordinateAction> {
         if self.patrol_chief.is_none() {
             // Can happen when stimulus was postponed on door
-            return;
+            return None;
         }
 
         let target_pos = match info {
             StimulusInfo::Position(pos) => *pos,
-            _ => return,
+            _ => return None,
         };
 
         match self.current_substate {
@@ -4138,26 +4164,27 @@ impl AiController {
             | Substate::DefaultGotoChief
             | Substate::DefaultOnPostLookingSidewards => {
                 self.stop_all();
-                self.coordinate_patrol_walk(target_pos, ctx, patrol_chief_position);
             }
             // Already in patrol formation — just update target
             Substate::DefaultPatrolEnroute
             | Substate::DefaultPatrolEnrouteRunning
-            | Substate::DefaultPatrolEnrouteWaiting => {
-                self.coordinate_patrol_walk(target_pos, ctx, patrol_chief_position);
-            }
-            _ => {}
+            | Substate::DefaultPatrolEnrouteWaiting => {}
+            _ => return None,
         }
+
+        Some(Self::plan_patrol_coordinate(
+            target_pos,
+            ctx,
+            patrol_chief_position,
+        ))
     }
 
-    /// Inner logic for coordinate_patrol — compute speed and walk/run to the
-    /// assigned formation position.
-    fn coordinate_patrol_walk(
-        &mut self,
+    /// Compute the formation action without committing the virtual state.
+    fn plan_patrol_coordinate(
         target: Position,
         ctx: &AiContext,
         patrol_chief_position: Position,
-    ) {
+    ) -> PatrolCoordinateAction {
         let vec_to_point = [target.x - ctx.position.x, target.y - ctx.position.y];
         let vec_to_chief = [
             patrol_chief_position.x - ctx.position.x,
@@ -4182,27 +4209,46 @@ impl AiController {
 
         if near_point_backwards {
             // Just turn to face the officer instead of walking backward
-            self.face_position_with_ctx(
-                Position {
+            PatrolCoordinateAction::FaceChief {
+                target: Position {
                     x: patrol_chief_position.x,
                     y: patrol_chief_position.y,
                     ..ctx.position
                 },
-                ctx,
-            );
-            return;
-        }
-
-        if speed_factor <= 2.0 {
-            self.set_ai_state(AiState::Default);
-            self.current_substate = Substate::DefaultPatrolEnroute;
-            let flags = GotoFlags::NO_HALT | GotoFlags::DONT_STOP | self.default_path_walking_flags;
-            self.go_to_speed(target, flags, speed_factor, ctx);
+            }
+        } else if speed_factor <= 2.0 {
+            PatrolCoordinateAction::Walk {
+                target,
+                speed_factor,
+            }
         } else {
-            self.set_ai_state(AiState::Default);
-            self.current_substate = Substate::DefaultPatrolEnrouteRunning;
-            let flags = GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP;
-            self.go_to(target, flags, ctx);
+            PatrolCoordinateAction::Run { target }
+        }
+    }
+
+    /// Base fallback retained for callers without a specialised virtual
+    /// state owner.
+    fn apply_base_patrol_coordinate(&mut self, action: PatrolCoordinateAction, ctx: &AiContext) {
+        match action {
+            PatrolCoordinateAction::FaceChief { target } => {
+                self.face_position_with_ctx(target, ctx);
+            }
+            PatrolCoordinateAction::Walk {
+                target,
+                speed_factor,
+            } => {
+                self.set_ai_state(AiState::Default);
+                self.current_substate = Substate::DefaultPatrolEnroute;
+                let flags =
+                    GotoFlags::NO_HALT | GotoFlags::DONT_STOP | self.default_path_walking_flags;
+                self.go_to_speed(target, flags, speed_factor, ctx);
+            }
+            PatrolCoordinateAction::Run { target } => {
+                self.set_ai_state(AiState::Default);
+                self.current_substate = Substate::DefaultPatrolEnrouteRunning;
+                let flags = GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP;
+                self.go_to(target, flags, ctx);
+            }
         }
     }
 

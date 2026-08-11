@@ -1062,8 +1062,7 @@ impl EnemyAi {
             }
 
             StimulusType::CallPatrolCoordinate => {
-                self.base
-                    .coordinate_patrol(&stimulus.info, ctx, tick.patrol_chief_position);
+                self.coordinate_patrol(&stimulus.info, ctx, tick.patrol_chief_position);
             }
 
             // The officer who

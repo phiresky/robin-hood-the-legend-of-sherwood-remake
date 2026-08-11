@@ -3390,6 +3390,74 @@ impl EnemyAi {
         self.base.go_near(destination, distance, flags, ctx);
     }
 
+    /// Apply common patrol geometry through the enemy virtual `SetState`.
+    /// Original's default-state transition clears alert and authors the
+    /// leave-attentive element before the following movement.
+    fn coordinate_patrol(
+        &mut self,
+        info: &StimulusInfo,
+        ctx: &AiContext,
+        patrol_chief_position: Position,
+    ) {
+        let Some(action) = self
+            .base
+            .prepare_patrol_coordinate(info, ctx, patrol_chief_position)
+        else {
+            return;
+        };
+
+        match action {
+            PatrolCoordinateAction::FaceChief { target } => {
+                self.base.face_position_with_ctx(target, ctx);
+            }
+            PatrolCoordinateAction::Walk {
+                target,
+                speed_factor,
+            } => {
+                let first_new_order = self.base.outbox.actor.orders.len();
+                let flags = GotoFlags::NO_HALT
+                    | GotoFlags::DONT_STOP
+                    | self.base.default_path_walking_flags;
+                self.go_to_speed(
+                    AiState::Default,
+                    Substate::DefaultPatrolEnroute,
+                    target,
+                    flags,
+                    speed_factor,
+                    ctx,
+                );
+                self.hold_new_patrol_orders_behind_attentive(first_new_order);
+            }
+            PatrolCoordinateAction::Run { target } => {
+                let first_new_order = self.base.outbox.actor.orders.len();
+                self.go_to(
+                    AiState::Default,
+                    Substate::DefaultPatrolEnrouteRunning,
+                    target,
+                    GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
+                    ctx,
+                );
+                self.hold_new_patrol_orders_behind_attentive(first_new_order);
+            }
+        }
+    }
+
+    /// `SetState(Default, ...)` calls `SetAttentiveMode(false)` before the
+    /// following `GoTo`. Only hold the movement when that call actually
+    /// changes `will_be_attentive`; Original's no-change call returns without
+    /// launching a transition element.
+    fn hold_new_patrol_orders_behind_attentive(&mut self, first_new_order: usize) {
+        let launches_transition = self
+            .base
+            .outbox
+            .actor
+            .set_attentive_mode
+            .is_some_and(|request| request.target != self.will_be_attentive);
+        for order in &mut self.base.outbox.actor.orders[first_new_order..] {
+            order.after_attentive_mode = launches_transition;
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Think — main stimulus dispatcher
     // -----------------------------------------------------------------------
@@ -5402,6 +5470,123 @@ mod tests {
         );
         assert_eq!(notification.source, AiStateChangeSource::Null);
         assert!(notification.actor_effects_before_callback.is_none());
+    }
+
+    #[test]
+    fn patrol_coordinate_uses_enemy_virtual_state_before_walk_and_run() {
+        for (distance, expected_substate, expected_order) in [
+            (
+                45.0,
+                Substate::DefaultPatrolEnroute,
+                crate::order::OrderType::WalkingUpright,
+            ),
+            (
+                60.0,
+                Substate::DefaultPatrolEnrouteRunning,
+                crate::order::OrderType::RunningUpright,
+            ),
+        ] {
+            let mut ai = EnemyAi::new(1);
+            ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
+                crate::entity_id::SoldierId(2),
+            ));
+            ai.base.current_state = AiState::Default;
+            ai.base.current_substate = Substate::DefaultOnPost;
+            ai.attentive = true;
+            ai.will_be_attentive = true;
+            ai.base.current_music_alert_status = AlertLevel::Yellow;
+            ai.base.view_alert_status = AlertLevel::Yellow;
+
+            let ctx = AiContext {
+                position: Position {
+                    x: 100.0,
+                    y: 100.0,
+                    sector: SectorHandle::new(1),
+                    level: 0,
+                },
+                self_animation: crate::order::OrderType::WaitingAlerted,
+                ..AiContext::default()
+            };
+            let target = Position {
+                x: ctx.position.x + distance,
+                ..ctx.position
+            };
+
+            ai.coordinate_patrol(
+                &StimulusInfo::Position(target),
+                &ctx,
+                Position {
+                    x: ctx.position.x + 100.0,
+                    ..ctx.position
+                },
+            );
+
+            assert_eq!(ai.base.current_state, AiState::Default);
+            assert_eq!(ai.base.current_substate, expected_substate);
+            assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
+            assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
+
+            let [AiOwnerWork::StateChange(notification)] =
+                ai.base.outbox.reentrant.owner_work.as_slice()
+            else {
+                panic!("patrol SetState must retain the StopAll prefix");
+            };
+            let prefix = notification
+                .actor_effects_before_callback
+                .as_ref()
+                .expect("StopAll must precede the virtual SetState callback");
+            assert!(prefix.halt);
+
+            let attentive = ai
+                .base
+                .outbox
+                .actor
+                .set_attentive_mode
+                .expect("Default SetState must request leaving attentive mode");
+            assert!(!attentive.target);
+            let [order] = ai.base.outbox.actor.orders.as_slice() else {
+                panic!("patrol coordinate must queue one replacement movement");
+            };
+            assert_eq!(order.order_type, expected_order);
+            assert!(
+                order.after_attentive_mode,
+                "movement must remain behind the LeaveAttentiveMode element"
+            );
+        }
+
+        let mut already_unalerted = EnemyAi::new(1);
+        already_unalerted.base.patrol_chief = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(2),
+        ));
+        already_unalerted.base.current_state = AiState::Default;
+        already_unalerted.base.current_substate = Substate::DefaultPatrolEnroute;
+        let ctx = AiContext {
+            position: Position {
+                x: 100.0,
+                y: 100.0,
+                sector: SectorHandle::new(1),
+                ..Position::default()
+            },
+            ..AiContext::default()
+        };
+        already_unalerted.coordinate_patrol(
+            &StimulusInfo::Position(Position {
+                x: ctx.position.x + 45.0,
+                ..ctx.position
+            }),
+            &ctx,
+            Position {
+                x: ctx.position.x + 100.0,
+                ..ctx.position
+            },
+        );
+        let [order] = already_unalerted.base.outbox.actor.orders.as_slice() else {
+            panic!("already-unalerted patrol update must retain its movement");
+        };
+        assert!(
+            !order.after_attentive_mode,
+            "a no-change SetAttentiveMode call must not defer movement instruction"
+        );
     }
 
     #[test]
