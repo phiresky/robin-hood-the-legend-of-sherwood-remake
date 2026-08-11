@@ -1913,6 +1913,73 @@ fn idle_wait_runs_while_future_owner_action_is_behind_ownerless_timer() {
 }
 
 #[test]
+fn transition_resumed_pass_door_reach_event_obeys_real_action_followers() {
+    use crate::element::Command;
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement};
+
+    let capture = |with_move_follower: bool| {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        let mut route = Sequence::new();
+        route.append_element(SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingUpright,
+        ));
+        if with_move_follower {
+            route.append_element(SequenceElement::new_movement(
+                2,
+                Command::AssertPosition,
+                Some(owner),
+                OrderType::WalkingUpright,
+            ));
+            route.append_element(SequenceElement::new_movement(
+                3,
+                Command::Move,
+                Some(owner),
+                OrderType::WalkingUpright,
+            ));
+        }
+        let route_id = engine.orders.sequence_manager.launch_sequence(route);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(route_id, 0);
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(route_id, 0);
+
+        let sim = crate::sim_rng::test_context();
+        let ((), stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
+            engine.dispatch_condolations_for_owner_boundary(&sim, owner, &assets);
+        });
+        stimuli
+            .into_iter()
+            .filter(|(event_owner, stimulus)| {
+                *event_owner == owner && *stimulus == crate::ai::StimulusType::EventReachPoint
+            })
+            .count()
+    };
+
+    assert_eq!(
+        capture(true),
+        0,
+        "PassDoor -> AssertPosition -> Move must not report the door as the route endpoint"
+    );
+    assert_eq!(
+        capture(false),
+        1,
+        "a route-terminal PassDoor must report exactly one EventReachPoint through condolence"
+    );
+}
+
+#[test]
 fn play_anim_uses_custom_wrapper_instead_of_requested_animation_semantics() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;

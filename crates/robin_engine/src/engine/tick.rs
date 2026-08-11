@@ -6115,16 +6115,21 @@ impl EngineInner {
                 }
             }
 
-            // If the door pass completed, notify the sequence manager
-            // and dispatch EventReachPoint, matching the handling in
-            // `tick_entity_movement` for normal arrival.
+            // If the door pass completed, notify the sequence manager. Its
+            // owner-local condolence drain runs immediately after these
+            // outcomes and is the sole EVENT_REACHPOINT owner: in particular,
+            // IsLastRealAction suppresses the event while AssertPosition /
+            // Move followers remain. Dispatching it manually here bypassed
+            // that source gate for translated door routes.
             if let Some(am) = arrived_movement {
-                if let Some(seq_id) = am.sequence_id {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, am.element_index);
-                }
-                self.dispatch_reach_point_events(sim, assets, &[entity_id]);
+                let seq_id = am.sequence_id.unwrap_or_else(|| {
+                    panic!(
+                        "completed transition-resumed PassDoor for {entity_id:?} has no sequence identity"
+                    )
+                });
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, am.element_index);
             }
 
             let _ = advance;
