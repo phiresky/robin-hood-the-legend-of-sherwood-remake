@@ -2322,6 +2322,7 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.couldnt_reachpoint = saved.couldnt_reachpoint;
     ai.already_on_point = saved.already_on_point;
     ai.already_turned = saved.already_turned;
+    reset_loaded_ai_completion_ownership(ai);
     ai.likes_to_sit_around = saved.likes_to_sit_around;
     ai.special_action = saved.special_action;
     ai.remaining_tequila_gulps = saved.remaining_tequila_gulps;
@@ -2361,6 +2362,14 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.patrol_stopped = saved.patrol_stopped;
     ai.patrol_direction = saved.patrol_direction;
     ai.stimulus_queue = saved.stimulus_queue;
+}
+
+fn reset_loaded_ai_completion_ownership(ai: &mut AiController) {
+    // The Original serializes the three completion latches above, but not its
+    // static Think recursion depth. Consequently a loaded latch has no live
+    // EndThink owner: the next StartThink clears it before doing any work.
+    // Do not retain ownership left by the initialized mission being replaced.
+    ai.completion_latch_inside_think = false;
 }
 
 fn payload_parts(
@@ -3727,6 +3736,24 @@ fn ai_base_mut(brain: &mut AiBrain) -> Option<&mut AiController> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_ai_load_drops_initialized_mission_completion_ownership() {
+        let mut ai = AiController {
+            couldnt_reachpoint: true,
+            already_on_point: true,
+            already_turned: true,
+            completion_latch_inside_think: true,
+            ..AiController::default()
+        };
+
+        reset_loaded_ai_completion_ownership(&mut ai);
+
+        assert!(!ai.completion_latch_inside_think);
+        assert!(ai.couldnt_reachpoint);
+        assert!(ai.already_on_point);
+        assert!(ai.already_turned);
+    }
 
     #[test]
     fn sprite_adoption_preserves_original_profile_switch_before_position_restore() {
