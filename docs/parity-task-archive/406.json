@@ -1,0 +1,9 @@
+{
+  "id": "406",
+  "subject": "Clear stale target-leading forecasts during exact-goal transitions",
+  "description": "`parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_002/Restart/replay-004-session-0001.jsonl.zst` historically first diverged after frame 974 on Projectile130's movement, old-position, and position map vectors. PC126 had already reached its transition goal, but Rust retained its previous running forecast `(4.996837, 0.177819, 0)` and added that stale motion to the arrow lead, while Original aimed at the stationary belt point. Original `RHSprite::PerformMotion` enters its nonzero animation-distance block even when the actor's cached goal increment is zero, recomputes the same position, and then calls `UpdateForecastedMovement` (`original-code/RHsprite.cpp:1492-1706`); the update multiplies the animation distance by that zero increment and therefore clears the forecast (`original-code/RHpositioninterface.cpp:995-1008`). `RHElementProjectile::ComputeInitialThrowVelocity` later adds only the target's current forecast to its launch velocity (`original-code/RHelementprojectile.cpp:123-171`). Rust already mirrored the exact-position recompute but skipped the forecast refresh because the remaining goal distance was zero. Commit `18a158250` now refreshes the forecast at that same exact-goal transition boundary without moving the actor. The focused `exact_goal_transition_clears_stale_running_forecast` regression passes, all 72 `engine::movement` tests pass, and the optimized parity-profile runner builds successfully. The representative now matches exact EOF through all 1,272 recorded frames, with `final_frame` and `frame_count` both 1272 in the RNG suffix; same-save replay-009 remains an exact-EOF control.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task406-exact-goal-forecast"
+}
