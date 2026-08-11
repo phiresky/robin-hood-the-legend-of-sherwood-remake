@@ -5,10 +5,11 @@ Usage:
     scripts/report_parity_progress.py output/parity-audits/full-sweep-e1669842d
 
 The audit directory must contain ``traces.snapshot``, ``status/`` and
-``logs/`` as produced by ``run_parity_release_sweep.sh``. Passing traces are
-counted from their status files. For each failing trace, the script combines
-the first failure boundary in its log with the trace header and ``rng_suffix``
-terminator to calculate how many recorded frames matched before the failure.
+``logs/`` as produced by ``run_parity_release_sweep.sh``. Passing traces must
+have exit status 0 and exactly one anchored exact-EOF marker in their log. For
+each failing trace, the script combines the first failure boundary in its log
+with the trace header and ``rng_suffix`` terminator to calculate how many
+recorded frames matched before the failure.
 
 Reading a trace's terminator requires decompressing it once. Metadata is
 cached under the audit directory so subsequent reports are cheap.
@@ -37,6 +38,8 @@ PANIC_FAILURE_RE = re.compile(
     re.MULTILINE,
 )
 CACHE_VERSION = 1
+EXACT_EOF_MARKER = "parity trace matched every recorded frame"
+INTEGRITY_STATUS = "integrity-eof-marker"
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,23 @@ class TraceEntry:
     key: str
     status: str
     log_path: Path
+
+
+def exact_eof_marker_count(log_path: Path) -> int:
+    if not log_path.is_file():
+        return 0
+    text = log_path.read_text(errors="replace")
+    return sum(line == EXACT_EOF_MARKER for line in text.splitlines())
+
+
+def is_exact_eof(entry: TraceEntry) -> bool:
+    return entry.status == "0" and exact_eof_marker_count(entry.log_path) == 1
+
+
+def is_integrity_failure(entry: TraceEntry) -> bool:
+    return entry.status == INTEGRITY_STATUS or (
+        entry.status == "0" and exact_eof_marker_count(entry.log_path) != 1
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -292,8 +312,9 @@ def calculate(args: argparse.Namespace) -> dict[str, object]:
     audit_dir = args.audit_dir.resolve()
     workspace = args.workspace.resolve()
     entries = load_entries(audit_dir, workspace)
-    passed = [entry for entry in entries if entry.status == "0"]
-    failed = [entry for entry in entries if entry.status != "0"]
+    passed = [entry for entry in entries if is_exact_eof(entry)]
+    failed = [entry for entry in entries if not is_exact_eof(entry)]
+    integrity_failures = [entry for entry in entries if is_integrity_failure(entry)]
     boundaries = {
         entry.key: boundary
         for entry in failed
@@ -369,6 +390,8 @@ def calculate(args: argparse.Namespace) -> dict[str, object]:
         "exact_eof": len(passed),
         "exact_eof_percent": len(passed) / total * 100.0 if total else 0.0,
         "non_eof": len(failed),
+        "integrity_failures": len(integrity_failures),
+        "integrity_failure_keys": [entry.key for entry in integrity_failures],
         "non_eof_with_frame_boundary": len(progress_records),
         "non_eof_frame_coverage_percent": (
             len(progress_records) / len(failed) * 100.0 if failed else 100.0
@@ -403,6 +426,8 @@ def print_human(result: dict[str, object]) -> None:
         f"{result['non_eof_with_frame_boundary']}/{result['non_eof']} "
         f"({result['non_eof_frame_coverage_percent']:.2f}%)"
     )
+    if result["integrity_failures"]:
+        print(f"integrity failures: {result['integrity_failures']}")
     errors = result["metadata_errors"]
     if errors:
         print(f"metadata errors: {len(errors)} (see --json for details)", file=sys.stderr)

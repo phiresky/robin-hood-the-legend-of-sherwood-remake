@@ -25,6 +25,25 @@ workspace=$(pwd)
 snapshot="$audit_dir/traces.snapshot"
 mkdir -p "$audit_dir/logs" "$audit_dir/status"
 
+exact_eof_marker='parity trace matched every recorded frame'
+integrity_status='integrity-eof-marker'
+
+write_status() {
+    local destination=$1
+    local value=$2
+    local temporary
+
+    temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
+    if ! printf '%s\n' "$value" > "$temporary"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    if ! mv -f -- "$temporary" "$destination"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+}
+
 if [[ ! -f "$snapshot" ]]; then
     printf 'error: trace snapshot does not exist: %s\n' "$snapshot" >&2
     exit 2
@@ -40,7 +59,7 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
 
     [[ -f "$status" ]] && continue
     if [[ ! -f "$trace" ]]; then
-        printf 'missing\n' > "$status"
+        write_status "$status" missing
         continue
     fi
 
@@ -48,8 +67,14 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         env ROBINHOOD_DATA_DIR="$workspace/datadirs/fullgame_linux" \
         "$runner" --no-auto-dump "$trace" > "$log" 2>&1
     then
-        printf '0\n' > "$status"
+        marker_count=$(grep -Fxc -- "$exact_eof_marker" "$log" || true)
+        if [[ "$marker_count" == 1 ]]; then
+            write_status "$status" 0
+        else
+            write_status "$status" "$integrity_status"
+        fi
     else
-        printf '%s\n' "$?" > "$status"
+        runner_status=$?
+        write_status "$status" "$runner_status"
     fi
 done
