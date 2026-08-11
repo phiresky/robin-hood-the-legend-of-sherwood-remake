@@ -3575,9 +3575,6 @@ impl EngineInner {
             let Some(s) = self.world.entities.get_soldier(SoldierId(current)) else {
                 break;
             };
-            if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
-                break;
-            }
             let Some(neighbour_ai) = s.npc.ai_brain.enemy() else {
                 break;
             };

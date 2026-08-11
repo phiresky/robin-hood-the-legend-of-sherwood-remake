@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn phalanx_them_list_snapshot_follows_inactive_linked_member() {
+    use crate::element::{Camp, Entity};
+
+    let mut engine = EngineInner::new();
+    engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let chief = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let linked = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+    for id in [chief, linked] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+            unreachable!("test phalanx member changed kind")
+        };
+        soldier.npc.ai_brain.base_mut().unwrap().me = id.index();
+    }
+    let chief_ai = engine
+        .get_entity_mut(chief)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap();
+    chief_ai.right_combat_neighbour = linked.index();
+
+    let Entity::Soldier(linked_soldier) = engine.get_entity_mut(linked).unwrap() else {
+        unreachable!()
+    };
+    linked_soldier.element.active = false;
+    linked_soldier.human.unconscious = true;
+    linked_soldier.npc.life_points = 0;
+
+    let snapshots = engine.build_phalanx_member_them_lists(chief);
+    assert_eq!(
+        snapshots
+            .iter()
+            .map(|member| member.handle)
+            .collect::<Vec<_>>(),
+        [chief.index(), linked.index()],
+        "Original follows the installed right-neighbour link without active, consciousness, or life guards"
+    );
+}
+
+#[test]
 fn primary_target_tracking_precedes_view_refresh() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
