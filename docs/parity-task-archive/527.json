@@ -1,0 +1,9 @@
+{
+  "id": "527",
+  "subject": "Complete RiderCharging at its motion destination",
+  "description": "COMPLETED. On integrated first-execute baseline `56fdad63d`, old schema-12 `parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Savegame_018/replay-009-session-0001.jsonl.zst` advanced from the cleared frame-8728 ordering boundary to frame 8749. Soldier83 reached its charge destination: Original snapped exactly to `(1216.7394,577.30206)`, exposed RunningUpright/AI substate 210, and cleared the completed movement goal, while Rust stepped past the goal, retained TransitionCharging/substate 209, and kept the destination installed. Original `RHElementActorHuman::ExecuteRiderCharge` forwards `RHSprite::PerformMotion(..., RHMOTIONMETHOD_RUN, ...)` (`original-code/RHelementactorhuman.cpp:10092-10156`); normal motion commits movement, evaluates `IsGoalReached`, snaps an undeviated zero-tolerance arrival, and returns `RHMOTION_TERMINATED` (`original-code/RHsprite.cpp:1393-1941`). Base Actor Hourglass runs `CheckForLineCrossing` before `DoNextOrder` (`original-code/RHelementactor.cpp:669-698`). Integrated commit `2338dc115` adds that arrival result to Rust's specialized rider owner, preserves the terminating entry order through post-Execute line-crossing callbacks, and advances it only if a callback did not replace it. Focused coverage proves snap/termination, callback-visible entry identity, and successor advancement; all 21 rider-charge tests pass. The optimized representative and schema-14 linux2 Profile_002 Savegame_017 replay-013 control both match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task527-rider-charge-completion"
+}
