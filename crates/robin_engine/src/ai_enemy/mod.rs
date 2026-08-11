@@ -2736,7 +2736,7 @@ impl EnemyAi {
     ) -> bool {
         let radius_sq = (radius as f32) * (radius as f32);
         let my_camp = ctx.camp;
-        let my_pos = ctx.position;
+        let my_pos = ctx.self_position_world;
         // The engine performs the state-filtered registry walk against live
         // recipients. Use this snapshot only to avoid suspending the caller
         // when no same-camp soldier is even in range.
@@ -2747,9 +2747,14 @@ impl EnemyAi {
                 **handle != self.base.me && view.is_soldier() && view.camp == my_camp
             })
             .any(|(_, view)| {
-                let dx = view.position.x - my_pos.x;
-                let dz = view.elevation - ctx.elevation;
-                let dy = (view.position.y + view.elevation) - (my_pos.y + ctx.elevation);
+                // Original subtracts each friend's raw
+                // RHElement::GetPosition() from the caller's raw element
+                // position. AI Position() is not interchangeable here: it
+                // snaps an actor passing a door to a gate endpoint.
+                let friend_pos = view.detection_position_world;
+                let dx = friend_pos.x - my_pos.x;
+                let dy = friend_pos.y - my_pos.y;
+                let dz = friend_pos.z - my_pos.z;
                 dx * dx + dy * dy + dz * dz < radius_sq
             });
         if !any_friend_in_range {
@@ -4630,6 +4635,49 @@ mod tests {
             },
             ..AiContext::default()
         }
+    }
+
+    #[test]
+    fn look_there_precheck_uses_raw_owner_geometry_during_door_transit() {
+        let mut ai = EnemyAi::new(124);
+        let raw_owner = crate::coordinates::WorldPoint3D::new(722.0, 1695.0, 160.0);
+        let raw_friend = crate::coordinates::WorldPoint3D::new(713.0, 1663.0, 250.0);
+
+        let mut owner_view = soldier_view(test_position(1709.0, 2228.0));
+        owner_view.camp = Camp::Lacklandists;
+        owner_view.passing_door = true;
+        owner_view.detection_position_world = raw_owner;
+        let mut friend_view = soldier_view(test_position(713.0, 1413.0));
+        friend_view.camp = Camp::Lacklandists;
+        friend_view.detection_position_world = raw_friend;
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(124, owner_view);
+        views.insert(184, friend_view);
+        let ctx = AiContext {
+            // AI Position() has snapped the owner to the distant gate point,
+            // while RHElement::GetPosition() remains within the 100-unit
+            // world radius of the raised friend.
+            position: test_position(1709.0, 2228.0),
+            self_position_world: raw_owner,
+            camp: Camp::Lacklandists,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        assert!(ai.hey_folks_look_there(
+            &test_position(1154.0, 1860.0),
+            100,
+            LookThereContinuation::EventView {
+                enemy: 342,
+                enemy_pos: test_position(1154.0, 1860.0),
+            },
+            &ctx,
+        ));
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [CrossNpcAction::BroadcastLookThere { caller: 124, .. }]
+        ));
     }
 
     #[test]
