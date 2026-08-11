@@ -1,0 +1,9 @@
+{
+  "id": "507",
+  "subject": "Preserve cached 3D takeoff state through combat flights",
+  "description": "`parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_034/replay-010-session-0001.jsonl.zst` previously first diverged after frame 1581 on Soldier114's elevation: Original advanced from takeoff Z by `0.594492`, while Rust eagerly replaced the takeoff elevation with the landing plane and produced `-3.0875735`; six visibility origins and their retained results then differed downstream. Original `RHSprite::ReadyForTakeOff` captures the complete 3D position before installing the goal obstacle, computes one complete 3D increment from that captured point, and `PerformFlight` accumulates it before recomputing projected position (`original-code/RHsprite.cpp:1320-1369,1952-2119`). `RHPositionInterface::SetObstacle` only installs the plane and invalidates its lazy 3D caches (`original-code/RHpositioninterface.cpp:545-560`). Rust's eager obstacle helper instead recomputed elevation immediately, and its separate projected-map-Y and Z accumulation introduced a later one-ULP Y mismatch. Commit `9913b66cdc39f4d28bead7834c5c018e50cf0c3a` preserves the cached takeoff point for pushed and hit flights, stores World3d Y as the authored world-space increment, accumulates the cached 3D vector directly, and derives projected map Y only for consumers that require it; GroundPlane flights retain their existing representation. Both elevated-goal focused regressions pass, and the optimized parity-profile runner builds successfully. The representative replay-010 and adjacent same-save replay-009 both match exact EOF on that rebuilt runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task507-combat-flight-3d"
+}
