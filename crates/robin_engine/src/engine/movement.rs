@@ -10938,10 +10938,27 @@ impl EngineInner {
             return false;
         }
 
-        let mut indices = self
+        let indices = self
             .world
             .fast_grid
             .get_crossing_elevation_line_indices(layer, old_pos, new_pos);
+        self.check_for_elevation_line_crossing_indices(
+            assets, entity_id, old_pos, new_pos, layer, indices,
+        )
+    }
+
+    /// Dispatch an already-filtered elevation subset from Actor's unified
+    /// `LINE_CROSS` list. This keeps Original's candidate count and callback
+    /// set on the same boundary.
+    fn check_for_elevation_line_crossing_indices(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
+        layer: u16,
+        mut indices: Vec<crate::fast_find_grid::LineIndex>,
+    ) -> bool {
         tracing::trace!(
             target: "robin_engine::elevation_crossing",
             ?entity_id,
@@ -11047,6 +11064,20 @@ impl EngineInner {
             .world
             .fast_grid
             .get_actor_non_elevation_crossing_line_indices(layer, old_pos, new_pos);
+        self.check_for_non_elevation_line_crossing_indices(
+            sim, assets, entity_id, old_pos, new_pos, indices,
+        );
+    }
+
+    fn check_for_non_elevation_line_crossing_indices(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
+        indices: Vec<crate::fast_find_grid::LineIndex>,
+    ) {
         if indices.is_empty() {
             return;
         }
@@ -11090,6 +11121,118 @@ impl EngineInner {
                 self.dispatch_sound_line_crossing(assets, entity_id, new_pos, line_index);
             }
         }
+    }
+
+    /// Close Original `RHElementActor::Hourglass`'s post-`Execute`
+    /// `CheckForLineCrossing` boundary for an actor whose selected Execute arm
+    /// moved it without going through the movement owner.
+    ///
+    /// Original collects every `LINE_CROSS` candidate once. With exactly one
+    /// line it recomputes the actor increment only when that line is an
+    /// elevation bond; with multiple lines it unconditionally runs the shared
+    /// recompute block, even when every candidate is non-elevation. Keep that
+    /// observable branch shape: corpse placement can cross coincident sound
+    /// and script/patch boundaries while initializing a generic dying order.
+    pub(super) fn dispatch_actor_post_execute_line_crossing(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        entry_compute_direction: Option<bool>,
+    ) {
+        let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
+            let entity =
+                self.world.entities.get(entity_id).unwrap_or_else(|| {
+                    panic!("post-Execute crossing owner {entity_id:?} is missing")
+                });
+            (
+                entity.position_iface().old_map_position(),
+                entity.element_data().position_map(),
+                entity.element_data().layer(),
+                entity.element_data().posture,
+                entity
+                    .human_data()
+                    .is_some_and(|human| human.carrier.is_some()),
+                entity.is_human(),
+            )
+        };
+        if old_pos == new_pos
+            || !actor_line_crossing_eligible(
+                posture,
+                is_carried,
+                self.world.fast_grid.level.map_bbox.contains_point(new_pos),
+            )
+        {
+            return;
+        }
+
+        // Original obtains one SBListUnique<RHLine*> for LINE_CROSS, then
+        // filters it once. Keep this exact list stable across callbacks: an
+        // Enter/Leave may change line activity but cannot retroactively change
+        // this Hourglass's branch or dispatch set.
+        let crossing_indices = self
+            .world
+            .fast_grid
+            .get_actor_crossing_line_indices(layer, old_pos, new_pos);
+        let crossing_count = crossing_indices.len();
+        if crossing_count == 0 {
+            return;
+        }
+        let elevation_indices = crossing_indices
+            .iter()
+            .copied()
+            .filter(|&line_index| {
+                self.world.fast_grid.level.lines[usize::from(line_index)].is_elevation
+            })
+            .collect::<Vec<_>>();
+        // In Original's single-line arm every flag on that one RHLine is
+        // dispatched. In the multi-line arm elevation lines are grouped at
+        // the front and excluded from the later patch/script/sound loop.
+        let callback_indices = crossing_indices
+            .into_iter()
+            .filter(|&line_index| {
+                crossing_count == 1
+                    || !self.world.fast_grid.level.lines[usize::from(line_index)].is_elevation
+            })
+            .collect::<Vec<_>>();
+
+        let crossed_elevation = self.check_for_elevation_line_crossing_indices(
+            assets,
+            entity_id,
+            old_pos,
+            new_pos,
+            layer,
+            elevation_indices,
+        );
+        if crossed_elevation || crossing_count > 1 {
+            if is_human {
+                self.update_roll_after_crossing(assets, entity_id);
+            }
+            // `mpOrder` is the entry-latched pointer in Original. Execute may
+            // already have exhausted the Rust order deque, but Actor does not
+            // call DoNextOrder until after this crossing boundary.
+            if let Some(compute_direction) = entry_compute_direction
+                && let Some(entity) = self.world.entities.get_mut(entity_id)
+            {
+                // Preserve PositionInterface's cached-computation contract:
+                // Original calls ComputeIncrementAll here without forcibly
+                // clearing its flags. Elevation crossing/reprojection may
+                // have invalidated them; an otherwise cached vector remains
+                // authoritative.
+                entity
+                    .position_iface_mut()
+                    .compute_increment_all(compute_direction);
+            }
+        }
+
+        self.check_for_non_elevation_line_crossing_indices(
+            sim,
+            assets,
+            entity_id,
+            old_pos,
+            new_pos,
+            callback_indices,
+        );
     }
 
     /// Per-tick `LINE_PATCH` crossing dispatch for a PC.

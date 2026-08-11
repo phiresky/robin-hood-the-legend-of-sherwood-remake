@@ -228,6 +228,12 @@ impl std::fmt::Display for LineIndex {
 /// in [`FastFindGrid::line_active`] and is keyed by line index.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GridLine {
+    /// Complete serialized `RHlineType` mask. Actor LINE_CROSS collection and
+    /// the double-elevation comparison depend on bits that have no callback
+    /// in Rust (AREA/TOTAL/COVER/JUMP/RAILROAD/DISPLAY), so the reduced
+    /// convenience booleans below are not sufficient for parity.
+    #[serde(default)]
+    pub type_mask: u16,
     /// Segment endpoints.
     pub a: MapPoint,
     pub b: MapPoint,
@@ -283,6 +289,16 @@ pub struct GridLine {
 }
 
 impl GridLine {
+    const LINE_AREA: u16 = 1;
+    const LINE_MOTION: u16 = 2;
+    const LINE_ELEVATION: u16 = 4;
+    const LINE_CROSS: u16 = 8;
+    const LINE_SCRIPT: u16 = 16;
+    const LINE_SOUND: u16 = 32;
+    const LINE_PATCH: u16 = 64;
+    const LINE_REPULSIVE: u16 = 128;
+    const LINE_RAILROAD: u16 = 2048;
+
     /// Create a new grid line from two endpoints.
     pub fn new(a: MapPoint, b: MapPoint, is_motion: bool) -> Self {
         let mut bbox = MapBBox::new();
@@ -298,6 +314,7 @@ impl GridLine {
             MapVec::ZERO
         };
         Self {
+            type_mask: if is_motion { Self::LINE_MOTION } else { 0 },
             a,
             b,
             is_motion,
@@ -325,6 +342,7 @@ impl GridLine {
     /// is purely a trigger surface.
     pub fn new_patch(a: MapPoint, b: MapPoint, patch_index: crate::patch::PatchIndex) -> Self {
         let mut line = Self::new(a, b, false);
+        line.type_mask |= Self::LINE_CROSS | Self::LINE_PATCH;
         line.is_patch = true;
         line.patch_index = Some(patch_index);
         line
@@ -333,6 +351,11 @@ impl GridLine {
     /// Enable / disable the `LINE_REPULSIVE` flag.
     pub fn set_repulsive(&mut self, repulsive: bool) {
         self.is_repulsive = repulsive;
+        if repulsive {
+            self.type_mask |= Self::LINE_REPULSIVE;
+        } else {
+            self.type_mask &= !Self::LINE_REPULSIVE;
+        }
     }
 
     /// Recompute the repulsive-line normal for a motion sector edge.
@@ -340,6 +363,11 @@ impl GridLine {
     /// orientations so the normal always points outward (away from the
     /// walkable side).
     pub fn initialize_motion_normal(&mut self, is_area: bool) {
+        if is_area {
+            self.type_mask |= Self::LINE_AREA;
+        } else {
+            self.type_mask &= !Self::LINE_AREA;
+        }
         let dx = self.b.x - self.a.x;
         let dy = self.b.y - self.a.y;
         let len = (dx * dx + dy * dy).sqrt();
@@ -364,6 +392,7 @@ impl GridLine {
     /// a trigger surface.
     pub fn new_script(a: MapPoint, b: MapPoint, script_zone_index: u16) -> Self {
         let mut line = Self::new(a, b, false);
+        line.type_mask |= Self::LINE_CROSS | Self::LINE_SCRIPT;
         line.is_script = true;
         line.script_zone_index = Some(script_zone_index);
         line
@@ -380,6 +409,7 @@ impl GridLine {
     /// one call.
     pub fn new_sound(a: MapPoint, b: MapPoint, material_sector_index: u16) -> Self {
         let mut line = Self::new(a, b, false);
+        line.type_mask |= Self::LINE_CROSS | Self::LINE_SOUND;
         line.is_sound = true;
         line.sound_material_sector_index = Some(material_sector_index);
         line
@@ -398,10 +428,55 @@ impl GridLine {
         right_obstacle_index: Option<u16>,
     ) -> Self {
         let mut line = Self::new(a, b, false);
+        line.type_mask |= Self::LINE_CROSS | Self::LINE_ELEVATION;
         line.is_elevation = true;
         line.left_obstacle_index = left_obstacle_index;
         line.right_obstacle_index = right_obstacle_index;
         line
+    }
+
+    /// Create a no-callback railroad boundary (`LINE_CROSS |
+    /// LINE_RAILROAD`). It still participates in Actor's candidate count and
+    /// therefore in the multi-line UpdateRoll/ComputeIncrementAll branch.
+    pub fn new_railroad(a: MapPoint, b: MapPoint) -> Self {
+        let mut line = Self::new(a, b, false);
+        line.type_mask |= Self::LINE_CROSS | Self::LINE_RAILROAD;
+        line
+    }
+
+    fn effective_type_mask(&self) -> u16 {
+        if self.type_mask != 0 {
+            return self.type_mask;
+        }
+        // Compatibility for older serialized Rust states written before the
+        // raw mask was retained. Such states cannot recover callback-less
+        // bits, but all previously represented flags remain exact.
+        (if self.is_motion { Self::LINE_MOTION } else { 0 })
+            | (if self.is_elevation {
+                Self::LINE_ELEVATION | Self::LINE_CROSS
+            } else {
+                0
+            })
+            | (if self.is_patch {
+                Self::LINE_PATCH | Self::LINE_CROSS
+            } else {
+                0
+            })
+            | (if self.is_script {
+                Self::LINE_SCRIPT | Self::LINE_CROSS
+            } else {
+                0
+            })
+            | (if self.is_sound {
+                Self::LINE_SOUND | Self::LINE_CROSS
+            } else {
+                0
+            })
+            | (if self.is_repulsive {
+                Self::LINE_REPULSIVE
+            } else {
+                0
+            })
     }
 
     /// The line as a geo segment.
@@ -2628,14 +2703,15 @@ impl FastFindGrid {
         result
     }
 
-    /// Return active non-elevation `LINE_CROSS` candidates in the same
-    /// block/line discovery order as Original `RHFastFindGrid::GetLines`.
+    /// Return the actor's single active `LINE_CROSS` candidate list in the
+    /// block/line discovery order of Original `RHFastFindGrid::GetLines`.
     ///
-    /// Actor crossing dispatch must collect patch, script, and sound lines
-    /// into one list before its stable distance sort. Querying each kind
-    /// separately loses the insertion order for equal-distance crossings at
-    /// a shared vertex.
-    pub fn get_actor_non_elevation_crossing_line_indices(
+    /// `RHElementActor::CheckForLineCrossing` then removes duplicate
+    /// elevation lines only when their complete type mask and geometry match,
+    /// and removes every line containing the actor's old position. Keep those
+    /// filters here so count, elevation dispatch, and non-elevation callbacks
+    /// all consume the same authoritative list.
+    pub fn get_actor_crossing_line_indices(
         &self,
         layer: u16,
         old_pos: MapPoint,
@@ -2680,7 +2756,7 @@ impl FastFindGrid {
                         continue;
                     }
                     let line = &self.level.lines[usize::from(line_idx)];
-                    if !(line.is_patch || line.is_script || line.is_sound)
+                    if line.effective_type_mask() & GridLine::LINE_CROSS == 0
                         || !self.is_line_active(line_idx)
                     {
                         continue;
@@ -2691,7 +2767,56 @@ impl FastFindGrid {
                 }
             }
         }
-        result
+        let same_type = |left: &GridLine, right: &GridLine| {
+            left.effective_type_mask() == right.effective_type_mask()
+        };
+        let same_geometry = |left: &GridLine, right: &GridLine| {
+            (left.a == right.a && left.b == right.b) || (left.a == right.b && left.b == right.a)
+        };
+
+        // Original only diagnoses/removes double elevation bonds. Distinct
+        // patch/script/sound objects sharing geometry remain distinct.
+        let mut filtered = Vec::with_capacity(result.len());
+        'candidate: for line_idx in result {
+            let line = &self.level.lines[usize::from(line_idx)];
+            if line.is_elevation
+                && filtered.iter().copied().any(|kept_idx| {
+                    let kept = &self.level.lines[usize::from(kept_idx)];
+                    kept.is_elevation && same_type(kept, line) && same_geometry(kept, line)
+                })
+            {
+                continue 'candidate;
+            }
+
+            let line_dx = line.b.x - line.a.x;
+            let line_dy = line.b.y - line.a.y;
+            let old_dx = old_pos.x - line.a.x;
+            let old_dy = old_pos.y - line.a.y;
+            if line_dx * old_dy - line_dy * old_dx == 0.0 {
+                continue 'candidate;
+            }
+            filtered.push(line_idx);
+        }
+        filtered
+    }
+
+    /// Legacy callback view used by specialized movement/rolling owners.
+    /// A combined elevation+patch/script/sound line remains present here:
+    /// those callers dispatch elevation separately and must still run the
+    /// other flags on the same line.
+    pub fn get_actor_non_elevation_crossing_line_indices(
+        &self,
+        layer: u16,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
+    ) -> Vec<LineIndex> {
+        self.get_actor_crossing_line_indices(layer, old_pos, new_pos)
+            .into_iter()
+            .filter(|&line_idx| {
+                let line = &self.level.lines[usize::from(line_idx)];
+                line.is_patch || line.is_script || line.is_sound
+            })
+            .collect()
     }
 
     /// Construct `LINE_SCRIPT | LINE_CROSS` boundary segments for a
@@ -4074,6 +4199,109 @@ mod tests {
         assert_eq!(
             grid.get_actor_non_elevation_crossing_line_indices(0, old_pos, new_pos),
             vec![script_line, patch_line, sound_line]
+        );
+    }
+
+    #[test]
+    fn actor_crossing_unified_list_counts_a_multi_flag_line_once() {
+        let mut grid = make_empty_grid(1);
+        let mut combined = GridLine::new_elevation(
+            MapPoint::new(64.0, 32.0),
+            MapPoint::new(64.0, 96.0),
+            None,
+            None,
+        );
+        combined.is_patch = true;
+        combined.type_mask |= GridLine::LINE_PATCH;
+        combined.patch_index = Some(crate::patch::PatchIndex::new(0).unwrap());
+        let combined_idx = grid.add_line(combined, 0);
+
+        assert_eq!(
+            grid.get_actor_crossing_line_indices(
+                0,
+                MapPoint::new(32.0, 64.0),
+                MapPoint::new(96.0, 64.0),
+            ),
+            vec![combined_idx],
+            "SBListUnique stores one RHLine pointer regardless of how many LINE_CROSS flags it carries"
+        );
+        assert_eq!(
+            grid.get_actor_non_elevation_crossing_line_indices(
+                0,
+                MapPoint::new(32.0, 64.0),
+                MapPoint::new(96.0, 64.0),
+            ),
+            vec![combined_idx],
+            "specialized owners must still dispatch the patch flag carried by an elevation line"
+        );
+    }
+
+    #[test]
+    fn actor_crossing_unified_list_dedupes_only_same_type_elevation_geometry() {
+        let mut grid = make_empty_grid(1);
+        let a = MapPoint::new(64.0, 32.0);
+        let b = MapPoint::new(64.0, 96.0);
+        let first = grid.add_line(GridLine::new_elevation(a, b, None, None), 0);
+        grid.add_line(GridLine::new_elevation(b, a, Some(1), Some(2)), 0);
+
+        let mut different_type = GridLine::new_elevation(a, b, None, None);
+        different_type.is_sound = true;
+        different_type.type_mask |= GridLine::LINE_SOUND;
+        different_type.sound_material_sector_index = Some(0);
+        let different_type = grid.add_line(different_type, 0);
+
+        assert_eq!(
+            grid.get_actor_crossing_line_indices(
+                0,
+                MapPoint::new(32.0, 64.0),
+                MapPoint::new(96.0, 64.0),
+            ),
+            vec![first, different_type],
+            "Original removes reversed duplicate bonds with the same type mask, but retains coincident elevation lines with distinct masks"
+        );
+    }
+
+    #[test]
+    fn actor_crossing_unified_list_excludes_lines_containing_old_position() {
+        let mut grid = make_empty_grid(1);
+        grid.add_line(
+            GridLine::new_script(MapPoint::new(32.0, 64.0), MapPoint::new(96.0, 64.0), 0),
+            0,
+        );
+        assert!(
+            grid.get_actor_crossing_line_indices(
+                0,
+                MapPoint::new(64.0, 64.0),
+                MapPoint::new(64.0, 96.0),
+            )
+            .is_empty(),
+            "Original removes a candidate when the actor's old map position lies on it"
+        );
+    }
+
+    #[test]
+    fn actor_crossing_unified_list_includes_callbackless_railroad_line() {
+        let mut grid = make_empty_grid(1);
+        let railroad = grid.add_line(
+            GridLine::new_railroad(MapPoint::new(64.0, 32.0), MapPoint::new(64.0, 96.0)),
+            0,
+        );
+        assert_eq!(
+            grid.get_actor_crossing_line_indices(
+                0,
+                MapPoint::new(32.0, 64.0),
+                MapPoint::new(96.0, 64.0),
+            ),
+            vec![railroad]
+        );
+        assert!(
+            grid.get_actor_non_elevation_crossing_line_indices(
+                0,
+                MapPoint::new(32.0, 64.0),
+                MapPoint::new(96.0, 64.0),
+            )
+            .is_empty(),
+            "railroad affects Actor's branch but owns no patch/script/sound callback"
         );
     }
 
