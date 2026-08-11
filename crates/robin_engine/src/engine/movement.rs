@@ -8431,6 +8431,11 @@ impl EngineInner {
                     let elem = entity.element_data_mut();
                     elem.set_position_map(position);
                     elem.update_grid_cell();
+                    // The same nonzero-animation-distance block ends with
+                    // UpdateForecastedMovement even though the cached
+                    // increment is zero at the goal. This clears a preceding
+                    // running forecast before projectile leading samples it.
+                    refresh_motion_forecast(entity.sprite_mut(), speed, split_motion_speeds);
                 }
                 if transition_has_distance {
                     // Original's shared PerformMotion path refreshes target
@@ -14397,6 +14402,121 @@ mod line_jump_tests {
         assert!(
             !motion_recomputes_exact_position(true, true, 0.0, 0.0),
             "a zero-distance transition frame never enters Original's position-update block"
+        );
+    }
+
+    #[test]
+    fn exact_goal_transition_clears_stale_running_forecast() {
+        use crate::element::{
+            ActionState, ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
+        };
+        use crate::order::Order;
+        use crate::sequence::{SequenceElement, SequencePriority};
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut engine = EngineInner::new();
+        let position = MapPoint::new(100.0, 100.0);
+        let transition = OrderType::TransitionRunningUprightWaitingUpright;
+        let script = SpriteScript {
+            action_id: transition as u16,
+            action_done: 2,
+            average_speed: 2.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 6,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0; 3],
+            distances: vec![2; 3],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[transition as usize] = 0;
+
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        element.sprite.last_action = transition;
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(position);
+        element
+            .sprite
+            .position_iface
+            .set_map_goal(MapPoint::new(110.0, 100.0));
+        element.sprite.position_iface.compute_increment_all(true);
+        element
+            .sprite
+            .position_iface
+            .update_forecasted_movement(5.0, 1);
+        assert_ne!(
+            element.sprite.position_iface.get_forecasted_movement(),
+            crate::coordinates::WorldVec3D::ZERO
+        );
+        element.sprite.position_iface.zero_all_increments();
+
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                action_state: ActionState::MovingFast,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+        let order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        movement.priority = SequencePriority::Normal;
+        movement
+            .orders
+            .push_back(Order::new(transition, position.x, position.y, order_id));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_forecasted_movement(),
+            crate::coordinates::WorldVec3D::ZERO,
+            "Original's nonzero animation-distance block refreshes the forecast with the zero goal increment"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            position,
+            "the forecast refresh must not move an actor already at the transition goal"
         );
     }
 
