@@ -31,6 +31,26 @@ fn legacy_vector_angle(from: (f32, f32), to: (f32, f32)) -> f32 {
 }
 
 impl EnemyAi {
+    /// Original archer tactics call `RHArtificialIntelligence::Position` for
+    /// their enemy geometry.  That is intentionally different from the raw
+    /// fighter position while an actor is passing a door (or is carried): the
+    /// AI-facing entity view contains the committed gate side / carrier
+    /// substitution authored by `Position`.
+    pub(super) fn archer_enemy_position(
+        &self,
+        enemy_handle: HumanHandle,
+        ctx: &AiContext,
+    ) -> Position {
+        ctx.entity_view(enemy_handle)
+            .unwrap_or_else(|| {
+                panic!(
+                    "archer {} requires missing AI Position for enemy {}",
+                    self.base.me, enemy_handle
+                )
+            })
+            .position
+    }
+
     // -----------------------------------------------------------------------
     // Archery
     // -----------------------------------------------------------------------
@@ -261,7 +281,8 @@ impl EnemyAi {
         // Vector from enemy to me (note the original name
         // `vEnemyToMe = posMe - Position(pEnemy)` is the vector pointing
         // from the enemy toward me).
-        let v_enemy_to_me = pos_diff(pos_me, &enemy.position);
+        let enemy_position = self.archer_enemy_position(enemy_handle, ctx);
+        let v_enemy_to_me = pos_diff(pos_me, &enemy_position);
         let sq_norm =
             crate::position_interface::vector_square_norm_iso(v_enemy_to_me.0, v_enemy_to_me.1);
 
@@ -324,9 +345,37 @@ impl EnemyAi {
 
 #[cfg(test)]
 mod tests {
-    use crate::ai_enemy::archer;
+    use crate::ai::{AiContext, Position};
+    use crate::ai_enemy::{EnemyAi, FighterSnapshot, archer};
+    use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
+    use crate::element::{ActionState, ActorPc, Entity};
 
     use super::legacy_vector_angle;
+
+    fn archer_context_with_target_position(target: u32, position: Position) -> AiContext {
+        let target_entity = Entity::Pc(ActorPc {
+            element: Default::default(),
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        let mut view = entity_view_from_entity(
+            &target_entity,
+            target,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        view.position = position;
+        view.detection_position = crate::coordinates::MapPoint::new(301.0, 0.0);
+        let mut views = AiEntityViewMap::new();
+        views.insert(target, view);
+        AiContext {
+            entity_views: shared_entity_views(views),
+            ..AiContext::default()
+        }
+    }
 
     #[test]
     fn legacy_angle_treats_a_coincident_point_as_opposite() {
@@ -341,5 +390,46 @@ mod tests {
         let friend_angle = legacy_vector_angle((1.0, 0.0), (0.0, 0.0));
         let target_angle = legacy_vector_angle((1.0, 0.0), (100.0, -3.0));
         assert!((target_angle - friend_angle).abs() >= archer::MIN_TARGET_FRIEND_ANGLE);
+    }
+
+    #[test]
+    fn archer_distance_uses_door_committed_ai_position() {
+        // A door-passing target's raw interpolated feet remain just outside
+        // the head-on retreat threshold, while AI Position has already
+        // committed it to the near gate side.  Original uses the latter in
+        // both ArcherIsToNearToEnemy and ProposeGoodStepBackGoal.
+        let target = 346;
+        let mut ai = EnemyAi::default();
+        ai.base.me = 191;
+        let committed = Position {
+            x: 299.0,
+            y: 0.0,
+            ..Position::default()
+        };
+        let ctx = archer_context_with_target_position(target, committed);
+        let mut tick = crate::ai::AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: target,
+            // Raw feet position deliberately differs from AI Position.
+            position: Position {
+                x: 301.0,
+                y: 0.0,
+                ..Position::default()
+            },
+            direction: 12,
+            action_state: ActionState::MovingFast,
+            ..FighterSnapshot::default()
+        });
+
+        let me = Position::default();
+        assert!(ai.archer_is_too_near_to_enemy(&me, target, &ctx, &tick));
+
+        let raw_ctx =
+            archer_context_with_target_position(target, tick.fighter_registry[0].position);
+        assert!(
+            !ai.archer_is_too_near_to_enemy(&me, target, &raw_ctx, &tick),
+            "the regression must distinguish committed AI Position from raw fighter geometry"
+        );
+        assert_eq!(ai.archer_enemy_position(target, &ctx), committed);
     }
 }

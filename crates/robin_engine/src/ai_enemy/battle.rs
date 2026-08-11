@@ -1939,10 +1939,11 @@ impl EnemyAi {
                     let target =
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
-                    let enemy_pos = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.position)
-                        .unwrap_or(ctx.position);
+                    // Original re-reads Position(mpPrimaryTarget) after
+                    // GetNewPrimaryTarget.  In particular, a door-passing
+                    // target contributes its committed gate side rather than
+                    // the raw interpolated fighter position.
+                    let enemy_pos = self.archer_enemy_position(target, ctx);
                     self.base.seek_position = enemy_pos;
                     if let Some(goal) = self.propose_good_step_back_goal(
                         enemy_pos,
