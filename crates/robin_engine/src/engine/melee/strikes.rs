@@ -35,13 +35,6 @@ fn sweep_rotation_complete(sweep: &crate::movement::SweepState) -> bool {
     }
 }
 
-fn true_sweep_still_rotating(sweep: &crate::movement::SweepState) -> bool {
-    matches!(
-        sweep.strike_kind,
-        WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
-    ) && !sweep_rotation_complete(sweep)
-}
-
 fn advance_circle_angle(sweep: &mut crate::movement::SweepState) {
     let candidate = sweep.current_angle + sweep.rotation_per_frame;
     let past_final = match sweep.direction {
@@ -777,10 +770,16 @@ impl EngineInner {
             .get_entity(attacker_id)
             .map(|entity| get_hth_weapon_id_full(entity, &assets.profile_manager))
             .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
-        let strike_kind = profile_idx
+        let (strike_kind, strike_direction) = profile_idx
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-            .map(|profile| profile.thrusts[strike as usize].kind)
-            .unwrap_or(WeaponThrustKind::Straight);
+            .map(|profile| {
+                let thrust = &profile.thrusts[strike as usize];
+                (thrust.kind, thrust.direction)
+            })
+            .unwrap_or((
+                WeaponThrustKind::Straight,
+                crate::profiles::WeaponThrustDirection::LeftToRight,
+            ));
         if matches!(
             strike_kind,
             WeaponThrustKind::Straight | WeaponThrustKind::Assault
@@ -817,17 +816,35 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(attacker_id) else {
                 return SweepTickPhase::Dormant;
             };
-            let direction = entity.element_data().direction() as u16;
             sweep_phase = SweepTickPhase::InProgress;
-            let hold_true_sweep = entity
-                .actor_data()
-                .and_then(|actor| actor.sweep_state.as_ref())
-                .is_some_and(true_sweep_still_rotating)
-                && entity.element_data().sprite.last_processed_order_id == selected.order_id.get()
-                && entity.element_data().sprite.current_frame
-                    == entity.element_data().sprite.action_done_frame
-                && entity.element_data().sprite.frame_count
-                    == entity.element_data().sprite.action_done_counter;
+            let true_sweep_at_action_point = matches!(
+                strike_kind,
+                WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
+            )
+            .then(|| {
+                entity
+                    .actor_data()
+                    .and_then(|actor| actor.sweep_state.as_ref())
+            })
+            .flatten()
+            .filter(|_| {
+                entity.element_data().sprite.last_processed_order_id == selected.order_id.get()
+                    && entity.element_data().sprite.current_frame
+                        == entity.element_data().sprite.action_done_frame
+                    && entity.element_data().sprite.frame_count
+                        == entity.element_data().sprite.action_done_counter
+            })
+            .map(|sweep| {
+                let still_rotating = match strike_direction {
+                    crate::profiles::WeaponThrustDirection::LeftToRight => {
+                        sweep.current_angle < sweep.final_angle
+                    }
+                    _ => sweep.current_angle > sweep.final_angle,
+                };
+                (sweep.current_angle, still_rotating)
+            });
+            let hold_true_sweep =
+                true_sweep_at_action_point.is_some_and(|(_, still_rotating)| still_rotating);
             if hold_true_sweep {
                 // The rotation phase runs no Sprite method and reports
                 // IN_PROGRESS outright. Latch that here: without it the arm
@@ -842,6 +859,19 @@ impl EngineInner {
                     strike
                 );
             } else {
+                // ExecuteTrueCircleSwordStrikeAction tests IsActionDone and
+                // presents the current sweep angle before its terminal
+                // PerformAction call advances the frame counter.  Preserve
+                // that exact equality boundary; the later effect phase sees
+                // the already-advanced sprite and must not synthesize it.
+                if let Some((current_angle, _)) = true_sweep_at_action_point {
+                    let new_dir = angle_to_sector(current_angle);
+                    let elem = entity.element_data_mut();
+                    elem.set_direction_instantly(new_dir as i16);
+                    elem.sprite
+                        .force_action_direction(animation, new_dir.into());
+                }
+                let direction = entity.element_data().direction() as u16;
                 let motion = entity.element_data_mut().sprite.perform_action(
                     sim,
                     Some(selected.order_id),
@@ -1069,22 +1099,18 @@ impl EngineInner {
                 ) {
                     return;
                 }
-                let sprite = &entity.element_data().sprite;
-                // ExecuteTrueCircleSwordStrikeAction branches on
-                // RHSprite::IsActionDone, not equality with the one-shot
-                // RHMOTION_DONE frame/counter.  Once this exact order has
-                // reached that point, later counters on the same frame still
-                // present the retained terminal angle before PerformAction.
-                let active_action_done = sprite.last_processed_order_id == active_order_id.get()
-                    && (sprite.current_frame > sprite.action_done_frame
-                        || (sprite.current_frame == sprite.action_done_frame
-                            && sprite.frame_count >= sprite.action_done_counter));
-                let retained_circle_before_action_point = self
+                let at_action_point = entity.element_data().sprite.last_processed_order_id
+                    == active_order_id.get()
+                    && entity.element_data().sprite.current_frame
+                        == entity.element_data().sprite.action_done_frame
+                    && entity.element_data().sprite.frame_count
+                        == entity.element_data().sprite.action_done_counter;
+                let retained_circle_off_action_point = self
                     .get_entity(attacker_id)
                     .and_then(|entity| entity.actor_data())
                     .and_then(|actor| actor.sweep_state.as_ref())
-                    .is_some_and(|_| is_circle_sweep(active_kind) && !active_action_done);
-                if retained_circle_before_action_point {
+                    .is_some_and(|_| is_circle_sweep(active_kind) && !at_action_point);
+                if retained_circle_off_action_point {
                     // ExecuteCircleSwordStrike always runs the effect with
                     // the current Execute call's strike, even before that
                     // animation reaches its action point.  The action-point

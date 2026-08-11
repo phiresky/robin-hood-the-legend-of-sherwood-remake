@@ -4982,7 +4982,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_true_circle_direction_is_presented_after_done_counter() {
+    fn terminal_true_circle_direction_is_presented_before_done_progresses() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = make_engine();
@@ -5006,7 +5006,8 @@ mod tests {
             SwordStrike::G,
             crate::profiles::WeaponThrustKind::TrueHalfCircle,
         );
-        install_test_melee_order(&mut engine, attacker, victim, SwordStrike::G, true);
+        let selected =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::G, true);
 
         let terminal_angle = sector_to_angle(13);
         {
@@ -5015,36 +5016,111 @@ mod tests {
             let sprite = &mut entity.element_data_mut().sprite;
             assert_eq!(sprite.current_frame, sprite.action_done_frame);
             assert_eq!(sprite.frame_count, sprite.action_done_counter);
-            sprite.frame_count += 1;
             entity.actor_data_mut().unwrap().sweep_state = Some(crate::movement::SweepState {
                 pending_victims: Vec::new(),
                 initial_angle: terminal_angle + std::f32::consts::PI,
                 current_angle: terminal_angle,
                 final_angle: terminal_angle,
                 rotation_per_frame: -std::f32::consts::FRAC_PI_2,
+                // Deliberately stale retained metadata: Original dispatches
+                // terminal action semantics from the current G call.
                 direction: crate::profiles::WeaponThrustDirection::RightToLeft,
-                strike: SwordStrike::G,
+                strike: SwordStrike::F,
                 attacker_profile_idx: Some(1),
-                strike_kind: crate::profiles::WeaponThrustKind::TrueHalfCircle,
+                strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
             });
         }
 
-        engine.tick_selected_sweep_phase(
-            sim,
-            &assets,
-            attacker,
-            strikes::SweepTickPhase::InProgress,
-        );
+        engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
 
         let attacker_entity = engine.get_entity(attacker).unwrap();
         assert_eq!(
             attacker_entity.element_data().direction(),
             13,
-            "Original presents the terminal true-circle angle on every Execute call after IsActionDone"
+            "Original presents the terminal true-circle angle before the exact action-done call advances the sprite"
+        );
+        let sprite = &attacker_entity.element_data().sprite;
+        let current_g_row = sprite
+            .row_for_action(strike_to_animation(SwordStrike::G))
+            .expect("current G animation remains mapped");
+        assert_eq!(
+            sprite.current_row,
+            current_g_row + 13,
+            "terminal presentation must force the current G animation row, not retained F"
+        );
+        assert_eq!(
+            sprite.current_frame,
+            sprite.action_done_frame + 1,
+            "the zero-delay fixture advances one frame after presenting the terminal angle"
+        );
+        assert_eq!(
+            sprite.frame_count, 0,
+            "the zero-delay next frame begins at counter zero"
         );
         assert!(
             attacker_entity.actor_data().unwrap().sweep_state.is_none(),
             "the terminal presentation call clears an exhausted sweep mirror"
+        );
+    }
+
+    #[test]
+    fn replacement_true_circle_uses_current_direction_at_action_done() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::G,
+            crate::profiles::WeaponThrustKind::TrueHalfCircle,
+        );
+        let selected =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::G, true);
+
+        let current_angle = sector_to_angle(13);
+        {
+            let entity = engine.get_entity_mut(attacker).unwrap();
+            entity.element_data_mut().set_direction_instantly(15);
+            entity.actor_data_mut().unwrap().sweep_state = Some(crate::movement::SweepState {
+                pending_victims: Vec::new(),
+                initial_angle: current_angle,
+                current_angle,
+                final_angle: current_angle + std::f32::consts::FRAC_PI_2,
+                rotation_per_frame: std::f32::consts::FRAC_PI_2,
+                // Stale retained right-to-left/false-F metadata says the
+                // sweep is complete. Current G is a left-to-right true
+                // circle and must keep rotating without progressing sprite.
+                direction: crate::profiles::WeaponThrustDirection::RightToLeft,
+                strike: SwordStrike::F,
+                attacker_profile_idx: Some(1),
+                strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
+            });
+        }
+
+        engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
+
+        let attacker_entity = engine.get_entity(attacker).unwrap();
+        let sprite = &attacker_entity.element_data().sprite;
+        assert_eq!(attacker_entity.element_data().direction(), 13);
+        assert_eq!(sprite.current_frame, sprite.action_done_frame);
+        assert_eq!(sprite.frame_count, sprite.action_done_counter);
+        assert!(
+            attacker_entity.actor_data().unwrap().sweep_state.is_some(),
+            "current G's left-to-right direction keeps the retained geometry rotating"
         );
     }
 
