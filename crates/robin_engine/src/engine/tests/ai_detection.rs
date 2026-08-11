@@ -1853,6 +1853,26 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         .position_iface
         .set_door_for_test(crate::position_interface::DoorHandle(0));
 
+    // Original `RHActor::IsPassingDoor` observes the selected PassDoor
+    // sequence command. Runtime door mirrors alone no longer arm forecast
+    // preparation after the selected-command parity fix.
+    let mut pass = crate::sequence::SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(door_actor),
+        crate::order::OrderType::WalkingUpright,
+    );
+    if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut pass.data {
+        *gate_id = Some(DoorIndex(0));
+    } else {
+        unreachable!("PassDoor fixture must be a movement element")
+    }
+    let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(pass_sequence, 0);
+
     let building_sector = SectorNumber::new(8);
     engine.script_domains.interactables.doors = vec![
         Door {

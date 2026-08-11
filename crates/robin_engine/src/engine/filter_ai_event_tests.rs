@@ -5471,6 +5471,37 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
     door_actor
 }
 
+fn select_unrelated_pass_door_fixture(engine: &mut EngineInner, door_actor: EntityId) {
+    use crate::gate::DoorIndex;
+
+    // `RHActor::IsPassingDoor` is selected-command state, not merely the
+    // actor's retained door choreography. Keep this unrelated control actor
+    // frozen so the synthetic PassDoor remains selected during fused owner
+    // walks without trying to execute the intentionally minimal fixture.
+    engine
+        .get_entity_mut(door_actor)
+        .expect("unrelated door-passing actor exists")
+        .actor_data_mut()
+        .expect("unrelated door-passing actor has actor data")
+        .execution_frozen = true;
+    let mut pass = crate::sequence::SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(door_actor),
+        crate::order::OrderType::WalkingUpright,
+    );
+    if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut pass.data {
+        *gate_id = Some(DoorIndex(0));
+    } else {
+        unreachable!("PassDoor fixture must be a movement element")
+    }
+    let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(pass_sequence, 0);
+}
+
 #[test]
 fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
     use crate::element::ActiveDoorPass;
@@ -5911,6 +5942,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
     let (mut seeking_engine, seeking_assets, seeking) =
         setup_ai_state_native_probe("SeekingRngProbe", 3);
     let door_actor = install_unrelated_multi_exit_building_actor(&mut seeking_engine);
+    select_unrelated_pass_door_fixture(&mut seeking_engine, door_actor);
     {
         let entity = seeking_engine.world.entities.get_mut(seeking).unwrap();
         entity
@@ -5959,7 +5991,8 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
 
     let (mut fleeing_engine, fleeing_assets, fleeing) =
         setup_ai_state_native_probe("FleeingRngProbe", 5);
-    install_unrelated_multi_exit_building_actor(&mut fleeing_engine);
+    let fleeing_door_actor = install_unrelated_multi_exit_building_actor(&mut fleeing_engine);
+    select_unrelated_pass_door_fixture(&mut fleeing_engine, fleeing_door_actor);
     let (_, fleeing_trace) = with_draw_trace(|| {
         run_ai_state_native_probe(&mut fleeing_engine, &fleeing_assets, fleeing);
     });
@@ -5975,6 +6008,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
 
     let (mut engine, assets, owner) = setup_ai_state_native_probe("EnvelopeRngProbe", 3);
     let door_actor = install_unrelated_multi_exit_building_actor(&mut engine);
+    select_unrelated_pass_door_fixture(&mut engine, door_actor);
     engine
         .get_entity_mut(owner)
         .expect("forecast control owner exists")
