@@ -236,6 +236,7 @@ impl EngineInner {
                 });
             let mut appeared = Vec::new();
             let mut line_toggles = Vec::new();
+            let mut sector_toggles = Vec::new();
             self.world.pathfinder.toggle_obstacle_state(
                 assets.pathfinder_graph.as_ref(),
                 ctx.pathfinder_layer as usize,
@@ -243,12 +244,18 @@ impl EngineInner {
                 ctx.pathfinder_changing_obstacles as u16,
                 &mut appeared,
                 &mut line_toggles,
+                &mut sector_toggles,
             );
 
             // Apply grid-line toggles from motion-obstacle activation
             // changes.
             for (line_idx, active) in line_toggles {
                 self.world.fast_grid.set_line_active(line_idx, active);
+            }
+            for (sector_idx, active) in sector_toggles {
+                self.world
+                    .fast_grid
+                    .set_sector_active(u32::from(sector_idx), active);
             }
 
             if !forced_reset {

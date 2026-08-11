@@ -2476,11 +2476,20 @@ impl EngineInner {
         }
 
         // ── Part 1: Motion obstacles → grid lines + pathfinder move_layers ──
+        // Part 5 registers these same areas/obstacles in exactly this order.
+        // Reserve their flat sector slots now so pathfinder state changes can
+        // toggle each obstacle sector together with its perimeter lines.
+        let mut next_motion_sector_index = u32::try_from(self.world.fast_grid.level.sectors.len())
+            .expect("fast-grid sector count exceeds u32");
         for (layer_idx, layer_areas) in motion_data.layers.iter().enumerate() {
             let mut move_areas = Vec::new();
             let mut alt_move_areas = Vec::new();
 
             for area in layer_areas {
+                // The area's own motion sector precedes its obstacles.
+                next_motion_sector_index = next_motion_sector_index
+                    .checked_add(1)
+                    .expect("motion sector index overflow");
                 // Add motion area polygon lines to the grid: the
                 // perimeter is both motion-blocking and repulsive, so
                 // anti-collision pushes actors off walls instead of
@@ -2563,6 +2572,13 @@ impl EngineInner {
                 // `line_active` flag without rescanning the layer.
                 let mut obstacles = Vec::new();
                 for obstacle in &area.obstacles {
+                    let grid_sector_index = crate::fast_find_grid::SectorIndex::new(
+                        next_motion_sector_index,
+                    )
+                    .expect("motion obstacle sector index uses the invalid u32::MAX sentinel");
+                    next_motion_sector_index = next_motion_sector_index
+                        .checked_add(1)
+                        .expect("motion sector index overflow");
                     let obs_poly = &obstacle.polygon;
                     let mut bbox = crate::coordinates::MapBBox::new();
                     let mut poly_pts: Vec<MapPoint> = Vec::with_capacity(obs_poly.points.len());
@@ -2630,6 +2646,7 @@ impl EngineInner {
                         active: true,
                         bounding_box: bbox,
                         polygon: poly_pts,
+                        grid_sector_index: Some(grid_sector_index),
                         grid_line_indices: line_indices,
                     });
                 }
@@ -2688,9 +2705,12 @@ impl EngineInner {
 
             let mut sector_number = crate::sector::SectorNumber::new(0);
             let mut area_flat_idx: u16 = 0;
+            let mut expected_motion_sector_idx =
+                u32::try_from(self.world.fast_grid.level.sectors.len())
+                    .expect("fast-grid sector count exceeds u32");
 
             for (layer_idx, layer_areas) in motion_data.layers.iter().enumerate() {
-                for area in layer_areas {
+                for (area_idx, area) in layer_areas.iter().enumerate() {
                     // Register the walkable area polygon.
                     // ForceCrouched when flags != 0.
                     let force_crouched = area.flags != 0;
@@ -2710,7 +2730,7 @@ impl EngineInner {
                         bbox.expand_point(p);
                     }
 
-                    self.world.fast_grid.add_sector(
+                    let area_grid_idx = self.world.fast_grid.add_sector(
                         crate::fast_find_grid::GridSector {
                             points: pts,
                             bounding_box: bbox,
@@ -2731,11 +2751,18 @@ impl EngineInner {
                         },
                         layer_idx as u16,
                     );
+                    assert_eq!(
+                        area_grid_idx, expected_motion_sector_idx,
+                        "motion area sector registration drifted from pathfinder topology"
+                    );
+                    expected_motion_sector_idx = expected_motion_sector_idx
+                        .checked_add(1)
+                        .expect("motion sector index overflow");
                     sector_number += 1;
                     area_flat_idx += 1;
 
                     // Register each obstacle polygon (MOTION without AREA)
-                    for obstacle in &area.obstacles {
+                    for (obstacle_idx, obstacle) in area.obstacles.iter().enumerate() {
                         let obs_pts: Vec<_> = obstacle
                             .polygon
                             .points
@@ -2747,7 +2774,7 @@ impl EngineInner {
                             obs_bbox.expand_point(p);
                         }
 
-                        self.world.fast_grid.add_sector(
+                        let obstacle_grid_idx = self.world.fast_grid.add_sector(
                             crate::fast_find_grid::GridSector {
                                 points: obs_pts,
                                 bounding_box: obs_bbox,
@@ -2768,10 +2795,32 @@ impl EngineInner {
                             },
                             layer_idx as u16,
                         );
+                        let expected = assets.pathfinder_graph.static_data.move_layers[layer_idx]
+                            [area_idx]
+                            .motion_obstacles[obstacle_idx]
+                            .grid_sector_index
+                            .expect("loaded motion obstacle has no fast-grid sector binding");
+                        assert_eq!(
+                            obstacle_grid_idx,
+                            u32::from(expected),
+                            "motion obstacle sector registration drifted from pathfinder topology"
+                        );
+                        assert_eq!(
+                            obstacle_grid_idx, expected_motion_sector_idx,
+                            "motion obstacle sector counter drifted from pathfinder topology"
+                        );
+                        expected_motion_sector_idx = expected_motion_sector_idx
+                            .checked_add(1)
+                            .expect("motion sector index overflow");
                         sector_number += 1;
                     }
                 }
             }
+
+            self.world.pathfinder.synchronize_motion_obstacle_sectors(
+                assets.pathfinder_graph.as_ref(),
+                &mut self.world.fast_grid,
+            );
 
             // ── Apply lift_type from RawLift data to grid sectors ──
             //

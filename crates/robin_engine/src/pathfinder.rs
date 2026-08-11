@@ -372,6 +372,10 @@ pub struct MotionObstacle {
     pub bounding_box: MapBBox,
     /// Polygon vertices defining the obstacle footprint.
     pub polygon: Vec<MapPoint>,
+    /// Flat fast-grid sector slot owning this obstacle polygon. Original
+    /// toggles the `RHSector` and all of its perimeter lines together.
+    #[serde(default)]
+    pub grid_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     /// Grid-line indices emitted from this obstacle's perimeter when
     /// the level was loaded. We store the mapping up front so state
     /// transitions can flip the grid's `line_active` flags without a
@@ -1030,6 +1034,58 @@ impl PathFinder {
         graph.try_convert_sector(sector)
     }
 
+    /// Resolve a freshly initialized motion obstacle's active state from the
+    /// authoritative per-area state word. Level loading uses this after the
+    /// obstacle sector has been registered, matching `SetStatesAll`'s sector
+    /// activation as well as its earlier perimeter-line activation.
+    pub(crate) fn is_motion_obstacle_active(
+        &self,
+        layer: usize,
+        area: usize,
+        state_id: u32,
+    ) -> bool {
+        let state = *self
+            .states
+            .get(layer)
+            .and_then(|areas| areas.get(area))
+            .unwrap_or_else(|| {
+                panic!(
+                    "pathfinder motion obstacle references missing state layer {layer}, area {area}"
+                )
+            });
+        (state_id & state) == state_id
+    }
+
+    /// Apply initialized pathfinder state to every registered motion-obstacle
+    /// sector after level loading has finished creating those sectors.
+    pub(crate) fn synchronize_motion_obstacle_sectors(
+        &self,
+        graph: &PathGraph,
+        grid: &mut FastFindGrid,
+    ) {
+        for (layer, areas) in graph.static_data.move_layers.iter().enumerate() {
+            for (area, motion_area) in areas.iter().enumerate() {
+                for obstacle in &motion_area.motion_obstacles {
+                    let sector = obstacle.grid_sector_index.unwrap_or_else(|| {
+                        panic!(
+                            "pathfinder motion obstacle on layer {layer}, area {area} has no fast-grid sector binding"
+                        )
+                    });
+                    let index =
+                        usize::try_from(sector.get()).expect("u32 sector index does not fit usize");
+                    let active = self.is_motion_obstacle_active(layer, area, obstacle.state_id);
+                    let sector_count = grid.sector_active.len();
+                    let slot = grid.sector_active.get_mut(index).unwrap_or_else(|| {
+                        panic!(
+                            "pathfinder motion obstacle sector {index} is absent from fast grid with {sector_count} sectors"
+                        )
+                    });
+                    *slot = active;
+                }
+            }
+        }
+    }
+
     pub fn cancel_requests_for(&mut self, _actor_id: EntityId) {}
 
     pub fn toggle_obstacle_state(
@@ -1040,10 +1096,17 @@ impl PathFinder {
         changing_obstacle: u16,
         appeared: &mut Vec<AppearedObstacle>,
         line_toggles: &mut Vec<(crate::fast_find_grid::LineIndex, bool)>,
+        sector_toggles: &mut Vec<(crate::fast_find_grid::SectorIndex, bool)>,
     ) -> bool {
         let mut runtime = self.runtime_from_graph(graph);
-        let changed =
-            runtime.toggle_obstacle_state(layer, area, changing_obstacle, appeared, line_toggles);
+        let changed = runtime.toggle_obstacle_state(
+            layer,
+            area,
+            changing_obstacle,
+            appeared,
+            line_toggles,
+            sector_toggles,
+        );
         self.states = runtime.graph.states;
         changed
     }
@@ -1959,7 +2022,15 @@ impl PathFinderRuntime {
     pub fn set_state_area(&mut self, layer: usize, area: usize, new_state: u32) -> bool {
         let mut appeared = Vec::new();
         let mut line_toggles = Vec::new();
-        self.set_state_area_with_appeared(layer, area, new_state, &mut appeared, &mut line_toggles)
+        let mut sector_toggles = Vec::new();
+        self.set_state_area_with_appeared(
+            layer,
+            area,
+            new_state,
+            &mut appeared,
+            &mut line_toggles,
+            &mut sector_toggles,
+        )
     }
 
     /// Like [`Self::set_state_area`] but pushes the bounding boxes of
@@ -1976,6 +2047,7 @@ impl PathFinderRuntime {
         new_state: u32,
         appeared: &mut Vec<AppearedObstacle>,
         line_toggles: &mut Vec<(crate::fast_find_grid::LineIndex, bool)>,
+        sector_toggles: &mut Vec<(crate::fast_find_grid::SectorIndex, bool)>,
     ) -> bool {
         self.graph.states[layer][area] = new_state;
         let mut changed = false;
@@ -2065,6 +2137,12 @@ impl PathFinderRuntime {
                     for &line_idx in &obs.grid_line_indices {
                         line_toggles.push((line_idx, should_be_active));
                     }
+                    let sector_index = obs.grid_sector_index.unwrap_or_else(|| {
+                        panic!(
+                            "pathfinder motion obstacle on layer {layer}, area {area} has no fast-grid sector binding"
+                        )
+                    });
+                    sector_toggles.push((sector_index, should_be_active));
                 }
             }
         }
@@ -2084,6 +2162,7 @@ impl PathFinderRuntime {
         changing_obstacle: u16,
         appeared: &mut Vec<AppearedObstacle>,
         line_toggles: &mut Vec<(crate::fast_find_grid::LineIndex, bool)>,
+        sector_toggles: &mut Vec<(crate::fast_find_grid::SectorIndex, bool)>,
     ) -> bool {
         let bit = 1u32 << ((changing_obstacle as u32) << 1);
         let current = self.graph.states[layer][area];
@@ -2092,7 +2171,14 @@ impl PathFinderRuntime {
         } else {
             current.wrapping_sub(bit)
         };
-        self.set_state_area_with_appeared(layer, area, new_state, appeared, line_toggles)
+        self.set_state_area_with_appeared(
+            layer,
+            area,
+            new_state,
+            appeared,
+            line_toggles,
+            sector_toggles,
+        )
     }
 
     /// Initialize all area states to the given value.
@@ -2307,11 +2393,12 @@ mod tests {
             0,
         );
 
-        let obstacle = |state_id, line_idx| MotionObstacle {
+        let obstacle = |state_id, sector_idx, line_idx| MotionObstacle {
             state_id,
             active: true,
             bounding_box: MapBBox::default(),
             polygon: Vec::new(),
+            grid_sector_index: crate::fast_find_grid::SectorIndex::new(sector_idx),
             grid_line_indices: vec![line_idx],
         };
         let mut graph = PathGraph::new();
@@ -2321,7 +2408,7 @@ mod tests {
             // Default state is 0x5555_5555. Bit 0 is present and bit 1
             // is absent, so these obstacles must initialize active and
             // inactive respectively.
-            motion_obstacles: vec![obstacle(1, active_line), obstacle(2, inactive_line)],
+            motion_obstacles: vec![obstacle(1, 0, active_line), obstacle(2, 1, inactive_line)],
         }]);
         graph.layers = vec![vec![vec![Vec::new(), Vec::new()]]];
         graph.alternative_layers = vec![vec![vec![Vec::new(), Vec::new()]]];
@@ -2330,9 +2417,149 @@ mod tests {
         let mut pathfinder = PathFinder::new();
         pathfinder.initialize_from_graph(&graph, &mut grid);
 
+        for sector_number in 0..2 {
+            grid.add_sector(
+                crate::fast_find_grid::GridSector {
+                    points: Vec::new(),
+                    bounding_box: MapBBox::default(),
+                    sector_type: crate::sector::SectorType::MOTION,
+                    layer: 0,
+                    sector_number: crate::sector::SectorNumber::new(sector_number),
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                0,
+            );
+        }
+        pathfinder.synchronize_motion_obstacle_sectors(&graph, &mut grid);
+
         assert_eq!(pathfinder.states, vec![vec![0x5555_5555]]);
         assert!(grid.is_line_active(active_line));
         assert!(!grid.is_line_active(inactive_line));
+        assert_eq!(grid.sector_active, [true, false]);
+    }
+
+    #[test]
+    fn motion_obstacle_state_change_emits_matching_sector_and_line_toggles() {
+        let line = crate::fast_find_grid::LineIndex::new(0).unwrap();
+        let sector = crate::fast_find_grid::SectorIndex::new(0).unwrap();
+        let mut runtime = PathFinderRuntime::new();
+        runtime.graph.states = vec![vec![0]];
+        runtime.graph.layers = vec![vec![vec![Vec::new()]]];
+        runtime.graph.alternative_layers = runtime.graph.layers.clone();
+        runtime.graph.static_mut().move_layers = vec![vec![MotionArea {
+            skeleton: Vec::new(),
+            polygon: Vec::new(),
+            motion_obstacles: vec![MotionObstacle {
+                state_id: 2,
+                active: false,
+                bounding_box: MapBBox::default(),
+                polygon: Vec::new(),
+                grid_sector_index: Some(sector),
+                grid_line_indices: vec![line],
+            }],
+        }]];
+
+        let mut appeared = Vec::new();
+        let mut line_toggles = Vec::new();
+        let mut sector_toggles = Vec::new();
+        assert!(runtime.set_state_area_with_appeared(
+            0,
+            0,
+            2,
+            &mut appeared,
+            &mut line_toggles,
+            &mut sector_toggles,
+        ));
+
+        assert_eq!(line_toggles, vec![(line, true)]);
+        assert_eq!(sector_toggles, vec![(sector, true)]);
+
+        let mut grid = FastFindGrid::new();
+        grid.line_active = vec![false];
+        grid.sector_active = vec![false];
+        for &(line, active) in &line_toggles {
+            grid.set_line_active(line, active);
+        }
+        for &(sector, active) in &sector_toggles {
+            grid.set_sector_active(u32::from(sector), active);
+        }
+        assert_eq!(grid.line_active, [true]);
+        assert_eq!(grid.sector_active, [true]);
+
+        line_toggles.clear();
+        sector_toggles.clear();
+        assert!(runtime.set_state_area_with_appeared(
+            0,
+            0,
+            0,
+            &mut appeared,
+            &mut line_toggles,
+            &mut sector_toggles,
+        ));
+        for &(line, active) in &line_toggles {
+            grid.set_line_active(line, active);
+        }
+        for &(sector, active) in &sector_toggles {
+            grid.set_sector_active(u32::from(sector), active);
+        }
+        assert_eq!(line_toggles, vec![(line, false)]);
+        assert_eq!(sector_toggles, vec![(sector, false)]);
+        assert_eq!(grid.line_active, [false]);
+        assert_eq!(grid.sector_active, [false]);
+    }
+
+    #[test]
+    fn motion_obstacle_legacy_serde_defaults_missing_sector_binding() {
+        let obstacle: MotionObstacle = serde_json::from_value(serde_json::json!({
+            "state_id": 1,
+            "active": true,
+            "bounding_box": null,
+            "polygon": [],
+            "grid_line_indices": []
+        }))
+        .expect("legacy motion obstacle shape remains readable");
+
+        assert_eq!(obstacle.grid_sector_index, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no fast-grid sector binding")]
+    fn motion_obstacle_state_change_rejects_missing_sector_binding() {
+        let mut runtime = PathFinderRuntime::new();
+        runtime.graph.states = vec![vec![0]];
+        runtime.graph.layers = vec![vec![vec![Vec::new()]]];
+        runtime.graph.alternative_layers = runtime.graph.layers.clone();
+        runtime.graph.static_mut().move_layers = vec![vec![MotionArea {
+            skeleton: Vec::new(),
+            polygon: Vec::new(),
+            motion_obstacles: vec![MotionObstacle {
+                state_id: 2,
+                active: false,
+                bounding_box: MapBBox::default(),
+                polygon: Vec::new(),
+                grid_sector_index: None,
+                grid_line_indices: Vec::new(),
+            }],
+        }]];
+
+        runtime.set_state_area_with_appeared(
+            0,
+            0,
+            2,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
     }
 
     #[test]
@@ -2517,6 +2744,7 @@ mod tests {
             active: false,
             bounding_box: MapBBox::default(),
             polygon: Vec::new(),
+            grid_sector_index: crate::fast_find_grid::SectorIndex::new(0),
             grid_line_indices: Vec::new(),
         };
         let make_area = |n_obstacles: usize| MotionArea {
@@ -2565,7 +2793,16 @@ mod tests {
 
         let mut appeared = Vec::new();
         let mut line_toggles = Vec::new();
-        pf.toggle_obstacle_state(&graph, 0, area, 0, &mut appeared, &mut line_toggles);
+        let mut sector_toggles = Vec::new();
+        pf.toggle_obstacle_state(
+            &graph,
+            0,
+            area,
+            0,
+            &mut appeared,
+            &mut line_toggles,
+            &mut sector_toggles,
+        );
         assert_ne!(
             pf.states[0][1], 0,
             "toggling obstacle 0 in converted area 1 must mutate its state"

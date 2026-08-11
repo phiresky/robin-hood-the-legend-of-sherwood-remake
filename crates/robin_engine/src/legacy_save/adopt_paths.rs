@@ -78,6 +78,12 @@ pub enum LegacyPathAdoptError {
         "initialized path graph motion obstacle references grid line {line}, but runtime grid has only {line_count} lines"
     )]
     MissingGridLine { line: usize, line_count: usize },
+    #[error("initialized path graph motion obstacle has no fast-grid sector binding")]
+    MissingGridSectorBinding,
+    #[error(
+        "initialized path graph motion obstacle references grid sector {sector}, but runtime grid has only {sector_count} sectors"
+    )]
+    MissingGridSector { sector: usize, sector_count: usize },
     #[error(
         "saved pathfinder has do_not_ignore_next_path=true; the v48 writer always emits false after excluding an ignored head"
     )]
@@ -92,6 +98,7 @@ pub(crate) struct LegacyPathAdoptionPlan {
     pending: PendingPathRequestQueue,
     pathfinder_states: Vec<Vec<u32>>,
     line_active: Vec<bool>,
+    sector_active: Vec<bool>,
 }
 
 impl LegacyPathAdoptionPlan {
@@ -100,6 +107,7 @@ impl LegacyPathAdoptionPlan {
         engine.orders.pending_path_requests = self.pending;
         engine.world.pathfinder.states = self.pathfinder_states;
         engine.world.fast_grid.line_active = self.line_active;
+        engine.world.fast_grid.sector_active = self.sector_active;
     }
 }
 
@@ -166,7 +174,7 @@ pub(crate) fn preflight_v48_paths(
         converted_pending.push(request);
     }
 
-    let (pathfinder_states, line_active) =
+    let (pathfinder_states, line_active, sector_active) =
         preflight_graph_states(engine, assets, &pathfinder.layer_area_states)?;
 
     Ok(LegacyPathAdoptionPlan {
@@ -174,6 +182,7 @@ pub(crate) fn preflight_v48_paths(
         pending: PendingPathRequestQueue::restore_v48_waiting(converted_pending),
         pathfinder_states,
         line_active,
+        sector_active,
     })
 }
 
@@ -465,7 +474,7 @@ fn preflight_graph_states(
     engine: &EngineInner,
     assets: &LevelAssets,
     saved: &[Vec<u32>],
-) -> Result<(Vec<Vec<u32>>, Vec<bool>), LegacyPathAdoptError> {
+) -> Result<(Vec<Vec<u32>>, Vec<bool>, Vec<bool>), LegacyPathAdoptError> {
     let graph = assets.pathfinder_graph.as_ref();
     if saved.len() != graph.states.len() || saved.len() != engine.world.pathfinder.states.len() {
         return Err(LegacyPathAdoptError::StateShape {
@@ -497,6 +506,7 @@ fn preflight_graph_states(
     }
 
     let mut line_active = engine.world.fast_grid.line_active.clone();
+    let mut sector_active = engine.world.fast_grid.sector_active.clone();
     for (layer, states) in saved.iter().enumerate() {
         let move_areas = &graph.static_data.move_layers[layer];
         if move_areas.len() != states.len() {
@@ -510,6 +520,19 @@ fn preflight_graph_states(
         for (area, state) in move_areas.iter().zip(states) {
             for obstacle in &area.motion_obstacles {
                 let active = (obstacle.state_id & *state) == obstacle.state_id;
+                let sector = obstacle
+                    .grid_sector_index
+                    .ok_or(LegacyPathAdoptError::MissingGridSectorBinding)?;
+                let index =
+                    usize::try_from(sector.get()).expect("u32 sector index does not fit usize");
+                let sector_count = sector_active.len();
+                let Some(slot) = sector_active.get_mut(index) else {
+                    return Err(LegacyPathAdoptError::MissingGridSector {
+                        sector: index,
+                        sector_count,
+                    });
+                };
+                *slot = active;
                 for &line in &obstacle.grid_line_indices {
                     let index = usize::from(line);
                     let Some(slot) = line_active.get_mut(index) else {
@@ -524,7 +547,7 @@ fn preflight_graph_states(
         }
     }
 
-    Ok((saved.to_vec(), line_active))
+    Ok((saved.to_vec(), line_active, sector_active))
 }
 
 fn validate_point(
@@ -572,7 +595,7 @@ mod tests {
     use crate::{
         coordinates::MapBBox,
         entity_id::{EntityIdKind, SoldierId},
-        fast_find_grid::LineIndex,
+        fast_find_grid::{LineIndex, SectorIndex},
         pathfinder::{MotionArea, MotionObstacle, PathGraph},
         sequence::SequenceId,
     };
@@ -623,10 +646,11 @@ mod tests {
     }
 
     #[test]
-    fn graph_state_preflight_synchronizes_motion_lines_without_mutating_engine() {
+    fn graph_state_preflight_synchronizes_motion_grid_without_mutating_engine() {
         let mut engine = EngineInner::new();
         engine.world.pathfinder.states = vec![vec![0x5555_5555]];
         engine.world.fast_grid.line_active = vec![false, true];
+        engine.world.fast_grid.sector_active = vec![false, true];
 
         let mut graph = PathGraph::new();
         graph.states = vec![vec![0]];
@@ -641,6 +665,7 @@ mod tests {
                     active: false,
                     bounding_box: MapBBox::default(),
                     polygon: Vec::new(),
+                    grid_sector_index: SectorIndex::new(0),
                     grid_line_indices: vec![LineIndex::new(0).unwrap()],
                 },
                 MotionObstacle {
@@ -648,6 +673,7 @@ mod tests {
                     active: true,
                     bounding_box: MapBBox::default(),
                     polygon: Vec::new(),
+                    grid_sector_index: SectorIndex::new(1),
                     grid_line_indices: vec![LineIndex::new(1).unwrap()],
                 },
             ],
@@ -655,12 +681,14 @@ mod tests {
         let mut assets = LevelAssets::new();
         assets.pathfinder_graph = std::sync::Arc::new(graph);
 
-        let (states, lines) =
+        let (states, lines, sectors) =
             preflight_graph_states(&engine, &assets, &[vec![1]]).expect("valid graph state");
         assert_eq!(states, vec![vec![1]]);
         assert_eq!(lines, vec![true, false]);
+        assert_eq!(sectors, vec![true, false]);
         assert_eq!(engine.world.pathfinder.states, vec![vec![0x5555_5555]]);
         assert_eq!(engine.world.fast_grid.line_active, vec![false, true]);
+        assert_eq!(engine.world.fast_grid.sector_active, vec![false, true]);
     }
 
     #[test]

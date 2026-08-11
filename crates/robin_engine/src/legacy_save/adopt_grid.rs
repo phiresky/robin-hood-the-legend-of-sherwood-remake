@@ -532,6 +532,7 @@ impl LegacyFastFindGridAdoptionPlan {
                 }
                 let mut appeared = Vec::new();
                 let mut line_toggles = Vec::new();
+                let mut sector_toggles = Vec::new();
                 pathfinder.toggle_obstacle_state(
                     assets.pathfinder_graph.as_ref(),
                     layer,
@@ -539,6 +540,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     changing_obstacle,
                     &mut appeared,
                     &mut line_toggles,
+                    &mut sector_toggles,
                 );
                 for (line_index, active) in line_toggles {
                     let index = usize::from(line_index);
@@ -549,6 +551,17 @@ impl LegacyFastFindGridAdoptionPlan {
                         });
                     }
                     runtime_grid.line_active[index] = active;
+                }
+                for (sector_index, active) in sector_toggles {
+                    let index = usize::try_from(sector_index.get())
+                        .expect("u32 sector index does not fit usize");
+                    if index >= runtime_grid.sector_active.len() {
+                        return Err(LegacyGridAdoptError::MissingRuntimeIndex {
+                            field: "pathfinder obstacle sector",
+                            index,
+                        });
+                    }
+                    runtime_grid.sector_active[index] = active;
                 }
             }
         }
