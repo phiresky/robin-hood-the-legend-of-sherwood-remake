@@ -2288,6 +2288,93 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
 }
 
 #[test]
+fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
+    use crate::coordinates::MapPoint;
+    use crate::element::ActiveDoorPass;
+    use crate::gate::{Door, DoorIndex};
+    use crate::sector::SectorNumber;
+    use std::collections::VecDeque;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let pass = |door_index, position_direct| ActiveDoorPass {
+        door_index: DoorIndex(door_index),
+        direct: position_direct,
+        position_direct,
+        steps: VecDeque::new(),
+        triggers_fired: 0,
+        current_action: crate::order::OrderType::WalkingUpright,
+        current_reverse: false,
+        saved_action_state: None,
+    };
+    let Entity::Soldier(friend_soldier) = engine.get_entity_mut(friend).unwrap() else {
+        panic!("friend changed kind")
+    };
+    friend_soldier
+        .element
+        .set_position_map(MapPoint::new(11.0, 12.0));
+    friend_soldier.actor.active_door_pass = Some(pass(0, true));
+    let friend_ai = friend_soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("friend has AI");
+    friend_ai.current_substate = crate::ai::Substate::AttackingRunningToEnemy;
+    friend_ai.primary_target = target.index();
+
+    let Entity::Pc(target_pc) = engine.get_entity_mut(target).unwrap() else {
+        panic!("target changed kind")
+    };
+    target_pc
+        .element
+        .set_position_map(MapPoint::new(21.0, 22.0));
+    target_pc.actor.active_door_pass = Some(pass(1, false));
+
+    engine.script_domains.interactables.doors = vec![
+        Door {
+            point_in: MapPoint::new(101.0, 102.0),
+            sector_in: SectorNumber::new(11),
+            layer_in: 3,
+            ..Door::default()
+        },
+        Door {
+            point_out: MapPoint::new(201.0, 202.0),
+            sector_out: SectorNumber::new(22),
+            layer_out: 4,
+            ..Door::default()
+        },
+    ];
+
+    let candidates = crate::engine::ai::build_friend_swap_candidates(
+        &engine.world.entities,
+        &engine.script_domains.interactables.doors,
+        owner,
+        crate::element::Camp::Lacklandists,
+    );
+    assert_eq!(candidates.len(), 1);
+    let candidate = &candidates[0];
+    assert_eq!(candidate.friend_id, friend);
+    assert_eq!(candidate.friend_position.x, 101.0);
+    assert_eq!(candidate.friend_position.y, 102.0);
+    assert_eq!(
+        candidate.friend_position.sector,
+        crate::position_interface::SectorHandle::new(11)
+    );
+    assert_eq!(candidate.friend_position.level, 3);
+    assert_eq!(candidate.friend_primary_target, target.index());
+    assert_eq!(candidate.friend_primary_target_position.x, 201.0);
+    assert_eq!(candidate.friend_primary_target_position.y, 202.0);
+    assert_eq!(
+        candidate.friend_primary_target_position.sector,
+        crate::position_interface::SectorHandle::new(22)
+    );
+    assert_eq!(candidate.friend_primary_target_position.level, 4);
+}
+
+#[test]
 fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::element::ActiveDoorPass;

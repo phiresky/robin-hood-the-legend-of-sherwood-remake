@@ -1726,21 +1726,12 @@ pub(super) fn build_friend_swap_candidates(
         let Some(_friend_target_entity) = entities.get(friend_target_id) else {
             continue;
         };
-        let friend_pos = crate::ai::Position {
-            x: s.element.position_map().x,
-            y: s.element.position_map().y,
-            sector: s.element.sector(),
-            level: s.element.layer(),
-        };
-        // Original calls Position(friend->GetPrimaryTarget()) here. That
-        // resolves a door-passing actor to the committed gate endpoint and
-        // an on-shoulders PC to its carrier before comparing swap distances.
-        let friend_target_pos =
-            resolve_ai_position_with(entities, doors, friend_target_id, |position_id| {
+        let resolve_position = |position_owner| {
+            resolve_ai_position_with(entities, doors, position_owner, |position_id| {
                 let element = entities
                     .get(position_id)
                     .unwrap_or_else(|| {
-                        panic!("friend-swap target position owner {position_id:?} disappeared")
+                        panic!("friend-swap position owner {position_id:?} disappeared")
                     })
                     .element_data();
                 crate::ai::Position {
@@ -1750,7 +1741,14 @@ pub(super) fn build_friend_swap_candidates(
                     level: element.layer(),
                 }
             })
-            .effective;
+            .effective
+        };
+        // Original resolves both Position(pFriend) and
+        // Position(pFriend->GetPrimaryTarget()) here. Each therefore uses a
+        // committed gate endpoint while passing a door; an on-shoulders PC
+        // target resolves to its carrier after that door-first arm.
+        let friend_pos = resolve_position(friend_id.into());
+        let friend_target_pos = resolve_position(friend_target_id);
         out.push(crate::ai::FriendSwapCandidate {
             friend_id: friend_id.into(),
             friend_position: friend_pos,
