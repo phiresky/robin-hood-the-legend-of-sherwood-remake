@@ -1829,9 +1829,13 @@ impl FriendlyAi {
 
             match view.ai_state {
                 AiState::Default => {
-                    // MaxNorm (Chebyshev) distance candidate.
+                    // RHArtificialIntelligence::MaxNormDistance measures in
+                    // isometric world space: stretch Y by
+                    // INVERSE_ASPECT_RATIO before taking MaxNorm. AlertSoldier
+                    // then narrows that float to ULONG.
                     let dx = (view.position.x - my_pos.x).abs();
-                    let dy = (view.position.y - my_pos.y).abs();
+                    let dy = (view.position.y - my_pos.y).abs()
+                        * crate::position_interface::INVERSE_ASPECT_RATIO;
                     let mut distance = dx.max(dy) as u32;
 
                     // +1000 layer-change penalty.
@@ -3267,6 +3271,57 @@ mod tests {
             // Antagonist must be the same-layer one despite being farther.
             assert_eq!(ai.base.antagonist, 20);
         });
+    }
+
+    #[test]
+    fn alert_soldier_uses_isometric_max_norm_for_nearest_candidate() {
+        use crate::ai_entity_view::AiEntityViewMap;
+        use crate::element::Camp;
+
+        let mut ai = FriendlyAi::new(1);
+        let mut views = AiEntityViewMap::new();
+        // Raw Chebyshev distance incorrectly prefers handle 10 (379 < 453).
+        // Original stretches Y first, making handle 20 nearer
+        // (max(453, 366*1.743) < max(105, 379*1.743)).
+        views.insert(
+            10,
+            make_soldier_view(
+                Position {
+                    x: 105.0,
+                    y: 379.0,
+                    sector: None,
+                    level: 0,
+                },
+                Camp::Royalists,
+                AiState::Default,
+            ),
+        );
+        views.insert(
+            20,
+            make_soldier_view(
+                Position {
+                    x: 453.0,
+                    y: 366.0,
+                    sector: None,
+                    level: 0,
+                },
+                Camp::Royalists,
+                AiState::Default,
+            ),
+        );
+        let ctx = AiContext {
+            position: Position::default(),
+            camp: Camp::Royalists,
+            sq_standard_view_radius: 1.0,
+            sq_self_view_radius: 1.0,
+            all_soldier_handles: std::sync::Arc::new(vec![10, 20]),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let sim = crate::sim_rng::test_context();
+        assert!(ai.alert_soldier(&sim, ctx.position, 0, &ctx, None, None));
+        assert_eq!(ai.base.antagonist, 20);
     }
 
     #[test]
