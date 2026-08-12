@@ -1,0 +1,9 @@
+{
+  "id": "568",
+  "subject": "Retire second fresh-Bonus uninitialized old-elevation capture",
+  "description": "linux3 Profile_003 Savegame_072 replay-004 first diverges after frame 39491 only because newly allocated Bonus638 exposes Original's uninitialized RHPositionInterface::mpointOldPosition.mZ bits (0xf6e5e850), while Rust deterministically initializes old position to zero. The Bonus did not exist on the preceding frame; Original's DropAmmo allocation, Bonus/PositionInterface constructors, and CopyPositionMapEtc write current placement but never initialize old position before RHParity records it. The single undefined-oracle trace is retired with no Rust gameplay change. Same-save replays 001, 002, 003, 008, 009, 011, and 014 are exact-EOF controls.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task568-retire-bonus-old-elevation"
+}
