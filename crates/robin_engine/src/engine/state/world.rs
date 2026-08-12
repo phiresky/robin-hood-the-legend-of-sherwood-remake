@@ -183,6 +183,22 @@ impl WorldState {
         ids
     }
 
+    /// Actor ids in the order Original appended them to `marrayActors`.
+    ///
+    /// Projectile victim and shield scans use this combined PC/NPC array,
+    /// not the per-kind entity-slot order. Derive it from the authoritative
+    /// creation identities so deleted actors disappear and runtime actors
+    /// naturally join at their append position without duplicating state.
+    pub(crate) fn actor_registry_order(&self) -> Vec<EntityId> {
+        let mut ids: Vec<EntityId> = self
+            .entities
+            .actors()
+            .map(|(actor_id, _)| actor_id.into())
+            .collect();
+        ids.sort_by_key(|&id| self.original_creation_order(id));
+        ids
+    }
+
     /// Reattach immutable level topology and sprite runtimes after decoding.
     ///
     /// The caller must first run `preflight_level_assets` across the

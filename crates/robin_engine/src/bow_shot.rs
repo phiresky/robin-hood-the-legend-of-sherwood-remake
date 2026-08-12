@@ -3483,7 +3483,7 @@ pub fn tick_arrows(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(sim, entities, sight_obstacles, None, None, false, &[])
+    tick_arrows_matching(sim, entities, sight_obstacles, None, None, false, &[], None)
 }
 
 /// Advance every projectile except the ones listed in `skip_arrow_ids`.
@@ -3506,6 +3506,7 @@ pub fn tick_arrows_excluding(
         None,
         false,
         skip_arrow_ids,
+        None,
     )
 }
 
@@ -3530,6 +3531,29 @@ pub fn tick_arrow(
         Some(arrow_id),
         true,
         &[],
+        None,
+    )
+}
+
+/// Production variant of [`tick_arrow`] whose actor collision scans follow
+/// Original's combined `marrayActors` order.
+pub(crate) fn tick_arrow_in_actor_order(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+    arrow_id: EntityId,
+    actor_order: &[EntityId],
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        obstacle_check,
+        Some(arrow_id),
+        true,
+        &[],
+        Some(actor_order),
     )
 }
 
@@ -3555,6 +3579,29 @@ pub fn tick_existing_projectile(
         Some(projectile_id),
         false,
         &[],
+        None,
+    )
+}
+
+/// Production variant of [`tick_existing_projectile`] whose actor collision
+/// scans follow Original's combined `marrayActors` order.
+pub(crate) fn tick_existing_projectile_in_actor_order(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+    projectile_id: EntityId,
+    actor_order: &[EntityId],
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        obstacle_check,
+        Some(projectile_id),
+        false,
+        &[],
+        Some(actor_order),
     )
 }
 
@@ -3567,6 +3614,7 @@ fn tick_arrows_matching(
     only_arrow_id: Option<EntityId>,
     primed_segment_already_advanced: bool,
     skip_arrow_ids: &[EntityId],
+    actor_order: Option<&[EntityId]>,
 ) -> Vec<ArrowTickResult> {
     let mut results = Vec::new();
 
@@ -3595,10 +3643,21 @@ fn tick_arrows_matching(
         holding_shield: bool,
         position_map: MapPoint,
     }
-    let human_snapshots: Vec<HumanSnapshot> = entities
-        .humans()
-        .filter_map(|(human_id, e)| {
-            let entity_id: EntityId = human_id.into();
+    let actor_ids: Vec<EntityId> = actor_order.map_or_else(
+        || {
+            entities
+                .actors()
+                .map(|(actor_id, _)| actor_id.into())
+                .collect()
+        },
+        <[EntityId]>::to_vec,
+    );
+    let human_snapshots: Vec<HumanSnapshot> = actor_ids
+        .iter()
+        .filter_map(|&entity_id| {
+            let e = entities.get(entity_id).unwrap_or_else(|| {
+                panic!("projectile actor registry contains missing entity {entity_id}")
+            });
             if !e.is_human() || !e.is_active() {
                 return None;
             }
@@ -3711,10 +3770,12 @@ fn tick_arrows_matching(
         look_dir: (f32, f32),
         obstacle: crate::sight_obstacle::SightObstacle,
     }
-    let shield_snapshots: Vec<ShieldSnapshot> = entities
-        .actors()
-        .filter_map(|(actor_id, e)| {
-            let entity_id = actor_id.into();
+    let shield_snapshots: Vec<ShieldSnapshot> = actor_ids
+        .iter()
+        .filter_map(|&entity_id| {
+            let e = entities.get(entity_id).unwrap_or_else(|| {
+                panic!("projectile actor registry contains missing entity {entity_id}")
+            });
             if !e.is_active() || e.is_dead() {
                 return None;
             }
@@ -6188,6 +6249,149 @@ mod tests {
             }),
             "an earlier eligible human must be replaced by a later one"
         );
+    }
+
+    #[test]
+    fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+            bow_point: WorldPoint3D {
+                x: 0.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+            target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            target_pos: MapPoint { x: 100.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: WorldPoint3D {
+                    x: 100.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 1,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        });
+        let mut world = crate::engine::state::WorldState::new();
+        world.entities = entity_table(vec![
+            Some(make_pc(0.0, 0.0)),
+            // Slot order visits Soldier1 before Soldier2. Original creation
+            // order for the representative is the reverse, so Soldier1 is
+            // the final eligible actor and must replace Soldier2.
+            Some(make_soldier(60.0, 0.0)),
+            Some(make_soldier(80.0, 0.0)),
+            Some(arrow),
+        ]);
+        let pc = EntityId::Pc(crate::entity_id::PcId(0));
+        let soldier_1 = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let soldier_2 = EntityId::Soldier(crate::entity_id::SoldierId(2));
+        world.install_original_creation_orders(
+            std::collections::BTreeMap::from([
+                (pc, 100),
+                (soldier_2, 101),
+                (soldier_1, 102),
+                (arrow_id, 103),
+            ]),
+            104,
+        );
+        let actor_order = world.actor_registry_order();
+        assert_eq!(actor_order, [pc, soldier_2, soldier_1]);
+
+        let results = tick_arrow_in_actor_order(
+            sim,
+            &mut world.entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+            None,
+            arrow_id,
+            &actor_order,
+        );
+
+        assert!(results.iter().any(|result| {
+            result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
+        }));
+        assert!(results.iter().all(|result| {
+            result.hit_target != Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))
+        }));
+    }
+
+    #[test]
+    fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
+        crate::sim_rng::with_seed(1, |sim| {
+            use crate::element::ActionState;
+
+            let make_holder = || {
+                let mut holder = make_soldier(50.0, 0.0);
+                let actor = holder.actor_data_mut().unwrap();
+                actor.action_state = ActionState::HoldingShield;
+                actor.shield_obstacle = Some(compute_shield_obstacle(
+                    MapPoint { x: 50.0, y: 0.0 },
+                    0.0,
+                    4,
+                    &shield_params_for_soldier(20, 40),
+                ));
+                holder.element_data_mut().set_direction_instantly(4);
+                holder
+            };
+            let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
+            let arrow = spawn_arrow(SpawnArrowParams {
+                shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+                bow_point: WorldPoint3D::new(100.0, 0.0, 40.0),
+                trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
+                target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
+                target_pos: MapPoint { x: 50.0, y: 0.0 },
+                trajectory: vec![TrajectoryPoint {
+                    position: WorldPoint3D::new(50.0, 0.0, 40.0),
+                    time: 2,
+                }],
+                damage: 30,
+                layer: 0,
+                lands_in_hole: false,
+                initial_velocity: WorldVec3D::new(-1.0, 0.0, 0.0),
+            });
+            let mut entities = entity_table(vec![
+                Some(make_pc(100.0, 0.0)),
+                Some(make_holder()),
+                Some(make_holder()),
+                Some(arrow),
+            ]);
+            let soldier_1 = EntityId::Soldier(crate::entity_id::SoldierId(1));
+            let soldier_2 = EntityId::Soldier(crate::entity_id::SoldierId(2));
+            let actor_order = [
+                EntityId::Pc(crate::entity_id::PcId(0)),
+                soldier_2,
+                soldier_1,
+            ];
+
+            let mut shield_hit = None;
+            for _ in 0..10 {
+                for result in tick_arrow_in_actor_order(
+                    sim,
+                    &mut entities,
+                    crate::sight_obstacle::ObstacleList::empty(),
+                    None,
+                    arrow_id,
+                    &actor_order,
+                ) {
+                    shield_hit = shield_hit.or(result.shield_hit);
+                }
+                if shield_hit.is_some() {
+                    break;
+                }
+            }
+
+            assert_eq!(shield_hit, Some(soldier_2));
+        });
     }
 
     #[test]

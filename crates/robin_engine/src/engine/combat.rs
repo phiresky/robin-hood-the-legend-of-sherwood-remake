@@ -2229,12 +2229,14 @@ impl EngineInner {
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
-        let results = bow_shot::tick_existing_projectile(
+        let actor_order = self.world.actor_registry_order();
+        let results = bow_shot::tick_existing_projectile_in_actor_order(
             sim,
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
             projectile_id,
+            &actor_order,
         );
         self.process_projectile_tick_results(sim, assets, results);
     }
@@ -2256,12 +2258,14 @@ impl EngineInner {
             sight_obstacles,
             water_zones: Some(&assets.water_zones),
         };
-        let results = bow_shot::tick_arrow(
+        let actor_order = self.world.actor_registry_order();
+        let results = bow_shot::tick_arrow_in_actor_order(
             sim,
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
             arrow_id,
+            &actor_order,
         );
         self.process_projectile_tick_results(sim, assets, results);
     }
