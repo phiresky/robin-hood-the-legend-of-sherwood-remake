@@ -448,9 +448,38 @@ fn draw_alpha_polygon_gpu(
         return;
     }
 
+    // Scratch buffers reused across rows, and a run of consecutive rows
+    // sharing the same pixel spans that is flushed as taller quads.
+    let mut crossings: Vec<f32> = Vec::new();
+    let mut row_spans: Vec<(i32, i32)> = Vec::new();
+    let mut run_spans: Vec<(i32, i32)> = Vec::new();
+    let mut run_start_y = y_min;
+
+    let mut flush_run = |spans: &[(i32, i32)], y_from: i32, y_to: i32| {
+        for &(x0, x1) in spans {
+            let uv = [
+                x0 as f32 / sw as f32,
+                y_from as f32 / sh as f32,
+                x1 as f32 / sw as f32,
+                y_to as f32 / sh as f32,
+            ];
+            renderer.render_framebuffer_alpha_rect(
+                Rect {
+                    x: x0,
+                    y: y_from,
+                    w: x1 - x0,
+                    h: y_to - y_from,
+                },
+                uv,
+                color,
+                alpha,
+            );
+        }
+    };
+
     for y in y_min..y_max {
         let yf = y as f32 + 0.5;
-        let mut crossings: Vec<f32> = Vec::new();
+        crossings.clear();
         for edge in edges {
             if yf >= edge.y_min && yf < edge.y_max {
                 let x = edge.x_start + (yf - edge.y_min) * edge.dx_per_dy;
@@ -459,32 +488,24 @@ fn draw_alpha_polygon_gpu(
         }
         crossings.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
 
+        row_spans.clear();
         let mut i = 0;
         while i + 1 < crossings.len() {
             let x0 = (crossings[i].ceil() as i32).max(0);
             let x1 = (crossings[i + 1].floor() as i32 + 1).min(sw);
             if x1 > x0 {
-                let uv = [
-                    x0 as f32 / sw as f32,
-                    y as f32 / sh as f32,
-                    x1 as f32 / sw as f32,
-                    (y + 1) as f32 / sh as f32,
-                ];
-                renderer.render_framebuffer_alpha_rect(
-                    Rect {
-                        x: x0,
-                        y,
-                        w: x1 - x0,
-                        h: 1,
-                    },
-                    uv,
-                    color,
-                    alpha,
-                );
+                row_spans.push((x0, x1));
             }
             i += 2;
         }
+
+        if row_spans != run_spans {
+            flush_run(&run_spans, run_start_y, y);
+            std::mem::swap(&mut run_spans, &mut row_spans);
+            run_start_y = y;
+        }
     }
+    flush_run(&run_spans, run_start_y, y_max);
 }
 
 // ---------------------------------------------------------------------------

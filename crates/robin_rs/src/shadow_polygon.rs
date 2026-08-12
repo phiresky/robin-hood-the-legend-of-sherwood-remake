@@ -684,11 +684,18 @@ fn render_darken_inside_gpu_spans(
         .map(|poly| build_edge_table(poly))
         .collect();
 
-    for y in 0..h {
+    // Only walk the rows actually covered by the polygons instead of the
+    // full screen height, and reuse the per-row scratch buffers.
+    let Some((y_start, y_end)) = edge_tables_y_extent(&edge_tables, h) else {
+        return;
+    };
+    let mut visible_spans: Vec<(i32, i32)> = Vec::new();
+    let mut crossings: Vec<f32> = Vec::new();
+    for y in y_start..y_end {
         let yf = y as f32 + 0.5;
-        let mut visible_spans: Vec<(i32, i32)> = Vec::new();
+        visible_spans.clear();
         for edges in &edge_tables {
-            let mut crossings: Vec<f32> = Vec::new();
+            crossings.clear();
             for edge in edges {
                 if yf >= edge.y_min && yf < edge.y_max {
                     let x = edge.x_start + (yf - edge.y_min) * edge.dx_per_dy;
@@ -708,18 +715,18 @@ fn render_darken_inside_gpu_spans(
         }
 
         visible_spans.sort_unstable_by_key(|s| s.0);
-        let mut spans = merge_spans(&visible_spans);
-        if spans.is_empty() {
+        merge_spans_in_place(&mut visible_spans);
+        if visible_spans.is_empty() {
             continue;
         }
 
         let mut mask_spans = mask_spans_for_row(masks, view_rect, zoom, inv_zoom, y, w);
         if !mask_spans.is_empty() {
             mask_spans.sort_unstable_by_key(|s| s.0);
-            spans = subtract_spans(&spans, &merge_spans(&mask_spans));
+            visible_spans = subtract_spans(&visible_spans, &merge_spans(&mask_spans));
         }
 
-        for (start, end) in spans {
+        for &(start, end) in &visible_spans {
             let alpha_left =
                 cone_alpha_at_screen(start as f32 + 0.5, yf, viewer_screen, zoom, radius, alpha);
             let alpha_right = cone_alpha_at_screen(
@@ -965,6 +972,47 @@ fn build_edge_table(poly: &[[f32; 2]]) -> Vec<ScanEdge> {
     edges
 }
 
+/// Vertical screen extent (half-open row range) covered by the edge
+/// tables, clamped to `0..h`. `None` if no edges cover any on-screen row.
+fn edge_tables_y_extent(edge_tables: &[Vec<ScanEdge>], h: i32) -> Option<(i32, i32)> {
+    let mut ext_min = f32::INFINITY;
+    let mut ext_max = f32::NEG_INFINITY;
+    for edges in edge_tables {
+        for edge in edges {
+            ext_min = ext_min.min(edge.y_min);
+            ext_max = ext_max.max(edge.y_max);
+        }
+    }
+    if !(ext_min < ext_max) {
+        return None;
+    }
+    let y_start = (ext_min.floor() as i32).max(0);
+    let y_end = (ext_max.ceil() as i32).min(h);
+    if y_start >= y_end {
+        return None;
+    }
+    Some((y_start, y_end))
+}
+
+/// Merge overlapping or adjacent intervals in place. Input must be sorted
+/// by start. Allocation-free variant of `merge_spans` for hot loops.
+fn merge_spans_in_place(spans: &mut Vec<(i32, i32)>) {
+    if spans.is_empty() {
+        return;
+    }
+    let mut write = 0;
+    for read in 1..spans.len() {
+        let (start, end) = spans[read];
+        if start <= spans[write].1 {
+            spans[write].1 = spans[write].1.max(end);
+        } else {
+            write += 1;
+            spans[write] = (start, end);
+        }
+    }
+    spans.truncate(write + 1);
+}
+
 /// Merge overlapping or adjacent intervals. Input must be sorted by start.
 fn merge_spans(spans: &[(i32, i32)]) -> Vec<(i32, i32)> {
     if spans.is_empty() {
@@ -1138,6 +1186,35 @@ mod tests {
         );
         assert_eq!(merge_spans(&[(0, 10)]), vec![(0, 10)]);
         assert_eq!(merge_spans(&[]), Vec::<(i32, i32)>::new());
+    }
+
+    #[test]
+    fn merge_spans_in_place_matches_merge_spans() {
+        for input in [
+            vec![(0, 5), (3, 8), (10, 15)],
+            vec![(0, 10)],
+            vec![],
+            vec![(0, 2), (2, 4), (5, 6), (5, 9)],
+        ] {
+            let mut in_place = input.clone();
+            merge_spans_in_place(&mut in_place);
+            assert_eq!(in_place, merge_spans(&input));
+        }
+    }
+
+    #[test]
+    fn edge_tables_y_extent_bounds_rows() {
+        let tri = vec![[0.0, 10.3], [100.0, 10.3], [50.0, 90.7]];
+        let tables = vec![build_edge_table(&tri)];
+        // Extent covers floor(min)..ceil(max), clamped to screen height.
+        assert_eq!(edge_tables_y_extent(&tables, 1080), Some((10, 91)));
+        assert_eq!(edge_tables_y_extent(&tables, 50), Some((10, 50)));
+        // Entirely above the screen → nothing to draw.
+        let above = vec![[0.0, -50.0], [100.0, -50.0], [50.0, -10.0]];
+        let tables = vec![build_edge_table(&above)];
+        assert_eq!(edge_tables_y_extent(&tables, 1080), None);
+        // No edges at all.
+        assert_eq!(edge_tables_y_extent(&[Vec::new()], 1080), None);
     }
 
     #[test]
