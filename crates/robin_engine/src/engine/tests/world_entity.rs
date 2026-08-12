@@ -2721,6 +2721,129 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
 }
 
 #[test]
+fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fallback() {
+    use crate::ai::{AiContext, AiState, Position, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::gate::{Door, DoorIndex};
+    use crate::order::OrderType;
+    use crate::sector::SectorNumber;
+    use crate::sequence::{SequenceElement, SequenceElementData};
+
+    let mut engine = EngineInner::new();
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let me_sector = crate::position_interface::SectorHandle::new(1);
+
+    for (id, position) in [
+        (owner_id, MapPoint::new(100.0, 0.0)),
+        (target_id, MapPoint::new(100.0, 25.0)),
+    ] {
+        let entity = engine.get_entity_mut(id).expect("roof-wait actor exists");
+        entity.element_data_mut().active = true;
+        entity.element_data_mut().set_position_map(position);
+        entity.element_data_mut().set_sector(me_sector);
+    }
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("roof-wait owner has Enemy AI");
+    owner.base.me = owner_id.index();
+    owner.base.primary_target = target_id.index();
+
+    // The target sprite is still on the owner's side. Original AI Position
+    // instead reports point_in/sector_in while this PassDoor is selected.
+    let mut door = Door {
+        sector_out: SectorNumber::new(1),
+        sector_in: SectorNumber::new(2),
+        point_out: MapPoint::new(100.0, 100.0),
+        point_in: MapPoint::new(100.0, 200.0),
+        ..Door::default()
+    };
+    door.lock_npc_villain();
+    engine.script_domains.interactables.doors = vec![door];
+
+    let mut pass = SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(target_id),
+        OrderType::WalkingUpright,
+    );
+    let SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    else {
+        panic!("PassDoor test element changed kind")
+    };
+    *gate_id = Some(DoorIndex(0));
+    *direction = 1;
+    let sequence_id = engine.orders.sequence_manager.launch_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+
+    let wait = crate::engine::ai::precompute_avenger_on_roof_wait_position(
+        &engine.world.entities,
+        &engine.script_domains.interactables.doors,
+        &engine.orders.sequence_manager,
+        owner_id,
+        target_id,
+        &|_| true,
+        &|_| None,
+    )
+    .expect("committed target side exposes the NPC-locked blocking gate");
+    assert_eq!(wait.x, 100.0);
+    assert_eq!(wait.y, 100.0);
+    assert_eq!(wait.sector, me_sector);
+
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("roof-wait owner retains Enemy AI");
+    owner.base.current_state = AiState::Attacking;
+    owner.base.current_substate = Substate::AttackingRunningToEnemy;
+    owner.base.couldnt_reachpoint = true;
+    owner.resume_reconsider_enemy_approach_after_go_near(
+        Position {
+            x: 100.0,
+            y: 200.0,
+            sector: crate::position_interface::SectorHandle::new(2),
+            level: 0,
+        },
+        Some(wait),
+        &AiContext::default(),
+    );
+    assert!(!owner.base.couldnt_reachpoint);
+    assert_eq!(
+        owner.base.current_substate,
+        Substate::AttackingRunToAvengerOnRoof
+    );
+    assert_eq!(owner.base.outbox.actor.orders.len(), 1);
+    assert_eq!(owner.base.outbox.actor.orders[0].target_x, 100.0);
+    assert_eq!(owner.base.outbox.actor.orders[0].target_y, 100.0);
+
+    // Without the selected PassDoor, both ordinary live positions are in the
+    // same sector. The roof special case must remain absent so the caller can
+    // retain couldn't-reachpoint and take its normal emergency fallback.
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(sequence_id, 0);
+    assert!(
+        crate::engine::ai::precompute_avenger_on_roof_wait_position(
+            &engine.world.entities,
+            &engine.script_domains.interactables.doors,
+            &engine.orders.sequence_manager,
+            owner_id,
+            target_id,
+            &|_| true,
+            &|_| None,
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};

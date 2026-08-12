@@ -3805,6 +3805,7 @@ impl EngineInner {
                         crate::engine::ai::precompute_avenger_on_roof_wait_position(
                             &self.world.entities,
                             self.script_domains.interactables.doors.as_slice(),
+                            &self.orders.sequence_manager,
                             owner,
                             target_id,
                             &|sector| self.building_sector_is_authorized(sector),

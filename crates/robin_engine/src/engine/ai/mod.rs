@@ -1966,6 +1966,7 @@ pub(super) fn build_friend_swap_candidates(
 pub(super) fn precompute_avenger_on_roof_wait_position(
     entities: &crate::entities::Entities,
     doors: &[crate::gate::Door],
+    sequence_manager: &crate::sequence::SequenceManager,
     me_id: impl Into<crate::element::EntityId>,
     target_id: impl Into<crate::element::EntityId>,
     building_is_authorized: &impl Fn(crate::sector::SectorNumber) -> bool,
@@ -1979,10 +1980,30 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
     let me = entities.get(me_id)?;
     let target = entities.get(target_id)?;
 
-    let me_elem = me.element_data();
-    let target_elem = target.element_data();
-    let me_sector = me_elem.sector()?;
-    let target_sector = target_elem.sector()?;
+    // Original `GetAvengerOnTheRoofWaitPosition` calls AI `Position(...)`
+    // for both actors (RHartificialmalignity.cpp:20231-20242). That virtual
+    // position commits a selected PassDoor actor to the destination gate
+    // endpoint before falling back to its sprite coordinates
+    // (RHartificialintelligence.cpp:4307-4346).
+    let resolve_position = |id| {
+        resolve_ai_position_with(entities, doors, sequence_manager, id, |position_id| {
+            let element = entities
+                .get(position_id)
+                .unwrap_or_else(|| panic!("roof-wait position owner {position_id:?} disappeared"))
+                .element_data();
+            crate::ai::Position {
+                x: element.position_map().x,
+                y: element.position_map().y,
+                sector: element.sector(),
+                level: element.layer(),
+            }
+        })
+        .effective
+    };
+    let me_position = resolve_position(me_id);
+    let target_position = resolve_position(target_id);
+    let me_sector: u16 = me_position.sector?.into();
+    let target_sector: u16 = target_position.sector?.into();
     if me_sector == target_sector {
         return None;
     }
@@ -1992,11 +2013,11 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
 
     let wait = crate::gate::compute_avenger_wait_position(
         doors,
-        (target_elem.position_map().x, target_elem.position_map().y),
-        target_sector.into(),
+        (target_position.x, target_position.y),
+        target_sector,
         &target_auth,
-        (me_elem.position_map().x, me_elem.position_map().y),
-        me_sector.into(),
+        (me_position.x, me_position.y),
+        me_sector,
         &me_auth,
         building_is_authorized,
         sector_lift_type,
@@ -2998,6 +3019,7 @@ impl EngineInner {
                 if let Some(wait) = precompute_avenger_on_roof_wait_position(
                     &self.world.entities,
                     doors_slice,
+                    &self.orders.sequence_manager,
                     npc_id,
                     candidate_id,
                     &|sector| self.building_sector_is_authorized(sector),
