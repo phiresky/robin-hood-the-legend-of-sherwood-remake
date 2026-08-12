@@ -217,15 +217,11 @@ impl Thumbnail {
     }
 }
 
+/// Truncating 565→888 expansion — shared with the renderer so PNG
+/// thumbnails show the same colours as the live frame they capture.
 fn rgb565_to_rgb888(pixel: u16) -> [u8; 3] {
-    let r5 = ((pixel >> 11) & 0x1F) as u8;
-    let g6 = ((pixel >> 5) & 0x3F) as u8;
-    let b5 = (pixel & 0x1F) as u8;
-    [
-        (r5 << 3) | (r5 >> 2),
-        (g6 << 2) | (g6 >> 4),
-        (b5 << 3) | (b5 >> 2),
-    ]
+    let (r, g, b) = crate::renderer::rgb565_to_rgb8(pixel);
+    [r, g, b]
 }
 
 fn rgb888_to_rgb565(r: u8, g: u8, b: u8) -> u16 {

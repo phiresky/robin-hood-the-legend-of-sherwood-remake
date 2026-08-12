@@ -730,40 +730,60 @@ impl FrameState {
         pass.set_bind_group(0, &self.screen_bg, &[]);
         pass.set_vertex_buffer(0, vbo.slice(..));
 
-        // `last_pipeline_kind`: track which fragment pipeline is bound
-        // separately from the blend index, since `Colorize` uses its
-        // own pipeline regardless of the queued draw's blend slot.
-        let mut last_pipeline_kind: Option<&'static str> = None;
+        /// Which fragment pipeline family is currently bound. Tracked
+        /// separately from the blend index, since e.g. `Colorize` uses
+        /// its own pipeline regardless of the queued draw's blend slot.
+        #[derive(PartialEq, Clone, Copy)]
+        enum BoundPipeline {
+            Quad,
+            MaskedQuad,
+            Colorize,
+            BgAlpha,
+            ViewCone,
+            MaskStencil,
+            LoadingDissolve,
+        }
+        /// Which texture bind group is currently bound at slot 1.
+        #[derive(PartialEq, Clone, Copy)]
+        enum BoundTex {
+            White,
+            Frozen,
+            AlphaSource,
+            Frame,
+            MaskAlpha,
+            LoadingDissolve,
+        }
+        let mut last_pipeline: Option<BoundPipeline> = None;
         let mut last_blend: Option<usize> = None;
-        let mut last_tex: Option<&'static str> = None;
+        let mut last_tex: Option<BoundTex> = None;
         let mut last_frame_idx: Option<u32> = None;
         for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
             match d.tex {
                 TextureRef::ColorizeFromFrozen => {
-                    if last_pipeline_kind != Some("colorize") {
+                    if last_pipeline != Some(BoundPipeline::Colorize) {
                         pass.set_pipeline(&pipelines.colorize_pipeline);
-                        last_pipeline_kind = Some("colorize");
+                        last_pipeline = Some(BoundPipeline::Colorize);
                         last_blend = None;
                     }
                 }
                 TextureRef::FramebufferAlpha => {
-                    if last_pipeline_kind != Some("bg_alpha") {
+                    if last_pipeline != Some(BoundPipeline::BgAlpha) {
                         pass.set_pipeline(&pipelines.bg_alpha_pipeline);
-                        last_pipeline_kind = Some("bg_alpha");
+                        last_pipeline = Some(BoundPipeline::BgAlpha);
                         last_blend = None;
                     }
                 }
                 TextureRef::ViewConeGradient => {
-                    if last_pipeline_kind != Some("view_cone") {
+                    if last_pipeline != Some(BoundPipeline::ViewCone) {
                         pass.set_pipeline(&pipelines.view_cone_pipeline);
-                        last_pipeline_kind = Some("view_cone");
+                        last_pipeline = Some(BoundPipeline::ViewCone);
                         last_blend = None;
                     }
                 }
                 TextureRef::MaskAlpha(_) | TextureRef::StencilClear => {
-                    if last_pipeline_kind != Some("mask_stencil") {
+                    if last_pipeline != Some(BoundPipeline::MaskStencil) {
                         pass.set_pipeline(&pipelines.mask_stencil_pipeline);
-                        last_pipeline_kind = Some("mask_stencil");
+                        last_pipeline = Some(BoundPipeline::MaskStencil);
                         last_blend = None;
                     }
                     pass.set_stencil_reference(if matches!(d.tex, TextureRef::MaskAlpha(_)) {
@@ -774,69 +794,58 @@ impl FrameState {
                 }
                 TextureRef::MaskedFrame(_) => {
                     let bidx = blend_index(d.blend);
-                    let need_rebind_pipe =
-                        last_pipeline_kind != Some("masked_quad") || last_blend != Some(bidx);
-                    if need_rebind_pipe {
-                        if let Some(p) = pipelines.masked_pipelines[bidx].as_ref() {
-                            pass.set_pipeline(p);
-                            pass.set_stencil_reference(0);
-                            last_pipeline_kind = Some("masked_quad");
-                            last_blend = Some(bidx);
-                        } else {
-                            continue;
-                        }
+                    if last_pipeline != Some(BoundPipeline::MaskedQuad) || last_blend != Some(bidx)
+                    {
+                        pass.set_pipeline(&pipelines.masked_pipelines[bidx]);
+                        pass.set_stencil_reference(0);
+                        last_pipeline = Some(BoundPipeline::MaskedQuad);
+                        last_blend = Some(bidx);
                     }
                 }
                 TextureRef::LoadingDissolveFrame(_) => {
-                    if last_pipeline_kind != Some("loading_dissolve") {
+                    if last_pipeline != Some(BoundPipeline::LoadingDissolve) {
                         pass.set_pipeline(&pipelines.loading_dissolve_pipeline);
-                        last_pipeline_kind = Some("loading_dissolve");
+                        last_pipeline = Some(BoundPipeline::LoadingDissolve);
                         last_blend = None;
                     }
                 }
                 _ => {
                     let bidx = blend_index(d.blend);
-                    let need_rebind_pipe =
-                        last_pipeline_kind != Some("quad") || last_blend != Some(bidx);
-                    if need_rebind_pipe {
-                        if let Some(p) = pipelines.pipelines[bidx].as_ref() {
-                            pass.set_pipeline(p);
-                            last_pipeline_kind = Some("quad");
-                            last_blend = Some(bidx);
-                        } else {
-                            continue;
-                        }
+                    if last_pipeline != Some(BoundPipeline::Quad) || last_blend != Some(bidx) {
+                        pass.set_pipeline(&pipelines.pipelines[bidx]);
+                        last_pipeline = Some(BoundPipeline::Quad);
+                        last_blend = Some(bidx);
                     }
                 }
             }
             let need_rebind_tex = match d.tex {
-                TextureRef::White => last_tex != Some("white"),
-                TextureRef::FrozenScene => last_tex != Some("frozen"),
-                TextureRef::ColorizeFromFrozen => last_tex != Some("frozen"),
-                TextureRef::FramebufferAlpha => last_tex != Some("alpha_source"),
-                TextureRef::ViewConeGradient => last_tex != Some("white"),
+                TextureRef::White => last_tex != Some(BoundTex::White),
+                TextureRef::FrozenScene => last_tex != Some(BoundTex::Frozen),
+                TextureRef::ColorizeFromFrozen => last_tex != Some(BoundTex::Frozen),
+                TextureRef::FramebufferAlpha => last_tex != Some(BoundTex::AlphaSource),
+                TextureRef::ViewConeGradient => last_tex != Some(BoundTex::White),
                 TextureRef::Frame(idx) | TextureRef::MaskedFrame(idx) => {
-                    last_tex != Some("frame") || last_frame_idx != Some(idx)
+                    last_tex != Some(BoundTex::Frame) || last_frame_idx != Some(idx)
                 }
                 TextureRef::MaskAlpha(idx) => {
-                    last_tex != Some("mask_alpha") || last_frame_idx != Some(idx)
+                    last_tex != Some(BoundTex::MaskAlpha) || last_frame_idx != Some(idx)
                 }
-                TextureRef::StencilClear => last_tex != Some("white"),
+                TextureRef::StencilClear => last_tex != Some(BoundTex::White),
                 TextureRef::LoadingDissolveFrame(idx) => {
-                    last_tex != Some("loading_dissolve") || last_frame_idx != Some(idx)
+                    last_tex != Some(BoundTex::LoadingDissolve) || last_frame_idx != Some(idx)
                 }
             };
             if need_rebind_tex {
                 match d.tex {
                     TextureRef::White => {
                         pass.set_bind_group(1, &resources.white_bg, &[]);
-                        last_tex = Some("white");
+                        last_tex = Some(BoundTex::White);
                         last_frame_idx = None;
                     }
                     TextureRef::FrozenScene | TextureRef::ColorizeFromFrozen => {
                         if let Some((_, _, bg)) = self.frozen_scene.as_ref() {
                             pass.set_bind_group(1, bg, &[]);
-                            last_tex = Some("frozen");
+                            last_tex = Some(BoundTex::Frozen);
                             last_frame_idx = None;
                         } else {
                             continue;
@@ -844,18 +853,18 @@ impl FrameState {
                     }
                     TextureRef::FramebufferAlpha => {
                         pass.set_bind_group(1, &self.alpha_source_bg, &[]);
-                        last_tex = Some("alpha_source");
+                        last_tex = Some(BoundTex::AlphaSource);
                         last_frame_idx = None;
                     }
                     TextureRef::ViewConeGradient => {
                         pass.set_bind_group(1, &resources.white_bg, &[]);
-                        last_tex = Some("white");
+                        last_tex = Some(BoundTex::White);
                         last_frame_idx = None;
                     }
                     TextureRef::Frame(idx) | TextureRef::MaskedFrame(idx) => {
                         if let Some(bg) = self.frame_texture_bgs.get(idx as usize) {
                             pass.set_bind_group(1, bg, &[]);
-                            last_tex = Some("frame");
+                            last_tex = Some(BoundTex::Frame);
                             last_frame_idx = Some(idx);
                         } else {
                             continue;
@@ -866,18 +875,18 @@ impl FrameState {
                             panic!("missing uploaded sprite mask {idx} during rendering")
                         });
                         pass.set_bind_group(1, &mask.bind_group, &[]);
-                        last_tex = Some("mask_alpha");
+                        last_tex = Some(BoundTex::MaskAlpha);
                         last_frame_idx = Some(idx);
                     }
                     TextureRef::StencilClear => {
                         pass.set_bind_group(1, &resources.white_bg, &[]);
-                        last_tex = Some("white");
+                        last_tex = Some(BoundTex::White);
                         last_frame_idx = None;
                     }
                     TextureRef::LoadingDissolveFrame(idx) => {
                         if let Some(bg) = self.frame_texture_bgs.get(idx as usize) {
                             pass.set_bind_group(1, bg, &[]);
-                            last_tex = Some("loading_dissolve");
+                            last_tex = Some(BoundTex::LoadingDissolve);
                             last_frame_idx = Some(idx);
                         } else {
                             continue;
