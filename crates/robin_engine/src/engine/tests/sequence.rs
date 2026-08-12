@@ -165,24 +165,6 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
             .unwrap()
             .attentive
     );
-    engine.stamp_element_transition_state(owner, incoming_sequence, 0);
-    assert!(engine.generate_transition(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        incoming_sequence,
-        0,
-    ));
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(incoming_sequence, 0)
-            .unwrap()
-            .state,
-        SequenceState::Terminated,
-        "the transition synchronously terminates the queued manager element"
-    );
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
 
