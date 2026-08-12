@@ -3870,7 +3870,6 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
         soldier.npc.life_points = 30;
         soldier.soldier.cached_max_life_points = 30;
         soldier.soldier.cached_camp = Camp::Lacklandists;
-        soldier.human.camp = Camp::Lacklandists;
         soldier.human.unconscious = true;
         soldier.human.concussion_of_the_brain = CONCUSSION_MAX;
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
