@@ -1,5 +1,45 @@
 use super::*;
 
+#[derive(Debug)]
+struct ConsiderReportDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    owner: Option<u32>,
+}
+
+fn consider_report_debug_config() -> &'static ConsiderReportDebugConfig {
+    static CONFIG: std::sync::OnceLock<ConsiderReportDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_CONSIDER_REPORT").is_some();
+        if !enabled {
+            return ConsiderReportDebugConfig {
+                enabled: false,
+                frame: None,
+                owner: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for CONSIDERREPORT diagnostic: {error}")
+                })
+            })
+        };
+        ConsiderReportDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_CONSIDER_REPORT_FRAME"),
+            owner: parse("PARITY_DEBUG_CONSIDER_REPORT_OWNER"),
+        }
+    })
+}
+
+pub(crate) fn consider_report_debug_matches(frame: u32, owner: u32) -> bool {
+    let config = consider_report_debug_config();
+    config.enabled
+        && config.frame.is_none_or(|expected| expected == frame)
+        && config.owner.is_none_or(|expected| expected == owner)
+}
+
 /// Reproduce the Original's mixed signed/unsigned waypoint expression:
 /// `current + ((SWORD)encoded - 1000)`, narrowed to `UWORD`.
 fn resolve_synchronize_index(current: u16, encoded: u16) -> u16 {
@@ -1402,14 +1442,44 @@ impl AiController {
         flags: u16,
         entity_views: &crate::ai_entity_view::AiEntityViewMap,
     ) {
+        self.consider_report_merged_inner(other, flags, entity_views, None);
+    }
+
+    pub(crate) fn consider_report_merged_at_frame(
+        &mut self,
+        other: &ReconnaissanceReport,
+        flags: u16,
+        entity_views: &crate::ai_entity_view::AiEntityViewMap,
+        frame: u32,
+    ) {
+        self.consider_report_merged_inner(other, flags, entity_views, Some(frame));
+    }
+
+    fn consider_report_merged_inner(
+        &mut self,
+        other: &ReconnaissanceReport,
+        flags: u16,
+        entity_views: &crate::ai_entity_view::AiEntityViewMap,
+        frame: Option<u32>,
+    ) {
         use crate::element::{DetectableType, EntityId};
         const REPORT_UPDATE_BODIES: u16 = 1;
         const REPORT_UPDATE_CHARLY: u16 = 2;
         const REPORT_UPDATE_TYPE: u16 = 4;
 
+        let debug = frame.is_some_and(|frame| consider_report_debug_matches(frame, self.me));
+        if debug {
+            let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
+            eprintln!(
+                "CONSIDERREPORT {{\"stage\":\"merge_start\",\"frame\":{frame},\"owner\":{},\"flags\":{flags},\"incoming\":{:?},\"known_before\":{:?}}}",
+                self.me, other.seen_bodies, self.my_reconnaissance_report.seen_bodies,
+            );
+        }
+
         // Per-body merge + per-body DeleteDetectable.
         for &body in &other.seen_bodies {
-            if !self.my_reconnaissance_report.is_body_seen(body) {
+            let known = self.my_reconnaissance_report.is_body_seen(body);
+            if !known {
                 if (flags & REPORT_UPDATE_BODIES) != 0 {
                     self.my_reconnaissance_report.add_seen_body(body);
                 }
@@ -1425,7 +1495,32 @@ impl AiController {
                     .actor
                     .delete_detectable_entity
                     .push((body_id, DetectableType::Body));
+                if debug {
+                    let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
+                    eprintln!(
+                        "CONSIDERREPORT {{\"stage\":\"body\",\"frame\":{frame},\"owner\":{},\"body\":{body},\"known\":false,\"resolved_kind\":{:?},\"resolved_index\":{},\"queued\":true}}",
+                        self.me,
+                        body_id.kind(),
+                        body_id.index(),
+                    );
+                }
+            } else if debug {
+                let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
+                eprintln!(
+                    "CONSIDERREPORT {{\"stage\":\"body\",\"frame\":{frame},\"owner\":{},\"body\":{body},\"known\":true,\"resolved_kind\":null,\"resolved_index\":null,\"queued\":false}}",
+                    self.me,
+                );
             }
+        }
+
+        if debug {
+            let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
+            eprintln!(
+                "CONSIDERREPORT {{\"stage\":\"merge_end\",\"frame\":{frame},\"owner\":{},\"known_after\":{:?},\"queued_deletes\":{:?}}}",
+                self.me,
+                self.my_reconnaissance_report.seen_bodies,
+                self.outbox.actor.delete_detectable_entity,
+            );
         }
 
         // Charly merge + AddDetectable(MISSED_FRIEND).

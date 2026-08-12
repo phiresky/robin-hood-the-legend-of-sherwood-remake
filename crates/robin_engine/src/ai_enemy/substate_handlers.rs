@@ -3296,10 +3296,11 @@ impl EnemyAi {
                         charly_seen: civ_view.report_charly != 0,
                     };
                     // Merge with all three flags.
-                    self.base.consider_report_merged(
+                    self.base.consider_report_merged_at_frame(
                         &civ_report,
                         1 | 2 | 4,
                         ctx.entity_views.as_ref(),
+                        ctx.frame,
                     );
 
                     // Alerting transition when the civilian's

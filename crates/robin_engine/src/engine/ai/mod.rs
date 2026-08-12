@@ -8319,6 +8319,18 @@ impl EngineInner {
             || !effects.delete_detectables.is_empty()
             || !effects.delete_detectable_entities.is_empty()
         {
+            let debug_consider_report = crate::ai::consider_report_debug_matches(
+                self.control.frame_counter,
+                npc_id.index(),
+            );
+            if debug_consider_report {
+                eprintln!(
+                    "CONSIDERREPORT {{\"stage\":\"drain_start\",\"frame\":{},\"owner\":{},\"pending_entity_deletes\":{:?}}}",
+                    self.control.frame_counter,
+                    npc_id.index(),
+                    effects.delete_detectable_entities,
+                );
+            }
             // Resolve target classification for each ENEMY-arm push
             // so the `add_detectable` filter can run.  Resolved
             // up-front to avoid borrowing `self.world.entities` mutably
@@ -8383,6 +8395,18 @@ impl EngineInner {
                     det_type
                 );
                 npc.detectable_lists[idx].retain(|d| d.element != Some(*entity_id));
+            }
+            if debug_consider_report {
+                let body_ids = npc.detectable_lists[DetectableType::Body as usize]
+                    .iter()
+                    .map(|detectable| detectable.element.map(EntityId::index))
+                    .collect::<Vec<_>>();
+                eprintln!(
+                    "CONSIDERREPORT {{\"stage\":\"drain_after_delete\",\"frame\":{},\"owner\":{},\"body_ids\":{:?}}}",
+                    self.control.frame_counter,
+                    npc_id.index(),
+                    body_ids,
+                );
             }
             // Add new detectables.
             for ((entity_id, det_type), tgt) in
@@ -11543,6 +11567,7 @@ impl EngineInner {
                     report,
                     flags,
                 } => {
+                    let frame = self.control.frame_counter;
                     let target_id = EntityId::Soldier(SoldierId(target));
                     let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
@@ -11556,10 +11581,11 @@ impl EngineInner {
                         // skipped those side effects, leaving stale
                         // body detectables on the NPC after a peer
                         // report merge.
-                        enemy_ai.base.consider_report_merged(
+                        enemy_ai.base.consider_report_merged_at_frame(
                             &report,
                             flags,
                             scratch.ai_entity_views.as_ref(),
+                            frame,
                         );
                     }
                 }
@@ -12384,6 +12410,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let frame = self.control.frame_counter;
         let target_id = EntityId::Soldier(SoldierId(target));
         self.world
             .entities
@@ -12391,7 +12418,12 @@ impl EngineInner {
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("ConsiderReport target {target} is not an enemy soldier"))
             .base
-            .consider_report_merged(&report, flags, scratch.ai_entity_views.as_ref());
+            .consider_report_merged_at_frame(
+                &report,
+                flags,
+                scratch.ai_entity_views.as_ref(),
+                frame,
+            );
         self.drain_direct_ai_owner_boundary_without_forecast(sim, target_id, assets);
     }
 

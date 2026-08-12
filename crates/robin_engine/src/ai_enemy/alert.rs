@@ -971,8 +971,12 @@ impl EnemyAi {
             charly: soldier.report_charly,
             charly_seen: soldier.report_charly != 0,
         };
-        self.base
-            .consider_report_merged(&soldier_report, 1 | 2 | 4, ctx.entity_views.as_ref()); // BODIES | CHARLY | TYPE
+        self.base.consider_report_merged_at_frame(
+            &soldier_report,
+            1 | 2 | 4,
+            ctx.entity_views.as_ref(),
+            ctx.frame,
+        ); // BODIES | CHARLY | TYPE
 
         // Share our (now updated) report back to the soldier. Original calls
         // `soldier.ConsiderReport(my_reconnaissance_report, 0)`: flags zero

@@ -81,6 +81,7 @@ pub use effects::{
 
 mod controller;
 pub(crate) use controller::PatrolCoordinateAction;
+pub(crate) use controller::consider_report_debug_matches;
 pub use controller::{AiController, ConsiderationAccumulator};
 
 #[cfg(test)]
