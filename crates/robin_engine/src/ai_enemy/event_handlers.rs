@@ -415,16 +415,18 @@ impl EnemyAi {
                     }
                     // Body unreachable → seek area.
                     Substate::SeekingBody => {
-                        self.seek_area(
-                            sim,
-                            self.base.seek_position,
-                            parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                            SeekFlags::empty(),
-                            UNDEFINED_DIRECTION,
-                            global,
-                            ctx,
-                            tick,
-                        );
+                        if !self.examine_other_bodies(ctx, tick) {
+                            self.seek_area(
+                                sim,
+                                ctx.position,
+                                parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                                SeekFlags::empty(),
+                                UNDEFINED_DIRECTION,
+                                global,
+                                ctx,
+                                tick,
+                            );
+                        }
                     }
                     Substate::AttackingObserve => {
                         // Ignore.
@@ -3849,5 +3851,112 @@ mod tests {
             vec![1, 2],
             "GetBattleOverview must not rebuild the persistent friend list"
         );
+    }
+
+    #[test]
+    fn couldnt_reach_seeking_body_examines_queued_body_before_starting_seek_area() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(206);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBody;
+        ai.other_bodies_to_examine.push(207);
+
+        let alternate_position = Position {
+            x: 658.0,
+            y: 2910.0,
+            sector: crate::position_interface::SectorHandle::new(18),
+            level: 0,
+        };
+        let mut alternate_body = object_view(ObjectType::None);
+        alternate_body.kind = EntityKind::Soldier;
+        alternate_body.position = alternate_position;
+        alternate_body.is_able_to_fight = false;
+        let mut views = AiEntityViewMap::new();
+        views.insert(207, alternate_body);
+        let ctx = AiContext {
+            position: Position {
+                x: 792.0,
+                y: 2612.0,
+                sector: crate::position_interface::SectorHandle::new(44),
+                level: 0,
+            },
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.detected_body, 207);
+        assert_eq!(ai.base.seek_position, alternate_position);
+        assert_eq!(ai.base.current_substate, Substate::SeekingBody);
+        assert!(ai.my_seek_points.is_empty());
+    }
+
+    #[test]
+    fn couldnt_reach_seeking_body_centers_fallback_on_actor_not_stale_body() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(206);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBody;
+        ai.base.seek_position = Position {
+            x: 2_000.0,
+            y: 2_000.0,
+            sector: crate::position_interface::SectorHandle::new(44),
+            level: 0,
+        };
+        let actor_position = Position {
+            x: 792.0,
+            y: 2612.0,
+            sector: crate::position_interface::SectorHandle::new(44),
+            level: 0,
+        };
+        let actor_seek_point = Position {
+            x: 652.0,
+            y: 2_928.0,
+            sector: crate::position_interface::SectorHandle::new(44),
+            level: 0,
+        };
+        let stale_body_seek_point = Position {
+            x: 2_020.0,
+            y: 2_000.0,
+            sector: crate::position_interface::SectorHandle::new(44),
+            level: 0,
+        };
+        let point = |id, position| SeekPoint {
+            position,
+            frame_when_full_interest: 0,
+            directions: vec![0],
+            last_calculated_interest: 100,
+            locked: false,
+            id,
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points = vec![point(0, actor_seek_point), point(1, stale_body_seek_point)];
+        let ctx = AiContext {
+            position: actor_position,
+            self_is_soldier: true,
+            ..AiContext::default()
+        };
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut global,
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.seek_center, actor_position);
+        assert_eq!(ai.actual_seek_point, Some(0));
+        assert_eq!(ai.base.last_goto_destination, actor_seek_point);
+        assert_ne!(ai.base.last_goto_destination, stale_body_seek_point);
     }
 }
