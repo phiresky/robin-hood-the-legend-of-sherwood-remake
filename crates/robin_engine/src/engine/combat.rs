@@ -6,6 +6,24 @@ use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
 
+fn projectile_landing_debug_matches(frame: u32, shooter: EntityId, projectile: EntityId) -> bool {
+    if std::env::var_os("PARITY_DEBUG_PROJECTILE_LANDING").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for projectile landing diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_FRAME").is_none_or(|value| value == frame)
+        && parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_SHOOTER")
+            .is_none_or(|value| value == shooter.index())
+        && parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_PROJECTILE")
+            .is_none_or(|value| value == projectile.index())
+}
+
 #[cfg(test)]
 thread_local! {
     static RECEIVE_PURSE_REVEAL_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> =
@@ -697,6 +715,82 @@ impl EngineInner {
             arrow_projectile.projectile.trajectory_origin_layer = layer;
             let arrow_id = self.add_entity(arrow);
             if let Some(resolution) = initial_landing_resolution {
+                if projectile_landing_debug_matches(
+                    self.control.frame_counter,
+                    result.shooter,
+                    arrow_id,
+                ) {
+                    let obstacle_list = self.sight_obstacles(assets);
+                    let obstacle = terminal_obstacle.map(|handle| {
+                        let index = usize::from(u16::from(handle));
+                        let obstacle = obstacle_list.get(index).unwrap_or_else(|| {
+                            panic!("diagnostic terminal obstacle {index} disappeared")
+                        });
+                        (
+                            index,
+                            obstacle_list.is_active(index),
+                            obstacle.is_projection_area(),
+                            obstacle.layer,
+                            obstacle.sector,
+                            obstacle.contains_point_projection(
+                                trajectory_end
+                                    .expect("terminal impact lost its endpoint")
+                                    .to_map(),
+                            ),
+                        )
+                    });
+                    let landing = trajectory_end
+                        .expect("terminal impact lost its endpoint")
+                        .to_map();
+                    let candidate_layer = obstacle
+                        .filter(|(_, active, projection, layer, _, _)| {
+                            *active && *projection && *layer != u16::MAX
+                        })
+                        .map_or(0, |(_, _, _, layer, _, _)| layer);
+                    let candidates = if self.world.fast_grid.is_inside_grid_point(landing) {
+                        let block = self
+                            .world
+                            .fast_grid
+                            .get_block_index(landing, candidate_layer);
+                        self.world
+                            .fast_grid
+                            .get_sectors_at_block(block, crate::sector::SectorType::MOTION)
+                            .into_iter()
+                            .map(|(index, sector)| {
+                                (
+                                    index,
+                                    i16::from(sector.sector_number),
+                                    sector.sector_type.is_area(),
+                                    sector.bounding_box.contains_point(landing),
+                                    sector.contains_point(landing),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
+                    eprintln!(
+                        "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_obstacle={obstacle:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
+                        self.control.frame_counter,
+                        result.shooter.index(),
+                        arrow_id.index(),
+                        trajectory_end
+                            .expect("terminal impact lost its endpoint")
+                            .x
+                            .to_bits(),
+                        trajectory_end
+                            .expect("terminal impact lost its endpoint")
+                            .y
+                            .to_bits(),
+                        trajectory_end
+                            .expect("terminal impact lost its endpoint")
+                            .z
+                            .to_bits(),
+                        landing.x.to_bits(),
+                        landing.y.to_bits(),
+                        candidate_layer,
+                    );
+                }
                 let entity = self
                     .world
                     .entities
