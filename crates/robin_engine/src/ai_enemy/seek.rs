@@ -7,6 +7,22 @@ use crate::ai::*;
 use crate::parameters_ai;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
+fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
+    if std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for SEEKAREA diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_SEEK_AREA_FRAME").is_none_or(|expected| frame == expected)
+        && parse_filter("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER")
+            .is_none_or(|expected| creation_order == Some(expected))
+}
+
 use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, task_priority};
 
@@ -301,6 +317,8 @@ impl EnemyAi {
             }
 
             let mut expected_points = (expected_points_for_one as f32 * friend_factor) as u16;
+            let expected_points_before_help_random = expected_points;
+            let mut preselection_rng_draws = 0usize;
 
             if self.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER) {
                 // Reduce seek count when planning to ask for help.
@@ -326,6 +344,7 @@ impl EnemyAi {
                 expected_points = if min == expected_points {
                     min
                 } else {
+                    preselection_rng_draws += 1;
                     crate::sim_rng::u16(
                         sim,
                         crate::sim_rng::RngSite::SeekPointSelection,
@@ -337,15 +356,19 @@ impl EnemyAi {
             // ── Phase 4: select points by interest (randomised order) ──
             let mut selected_random: Vec<usize> = Vec::new();
             let mut count_f: f32 = 0.0;
+            let mut phase4_attempts = 0usize;
+            let mut phase4_accepts = 0usize;
 
             for &idx in &near_sorted {
                 if count_f >= expected_points as f32 {
                     break;
                 }
                 let interest = global.seek_points[idx].calculate_interest(current_frame);
+                phase4_attempts += 1;
                 if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointSelection, 0..100)
                     < interest
                 {
+                    phase4_accepts += 1;
                     // Unconditionally call rand on every accepted
                     // point, including the first (where the count == 1
                     // consumes a draw deterministically returning 0).
@@ -359,6 +382,30 @@ impl EnemyAi {
                     selected_random.insert(insert_pos, idx);
                     count_f += interest as f32 * 0.01;
                 }
+            }
+
+            if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"selection_summary\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"standard_radius\":{},\"near_points\":{},\"expected_for_one\":{},\"visible_friends\":{},\"clears_help\":{},\"expected_before_help_random\":{},\"expected_points\":{},\"phase4_attempts\":{},\"phase4_accepts\":{},\"preselection_rng_draws\":{},\"phase4_rng_draws\":{},\"selection_rng_draws\":{},\"accepted_interest_sum\":{}}}",
+                    ctx.frame,
+                    self.base.me,
+                    ctx.original_creation_order,
+                    center.x,
+                    center.y,
+                    standard_radius,
+                    near_sorted.len(),
+                    expected_points_for_one,
+                    tick.visible_seeking_friends,
+                    tick.friend_seek_clears_help_flag,
+                    expected_points_before_help_random,
+                    expected_points,
+                    phase4_attempts,
+                    phase4_accepts,
+                    preselection_rng_draws,
+                    phase4_attempts + phase4_accepts,
+                    preselection_rng_draws + phase4_attempts + phase4_accepts,
+                    count_f,
+                );
             }
 
             // ── Phase 5: reorder for optimal travel path ──

@@ -82,6 +82,26 @@ pub(super) fn building_exit_wait_owner_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BUILDING_EXIT_WAIT_OWNER").is_some())
 }
 
+/// Narrow, process-local diagnostics for the Save050 SeekArea point-count
+/// mismatch. Environment reads and stderr output must remain outside engine
+/// state so enabling this cannot affect snapshots, hashes, or simulation RNG.
+fn seek_area_owner_position_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_some()
+}
+
+fn seek_area_owner_position_debug_matches(frame: u32, creation_order: u32) -> bool {
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for SEEKAREA diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_SEEK_AREA_FRAME").is_none_or(|expected| frame == expected)
+        && parse_filter("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER")
+            .is_none_or(|expected| creation_order == expected)
+}
+
 #[cfg(test)]
 thread_local! {
     static GALOPP_DISPATCH_OBSERVER: std::cell::RefCell<
@@ -2690,6 +2710,38 @@ impl EngineInner {
         // Build this for every Think boundary, not only RefreshDetection,
         // because timer/report callbacks also enter SeekArea synchronously.
         let doors = self.script_domains.interactables.doors.as_slice();
+        let frame = self.frame_counter();
+        // Keep the diagnostic entirely absent from the disabled path. In
+        // particular, do not resolve Original identity for an observation
+        // that production does not otherwise need here.
+        let seek_area_debug_enabled = seek_area_owner_position_debug_enabled();
+        let creation_order = if seek_area_debug_enabled {
+            self.world.original_creation_order(npc_id)
+        } else {
+            0
+        };
+        let seek_area_debug = seek_area_debug_enabled
+            && seek_area_owner_position_debug_matches(frame, creation_order);
+        if seek_area_debug {
+            let owner_selected_door =
+                selected_pass_door_movement(&self.orders.sequence_manager, npc_id);
+            let owner_effective_position = seek_area_friend_position_map(
+                me_pos,
+                owner_selected_door.map(|(door_index, direction)| (door_index, direction != 0)),
+                doors,
+            );
+            eprintln!(
+                "SEEKAREA {{\"event\":\"owner_position\",\"frame\":{},\"owner\":{:?},\"owner_creation_order\":{},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?}}}",
+                frame,
+                npc_id,
+                creation_order,
+                me_pos.x,
+                me_pos.y,
+                owner_effective_position.x,
+                owner_effective_position.y,
+                owner_selected_door,
+            );
+        }
         for (other_id, other) in self.world.entities.soldiers() {
             if other_id == npc_id {
                 continue;
@@ -2701,27 +2753,93 @@ impl EngineInner {
             // `mViewParameters.ubAlertStatus`, not the independently tracked
             // music alert. Forced-attentive and music-only transitions can
             // deliberately make those values differ.
-            if other_ai.base.view_alert_status == crate::ai::AlertLevel::Green {
+            let alert_status = other_ai.base.view_alert_status;
+            let friend_raw_position = other.element.position_map();
+            if alert_status == crate::ai::AlertLevel::Green {
+                if seek_area_debug {
+                    let friend_selected_door = selected_pass_door_movement(
+                        &self.orders.sequence_manager,
+                        EntityId::Soldier(other_id),
+                    );
+                    let friend_effective_position = seek_area_friend_position_map(
+                        friend_raw_position,
+                        friend_selected_door
+                            .map(|(door_index, direction)| (door_index, direction != 0)),
+                        doors,
+                    );
+                    eprintln!(
+                        "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":false,\"reason\":\"green\"}}",
+                        frame,
+                        creation_order,
+                        other_id,
+                        self.world
+                            .original_creation_order(EntityId::Soldier(other_id)),
+                        alert_status,
+                        friend_raw_position.x,
+                        friend_raw_position.y,
+                        friend_effective_position.x,
+                        friend_effective_position.y,
+                        friend_selected_door,
+                    );
+                }
                 continue;
             }
             let friend_seeks_with_help = other_ai.base.current_substate.is_seek_area()
                 && other_ai
                     .seek_flags
                     .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER);
-            let Some(clears_help) = seek_area_friend_contribution(
+            let contribution = seek_area_friend_contribution(
                 &self.orders.sequence_manager,
                 EntityId::Soldier(other_id),
                 me_pos,
-                other.element.position_map(),
+                friend_raw_position,
                 doors,
                 friend_seeks_with_help,
-            ) else {
+            );
+            if seek_area_debug {
+                let friend_selected_door = selected_pass_door_movement(
+                    &self.orders.sequence_manager,
+                    EntityId::Soldier(other_id),
+                );
+                let friend_effective_position = seek_area_friend_position_map(
+                    friend_raw_position,
+                    friend_selected_door
+                        .map(|(door_index, direction)| (door_index, direction != 0)),
+                    doors,
+                );
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":{},\"clears_help\":{}}}",
+                    frame,
+                    creation_order,
+                    other_id,
+                    self.world
+                        .original_creation_order(EntityId::Soldier(other_id)),
+                    alert_status,
+                    friend_raw_position.x,
+                    friend_raw_position.y,
+                    friend_effective_position.x,
+                    friend_effective_position.y,
+                    friend_selected_door,
+                    contribution.is_some(),
+                    contribution.unwrap_or(false),
+                );
+            }
+            let Some(clears_help) = contribution else {
                 continue;
             };
             tick.visible_seeking_friends += 1;
             if clears_help {
                 tick.friend_seek_clears_help_flag = true;
             }
+        }
+        if seek_area_debug {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"friend_summary\",\"frame\":{},\"owner_creation_order\":{},\"visible_friends\":{},\"clears_help\":{}}}",
+                frame,
+                creation_order,
+                tick.visible_seeking_friends,
+                tick.friend_seek_clears_help_flag,
+            );
         }
         tick.camp_soldiers =
             self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch, build_forecasts);
