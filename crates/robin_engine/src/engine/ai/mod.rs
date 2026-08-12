@@ -11143,23 +11143,6 @@ impl EngineInner {
                     }
                 }
 
-                crate::ai::CrossNpcAction::UpdateReport {
-                    target,
-                    report_type,
-                    seek_position,
-                } => {
-                    let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
-                        continue;
-                    };
-                    if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                        enemy_ai
-                            .base
-                            .my_reconnaissance_report
-                            .update(report_type, seek_position);
-                    }
-                }
-
                 crate::ai::CrossNpcAction::ConsiderReport {
                     target,
                     report,

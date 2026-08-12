@@ -4991,6 +4991,119 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
 }
 
 #[test]
+fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
+    use crate::ai::{AiState, Position, ReportType, Stimulus, StimulusType, Substate};
+    use crate::element::{Detectable, DetectableType, Posture};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
+    let mut add_body = || {
+        let id = engine.add_entity(make_test_pc(Posture::Lying));
+        let Entity::Pc(body) = engine.get_entity_mut(id).expect("report body exists") else {
+            panic!("report body changed kind")
+        };
+        body.element.active = true;
+        body.pc.life_points = 0;
+        id
+    };
+    let prefix = add_body();
+    let unknown_a = add_body();
+    let already_known = add_body();
+    let unknown_b = add_body();
+    let suffix = add_body();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    {
+        let officer = engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("report officer has EnemyAi");
+        officer.set_state(
+            AiState::Seeking,
+            Substate::SeekingOfficerWaitForInstructedSoldier,
+        );
+        officer.base.antagonist = soldier_id.index();
+        officer.base.my_reconnaissance_report.report_type = ReportType::Body;
+        officer.base.my_reconnaissance_report.seek_position = Position {
+            x: 91.0,
+            ..Default::default()
+        };
+        officer.base.my_reconnaissance_report.seen_bodies =
+            vec![unknown_a.index(), already_known.index(), unknown_b.index()];
+    }
+    {
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(soldier_id)
+            .expect("reporting soldier exists")
+        else {
+            panic!("reporting entity changed kind")
+        };
+        let ai = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("reporting soldier has EnemyAi");
+        ai.base.my_reconnaissance_report.report_type = ReportType::Nothing;
+        ai.base.my_reconnaissance_report.seek_position = Position {
+            x: 17.0,
+            ..Default::default()
+        };
+        ai.base
+            .my_reconnaissance_report
+            .seen_bodies
+            .push(already_known.index());
+        soldier.npc.detectable_lists[DetectableType::Body as usize] =
+            [prefix, unknown_a, already_known, unknown_b, suffix]
+                .into_iter()
+                .map(|id| Detectable {
+                    element: Some(id),
+                    detectable_type: DetectableType::Body,
+                    ..Default::default()
+                })
+                .collect();
+    }
+
+    let report_before = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("reporting soldier retains EnemyAi")
+        .base
+        .my_reconnaissance_report
+        .clone();
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    engine.dispatch_think_with_drain(
+        &sim,
+        officer_id,
+        &Stimulus::with_human(StimulusType::CallReport, soldier_id.index()),
+        &ctx,
+        &tick,
+        &assets,
+    );
+
+    let recipient = engine
+        .get_entity(soldier_id)
+        .expect("reporting soldier remains present");
+    let body_handles: Vec<_> = recipient
+        .npc_data()
+        .expect("recipient remains NPC")
+        .detectable_lists[DetectableType::Body as usize]
+        .iter()
+        .map(|detectable| detectable.element.expect("body detectable stays typed"))
+        .collect();
+    assert_eq!(body_handles, vec![prefix, already_known, suffix]);
+    let report_after = &recipient
+        .enemy_ai()
+        .expect("recipient retains EnemyAi")
+        .base
+        .my_reconnaissance_report;
+    assert_eq!(report_after.report_type, report_before.report_type);
+    assert_eq!(report_after.seek_position, report_before.seek_position);
+    assert_eq!(report_after.seen_bodies, report_before.seen_bodies);
+    assert_eq!(report_after.charly, report_before.charly);
+    assert_eq!(report_after.charly_seen, report_before.charly_seen);
+}
+
+#[test]
 fn review2_alert_result_and_report_finish_before_next_soldier_call() {
     use crate::ai::{
         AlertSoldiersFailureContinuation, CrossNpcAction, Position, ReconnaissanceReport,

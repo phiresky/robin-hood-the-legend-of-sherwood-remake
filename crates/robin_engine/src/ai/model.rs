@@ -1553,14 +1553,6 @@ pub enum CrossNpcAction {
     /// Money-fight looters set this as soon as they reserve a KO'd victim
     /// so other scanners skip the same body.
     SetLootedAfterMoneyFight { target: NpcHandle, looted: bool },
-    /// Update the target NPC's reconnaissance report type and seek position
-    /// — shares the officer's report back to the soldier after
-    /// `GetReportFromSoldier`.
-    UpdateReport {
-        target: NpcHandle,
-        report_type: ReportType,
-        seek_position: Position,
-    },
     /// Merge the officer's reconnaissance report into the target soldier's
     /// report. Broadcast inside `AlertSoldiers` so newly alerted soldiers
     /// pick up the officer's charly handle and report type before they run

@@ -974,17 +974,19 @@ impl EnemyAi {
         self.base
             .consider_report_merged(&soldier_report, 1 | 2 | 4, ctx.entity_views.as_ref()); // BODIES | CHARLY | TYPE
 
-        // Share our (now updated) report back to the soldier.
-        // soldier.ConsiderReport(my_reconnaissance_report, 0)
-        // — flags=0 means only update type, not bodies/charly.
+        // Share our (now updated) report back to the soldier. Original calls
+        // `soldier.ConsiderReport(my_reconnaissance_report, 0)`: flags zero
+        // deliberately leaves the soldier's stored report unchanged, but the
+        // ConsiderReport body walk still removes every newly known body from
+        // the soldier's BODY detectables.
         self.base
             .outbox
             .reentrant
             .cross_npc_actions
-            .push(CrossNpcAction::UpdateReport {
+            .push(CrossNpcAction::ConsiderReport {
                 target: soldier_handle,
-                report_type: self.base.my_reconnaissance_report.report_type,
-                seek_position: self.base.my_reconnaissance_report.seek_position,
+                report: self.base.my_reconnaissance_report.clone(),
+                flags: 0,
             });
 
         // Check if the report is really alerting
