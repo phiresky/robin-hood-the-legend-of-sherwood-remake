@@ -4571,7 +4571,16 @@ impl OwnerViewRadiusCache {
                 std::panic::Location::caller(),
             );
         }
-        let radius = compute();
+        let radius = if let Some(viewer) = self.diagnostic_viewer {
+            crate::ai_vision::with_view_radius_sector_debug_context(
+                viewer,
+                self.diagnostic_frame,
+                obstacle,
+                compute,
+            )
+        } else {
+            compute()
+        };
         // Original uses zero as the cache-miss sentinel: a zero result from
         // ComputeViewRadius is recomputed on the next eligible target.
         if radius != 0.0 {

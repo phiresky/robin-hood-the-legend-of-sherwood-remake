@@ -68,6 +68,41 @@ fn view_radius_cache_debug_config() -> &'static ViewRadiusCacheDebugConfig {
     })
 }
 
+#[derive(Clone, Copy)]
+struct ViewRadiusSectorDebugContext {
+    viewer: EntityId,
+    frame: u32,
+    surface: Option<ObstacleHandle>,
+}
+
+thread_local! {
+    static VIEW_RADIUS_SECTOR_DEBUG_CONTEXT: std::cell::Cell<Option<ViewRadiusSectorDebugContext>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn with_view_radius_sector_debug_context<T>(
+    viewer: EntityId,
+    frame: u32,
+    surface: Option<ObstacleHandle>,
+    compute: impl FnOnce() -> T,
+) -> T {
+    let config = view_radius_cache_debug_config();
+    if !config.enabled || frame < config.from_frame || frame > config.through_frame {
+        return compute();
+    }
+
+    VIEW_RADIUS_SECTOR_DEBUG_CONTEXT.with(|slot| {
+        let previous = slot.replace(Some(ViewRadiusSectorDebugContext {
+            viewer,
+            frame,
+            surface,
+        }));
+        let result = compute();
+        slot.set(previous);
+        result
+    })
+}
+
 pub(crate) fn debug_view_radius_cache_event(
     stage: &str,
     source: &str,
@@ -958,7 +993,93 @@ fn night_fog_shadow_sector_indices(
         found = result.len(),
         "night/fog shadow-sector block walk"
     );
+    debug_night_fog_shadow_sector_candidates(
+        fast_grid, layer, &query_box, x_min, x_max, y_min, y_max, &result,
+    );
     result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn debug_night_fog_shadow_sector_candidates(
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    layer: u16,
+    query_box: &crate::coordinates::MapBBox,
+    x_min: u16,
+    x_max: u16,
+    y_min: u16,
+    y_max: u16,
+    selected: &[u32],
+) {
+    VIEW_RADIUS_SECTOR_DEBUG_CONTEXT.with(|slot| {
+        let Some(context) = slot.get() else {
+            return;
+        };
+        let level = &fast_grid.level;
+        let Some(layer_data) = level.layers.get(usize::from(layer)) else {
+            return;
+        };
+        let surface = context
+            .surface
+            .map_or(-1, |handle| i32::from(u16::from(handle)));
+
+        for &sector_idx in &layer_data.sector_indices {
+            let Some(sector) = level.sectors.get(sector_idx as usize) else {
+                continue;
+            };
+            let is_selected = selected.contains(&sector_idx);
+            if !fast_grid.is_sector_active(sector_idx)
+                || !fast_grid.sector_type(sector_idx).is_shadow()
+                || sector.points.is_empty()
+                || (!is_selected && !sector.bounding_box.intersects_bbox(query_box))
+            {
+                continue;
+            }
+
+            let mut registered_cells = Vec::new();
+            let mut intersecting_cells = Vec::new();
+            for cy in y_min..=y_max {
+                for cx in x_min..=x_max {
+                    let block_idx = fast_grid.block_index_from_cell(cx, cy, layer);
+                    if level.blocks.get(block_idx).is_some_and(|block| {
+                        block.sector_indices.iter().any(|&idx| idx == sector_idx)
+                    }) {
+                        registered_cells.push([cx, cy]);
+                    }
+                    let cell_min = MapPoint::new(f32::from(cx) * 64.0, f32::from(cy) * 64.0);
+                    let cell_box = crate::coordinates::MapBBox::from_coords(
+                        cell_min.x,
+                        cell_min.y,
+                        cell_min.x + 64.0,
+                        cell_min.y + 64.0,
+                    );
+                    if sector.intersects_bbox(&cell_box) {
+                        intersecting_cells.push([cx, cy]);
+                    }
+                }
+            }
+
+            let shadow = level.shadow_data.get(&sector_idx);
+            let bbox = sector.bounding_box.0;
+            let query_bbox = query_box.0;
+            eprintln!(
+                "VRSECTOR {{\"engine\":\"rust\",\"frame\":{},\"viewer_slot\":{},\"surface\":{surface},\"layer\":{layer},\"scan_cells\":[{x_min},{x_max},{y_min},{y_max}],\"query_bbox_bits\":[{},{},{},{}],\"sector_idx\":{sector_idx},\"sector_number\":{},\"selected\":{is_selected},\"barycentre_bits\":[{},{},{}],\"bbox_bits\":[{},{},{},{}],\"registered_cells\":{registered_cells:?},\"intersecting_cells\":{intersecting_cells:?}}}",
+                context.frame,
+                context.viewer.index(),
+                query_bbox.map_or(0, |rect| rect.min().x.to_bits()),
+                query_bbox.map_or(0, |rect| rect.min().y.to_bits()),
+                query_bbox.map_or(0, |rect| rect.max().x.to_bits()),
+                query_bbox.map_or(0, |rect| rect.max().y.to_bits()),
+                sector.sector_number,
+                shadow.map_or(0, |data| data.barycentre_3d_x.to_bits()),
+                shadow.map_or(0, |data| data.barycentre_3d_y.to_bits()),
+                shadow.map_or(0, |data| data.barycentre_3d_z.to_bits()),
+                bbox.map_or(0, |rect| rect.min().x.to_bits()),
+                bbox.map_or(0, |rect| rect.min().y.to_bits()),
+                bbox.map_or(0, |rect| rect.max().x.to_bits()),
+                bbox.map_or(0, |rect| rect.max().y.to_bits()),
+            );
+        }
+    });
 }
 
 /// Computes the effective view radius after:
