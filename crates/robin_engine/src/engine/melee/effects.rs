@@ -1429,7 +1429,7 @@ impl EngineInner {
             static_active: &self.world.static_sight_obstacle_active,
         };
 
-        match kind {
+        let mut victims = match kind {
             WeaponThrustKind::Straight | WeaponThrustKind::Assault => {
                 // Single-target: check principal opponent / original target only
                 // For sequence-driven strikes, the target is already known
@@ -1561,7 +1561,18 @@ impl EngineInner {
                 &self.world.fast_grid,
                 obstacles,
             ),
-        }
+        };
+
+        // Original seeds every multi-target strike by walking
+        // `RHEngine::marrayActors` in `GetActor(i)` order
+        // (`RHelementactorhuman.cpp`: lateral 9614+, with the same actor walk
+        // in the push/circle executors). Entity-kind slots are not that FIFO:
+        // loaded PCs can have an ID order different from their authored
+        // insertion order. Preserve the actor walk before the retained sweep
+        // (or immediate push effects) starts, since each victim's synchronous
+        // damage callbacks can change how later victims are handled.
+        victims.sort_by_key(|&victim_id| self.world.original_creation_order(victim_id));
+        victims
     }
 }
 

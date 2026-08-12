@@ -6751,6 +6751,149 @@ mod tests {
     }
 
     #[test]
+    fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
+        use crate::ai::{AiState, LogLineType, Remark, StimulusType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        // Allocate the survivor first so typed entity iteration disagrees with
+        // Original's actor registry below. This is the Save016 shape: the
+        // later-ID victim must knock out and unlink the attacker first.
+        let survivor = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 20.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        let knockout = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        engine.world.install_original_creation_orders(
+            [(attacker, 0), (knockout, 1), (survivor, 2)]
+                .into_iter()
+                .collect(),
+            3,
+        );
+
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            // Only the first Original-order victim is an opponent. Its KO
+            // therefore synchronously sends EventQuitSwordfight to the
+            // attacker before damage reaches the later survivor.
+            soldier.human.opponents.push(knockout);
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = attacker.index();
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+            ai.hth_weapon_id = 1;
+        }
+        engine
+            .get_entity_mut(knockout)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(attacker);
+        // Keep the later victim conscious while retaining real cutting damage,
+        // so it would emit GoodStrike if processed before the KO callback.
+        engine
+            .get_entity_mut(survivor)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .invulnerable = true;
+
+        let mut assets = assets_with_sword_profile_effects(1, 100, 4, 100);
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::A as usize];
+        thrust.kind = crate::profiles::WeaponThrustKind::Lateral;
+        thrust.direction = crate::profiles::WeaponThrustDirection::LeftToRight;
+        thrust.initial_angle = 0;
+        thrust.final_angle = 180;
+        thrust.rotation_angle = 90;
+
+        let victims =
+            engine.execute_multi_target_strike(&assets, attacker, SwordStrike::A, Some(1));
+        assert_eq!(
+            victims,
+            [knockout, survivor],
+            "DONE membership is unchanged, but follows Original GetActor FIFO rather than typed IDs"
+        );
+
+        for victim in victims {
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence_id, 0);
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence_id, 0),
+            );
+        }
+
+        assert!(
+            engine
+                .get_entity(knockout)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .unconscious,
+            "first victim must exercise the synchronous knockout/quit arm"
+        );
+        assert!(
+            !engine
+                .get_entity(survivor)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .unconscious,
+            "later cutting victim must remain a genuine surviving control"
+        );
+        let ai = engine
+            .get_entity(attacker)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert_eq!(ai.current_substate, Substate::AttackingQuittingSwordfight);
+        assert!(
+            ai.ai_log.iter().any(|entry| {
+                entry.line_type == LogLineType::Event
+                    && entry.info == StimulusType::EventGoodStrike as u16
+            }),
+            "later survivor must deliver a real GoodStrike after the first victim quits"
+        );
+        assert!(
+            !ai.ai_log.iter().any(|entry| {
+                entry.line_type == LogLineType::Speak
+                    && entry.info == Remark::GoodStrikeCombat as u16
+            }),
+            "later GoodStrike is delivered after quit and must not start speech"
+        );
+        assert!(
+            engine.feedback.sound_sim.pending_exclamations.is_empty(),
+            "ignored later GoodStrike must not leave a pending combat exclamation"
+        );
+    }
+
+    #[test]
     fn surviving_sword_knockout_quits_before_good_strike_and_fall_translation() {
         use crate::ai::{AiState, LogLineType, StimulusType, Substate};
 
