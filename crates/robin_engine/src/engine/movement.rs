@@ -7041,6 +7041,20 @@ impl EngineInner {
             executed_sword_movement,
         } = deferred;
 
+        // The PC WalkingWithCorpse override moves the carried actor inside
+        // this Execute arm, immediately after the carrier's PerformMotion.
+        // Later creation slots (including NPC RefreshDetection) therefore see
+        // the body's new position in the same frame.
+        for &(carrier_id, action) in &executed_pc_movement_actions {
+            if action == OrderType::WalkingWithCorpse {
+                crate::abilities::sync_walking_corpse_for_carrier(
+                    &mut self.world.entities,
+                    &assets.profile_manager,
+                    carrier_id,
+                );
+            }
+        }
+
         for entity_id in sword_movement_starts {
             self.apply_sword_movement_start_initiative_transfer(entity_id);
         }

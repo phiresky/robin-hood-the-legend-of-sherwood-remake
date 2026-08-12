@@ -32,6 +32,171 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
+fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
+    use crate::coordinates::{MapPoint, SpriteFrameOffset};
+    use crate::element::{
+        ActionState, Camp, Detectable, DetectableType, Entity, EyeStatus, Posture,
+    };
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{MoveFlags, SequenceElement};
+    use crate::sprite::Sprite;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use std::sync::Arc;
+
+    let mut engine = EngineInner::new();
+    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
+    let body = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+    let observer = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine.world.install_original_creation_orders(
+        std::collections::BTreeMap::from([(carrier, 1), (body, 2), (observer, 3)]),
+        4,
+    );
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let script = SpriteScript {
+        action_id: OrderType::WalkingWithCorpse as u16,
+        action_done: 1,
+        average_speed: 2.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 4,
+        frame_ids: vec![0, 1],
+        delays: vec![1, 1],
+        distances: vec![2, 2],
+        offsets: vec![SpriteFrameOffset::ZERO; 2],
+        sound_ids: vec![0; 2],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::WalkingWithCorpse as usize] = 0;
+    let mut scripts = Vec::new();
+    for _ in 0..16 {
+        scripts.push(script.clone());
+    }
+
+    let Entity::Pc(pc) = engine.get_entity_mut(carrier).unwrap() else {
+        unreachable!()
+    };
+    pc.element.active = true;
+    pc.element.set_position_map(MapPoint::new(100.0, 100.0));
+    pc.element.set_direction_instantly(0);
+    pc.element.sprite = Sprite::new(Arc::new(scripts), Arc::new(conversion));
+    pc.element
+        .sprite
+        .position_iface
+        .set_anti_collision_on(false);
+    pc.element.set_position_map(MapPoint::new(100.0, 100.0));
+    pc.actor.action_state = ActionState::Moving;
+    pc.pc.carried = Some(body);
+
+    let body_entity = engine.get_entity_mut(body).unwrap();
+    body_entity.element_data_mut().active = true;
+    body_entity.element_data_mut().posture = Posture::Carried;
+    body_entity
+        .element_data_mut()
+        .set_position_map(MapPoint::new(90.0, 100.0));
+    body_entity.human_data_mut().unwrap().carrier = Some(carrier);
+
+    let Entity::Soldier(watcher) = engine.get_entity_mut(observer).unwrap() else {
+        unreachable!()
+    };
+    watcher.element.active = true;
+    watcher
+        .element
+        .set_position_map(MapPoint::new(300.0, 100.0));
+    watcher.element.set_direction_instantly(12);
+    watcher.npc.eye_status = EyeStatus::LookForward;
+    watcher.npc.direction_old = 12;
+    watcher.npc.view_direction = [-1.0, 0.0];
+    watcher.npc.view_radius = 400;
+    watcher.npc.view_radius_base = 400;
+    watcher.npc.view_radius_goal = 400;
+    let ai = watcher
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("body observer retains enemy AI");
+    ai.base.current_state = crate::ai::AiState::Seeking;
+    ai.base.current_substate = crate::ai::Substate::SeekingJustWatching;
+    for list in &mut watcher.npc.detectable_lists {
+        list.clear();
+    }
+    watcher.npc.detectable_lists[DetectableType::Body as usize].push(Detectable {
+        element: Some(body),
+        detectable_type: DetectableType::Body,
+        ..Detectable::default()
+    });
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut order = Order::new(OrderType::WalkingWithCorpse, 110.0, 100.0, order_id);
+    order.compute_direction = true;
+    let mut movement = SequenceElement::new_movement(
+        1,
+        Command::Move,
+        Some(carrier),
+        OrderType::WalkingWithCorpse,
+    );
+    if let crate::sequence::SequenceElementData::Movement { flags, .. } = &mut movement.data {
+        *flags = MoveFlags::empty();
+    }
+    movement.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine
+        .get_entity_mut(carrier)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_movement = ActiveMovement::new(sequence, 0);
+
+    // Body cadence is `(universal frame + observer creation order) % 8`.
+    engine.control.frame_counter = 5;
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
+    }
+    let observed_body_position = std::rc::Rc::new(std::cell::Cell::new(MapPoint::ZERO));
+    let observed = observed_body_position.clone();
+    crate::sight_obstacle::begin_parity_visibility_capture();
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &positions,
+        move |engine, owner| {
+            if owner == observer {
+                observed.set(
+                    engine
+                        .get_entity(body)
+                        .unwrap()
+                        .element_data()
+                        .position_map(),
+                );
+            }
+        },
+    );
+    let queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+    let post_move = engine
+        .get_entity(carrier)
+        .unwrap()
+        .element_data()
+        .position_map();
+    assert_ne!(post_move, MapPoint::new(100.0, 100.0));
+    assert_eq!(observed_body_position.get(), post_move);
+    assert!(
+        queries.iter().any(|query| {
+            query.destination[0].to_bits() == post_move.x.to_bits()
+                && query.destination[1].to_bits() == post_move.y.to_bits()
+        }),
+        "later Body visibility must raycast to the carrier's post-motion position; queries={queries:?}"
+    );
+}
+
+#[test]
 fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
     use crate::coordinates::MapPoint;
     use crate::engine::MissionScript;

@@ -3003,6 +3003,59 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
     }
 }
 
+/// Synchronize the corpse carried by one PC from inside that PC's
+/// `WalkingWithCorpse` Execute arm.
+///
+/// Original performs this immediately after `PerformMotion`, before the
+/// carrier returns from its actor slot (`RHelementactorpc.cpp:5000-5032`).
+/// The broad end-of-frame carry pass remains authoritative for the other
+/// carry phases whose exact owner boundary has not been established.
+pub(crate) fn sync_walking_corpse_for_carrier(
+    entities: &mut Entities,
+    profiles: &crate::profiles::ProfileManager,
+    carrier_id: EntityId,
+) {
+    let Some(carrier) = entities.get(carrier_id) else {
+        panic!("WalkingWithCorpse carrier {carrier_id:?} disappeared during Execute")
+    };
+    let Some(pc) = carrier.pc_data() else {
+        panic!("WalkingWithCorpse owner {carrier_id:?} is not a PC")
+    };
+    let Some(target_id) = pc.carried else {
+        panic!("WalkingWithCorpse carrier {carrier_id:?} has no carried actor")
+    };
+    let position = carrier.element_data().position_map();
+    let carrier_direction = carrier.element_data().direction();
+    let little_john_style = profiles
+        .get_character(pc.profile_index)
+        .map(|profile| {
+            profile
+                .contextual_actions
+                .contains(&crate::profiles::Action::LittleJohnCarry)
+        })
+        .unwrap_or(false);
+
+    let target = entities.get_mut(target_id).unwrap_or_else(|| {
+        panic!("WalkingWithCorpse carrier {carrier_id:?} references missing actor {target_id:?}")
+    });
+    let carried_direction = carrier_direction.wrapping_sub(4) & 15;
+    let carried_direction_u16 = u16::try_from(carried_direction)
+        .unwrap_or_else(|_| panic!("carried corpse has negative direction"));
+    let element = target.element_data_mut();
+    element.set_position_map(position);
+    element.set_direction_instantly(carried_direction);
+    element.sprite.display_order_ref = Some(carrier_id);
+    element.sprite.behind_display_order_ref = false;
+    element.sprite.force_animation(
+        if little_john_style {
+            OrderType::BeingCarriedLittleJohn
+        } else {
+            OrderType::BeingCarriedPeasantC
+        },
+        carried_direction_u16,
+    );
+}
+
 /// Synchronize the carried body's final drop frame from the carrier before
 /// `DropCorpse` severs their link.
 ///
