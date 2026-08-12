@@ -33,6 +33,48 @@ fn consider_report_debug_config() -> &'static ConsiderReportDebugConfig {
     })
 }
 
+#[derive(Debug)]
+struct WillStopDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    owner: Option<u32>,
+}
+
+fn will_stop_debug_config() -> &'static WillStopDebugConfig {
+    static CONFIG: std::sync::OnceLock<WillStopDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_WILLSTOP").is_some();
+        if !enabled {
+            return WillStopDebugConfig {
+                enabled: false,
+                frame: None,
+                owner: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for WILLSTOP diagnostic: {error}")
+                })
+            })
+        };
+        WillStopDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_WILLSTOP_FRAME"),
+            owner: parse("PARITY_DEBUG_WILLSTOP_OWNER"),
+        }
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WillStopCaller {
+    MacroCompletion,
+    ReturnToDuty,
+    SimpleWaypoint,
+    ProceedOnPath,
+    SetPathWalkingFlags,
+}
+
 pub(crate) fn consider_report_debug_matches(frame: u32, owner: u32) -> bool {
     let config = consider_report_debug_config();
     config.enabled
@@ -2572,7 +2614,12 @@ impl AiController {
                     let hiking_paths = &ctx.hiking_paths;
                     self.set_ai_state(AiState::Default);
                     self.current_substate = Substate::DefaultEnroute;
-                    let will_stop = self.will_stop_at_next_waypoint(sim, hiking_paths);
+                    let will_stop = self.will_stop_at_next_waypoint_debug(
+                        sim,
+                        hiking_paths,
+                        ctx,
+                        WillStopCaller::MacroCompletion,
+                    );
                     let mut walk_flags = self.default_path_walking_flags;
                     if !will_stop {
                         walk_flags |= GotoFlags::DONT_STOP;
@@ -4028,7 +4075,12 @@ impl AiController {
                 });
                 if let Some(dest) = dest {
                     let mut walk_flags = self.default_path_walking_flags;
-                    if !self.will_stop_at_next_waypoint(sim, hiking_paths) {
+                    if !self.will_stop_at_next_waypoint_debug(
+                        sim,
+                        hiking_paths,
+                        ctx,
+                        WillStopCaller::ReturnToDuty,
+                    ) {
                         walk_flags |= GotoFlags::DONT_STOP;
                     }
                     self.go_to(dest, walk_flags, ctx);
@@ -4094,6 +4146,50 @@ impl AiController {
     /// `&mut self` so it can call [`Self::forecast_macro_rand`] (peek
     /// without consuming).
     pub fn will_stop_at_next_waypoint(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        hiking_paths: &[crate::level_data::RawHikingPath],
+    ) -> bool {
+        self.will_stop_at_next_waypoint_inner(sim, hiking_paths)
+    }
+
+    pub(crate) fn will_stop_at_next_waypoint_debug(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        hiking_paths: &[crate::level_data::RawHikingPath],
+        ctx: &AiContext,
+        caller: WillStopCaller,
+    ) -> bool {
+        let config = will_stop_debug_config();
+        let debug = config.enabled
+            && config.frame.is_none_or(|frame| frame == ctx.frame)
+            && config
+                .owner
+                .is_none_or(|owner| ctx.original_creation_order == Some(owner));
+        let before = debug.then(|| {
+            let path = self.patrol_path.as_ref();
+            let waypoint = path.and_then(|path| path.current_waypoint(hiking_paths));
+            (
+                self.next_macro_rand_forecasted,
+                self.next_macro_rand,
+                path.map(|path| (path.hiking_path_index, path.current_waypoint_index)),
+                waypoint.map(|waypoint| format!("{:?}", waypoint.command)),
+            )
+        });
+        let result = self.will_stop_at_next_waypoint_inner(sim, hiking_paths);
+        if let Some((forecasted_before, value_before, path, waypoint)) = before {
+            eprintln!(
+                "WILLSTOP frame={} owner={:?} caller={caller:?} path={path:?} waypoint={waypoint:?} forecast_before={forecasted_before} value_before={value_before} forecast_after={} value_after={} result={result}",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.next_macro_rand_forecasted,
+                self.next_macro_rand,
+            );
+        }
+        result
+    }
+
+    fn will_stop_at_next_waypoint_inner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         hiking_paths: &[crate::level_data::RawHikingPath],
@@ -4573,7 +4669,12 @@ impl AiController {
                                         }
                                     } else {
                                         let mut walk_flags = self.default_path_walking_flags;
-                                        if !self.will_stop_at_next_waypoint(sim, hiking_paths) {
+                                        if !self.will_stop_at_next_waypoint_debug(
+                                            sim,
+                                            hiking_paths,
+                                            ctx,
+                                            WillStopCaller::SimpleWaypoint,
+                                        ) {
                                             walk_flags |= GotoFlags::DONT_STOP;
                                         }
                                         if is_enroute {
@@ -4931,7 +5032,12 @@ impl AiController {
                 // path-finder). Without this, the engine's movement
                 // layer falls through to the routed direction branch.
                 let mut walk_flags = self.default_path_walking_flags | GotoFlags::STRAIGHT;
-                if !self.will_stop_at_next_waypoint(sim, hiking_paths) {
+                if !self.will_stop_at_next_waypoint_debug(
+                    sim,
+                    hiking_paths,
+                    ctx,
+                    WillStopCaller::ProceedOnPath,
+                ) {
                     walk_flags |= GotoFlags::DONT_STOP;
                 }
                 let dest = Position {

@@ -9336,7 +9336,12 @@ impl EngineInner {
         let Some(ai) = entity.ai_controller_mut() else {
             return;
         };
-        let will_stop = ai.will_stop_at_next_waypoint(sim, &assets.hiking_paths);
+        let will_stop = ai.will_stop_at_next_waypoint_debug(
+            sim,
+            &assets.hiking_paths,
+            &ctx,
+            crate::ai::WillStopCaller::SetPathWalkingFlags,
+        );
         let mut flags = ai.default_path_walking_flags;
         if !will_stop {
             flags |= crate::ai::GotoFlags::DONT_STOP;
