@@ -3809,6 +3809,11 @@ impl EngineInner {
                                 .and_then(Entity::actor_data_mut)
                                 .expect("frozen actor disappeared before mpOrder clear")
                                 .installed_order = None;
+                            self.debug_refresh_view_lifecycle(
+                                "derived_tail_frozen_without_order",
+                                entity_id,
+                                Some(crate::order::OrderType::NonanimationEnd),
+                            );
                             after_slot(self, entity_id, crate::order::OrderType::NonanimationEnd);
                             let leaked_slot_work = self
                                 .orders
@@ -4458,6 +4463,11 @@ impl EngineInner {
                             .and_then(|actor| actor.installed_order)
                             .map(|order| order.order_type)
                             .unwrap_or(crate::order::OrderType::NonanimationEnd);
+                        self.debug_refresh_view_lifecycle(
+                            "derived_tail_normal",
+                            entity_id,
+                            Some(installed_tail_order_type),
+                        );
                         after_slot(self, entity_id, installed_tail_order_type);
 
                         if let Some(actor) = self

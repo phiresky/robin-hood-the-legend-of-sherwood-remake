@@ -29,6 +29,51 @@ use crate::engine::SimScratch;
 use crate::entities::{Entities, EntitySlots};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug)]
+struct RefreshViewLifecycleDebugConfig {
+    enabled: bool,
+    from_frame: u32,
+    through_frame: u32,
+    creation_order: Option<u32>,
+}
+
+fn refresh_view_lifecycle_debug_config() -> &'static RefreshViewLifecycleDebugConfig {
+    static CONFIG: std::sync::OnceLock<RefreshViewLifecycleDebugConfig> =
+        std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE").is_some();
+        if !enabled {
+            return RefreshViewLifecycleDebugConfig {
+                enabled: false,
+                from_frame: 0,
+                through_frame: u32::MAX,
+                creation_order: None,
+            };
+        }
+        let parse = |name: &str, default: u32| {
+            std::env::var(name).map_or(default, |value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for RVLIFE diagnostic: {error}")
+                })
+            })
+        };
+        RefreshViewLifecycleDebugConfig {
+            enabled: true,
+            from_frame: parse("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_FROM", 0),
+            through_frame: parse("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_THROUGH", u32::MAX),
+            creation_order: std::env::var("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_CREATION_ORDER")
+                .ok()
+                .map(|value| {
+                    value.parse::<u32>().unwrap_or_else(|error| {
+                        panic!(
+                            "invalid PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_CREATION_ORDER={value:?}: {error}"
+                        )
+                    })
+                }),
+        }
+    })
+}
+
 #[cfg(test)]
 thread_local! {
     static GALOPP_DISPATCH_OBSERVER: std::cell::RefCell<
@@ -2144,6 +2189,75 @@ fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
 }
 
 impl EngineInner {
+    pub(super) fn debug_refresh_view_lifecycle(
+        &self,
+        stage: &str,
+        npc_id: EntityId,
+        derived_tail_order_type: Option<crate::order::OrderType>,
+    ) {
+        let config = refresh_view_lifecycle_debug_config();
+        if !config.enabled
+            || self.control.frame_counter < config.from_frame
+            || self.control.frame_counter > config.through_frame
+        {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(npc_id);
+        if config
+            .creation_order
+            .is_some_and(|expected| creation_order != expected)
+        {
+            return;
+        }
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+            panic!(
+                "RVLIFE owner {} disappeared at stage {stage}",
+                npc_id.index()
+            )
+        });
+        let Some(npc) = entity.npc_data() else {
+            return;
+        };
+        let actor = entity.actor_data().unwrap_or_else(|| {
+            panic!(
+                "RVLIFE owner {} is not an actor at stage {stage}",
+                npc_id.index()
+            )
+        });
+        let human = entity.human_data().unwrap_or_else(|| {
+            panic!(
+                "RVLIFE owner {} is not human at stage {stage}",
+                npc_id.index()
+            )
+        });
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let installed_order = actor
+            .installed_order
+            .map(|order| order.order_type as u32)
+            .map_or(-1_i64, i64::from);
+        let derived_tail_order = derived_tail_order_type
+            .map(|order| order as u32)
+            .map_or(-1_i64, i64::from);
+        eprintln!(
+            "RVLIFE {{\"engine\":\"rust\",\"seq\":{sequence},\"stage\":{stage:?},\"frame\":{},\"owner_slot\":{},\"creation_order\":{creation_order},\"eye_status\":{},\"alpha_start\":{},\"radius_goal\":{},\"radius_step\":{},\"radius\":{},\"active\":{},\"unconscious\":{},\"tied\":{},\"dead\":{},\"frozen_all\":{},\"installed_order\":{installed_order},\"derived_tail_order\":{derived_tail_order},\"motion_state\":{},\"execution_frozen\":{}}}",
+            self.control.frame_counter,
+            npc_id.index(),
+            npc.eye_status as u8,
+            npc.view_alpha_start,
+            npc.view_radius_goal,
+            npc.view_radius_step,
+            npc.view_radius,
+            entity.element_data().active,
+            human.unconscious,
+            entity.element_data().posture == crate::element::Posture::Tied,
+            entity.is_dead(),
+            self.actors_frozen(),
+            actor.continuation.motion_state as u8,
+            actor.execution_frozen,
+        );
+    }
+
     /// Refresh the Original actor's selected `mpWaitSequenceElement` identity
     /// on a context immediately before an AI call that may project deferred
     /// Halt effects. The legacy ownership decoder proves that only Wait and
@@ -5803,14 +5917,18 @@ impl EngineInner {
         // shared borrow dropped ──
 
         // ── Phase 2: mutable — apply RefreshView ──
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            return;
-        };
-        if let Some(npc) = entity.npc_data_mut() {
-            let span = tracing::trace_span!("refresh_npc_view", npc = npc_id.index());
-            let _guard = span.enter();
-            ai_vision::refresh_view(npc, &ctx);
+        self.debug_refresh_view_lifecycle("refresh_view_before", npc_id, None);
+        {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+                return;
+            };
+            if let Some(npc) = entity.npc_data_mut() {
+                let span = tracing::trace_span!("refresh_npc_view", npc = npc_id.index());
+                let _guard = span.enter();
+                ai_vision::refresh_view(npc, &ctx);
+            }
         }
+        self.debug_refresh_view_lifecycle("refresh_view_after", npc_id, None);
     }
 
     // ─── Owner-local NPC speech ─────────────────────────────────
@@ -6678,6 +6796,7 @@ impl EngineInner {
         _prepared: PreparedNpcOwnerPass,
         npc_id: EntityId,
     ) {
+        self.debug_refresh_view_lifecycle("npc_tail_enter", npc_id, None);
         let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
                 "NPC owner {} disappeared before its fused legacy-slot envelope",
@@ -6692,6 +6811,7 @@ impl EngineInner {
         // FrozenAll is volatile script state. Sample it at the consuming NPC
         // slot rather than caching it before earlier owners run callbacks.
         if self.actors_frozen() {
+            self.debug_refresh_view_lifecycle("npc_tail_frozen_skip", npc_id, None);
             self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
             return;
         }
