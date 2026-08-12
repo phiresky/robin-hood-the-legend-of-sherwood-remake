@@ -203,8 +203,16 @@ impl EngineInner {
             );
         }
 
-        let victims =
+        let mut victims =
             self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
+        // RHElementActorHuman::Execute warns the list produced by
+        // GetPossibleVictimsOfSwordStrike. Every multi-victim collector fills
+        // that list by walking RHEngine::GetActor(0..GetNumberOfActors), whose
+        // marrayActors registry is append-only AddElement order. Rust entity
+        // slots are grouped by kind and do not preserve that ordering after a
+        // legacy save is adopted, so restore the authoritative actor order
+        // before these synchronous callbacks consume RNG.
+        victims.sort_by_key(|&victim_id| self.world.original_creation_order(victim_id));
         self.warn_for_strike(sim, assets, attacker_id, &victims, strike);
     }
 

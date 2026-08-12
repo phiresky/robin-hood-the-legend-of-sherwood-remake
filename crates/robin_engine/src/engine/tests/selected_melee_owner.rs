@@ -44,9 +44,16 @@ fn positions(
 }
 
 fn bind_animation(engine: &mut EngineInner, actor: EntityId, action: OrderType) {
+    bind_animations(engine, actor, &[action]);
+}
+
+fn bind_animations(engine: &mut EngineInner, actor: EntityId, actions: &[OrderType]) {
+    let action = *actions.first().expect("test animation set is not empty");
     let mut conversion =
         vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
-    conversion[action as usize] = 0;
+    for &mapped_action in actions {
+        conversion[mapped_action as usize] = 0;
+    }
     let script = crate::sprite_script::SpriteScript {
         action_id: action as u16,
         action_done: 1,
@@ -358,6 +365,135 @@ fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
     assert!(
         in_progress_warnings.is_empty(),
         "WarnForStrike must not repeat after MotionState::Start: {in_progress_warnings:?}"
+    );
+}
+
+#[test]
+fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let lower_slot_later = engine.add_entity(make_test_pc(Posture::Upright));
+    let higher_slot_earlier = engine.add_entity(make_test_pc(Posture::Upright));
+    let earlier_principal = engine.add_entity(make_test_pc(Posture::Upright));
+    let later_principal = engine.add_entity(make_test_pc(Posture::Upright));
+
+    bind_animation(&mut engine, attacker, OrderType::StrikingLeftSword);
+    for victim in [lower_slot_later, higher_slot_earlier] {
+        bind_animations(
+            &mut engine,
+            victim,
+            &[
+                OrderType::StrikingStraightSword,
+                OrderType::StrikingStraightStrongSword,
+                OrderType::ExecutingSword,
+                OrderType::StrikingLeftSword,
+                OrderType::StrikingRightSword,
+                OrderType::StrikingSemiroundLeftSword,
+                OrderType::StrikingSemiroundRightSword,
+                OrderType::StrikingRoundLeftSword,
+                OrderType::StrikingRoundRightSword,
+                OrderType::TransitionWaitingSwordParryingSword,
+            ],
+        );
+    }
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    set_map_position(&mut engine, lower_slot_later, 0.0, 0.0);
+    set_map_position(&mut engine, higher_slot_earlier, 0.0, 0.0);
+    for victim in [lower_slot_later, higher_slot_earlier] {
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .active = true;
+    }
+    engine
+        .get_entity_mut(higher_slot_earlier)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(earlier_principal);
+    engine
+        .get_entity_mut(lower_slot_later)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(later_principal);
+    for principal in [earlier_principal, later_principal] {
+        set_map_position(&mut engine, principal, 500.0, 500.0);
+        engine
+            .get_entity_mut(principal)
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+    }
+
+    // Rust allocated lower_slot_later first, but Original AddElement appended
+    // higher_slot_earlier first. Inactive principals remain valid duel links
+    // for the reactive proposal while staying out of the lateral warning arc.
+    engine.world.install_original_creation_orders(
+        std::collections::BTreeMap::from([
+            (attacker, 100),
+            (higher_slot_earlier, 101),
+            (earlier_principal, 102),
+            (later_principal, 103),
+            (lower_slot_later, 104),
+        ]),
+        105,
+    );
+
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::SwordstrikeThrustD,
+            Some(attacker),
+        ));
+    let order_id = engine.orders.allocate_order_id();
+    let mut order = Order::new(OrderType::StrikingLeftSword, 0.0, 0.0, order_id);
+    order.antagonist = Some(higher_slot_earlier);
+    engine
+        .orders
+        .sequence_manager
+        .push_order_on(sequence, 0, order);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+
+    let mut assets = straight_warning_assets(0, 100);
+    let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+        [SwordStrike::D as usize];
+    thrust.kind = crate::profiles::WeaponThrustKind::Lateral;
+    thrust.direction = crate::profiles::WeaponThrustDirection::LeftToRight;
+    thrust.initial_angle = 45;
+    thrust.final_angle = 90;
+
+    let (((), rng_trace), warnings) = super::super::melee::capture_strike_warnings(|| {
+        crate::sim_rng::with_draw_trace(|| run_owner_walk(&mut engine, &assets))
+    });
+    assert_eq!(
+        warnings,
+        vec![
+            (attacker, higher_slot_earlier),
+            (attacker, lower_slot_later),
+        ],
+        "WarnForStrike callbacks must follow marrayActors/AddElement order, not PC slot order"
+    );
+    assert_eq!(
+        rng_trace
+            .iter()
+            .filter(|&&site| site == crate::sim_rng::RngSite::SwordStrikeSelection)
+            .count(),
+        2,
+        "both ordered PC callbacks must reach the RNG-sensitive reactive proposal: {rng_trace:?}"
     );
 }
 
