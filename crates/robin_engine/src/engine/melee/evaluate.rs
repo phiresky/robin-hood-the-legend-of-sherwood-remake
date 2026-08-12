@@ -752,10 +752,8 @@ impl EngineInner {
         // immediately when the fighters are on incompatible elevations.  In
         // particular, it never reaches the later visibility query.
         if elevation_prune {
-            Self::remove_opponent(&mut self.world.entities, entity_id, first_principal);
-            Self::remove_opponent(&mut self.world.entities, first_principal, entity_id);
-            self.recompute_relative_fighting_ability(entity_id, assets);
-            self.recompute_relative_fighting_ability(first_principal, assets);
+            self.delete_opponent(sim, assets, entity_id, first_principal);
+            self.delete_opponent(sim, assets, first_principal, entity_id);
             self.evaluate_opponents(sim, assets, entity_id);
             self.evaluate_opponents(sim, assets, first_principal);
             return;
@@ -793,10 +791,8 @@ impl EngineInner {
             );
         }
         if range_or_los_prune {
-            Self::remove_opponent(&mut self.world.entities, entity_id, first_principal);
-            Self::remove_opponent(&mut self.world.entities, first_principal, entity_id);
-            self.recompute_relative_fighting_ability(entity_id, assets);
-            self.recompute_relative_fighting_ability(first_principal, assets);
+            self.delete_opponent(sim, assets, entity_id, first_principal);
+            self.delete_opponent(sim, assets, first_principal, entity_id);
             self.evaluate_opponents(sim, assets, entity_id);
             self.evaluate_opponents(sim, assets, first_principal);
             return;

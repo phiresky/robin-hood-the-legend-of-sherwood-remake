@@ -921,6 +921,104 @@ fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
 }
 
 #[test]
+fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponent() {
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{ActorPc, ElementData, ElementKind, Entity, Posture};
+    use crate::element_kinds::ActionState;
+
+    let mut engine = EngineInner::new();
+    let assets = swordfight_test_assets();
+    let make_fighter = |position, sector| {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position(position);
+        element.set_sector(crate::position_interface::SectorHandle::new(sector));
+        Entity::Pc(ActorPc {
+            element,
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        })
+    };
+    let departing = engine.add_entity(make_fighter(
+        WorldPoint3D {
+            x: 100.0,
+            y: 100.0,
+            z: 50.0,
+        },
+        1,
+    ));
+    let survivor = engine.add_entity(make_fighter(
+        WorldPoint3D {
+            x: 110.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        2,
+    ));
+    let principal = engine.add_entity(make_fighter(
+        WorldPoint3D {
+            x: 120.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        2,
+    ));
+
+    for fighter in [departing, survivor, principal] {
+        engine
+            .get_entity_mut(fighter)
+            .expect("fighter exists")
+            .actor_data_mut()
+            .expect("fighter is an actor")
+            .action_state = ActionState::WaitingSword;
+    }
+    {
+        let human = engine
+            .get_entity_mut(departing)
+            .and_then(Entity::human_data_mut)
+            .expect("departing fighter is human");
+        human.opponents.push(survivor);
+    }
+    {
+        let human = engine
+            .get_entity_mut(survivor)
+            .and_then(Entity::human_data_mut)
+            .expect("survivor is human");
+        human.opponents.extend([principal, departing]);
+        human.smalltalk_initiative = false;
+        human.received_smalltalk_initiative = false;
+    }
+    {
+        let human = engine
+            .get_entity_mut(principal)
+            .and_then(Entity::human_data_mut)
+            .expect("principal is human");
+        human.opponents.push(survivor);
+        human.smalltalk_initiative = true;
+        human.received_smalltalk_initiative = false;
+    }
+
+    engine.tick_waiting_sword_execute_for(&crate::sim_rng::test_context(), &assets, departing);
+
+    let survivor_human = engine
+        .get_entity(survivor)
+        .and_then(Entity::human_data)
+        .expect("survivor remains human");
+    assert_eq!(survivor_human.opponents, vec![principal]);
+    assert!(survivor_human.smalltalk_initiative);
+    assert!(survivor_human.received_smalltalk_initiative);
+    let principal_human = engine
+        .get_entity(principal)
+        .and_then(Entity::human_data)
+        .expect("principal remains human");
+    assert!(!principal_human.smalltalk_initiative);
+}
+
+#[test]
 fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     use crate::coordinates::WorldPoint3D;
     use crate::element::{ActorSoldier, Command, ElementData, ElementKind, Entity, Posture};
