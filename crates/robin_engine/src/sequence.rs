@@ -2214,13 +2214,17 @@ impl Sequence {
         depth: usize,
         cross_targets: &mut Vec<(SequenceId, usize)>,
     ) -> Vec<StateChangeEffects> {
-        let parity_debug_stage_timing =
-            std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() && depth <= 64;
-        if parity_debug_stage_timing {
+        {
             let elem = &self.elements[elem_idx];
-            eprintln!(
-                "parity stop: stop_element enter depth={depth} idx={elem_idx} command={:?} state={:?} priority={:?} postponed={:?}",
-                elem.command, elem.state, elem.priority, elem.postponed_element_index
+            tracing::trace!(
+                target: "parity_stop",
+                depth,
+                elem_idx,
+                command = ?elem.command,
+                state = ?elem.state,
+                priority = ?elem.priority,
+                postponed = ?elem.postponed_element_index,
+                "stop_element enter"
             );
         }
         let mut all_effects: Vec<StateChangeEffects> = Vec::new();
@@ -2238,17 +2242,20 @@ impl Sequence {
         // priority resolver and promote `None` to `Normal` so the stop
         // actually succeeds on commands like WAIT / FREEZE.
         if self.elements[elem_idx].priority == SequencePriority::NotYetSet {
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: stop_element before priority resolver depth={depth} idx={elem_idx}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                depth,
+                elem_idx,
+                "stop_element before priority resolver"
+            );
             let mut resolved = resolver(&self.elements[elem_idx]);
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: stop_element after priority resolver depth={depth} idx={elem_idx} resolved={resolved:?}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                depth,
+                elem_idx,
+                ?resolved,
+                "stop_element after priority resolver"
+            );
             if resolved == SequencePriority::None {
                 resolved = SequencePriority::Normal;
             }
@@ -2263,47 +2270,55 @@ impl Sequence {
                 // Movements in progress are kept (for transition) but their
                 // successor is interrupted
                 if let Some(next_idx) = self.following_element_index(elem_idx) {
-                    if parity_debug_stage_timing {
-                        eprintln!(
-                            "parity stop: stop_element before interrupt movement successor depth={depth} from={elem_idx} to={next_idx}"
-                        );
-                    }
+                    tracing::trace!(
+                        target: "parity_stop",
+                        depth,
+                        from = elem_idx,
+                        to = next_idx,
+                        "stop_element before interrupt movement successor"
+                    );
                     all_effects.push(self.set_element_state(
                         next_idx,
                         SequenceState::Interrupted,
                         CascadeFlags::NEXT_LEVEL,
                     ));
-                    if parity_debug_stage_timing {
-                        eprintln!(
-                            "parity stop: stop_element after interrupt movement successor depth={depth} from={elem_idx} to={next_idx}"
-                        );
-                    }
-                }
-            } else {
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity stop: stop_element before interrupt self depth={depth} idx={elem_idx}"
+                    tracing::trace!(
+                        target: "parity_stop",
+                        depth,
+                        from = elem_idx,
+                        to = next_idx,
+                        "stop_element after interrupt movement successor"
                     );
                 }
+            } else {
+                tracing::trace!(
+                    target: "parity_stop",
+                    depth,
+                    elem_idx,
+                    "stop_element before interrupt self"
+                );
                 all_effects.push(self.set_element_state(
                     elem_idx,
                     SequenceState::Interrupted,
                     CascadeFlags::NEXT_LEVEL,
                 ));
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity stop: stop_element after interrupt self depth={depth} idx={elem_idx}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_stop",
+                    depth,
+                    elem_idx,
+                    "stop_element after interrupt self"
+                );
             }
         } else {
             // Can't stop this element, but try the next one.
             if let Some(next_idx) = self.following_element_index(elem_idx) {
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity stop: stop_element before next depth={depth} from={elem_idx} to={next_idx}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_stop",
+                    depth,
+                    from = elem_idx,
+                    to = next_idx,
+                    "stop_element before next"
+                );
                 let sub = self.stop_element_with_debug_depth(
                     next_idx,
                     stop_priority,
@@ -2312,11 +2327,13 @@ impl Sequence {
                     cross_targets,
                 );
                 all_effects.extend(sub);
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity stop: stop_element after next depth={depth} from={elem_idx} to={next_idx}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_stop",
+                    depth,
+                    from = elem_idx,
+                    to = next_idx,
+                    "stop_element after next"
+                );
                 if self.elements[next_idx].state == SequenceState::Interrupted {
                     if let Some(legacy) = self.elements[elem_idx].legacy_v48.as_mut() {
                         legacy.next = None;
@@ -2335,11 +2352,13 @@ impl Sequence {
         // if/else above. Without this, a postponed sibling attached to
         // an Interrupted parent stays alive indefinitely.
         if let Some(postponed_idx) = self.elements[elem_idx].postponed_element_index {
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: stop_element before postponed depth={depth} from={elem_idx} to={postponed_idx}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                depth,
+                from = elem_idx,
+                to = postponed_idx,
+                "stop_element before postponed"
+            );
             let sub = self.stop_element_with_debug_depth(
                 postponed_idx,
                 stop_priority,
@@ -2348,11 +2367,13 @@ impl Sequence {
                 cross_targets,
             );
             all_effects.extend(sub);
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: stop_element after postponed depth={depth} from={elem_idx} to={postponed_idx}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                depth,
+                from = elem_idx,
+                to = postponed_idx,
+                "stop_element after postponed"
+            );
             // Null the postponed link when the recursive stop left it
             // INTERRUPTED so a subsequent `start_postponed` cascade
             // doesn't try to wake an already-interrupted element.
@@ -2361,9 +2382,7 @@ impl Sequence {
             }
         }
 
-        if parity_debug_stage_timing {
-            eprintln!("parity stop: stop_element exit depth={depth} idx={elem_idx}");
-        }
+        tracing::trace!(target: "parity_stop", depth, elem_idx, "stop_element exit");
         all_effects
     }
 }
@@ -4524,7 +4543,6 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
-        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         // Original `RHElementActor::Stop` starts from exactly
         // `mpSequenceElement`. Scanning every InProgress/Postponed element is
         // observably different after loading: stale non-selected branches can
@@ -4536,16 +4554,21 @@ impl SequenceManager {
                 !(elem.command == Command::Wait && elem.priority == SequencePriority::Wait)
             })
         {
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: manager stop_owner current owner={owner:?} priority={stop_priority:?} current={current:?}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                ?owner,
+                ?stop_priority,
+                ?current,
+                "manager stop_owner current"
+            );
             targets.push_back(current);
         }
-        if parity_debug_stage_timing && targets.is_empty() {
-            eprintln!(
-                "parity stop: manager stop_owner no current target owner={owner:?} priority={stop_priority:?}"
+        if targets.is_empty() {
+            tracing::trace!(
+                target: "parity_stop",
+                ?owner,
+                ?stop_priority,
+                "manager stop_owner no current target"
             );
         }
         let mut stopped = Vec::new();
@@ -4565,11 +4588,13 @@ impl SequenceManager {
                 Some(owner),
                 "Stop postponed graph crosses owners at {seq_id:?}/{elem_idx}"
             );
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: manager before stop_element owner={owner:?} seq={seq_id:?} idx={elem_idx}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                ?owner,
+                ?seq_id,
+                elem_idx,
+                "manager before stop_element"
+            );
             let (effects_vec, cross_targets) = self
                 .sequences
                 .get_mut(&seq_id)
@@ -4580,24 +4605,32 @@ impl SequenceManager {
                     targets.push_back(cross);
                 }
             }
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: manager after stop_element owner={owner:?} seq={seq_id:?} idx={elem_idx} effects={} ",
-                    effects_vec.len()
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                ?owner,
+                ?seq_id,
+                elem_idx,
+                effects = effects_vec.len(),
+                "manager after stop_element"
+            );
             for (effect_index, effects) in effects_vec.into_iter().enumerate() {
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity stop: manager before process_effects owner={owner:?} seq={seq_id:?} idx={elem_idx} effect={effect_index}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_stop",
+                    ?owner,
+                    ?seq_id,
+                    elem_idx,
+                    effect_index,
+                    "manager before process_effects"
+                );
                 self.process_effects(seq_id, effects);
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity stop: manager after process_effects owner={owner:?} seq={seq_id:?} idx={elem_idx} effect={effect_index}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_stop",
+                    ?owner,
+                    ?seq_id,
+                    elem_idx,
+                    effect_index,
+                    "manager after process_effects"
+                );
             }
             if self
                 .get_element(seq_id, elem_idx)
@@ -4612,11 +4645,12 @@ impl SequenceManager {
         // Remove the now-dead links just as the original Stop method nulls its
         // postponed pointer after recursively interrupting it.
         if !stopped.is_empty() {
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity stop: manager before clear stopped links owner={owner:?} stopped={stopped:?}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_stop",
+                ?owner,
+                ?stopped,
+                "manager before clear stopped links"
+            );
             for (seq_id, seq) in &mut self.sequences {
                 for elem in &mut seq.elements {
                     if let Some(postponed_idx) = elem.postponed_element_index
@@ -4631,9 +4665,7 @@ impl SequenceManager {
                     }
                 }
             }
-            if parity_debug_stage_timing {
-                eprintln!("parity stop: manager after clear stopped links owner={owner:?}");
-            }
+            tracing::trace!(target: "parity_stop", ?owner, "manager after clear stopped links");
         }
     }
 

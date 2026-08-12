@@ -650,12 +650,13 @@ impl EngineInner {
         pc_id: EntityId,
         action: Action,
     ) {
-        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity action: set_pc_action enter pc={pc_id:?} action={action:?} seat={seat}"
-            );
-        }
+        tracing::trace!(
+            target: "parity_action",
+            ?pc_id,
+            ?action,
+            seat,
+            "set_pc_action enter"
+        );
         if !self.players.seats[seat].selection.contains(&pc_id) {
             // "Not-selected" branch — only set the current action on the
             // single PC, no cleanup of the outgoing action. Don't call
@@ -697,17 +698,21 @@ impl EngineInner {
                 .map(|pc| pc.current_action)
                 .unwrap_or(Action::NoAction);
             if old_action != action && !record_qa {
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity action: before unselect_action pc={id:?} old={old_action:?} new={action:?}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_action",
+                    ?id,
+                    ?old_action,
+                    ?action,
+                    "before unselect_action"
+                );
                 self.unselect_action(id);
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity action: after unselect_action pc={id:?} old={old_action:?} new={action:?}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_action",
+                    ?id,
+                    ?old_action,
+                    ?action,
+                    "after unselect_action"
+                );
             }
             if let Some(entity) = self.get_entity_mut(id)
                 && let Some(pc) = entity.pc_data_mut()
@@ -747,17 +752,19 @@ impl EngineInner {
                 }
                 // `Normal` priority interrupts weaker-priority activity
                 // but leaves Preference / Script / Injury / etc. running.
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity action: before group stop_owner pc={id:?} priority=Normal action={action:?}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_action",
+                    ?id,
+                    ?action,
+                    "before group stop_owner (priority=Normal)"
+                );
                 self.stop_owner(id, SequencePriority::Normal);
-                if parity_debug_stage_timing {
-                    eprintln!(
-                        "parity action: after group stop_owner pc={id:?} priority=Normal action={action:?}"
-                    );
-                }
+                tracing::trace!(
+                    target: "parity_action",
+                    ?id,
+                    ?action,
+                    "after group stop_owner (priority=Normal)"
+                );
             }
         }
 
@@ -800,9 +807,12 @@ impl EngineInner {
             // of this raw double-click latch, but live simulation-originated
             // SelectAction messages should preserve it exactly.
         }
-        if parity_debug_stage_timing {
-            eprintln!("parity action: set_pc_action exit pc={pc_id:?} action={action:?}");
-        }
+        tracing::trace!(
+            target: "parity_action",
+            ?pc_id,
+            ?action,
+            "set_pc_action exit"
+        );
     }
 
     /// Compute the [`Stature`] state for the up/down arrow widgets.
@@ -955,31 +965,31 @@ impl EngineInner {
                     // (Normal / Wait / None), then launches `UnequipBow`.
                     // Stronger priorities (Script, Injury, KO,
                     // NonInterruptable) are protected.
-                    let parity_debug_stage_timing =
-                        std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
-                    if parity_debug_stage_timing {
-                        eprintln!(
-                            "parity action: before bow cleanup stop_owner pc={pc_id:?} priority=Preference"
-                        );
-                    }
+                    tracing::trace!(
+                        target: "parity_action",
+                        ?pc_id,
+                        "before bow cleanup stop_owner (priority=Preference)"
+                    );
                     self.stop_owner(pc_id, crate::sequence::SequencePriority::Preference);
-                    if parity_debug_stage_timing {
-                        eprintln!(
-                            "parity action: after bow cleanup stop_owner pc={pc_id:?} priority=Preference"
-                        );
-                        eprintln!(
-                            "parity action: before bow cleanup launch UnequipBow pc={pc_id:?}"
-                        );
-                    }
+                    tracing::trace!(
+                        target: "parity_action",
+                        ?pc_id,
+                        "after bow cleanup stop_owner (priority=Preference)"
+                    );
+                    tracing::trace!(
+                        target: "parity_action",
+                        ?pc_id,
+                        "before bow cleanup launch UnequipBow"
+                    );
                     let elem = SequenceElement::new(1, Command::UnequipBow, Some(pc_id));
                     let mut sequence = crate::sequence::Sequence::new();
                     sequence.append_element(elem);
                     self.launch_sequence(sequence);
-                    if parity_debug_stage_timing {
-                        eprintln!(
-                            "parity action: after bow cleanup launch UnequipBow pc={pc_id:?}"
-                        );
-                    }
+                    tracing::trace!(
+                        target: "parity_action",
+                        ?pc_id,
+                        "after bow cleanup launch UnequipBow"
+                    );
                     tracing::debug!(?pc_id, "UnSelectAction: unequipping bow");
                 }
                 Action::HelpToClimb
