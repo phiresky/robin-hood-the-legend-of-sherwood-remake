@@ -388,9 +388,18 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
         .collect();
     movements.sort_by_key(|(sequence_id, _)| sequence_id.0);
     assert_eq!(movements.len(), 2);
-    assert!(
-        movements[0].0.0 >= 3,
-        "A's ale GoTo must consume sequence IDs before B replaces it with the live patrol route"
+    assert_eq!(
+        [movements[0].0.0, movements[1].0.0],
+        [1, 2],
+        "A and B must register exactly once and in causal order on the fresh manager"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(soldier),
+        None,
+        "owner-work drain registers both moves before the later manager selection phase"
     );
     assert_eq!(movements[0].1.x, 100.0);
     assert_eq!(movements[0].1.y, 20.0);
