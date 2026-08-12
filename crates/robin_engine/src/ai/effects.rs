@@ -164,6 +164,14 @@ pub enum AiOwnerWork {
         flags: DutyFlags,
         owner_boundary_positions: Vec<(u32, Position)>,
     },
+    /// Finish `CMD_CHANGE_WAY` around the exact self callback emitted by
+    /// `AssignNewPatrolPath`: optional callback A, explicit second
+    /// `BreakMacro`, then virtual `ReturnToDuty` B.
+    ChangeWayAssignmentThinkThenExplicitTail {
+        assignment_callback: Option<StimulusType>,
+        owner_position_before_callback: Position,
+        owner_boundary_positions: Vec<(u32, Position)>,
+    },
     /// Continue Enemy `ReturnToDuty` after its synchronous
     /// `InitializePatrol` engine callback has completed.
     ResumeReturnToDutyAfterPatrolInit {

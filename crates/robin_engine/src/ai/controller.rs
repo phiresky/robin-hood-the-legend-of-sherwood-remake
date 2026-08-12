@@ -2241,6 +2241,7 @@ impl AiController {
                             Some(pid) => PatrolAssignment::Index(pid),
                             None => PatrolAssignment::ClearPath,
                         };
+                        let self_stimuli_before = self.outbox.reentrant.self_stimuli.len();
                         self.assign_new_patrol_path(
                             assignment,
                             ctx.position,
@@ -2250,10 +2251,36 @@ impl AiController {
                         // CMD_CHANGE_WAY does not stop after
                         // AssignNewPatrolPath. The original helper synchronously calls
                         // Think(EVENT_RETURN_TO_DUTY), then the opcode itself
-                        // redundantly breaks the macro and calls ReturnToDuty
-                        // again. Both calls launch an observable GoTo sequence.
-                        self.break_macro();
-                        self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                        // redundantly breaks the macro and calls the virtual
+                        // ReturnToDuty again. AssignNewPatrolPath's BreakMacro
+                        // has already performed the same state mutation, but
+                        // its nested Think must finish before this second
+                        // virtual call launches its observable GoTo.
+                        let owner_boundary_positions = ctx
+                            .entity_views
+                            .iter()
+                            .map(|(&handle, view)| (handle, view.position))
+                            .collect();
+                        let assignment_callback =
+                            if self.outbox.reentrant.self_stimuli.len() > self_stimuli_before {
+                                let callback = self
+                                    .outbox
+                                    .reentrant
+                                    .self_stimuli
+                                    .pop()
+                                    .expect("ChangeWay assignment callback disappeared");
+                                assert_eq!(callback, StimulusType::EventReturnToDuty);
+                                Some(callback)
+                            } else {
+                                None
+                            };
+                        self.outbox.reentrant.owner_work.push(
+                            AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
+                                assignment_callback,
+                                owner_position_before_callback: ctx.position,
+                                owner_boundary_positions,
+                            },
+                        );
                         return;
                     }
 

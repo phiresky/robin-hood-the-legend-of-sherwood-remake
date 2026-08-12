@@ -4161,6 +4161,13 @@ impl EnemyAi {
         let incoming_state = self.base.current_state;
         let incoming_substate = self.base.current_substate;
 
+        // `ReturnToDutyCommonStuff` reaches this pair through virtual Enemy
+        // `SetState`, whose first side effect is `mbTimerIsRunning = false`
+        // (`RHartificialmalignity.cpp:9145-9159`). The shared base setter does
+        // not own that subclass field, so restore it at the same resumed
+        // virtual boundary before any caller tail observes the new state.
+        self.base.timer_is_running = false;
+
         // ReturnToDutyCommonStuff calls the virtual Enemy SetState in Original.
         // When an archer leaves the bow substates, that override clears
         // mpShieldBearerBeforeMe and the shield bearer's reciprocal

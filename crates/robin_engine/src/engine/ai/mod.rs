@@ -13505,16 +13505,18 @@ impl EngineInner {
         self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
     }
 
-    /// Invoke the Enemy `ReturnToDuty` override requested by shared AI code.
-    /// The override queues its existing patrol-initialization continuation on
-    /// the same owner FIFO, so the caller observes the complete virtual call
-    /// before later owner work runs.
+    /// Invoke the concrete Enemy/Friendly `ReturnToDuty` override requested
+    /// by shared AI code. Enemy queues its patrol-initialization continuation
+    /// on the same owner FIFO; Friendly applies its busy gate before entering
+    /// the common tail. In both cases the caller observes the complete virtual
+    /// call before later owner work runs.
     pub(super) fn virtual_return_to_duty_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
         flags: crate::ai::DutyFlags,
+        owner_position_override: Option<crate::ai::Position>,
         owner_boundary_positions: &[(u32, crate::ai::Position)],
     ) {
         // Work already behind this virtual call belongs to the caller after
@@ -13562,21 +13564,43 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
+            if let Some(owner_position) = owner_position_override {
+                ctx.position = owner_position;
+            }
             ctx
         };
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        let tick = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
-        self.world
+        let is_enemy = self
+            .world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "virtual ReturnToDuty owner {} is not a soldier",
-                    npc_id.index()
-                )
-            })
-            .return_to_duty(sim, flags, &ctx, &tick);
+            .get(npc_id)
+            .is_some_and(|entity| entity.enemy_ai().is_some());
+        if is_enemy {
+            let tick = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "virtual ReturnToDuty enemy owner {} lost its AI",
+                        npc_id.index()
+                    )
+                })
+                .return_to_duty(sim, flags, &ctx, &tick);
+        } else {
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::friendly_ai_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "virtual ReturnToDuty owner {} has neither Enemy nor Friendly AI",
+                        npc_id.index()
+                    )
+                })
+                .return_to_duty(sim, flags, &ctx);
+        }
 
         self.world
             .entities
@@ -13642,6 +13666,12 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
+            if let Some((_, owner_position)) = owner_boundary_positions
+                .iter()
+                .find(|(handle, _)| *handle == npc_id.index())
+            {
+                ctx.position = *owner_position;
+            }
             ctx
         };
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);

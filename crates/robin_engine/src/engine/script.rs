@@ -3461,6 +3461,203 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
+                    assignment_callback,
+                    owner_position_before_callback,
+                    mut owner_boundary_positions,
+                } => {
+                    // Isolate exactly AssignNewPatrolPath's synchronous
+                    // callback A. Pre-existing sibling stimuli and owner work
+                    // belong after CMD_CHANGE_WAY's explicit tail B; work A
+                    // creates remains visible and settles depth-first here.
+                    let raw_positions = |engine: &EngineInner| {
+                        engine
+                            .world
+                            .entities
+                            .occupied()
+                            .map(|(entity_id, entity)| {
+                                let element = entity.element_data();
+                                let point = element.position_map();
+                                (
+                                    entity_id.index(),
+                                    crate::ai::Position {
+                                        x: point.x,
+                                        y: point.y,
+                                        sector: element.sector(),
+                                        level: element.layer(),
+                                    },
+                                )
+                            })
+                            .collect::<std::collections::HashMap<_, _>>()
+                    };
+                    let raw_positions_before_callback = raw_positions(self);
+                    let effective_positions_before_callback = self
+                        .build_owner_context_scratch_without_forecast(assets)
+                        .ai_entity_views;
+                    let raw_owner_position_before_callback = raw_positions_before_callback
+                        .get(&owner.index())
+                        .copied()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "ChangeWay owner {} disappeared before assignment callback",
+                                owner.index()
+                            )
+                        });
+                    let (later_self_stimuli, later_owner_work) = {
+                        let ai = self
+                            .world
+                            .entities
+                            .get_mut(owner)
+                            .and_then(Entity::ai_controller_mut)
+                            .unwrap_or_else(|| {
+                                panic!("ChangeWay continuation owner {} lost its AI", owner.index())
+                            });
+                        (
+                            std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
+                            std::mem::take(&mut ai.outbox.reentrant.owner_work),
+                        )
+                    };
+                    if let Some(callback) = assignment_callback {
+                        self.world
+                            .entities
+                            .get_mut(owner)
+                            .and_then(Entity::ai_controller_mut)
+                            .unwrap_or_else(|| {
+                                panic!("ChangeWay callback owner {} lost its AI", owner.index())
+                            })
+                            .outbox
+                            .reentrant
+                            .self_stimuli
+                            .push(callback);
+                        if owner_local_no_forecast {
+                            self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+                        } else {
+                            self.drain_self_stimuli_for_npc(sim, owner, assets);
+                        }
+                    }
+
+                    // A synchronous callback can move another actor before B
+                    // reads it. Preserve the originating legacy-slot snapshot
+                    // for unchanged actors, but overlay exact live positions
+                    // for actors A actually changed on this call stack.
+                    let raw_positions_after_callback = raw_positions(self);
+                    let effective_positions_after_callback = self
+                        .build_owner_context_scratch_without_forecast(assets)
+                        .ai_entity_views;
+                    let raw_owner_position_after_callback = raw_positions_after_callback
+                        .get(&owner.index())
+                        .copied()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "ChangeWay owner {} disappeared during assignment callback",
+                                owner.index()
+                            )
+                        });
+                    let effective_owner_position_before_callback =
+                        effective_positions_before_callback
+                            .get(&owner.index())
+                            .map(|view| view.position);
+                    let effective_owner_position_after_callback =
+                        effective_positions_after_callback
+                            .get(&owner.index())
+                            .map(|view| view.position);
+                    let owner_position_for_tail = if raw_owner_position_before_callback
+                        != raw_owner_position_after_callback
+                        || effective_owner_position_before_callback
+                            != effective_owner_position_after_callback
+                    {
+                        effective_owner_position_after_callback
+                            .unwrap_or(raw_owner_position_after_callback)
+                    } else {
+                        owner_position_before_callback
+                    };
+                    owner_boundary_positions.retain_mut(|(handle, position)| {
+                        let before = raw_positions_before_callback.get(handle).copied();
+                        let after = raw_positions_after_callback.get(handle).copied();
+                        let effective_before = effective_positions_before_callback
+                            .get(handle)
+                            .map(|view| view.position);
+                        let effective_after = effective_positions_after_callback
+                            .get(handle)
+                            .map(|view| view.position);
+                        match (before, after) {
+                            (Some(before), Some(after))
+                                if before != after || effective_before != effective_after =>
+                            {
+                                // Mutation ownership is detected strictly from
+                                // raw element coordinates and the effective
+                                // selected-door position. Once owned by A, B
+                                // observes Original `Position(actor)` semantics.
+                                *position = effective_after.unwrap_or(after);
+                                true
+                            }
+                            (Some(_), Some(_)) => true,
+                            // A removed actor is absent from B's freshly built
+                            // context. Drop its frozen entry rather than
+                            // resurrecting it through the boundary overlay.
+                            (Some(_), None) => false,
+                            // Callback-created actors were never frozen and
+                            // therefore remain live in the fresh B scratch.
+                            (None, Some(_)) | (None, None) => true,
+                        }
+                    });
+                    if let Some((_, position)) = owner_boundary_positions
+                        .iter_mut()
+                        .find(|(handle, _)| *handle == owner.index())
+                    {
+                        *position = owner_position_for_tail;
+                    } else {
+                        owner_boundary_positions.push((owner.index(), owner_position_for_tail));
+                    }
+
+                    {
+                        let ai = self
+                            .world
+                            .entities
+                            .get_mut(owner)
+                            .and_then(Entity::ai_controller_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "ChangeWay explicit tail owner {} lost its AI",
+                                    owner.index()
+                                )
+                            });
+                        // Preserve the opcode's explicit second BreakMacro
+                        // after callback A, even though the assignment helper
+                        // already performed the same call in its prologue.
+                        ai.break_macro();
+                    }
+                    self.virtual_return_to_duty_for_npc(
+                        sim,
+                        owner,
+                        assets,
+                        crate::ai::DutyFlags::empty(),
+                        Some(owner_position_for_tail),
+                        &owner_boundary_positions,
+                    );
+                    self.drain_direct_ai_owner_boundary_mode(
+                        sim,
+                        owner,
+                        assets,
+                        owner_local_no_forecast,
+                        defer_turn_instruction,
+                    );
+
+                    let ai = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "ChangeWay continuation owner {} vanished before tail restore",
+                                owner.index()
+                            )
+                        });
+                    ai.outbox.reentrant.self_stimuli.extend(later_self_stimuli);
+                    ai.outbox.reentrant.owner_work.extend(later_owner_work);
+                    continue;
+                }
                 crate::ai::AiOwnerWork::VirtualReturnToDuty {
                     flags,
                     owner_boundary_positions,
@@ -3470,6 +3667,7 @@ impl EngineInner {
                         owner,
                         assets,
                         flags,
+                        None,
                         &owner_boundary_positions,
                     );
                     continue;

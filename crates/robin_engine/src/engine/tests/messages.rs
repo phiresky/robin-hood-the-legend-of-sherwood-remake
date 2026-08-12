@@ -109,6 +109,296 @@ fn post_reentrant_macro_cleanup_preserves_nested_wait_deadline() {
 }
 
 #[test]
+fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
+    use crate::ai::{AiContext, AiState, MacroOpcode, Position, StimulusType, Substate};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    let mut entity = make_test_civilian(crate::element::Posture::Upright);
+    let Entity::Civilian(civilian_data) = &mut entity else {
+        unreachable!("civilian fixture changed entity kind")
+    };
+    civilian_data.npc.ai_brain =
+        crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
+    let civilian = engine.add_entity(entity);
+    let paths = vec![RawHikingPath {
+        waypoints: vec![RawWaypoint {
+            x: 40,
+            y: 20,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        }],
+    }];
+    {
+        let friendly = engine
+            .get_entity_mut(civilian)
+            .and_then(Entity::friendly_ai_mut)
+            .expect("test civilian has Friendly AI");
+        friendly.base.current_state = AiState::Default;
+        friendly.base.current_substate = Substate::DefaultInMacro;
+        friendly.base.macro_in_progress = true;
+        friendly.base.macro_timer_is_running = true;
+        friendly.base.macro_command = vec![MacroOpcode::ChangeWay as u8, 0, 0];
+        friendly.base.number_of_remaining_macro_bytes = 3;
+        friendly.fleeing_seen_enemy_counter = 5;
+        friendly
+            .base
+            .outbox
+            .reentrant
+            .self_stimuli
+            .push(StimulusType::EventPanic);
+        friendly.base.execute_next_macro_command(
+            sim,
+            &AiContext {
+                position: Position::default(),
+                hiking_paths: std::sync::Arc::new(paths.clone()),
+                ..AiContext::default()
+            },
+        );
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.drain_ai_owner_work_for(sim, &assets, civilian);
+    assert_eq!(
+        engine
+            .get_entity(civilian)
+            .and_then(Entity::ai_controller)
+            .expect("test civilian retains AI")
+            .outbox
+            .reentrant
+            .self_stimuli,
+        [StimulusType::EventPanic],
+        "unrelated sibling C must remain queued until explicit virtual tail B has returned"
+    );
+    engine.drain_self_stimuli_for_npc(sim, civilian, &assets);
+
+    let friendly = engine
+        .get_entity(civilian)
+        .and_then(Entity::npc_data)
+        .and_then(|npc| npc.ai_brain.friendly())
+        .expect("test civilian retains Friendly AI");
+    assert_eq!(friendly.fleeing_seen_enemy_counter, 0);
+    assert!(!friendly.base.macro_in_progress);
+    assert!(
+        !friendly.base.macro_timer_is_running,
+        "the delayed opcode tail must execute its explicit second BreakMacro"
+    );
+    assert!(friendly.base.outbox.reentrant.self_stimuli.is_empty());
+}
+
+#[test]
+fn change_way_suppressed_assignment_still_uses_friendly_virtual_tail() {
+    use crate::ai::{AiContext, AiState, MacroOpcode, Position, Substate};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    let mut entity = make_test_civilian(crate::element::Posture::Upright);
+    let Entity::Civilian(civilian_data) = &mut entity else {
+        unreachable!("civilian fixture changed entity kind")
+    };
+    civilian_data.npc.ai_brain =
+        crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
+    let civilian = engine.add_entity(entity);
+    let paths = vec![RawHikingPath {
+        waypoints: vec![RawWaypoint {
+            x: 40,
+            y: 20,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        }],
+    }];
+    {
+        let friendly = engine
+            .get_entity_mut(civilian)
+            .and_then(Entity::friendly_ai_mut)
+            .expect("test civilian has Friendly AI");
+        friendly.base.current_state = AiState::Wondering;
+        friendly.base.current_substate = Substate::WonderingWatching;
+        friendly.base.macro_in_progress = true;
+        friendly.base.macro_timer_is_running = true;
+        friendly.base.macro_command = vec![MacroOpcode::ChangeWay as u8, 0, 0];
+        friendly.base.number_of_remaining_macro_bytes = 3;
+        friendly.fleeing_seen_enemy_counter = 7;
+        friendly.base.execute_next_macro_command(
+            sim,
+            &AiContext {
+                position: Position::default(),
+                hiking_paths: std::sync::Arc::new(paths.clone()),
+                ..AiContext::default()
+            },
+        );
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.drain_ai_owner_work_for(sim, &assets, civilian);
+
+    let friendly = engine
+        .get_entity(civilian)
+        .and_then(Entity::npc_data)
+        .and_then(|npc| npc.ai_brain.friendly())
+        .expect("test civilian retains Friendly AI");
+    assert_eq!(friendly.fleeing_seen_enemy_counter, 0);
+    assert_eq!(friendly.base.current_state, AiState::Default);
+    assert!(!friendly.base.macro_timer_is_running);
+}
+
+#[test]
+fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
+    use crate::ai::{AiContext, AiState, MacroOpcode, Position, Substate};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let ale_destination = crate::coordinates::MapPoint::new(40.0, 20.0);
+    let mut ale_element = crate::element::ElementData {
+        kind: crate::element::ElementKind::ObjectOther,
+        active: true,
+        ..crate::element::ElementData::default()
+    };
+    ale_element.set_position_map(ale_destination);
+    ale_element.set_sector(crate::ai::SectorHandle::new(1));
+    let ale = engine.add_entity(Entity::Bonus(crate::element::ElementBonus {
+        element: ale_element,
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::Ale,
+            ..crate::element::ObjectData::default()
+        },
+    }));
+    {
+        let npc = engine
+            .get_entity_mut(soldier)
+            .and_then(Entity::npc_data_mut)
+            .expect("test soldier is NPC");
+        npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(
+            soldier.index(),
+        )));
+    }
+    let paths = vec![RawHikingPath {
+        waypoints: vec![
+            RawWaypoint {
+                x: 100,
+                y: 20,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+            RawWaypoint {
+                x: 180,
+                y: 20,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+        ],
+    }];
+    {
+        let soldier_element = engine
+            .get_entity_mut(soldier)
+            .expect("test soldier present")
+            .element_data_mut();
+        soldier_element.set_position_map(crate::coordinates::MapPoint::new(0.0, 20.0));
+        soldier_element.set_sector(crate::ai::SectorHandle::new(1));
+    }
+    {
+        let enemy = engine
+            .get_entity_mut(soldier)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test soldier has Enemy AI");
+        enemy.base.current_state = AiState::Default;
+        enemy.base.current_substate = Substate::DefaultInMacro;
+        enemy.base.macro_in_progress = true;
+        enemy.base.macro_command = vec![MacroOpcode::ChangeWay as u8, 0, 0];
+        enemy.base.number_of_remaining_macro_bytes = 3;
+        enemy.other_seen_ale.push(ale.index());
+        enemy.base.execute_next_macro_command(
+            sim,
+            &AiContext {
+                position: Position {
+                    x: 0.0,
+                    y: 20.0,
+                    sector: crate::ai::SectorHandle::new(1),
+                    level: 0,
+                },
+                self_is_soldier: true,
+                hiking_paths: std::sync::Arc::new(paths.clone()),
+                ..AiContext::default()
+            },
+        );
+    }
+
+    let mut assets = LevelAssets::new();
+    assets.hiking_paths = std::sync::Arc::new(paths);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.drain_ai_owner_work_for(sim, &assets, soldier);
+
+    let ai = engine
+        .get_entity(soldier)
+        .and_then(Entity::ai_controller)
+        .expect("test soldier retains AI");
+    assert!(ai.outbox.actor.orders.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(!ai.has_pending_synchronous_cross_npc_actions());
+    assert_eq!(ai.current_substate, Substate::DefaultGotoRoute);
+    assert!(!ai.macro_timer_is_running);
+    assert!(
+        !ai.timer_is_running,
+        "A's ale timer must be cleared when B's virtual Enemy SetState returns to the patrol route"
+    );
+    let enemy = engine
+        .get_entity(soldier)
+        .and_then(Entity::enemy_ai)
+        .expect("test soldier retains Enemy AI");
+    assert!(enemy.other_seen_ale.is_empty());
+    assert_eq!(
+        enemy.base.last_goto_destination,
+        Position {
+            x: 100.0,
+            y: 20.0,
+            sector: crate::ai::SectorHandle::new(1),
+            level: 0,
+        },
+        "B must fall through to the patrol waypoint after A consumes the ale"
+    );
+    let mut movements: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .filter_map(|sequence| {
+            let element = sequence
+                .elements
+                .iter()
+                .find(|element| element.owner == Some(soldier) && element.data.is_movement())?;
+            let crate::sequence::SequenceElementData::Movement { destination, .. } = &element.data
+            else {
+                unreachable!("movement predicate admitted non-movement data")
+            };
+            Some((sequence.id, *destination))
+        })
+        .collect();
+    movements.sort_by_key(|(sequence_id, _)| sequence_id.0);
+    assert_eq!(movements.len(), 2);
+    assert!(
+        movements[0].0.0 >= 3,
+        "A's ale GoTo must consume sequence IDs before B replaces it with the live patrol route"
+    );
+    assert_eq!(movements[0].1.x, 100.0);
+    assert_eq!(movements[0].1.y, 20.0);
+    assert_eq!(movements[1].1.x, 100.0);
+    assert_eq!(movements[1].1.y, 20.0);
+}
+
+#[test]
 fn condolation_reenters_think_before_dispatch_returns() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

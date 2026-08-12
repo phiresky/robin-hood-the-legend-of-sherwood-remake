@@ -329,7 +329,7 @@ fn invalid_patrol_assignment_preserves_original_partial_mutation() {
 }
 
 #[test]
-fn change_way_keeps_explicit_return_to_duty_after_assignment_callback() {
+fn change_way_binds_assignment_callback_before_explicit_virtual_tail() {
     use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
@@ -372,14 +372,18 @@ fn change_way_keeps_explicit_return_to_duty_after_assignment_callback() {
 
     assert_eq!(
         ai.outbox.reentrant.self_stimuli,
-        [StimulusType::EventReturnToDuty],
-        "AssignNewPatrolPath preserves the first ReturnToDuty callback"
+        [],
+        "the exact assignment callback must be isolated from unrelated sibling stimuli"
     );
-    assert_eq!(
-        ai.outbox.actor.orders.len(),
-        1,
-        "CMD_CHANGE_WAY must also execute its explicit ReturnToDuty tail"
-    );
+    assert!(ai.outbox.actor.orders.is_empty());
+    assert!(matches!(
+        ai.outbox.reentrant.owner_work.as_slice(),
+        [AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
+            assignment_callback: Some(StimulusType::EventReturnToDuty),
+            owner_position_before_callback,
+            owner_boundary_positions,
+        }] if *owner_position_before_callback == ctx.position && owner_boundary_positions.is_empty()
+    ));
     assert!(!ai.macro_in_progress);
 }
 
@@ -1975,6 +1979,14 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
     outbox.actor.stop_menace = true;
     outbox.actor.quit_swordfight = true;
     outbox.reentrant.self_stimuli.push(StimulusType::EventDone);
+    outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
+            assignment_callback: Some(StimulusType::EventReturnToDuty),
+            owner_position_before_callback: Position::default(),
+            owner_boundary_positions: vec![(7, Position::default())],
+        });
     outbox.music.instant_change = true;
     outbox.actor.archery_reservation_release = ArcheryReservationRelease {
         shooting_point: Some(ReservedShootingPoint {
@@ -1998,6 +2010,15 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
         decoded.reentrant.self_stimuli,
         vec![StimulusType::EventDone]
     );
+    assert!(matches!(
+        decoded.reentrant.owner_work.as_slice(),
+        [AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
+            assignment_callback: Some(StimulusType::EventReturnToDuty),
+            owner_position_before_callback,
+            owner_boundary_positions,
+        }] if *owner_position_before_callback == Position::default()
+            && owner_boundary_positions == &[(7, Position::default())]
+    ));
     assert!(decoded.music.instant_change);
 
     let core = decoded.actor.take_core();
