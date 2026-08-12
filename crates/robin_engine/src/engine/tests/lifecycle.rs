@@ -4224,6 +4224,195 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
 }
 
 #[test]
+fn hit_done_rechecks_live_target_distance_before_launching_damage() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    fn bind_hitting(engine: &mut EngineInner, attacker: EntityId) {
+        let script = SpriteScript {
+            action_id: OrderType::Hitting as u16,
+            action_done: 2,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3, 4],
+            delays: vec![0; 4],
+            distances: vec![0; 4],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
+            sound_ids: vec![0; 4],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::Hitting as usize] = 0;
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+    }
+
+    fn receive_hit_damage_count(engine: &EngineInner, victim: EntityId) -> usize {
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter(|element| {
+                element.command == Command::ReceiveHitDamage && element.owner == Some(victim)
+            })
+            .count()
+    }
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    {
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        victim_entity.element_data_mut().active = true;
+        victim_entity
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(20.0, 0.0));
+        let crate::element::Entity::Soldier(victim_soldier) = victim_entity else {
+            unreachable!()
+        };
+        victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    }
+    bind_hitting(&mut engine, attacker);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_interaction(
+            1,
+            Command::HitCmd,
+            Some(attacker),
+            Some(victim),
+        ));
+    assert_eq!(
+        crate::abilities::begin_hit(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            attacker,
+            victim,
+            seq,
+            0,
+            &mut engine.orders.next_order_id,
+        ),
+        crate::abilities::BeginResult::Started
+    );
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execute_order_initialising = true;
+
+    let mut display = HostDisplayState::default();
+    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    assert!(
+        !engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .done_effect_applied,
+        "the first valid Execute must leave a later terminal boundary to recheck"
+    );
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execute_order_initialising = false;
+
+    let mut in_range = engine.clone();
+    let mut out_of_range = engine;
+    in_range
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(39.0, 0.0));
+    out_of_range
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(41.0, 0.0));
+
+    for branch in [&mut in_range, &mut out_of_range] {
+        for _ in 0..10 {
+            branch.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, attacker);
+            if branch
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_ability
+                .done_effect_applied
+            {
+                break;
+            }
+        }
+        assert!(
+            branch
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_ability
+                .done_effect_applied,
+            "both branches must reach the real Hitting Done boundary"
+        );
+    }
+
+    let in_range_sprite = &in_range.get_entity(attacker).unwrap().element_data().sprite;
+    let out_of_range_sprite = &out_of_range
+        .get_entity(attacker)
+        .unwrap()
+        .element_data()
+        .sprite;
+    assert_eq!(
+        out_of_range_sprite.current_frame,
+        in_range_sprite.current_frame + 1,
+        "terminal invalidity must perform Original's extra virgin frame increment"
+    );
+    assert_eq!(
+        out_of_range_sprite.frame_count, in_range_sprite.frame_count,
+        "the zero-delay fixture makes the virgin increment advance exactly one frame"
+    );
+    assert_eq!(
+        out_of_range_sprite.last_motion_state,
+        Some(crate::sprite::MotionState::Done),
+        "the virgin increment must not replace Hitting's terminal Done edge"
+    );
+    assert_eq!(receive_hit_damage_count(&in_range, victim), 1);
+    assert_eq!(receive_hit_damage_count(&out_of_range, victim), 0);
+    assert_eq!(
+        out_of_range
+            .orders
+            .sequence_manager
+            .get_element(seq, 0)
+            .expect("missed Hit remains selected until normal animation termination")
+            .state,
+        SequenceState::InProgress,
+        "terminal invalidity suppresses damage without aborting or making Hit Impossible"
+    );
+}
+
+#[test]
 fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_starts_same_done_tick()
 {
     use crate::element::{Command, Posture};

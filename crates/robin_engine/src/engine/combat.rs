@@ -4444,6 +4444,56 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
+                    // RHElementActorHuman::Execute(HITTING) rechecks the live
+                    // interaction at RHMOTION_DONE before authoring damage.
+                    // Losing validity here merely makes the swing miss: the
+                    // Hitting order still completes through its normal Done
+                    // lifecycle and is not made Impossible.
+                    let valid = {
+                        let element = self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "completed Hit owner {actor_id:?} lost element \
+                                     {seq_id:?}/{elem_idx}"
+                                )
+                            });
+                        assert_eq!(element.owner, Some(actor_id));
+                        assert_eq!(element.command, crate::element::Command::HitCmd);
+                        let order = element.current_order().unwrap_or_else(|| {
+                            panic!(
+                                "completed Hit element {seq_id:?}/{elem_idx} lost its selected order"
+                            )
+                        });
+                        assert_eq!(order.order_type, crate::order::OrderType::Hitting);
+                        assert_eq!(order.target_actor, Some(target_id.index()));
+                        self.check_sequence_element_validity(assets, actor_id, element, true)
+                    };
+                    if !valid {
+                        let sprite = &mut self
+                            .get_entity_mut(actor_id)
+                            .unwrap_or_else(|| {
+                                panic!("completed Hit owner {actor_id:?} vanished after validation")
+                            })
+                            .element_data_mut()
+                            .sprite;
+                        sprite.perform_virgin_increment(
+                            sim,
+                            crate::sprite::FrameProgression::Default,
+                        );
+                        // Original returns the pre-increment RHMOTION_DONE;
+                        // preserve that edge for end-of-tick order propagation.
+                        sprite.last_motion_state = Some(crate::sprite::MotionState::Done);
+                        tracing::debug!(
+                            attacker = ?actor_id,
+                            target = ?target_id,
+                            "Hit: terminal validity failed; suppressing damage"
+                        );
+                        continue;
+                    }
+
                     // Resolve base concussion from attacker profile:
                     //   if PC has HitHard action → 150,
                     //   else PC → 80,
