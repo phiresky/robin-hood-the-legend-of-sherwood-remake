@@ -6066,7 +6066,7 @@ impl EnemyAi {
             Substate::AttackingWaitForAvengerOnRoof => {
                 if stimulus_type == StimulusType::EventTimer {
                     // IsDetecting180Degrees(primary_target)? re-face +
-                    // 30-tick timer; else SeekArea(pos,
+                    // 30-tick timer; else SeekArea(Position(mpMe),
                     // AI_LOST_ENEMY_SEEK_RADIUS, 0).
                     if self.base.primary_target != 0
                         && self
@@ -6077,7 +6077,7 @@ impl EnemyAi {
                     } else {
                         self.seek_area(
                             sim,
-                            self.base.seek_position,
+                            ctx.position,
                             parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                             SeekFlags::empty(),
                             UNDEFINED_DIRECTION,
@@ -6538,6 +6538,67 @@ mod tests {
                 "{member_substate:?}"
             );
         }
+    }
+
+    #[test]
+    fn avenger_roof_timeout_seeks_from_live_owner_position() {
+        // Original calls SeekArea(Position(mpMe), ...), not with the cached
+        // position used to reach the avenger. Keep those positions far apart
+        // so using the stale center cannot accidentally select these points.
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(149);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
+        ai.base.primary_target = 0;
+        ai.base.seek_position = Position {
+            x: 241.0,
+            y: 862.0,
+            ..Position::default()
+        };
+
+        let live_position = Position {
+            x: 1_800.0,
+            y: 2_200.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points = [(1_810.0, 2_200.0), (1_820.0, 2_200.0), (1_830.0, 2_200.0)]
+            .into_iter()
+            .enumerate()
+            .map(|(id, (x, y))| SeekPoint {
+                position: Position {
+                    x,
+                    y,
+                    ..Position::default()
+                },
+                frame_when_full_interest: 0,
+                directions: vec![0],
+                last_calculated_interest: 100,
+                locked: false,
+                id: id as u16,
+            })
+            .collect();
+        let ctx = AiContext {
+            frame: 12_000,
+            position: live_position,
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut global,
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.seek_center, live_position);
+        assert_ne!(ai.seek_center, ai.base.seek_position);
+        assert!(
+            ai.my_seek_points.iter().any(|&id| id < 3),
+            "live-center seek must select one of the nearby authored points"
+        );
     }
 
     #[test]
