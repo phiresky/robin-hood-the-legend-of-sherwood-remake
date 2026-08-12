@@ -7035,7 +7035,7 @@ mod tests {
     }
 
     #[test]
-    fn preexisting_unconscious_no_animation_push_still_applies_legacy_side_effects() {
+    fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
         use crate::ai::{LogLineType, StimulusType};
 
         let sim = crate::sim_rng::test_context();
@@ -7050,10 +7050,26 @@ mod tests {
         ));
         {
             let victim_entity = engine.get_entity_mut(victim).unwrap();
-            victim_entity.element_data_mut().posture = Posture::Carried;
+            victim_entity.element_data_mut().posture = Posture::Upright;
             victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
             victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(attacker);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(victim);
         let assets = assets_with_sword_profile(1, 50);
         let damage =
             crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
@@ -7071,6 +7087,11 @@ mod tests {
         ));
 
         let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(victim_entity.human_data().unwrap().unconscious);
+        assert_eq!(
+            victim_entity.npc_data().unwrap().eye_status,
+            EyeStatus::Closed
+        );
         assert_eq!(
             victim_entity
                 .ai_controller()
@@ -7082,19 +7103,63 @@ mod tests {
                         && entry.info == StimulusType::EventLoseConsciousness as u16
                 })
                 .count(),
-            1,
-            "an already-unconscious push still owns the legacy KO callback"
+            0,
+            "TranslatePushDamage must not replay SetConcussion's conscious-to-unconscious callback"
         );
-        assert!(
+        assert_eq!(
             engine
                 .feedback
                 .titbit_manager
                 .titbits()
                 .iter()
-                .any(|titbit| {
+                .filter(|titbit| {
                     titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
                         && titbit.element_supplier.0 == victim.index()
                 })
+                .count(),
+            0,
+            "TranslatePushDamage must not recreate the existing unconscious star"
+        );
+        assert!(
+            victim_entity.human_data().unwrap().opponents.is_empty(),
+            "the animated translation removes the victim's opponent"
+        );
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents
+                .is_empty(),
+            "the animated translation removes the reciprocal opponent"
+        );
+        assert_eq!(
+            victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .filter(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventQuitSwordfight as u16
+                })
+                .count(),
+            1,
+            "pre-existing unconscious animated translation owns exactly one plain quit"
+        );
+        let orders = &engine
+            .orders
+            .sequence_manager
+            .get_sequence(sequence)
+            .unwrap()
+            .elements[0]
+            .orders;
+        assert!(
+            orders
+                .iter()
+                .any(|order| order.order_type == OrderType::FallingPushedWithSword),
+            "the already-unconscious victim still receives the authored push animation"
         );
     }
 

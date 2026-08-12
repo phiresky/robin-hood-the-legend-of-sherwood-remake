@@ -797,7 +797,7 @@ impl EngineInner {
         push: &PushStrikeInfo,
         damage_result: combat::SwordDamageResult,
         damage_element: (crate::sequence::SequenceId, usize),
-        knockout_side_effects_already_applied: bool,
+        _knockout_side_effects_already_applied: bool,
     ) -> bool {
         // NonInterruptable guard: if the victim is already playing a
         // non-interruptable sequence (an earlier falling-pushed /
@@ -952,20 +952,12 @@ impl EngineInner {
                     self.apply_pc_kill_cascade(sim, assets, victim_id);
                 }
             } else if is_unconscious {
-                if knockout_side_effects_already_applied {
-                    // SetConcussionOfTheBrain already performed the first
-                    // full KO chain. Animated TranslatePushDamage still
-                    // owns its later, plain QuitSwordFight call.
-                    self.quit_swordfight(sim, assets, victim_id);
-                } else {
-                    // An actor that entered translation already unconscious
-                    // still needs the legacy full side-effect path.
-                    let attacker_is_pc = self
-                        .get_entity(attacker_id)
-                        .map(|e| e.kind().is_pc())
-                        .unwrap_or(false);
-                    self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, false);
-                }
+                // Animated TranslatePushDamage always performs its plain
+                // QuitSwordFight, including when the victim was already
+                // unconscious before this hit. Only SetConcussion's fuller
+                // KO cascade is conditional on the conscious-to-unconscious
+                // transition.
+                self.quit_swordfight(sim, assets, victim_id);
             }
 
             self.try_queue_roll(assets, victim_id, damage_element);
@@ -998,13 +990,6 @@ impl EngineInner {
                 if is_pc {
                     self.apply_pc_kill_cascade(sim, assets, victim_id);
                 }
-            }
-            if is_unconscious && !knockout_side_effects_already_applied {
-                let attacker_is_pc = self
-                    .get_entity(attacker_id)
-                    .map(|e| e.kind().is_pc())
-                    .unwrap_or(false);
-                self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, true);
             }
             if let Some(posture) = translated_push_posture(false, is_dead, is_unconscious)
                 && let Some(entity) = self.world.entities.get_mut(victim_id)
