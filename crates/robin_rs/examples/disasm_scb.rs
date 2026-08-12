@@ -111,25 +111,7 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
                 continue;
             }
         };
-        // Existing pre-batch bug: `structure_range_d` panics on certain
-        // control-flow shapes (sherwood hub). Catch so one bad script
-        // doesn't kill the whole batch.
-        // Suppress the default panic hook for the duration of this call
-        // so a caught panic doesn't spam stderr with a backtrace.
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            render(&scb, args.decompile, names.as_ref())
-        }));
-        std::panic::set_hook(prev_hook);
-        let text = match result {
-            Ok(t) => t,
-            #[allow(clippy::print_stderr)]
-            Err(_) => {
-                eprintln!("WARN: {path}: decompiler panicked; skipping");
-                continue;
-            }
-        };
+        let text = render(&scb, args.decompile, names.as_ref());
 
         // Record class bodies for the duplicate summary.
         if args.decompile {

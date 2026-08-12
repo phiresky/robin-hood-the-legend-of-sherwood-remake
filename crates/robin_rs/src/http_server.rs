@@ -348,11 +348,81 @@ fn start(port: u16) -> Result<HttpServer, String> {
     Ok(HttpServer { queue, bind_addr })
 }
 
+/// Reject requests a browser could have issued cross-origin.
+///
+/// The POST endpoints are unauthenticated and reachable via
+/// no-preflight `POST` from any web page, so a malicious page could
+/// drive the running game (CSRF). Non-browser clients (curl, scripts)
+/// never send `Origin` / `Sec-Fetch-Site` and send an exact local
+/// `Host`, so they pass untouched. Returns a rejection reason, or
+/// `None` when the request is acceptable.
+#[cfg(not(target_arch = "wasm32"))]
+fn browser_rejection_reason(
+    origin: Option<&str>,
+    sec_fetch_site: Option<&str>,
+    host: Option<&str>,
+    port: u16,
+) -> Option<&'static str> {
+    // Browsers attach `Origin` to every cross-origin (and most
+    // same-origin) fetches; no legitimate client of this API is a web
+    // page, so any `Origin` at all is rejected.
+    if origin.is_some() {
+        return Some("cross-origin requests are not allowed (Origin header present)");
+    }
+    match sec_fetch_site {
+        None | Some("none") | Some("same-origin") => {}
+        Some(_) => return Some("cross-site request blocked (Sec-Fetch-Site)"),
+    }
+    // Anti DNS-rebinding: the Host header must name this loopback server.
+    let host_ok = host.is_some_and(|h| {
+        let h = h.to_ascii_lowercase();
+        h == format!("127.0.0.1:{port}") || h == format!("localhost:{port}")
+    });
+    if !host_ok {
+        return Some("request rejected: Host header does not match the local server");
+    }
+    None
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn run_listener(server: tiny_http::Server, queue: Queue) {
     use tiny_http::Method;
 
+    let listen_port = server
+        .server_addr()
+        .to_ip()
+        .map(|addr| addr.port())
+        .expect("script HTTP server listens on an IP address");
+
     for mut req in server.incoming_requests() {
+        let header_value = |name: &'static str| {
+            req.headers()
+                .iter()
+                .find(|h| h.field.equiv(name))
+                .map(|h| h.value.as_str().to_string())
+        };
+        if let Some(reason) = browser_rejection_reason(
+            header_value("Origin").as_deref(),
+            header_value("Sec-Fetch-Site").as_deref(),
+            header_value("Host").as_deref(),
+            listen_port,
+        ) {
+            tracing::warn!("script HTTP server: rejected request: {reason}");
+            let response = tiny_http::Response::from_data(
+                serde_json::to_vec(&serde_json::json!({ "error": reason }))
+                    .expect("static rejection body"),
+            )
+            .with_status_code(403)
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .expect("static content-type header"),
+            );
+            if let Err(e) = req.respond(response) {
+                tracing::warn!("script HTTP response failed: {e}");
+            }
+            continue;
+        }
+
         let path_full = req.url().to_string();
         let (path, query) = match path_full.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
@@ -1887,6 +1957,61 @@ fn screenshot_target_dimensions(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_guard_rejects_any_origin_header() {
+        assert!(
+            browser_rejection_reason(
+                Some("https://evil.example"),
+                None,
+                Some("127.0.0.1:17640"),
+                17640
+            )
+            .is_some()
+        );
+        // Even a "local-looking" Origin is rejected: no browser client exists.
+        assert!(
+            browser_rejection_reason(
+                Some("http://127.0.0.1:17640"),
+                None,
+                Some("127.0.0.1:17640"),
+                17640
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn browser_guard_rejects_cross_site_fetch_metadata() {
+        assert!(
+            browser_rejection_reason(None, Some("cross-site"), Some("127.0.0.1:17640"), 17640)
+                .is_some()
+        );
+        assert!(
+            browser_rejection_reason(None, Some("same-site"), Some("127.0.0.1:17640"), 17640)
+                .is_some()
+        );
+        assert!(
+            browser_rejection_reason(None, Some("none"), Some("127.0.0.1:17640"), 17640).is_none()
+        );
+        assert!(
+            browser_rejection_reason(None, Some("same-origin"), Some("127.0.0.1:17640"), 17640)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn browser_guard_rejects_foreign_or_missing_host() {
+        assert!(
+            browser_rejection_reason(None, None, Some("attacker.example:17640"), 17640).is_some()
+        );
+        assert!(browser_rejection_reason(None, None, Some("127.0.0.1:9999"), 17640).is_some());
+        assert!(browser_rejection_reason(None, None, None, 17640).is_some());
+        // The curl default workflow keeps working.
+        assert!(browser_rejection_reason(None, None, Some("127.0.0.1:17640"), 17640).is_none());
+        assert!(browser_rejection_reason(None, None, Some("localhost:17640"), 17640).is_none());
+        assert!(browser_rejection_reason(None, None, Some("LOCALHOST:17640"), 17640).is_none());
+    }
 
     fn screenshot_request(width: Option<u16>, height: Option<u16>) -> ScreenshotRequest {
         ScreenshotRequest {

@@ -894,14 +894,20 @@ pub fn register_language_data_paths_for_tool() {
 }
 
 /// Set up the working directory so that `Data/` is accessible.
+///
+/// `data_dir_override` (e.g. a tool's `--data-dir` flag) takes priority
+/// over the `ROBINHOOD_DATA_DIR` environment variable.
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-fn setup_data_dir() -> Result<(), String> {
-    if let Ok(data_dir) = std::env::var("ROBINHOOD_DATA_DIR") {
-        tracing::info!("ROBINHOOD_DATA_DIR set, using primary datadir {}", data_dir);
+fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
+    let data_dir = data_dir_override
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .or_else(|| std::env::var("ROBINHOOD_DATA_DIR").ok());
+    if let Some(data_dir) = data_dir {
+        tracing::info!("using primary datadir {}", data_dir);
         let status = SbFile::set_primary_path(&data_dir);
         if status != SBFILE_NO_ERROR {
             return Err(format!(
-                "Unable to install ROBINHOOD_DATA_DIR {data_dir}: SBFile error {status}"
+                "Unable to install datadir {data_dir}: SBFile error {status}"
             ));
         }
     } else if !Path::new("Data").is_dir()
@@ -952,12 +958,12 @@ fn setup_data_dir() -> Result<(), String> {
 /// up the same way as desktop; otherwise rely on the installed
 /// `ShippingDatadir` / `asset_fs` bundle.
 #[cfg(target_os = "android")]
-fn setup_data_dir() -> Result<(), String> {
-    if let Ok(data_dir) = std::env::var("ROBINHOOD_DATA_DIR") {
-        tracing::info!(
-            "ROBINHOOD_DATA_DIR set, changing working directory to {}",
-            data_dir
-        );
+fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
+    let data_dir = data_dir_override
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .or_else(|| std::env::var("ROBINHOOD_DATA_DIR").ok());
+    if let Some(data_dir) = data_dir {
+        tracing::info!("changing working directory to datadir {}", data_dir);
         std::env::set_current_dir(&data_dir)
             .map_err(|e| format!("Unable to chdir to {}: {}", data_dir, e))?;
     }
@@ -982,7 +988,7 @@ fn setup_data_dir() -> Result<(), String> {
 /// `robin_util::asset_fs` consults for every read.  All we do here is
 /// bootstrap language-folder detection.
 #[cfg(target_arch = "wasm32")]
-fn setup_data_dir() -> Result<(), String> {
+fn setup_data_dir(_data_dir_override: Option<&Path>) -> Result<(), String> {
     add_language_folder();
     Ok(())
 }
@@ -999,8 +1005,14 @@ pub type RustInit = (
 
 /// Pure-Rust initialization: logging, data dir, profiles, campaign.
 pub fn rust_init() -> Result<RustInit, String> {
+    rust_init_with_data_dir(None)
+}
+
+/// [`rust_init`] with an explicit primary datadir (e.g. from a tool's
+/// `--data-dir` flag), taking priority over `ROBINHOOD_DATA_DIR`.
+pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, String> {
     crate::init_tracing();
-    setup_data_dir()?;
+    setup_data_dir(data_dir)?;
     tracing::info!("Robin Hood — Rust entry point");
 
     // Load the shipping datadir if one exists. When present, subsystem
@@ -1023,7 +1035,7 @@ pub fn rust_init_with_shipping(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 ) -> Result<RustInit, String> {
     crate::init_tracing();
-    setup_data_dir()?;
+    setup_data_dir(None)?;
     tracing::info!("Robin Hood — Rust entry point (preinstalled shipping data)");
     rust_init_finish(shipping)
 }

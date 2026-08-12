@@ -8,13 +8,16 @@ use super::{
     NetOutbound, decode_msg, encode_msg,
 };
 use futures_util::{SinkExt, StreamExt};
+// Non-poisoning mutex: a panicking worker thread must not turn every
+// later lock of the shared peer state into a second panic.
+use parking_lot::Mutex;
 use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tungstenite::Message as WsMessage;
@@ -61,8 +64,8 @@ impl ServerHandle {
 
         // Closing peer queues wakes writers; shutting down the sockets wakes
         // readers and partial WebSocket handshakes immediately.
-        self.peers.lock().unwrap().senders.clear();
-        for stream in self.active_connections.lock().unwrap().values() {
+        self.peers.lock().senders.clear();
+        for stream in self.active_connections.lock().values() {
             let _ = stream.shutdown(Shutdown::Both);
         }
 
@@ -72,18 +75,18 @@ impl ServerHandle {
             tracing::error!("multiplayer outgoing worker panicked during shutdown");
         }
 
-        let peer_threads = std::mem::take(&mut *self.peer_threads.lock().unwrap());
+        let peer_threads = std::mem::take(&mut *self.peer_threads.lock());
         for handle in peer_threads {
             if handle.join().is_err() {
                 tracing::error!("multiplayer peer worker panicked during shutdown");
             }
         }
-        self.active_connections.lock().unwrap().clear();
+        self.active_connections.lock().clear();
     }
 
     #[cfg(test)]
     pub(crate) fn peer_worker_count(&self) -> usize {
-        self.peer_threads.lock().unwrap().len()
+        self.peer_threads.lock().len()
     }
 }
 
@@ -151,7 +154,7 @@ impl PeerWriterGuard {
 
     fn close_and_join(&mut self) {
         {
-            let mut peers = self.peers.lock().unwrap();
+            let mut peers = self.peers.lock();
             peers.senders.remove(&self.seat);
             peers.ready_seats.remove(&self.seat);
             peers.nicknames.remove(&self.seat);
@@ -177,7 +180,7 @@ struct ActiveConnectionGuard {
 
 impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
-        self.connections.lock().unwrap().remove(&self.id);
+        self.connections.lock().remove(&self.id);
     }
 }
 
@@ -295,7 +298,7 @@ pub fn start_server(
                             // game loop already has the value (it just
                             // computed the hash before pushing here).
                             let to_send: Vec<Sender<NetMsg>> = {
-                                let p = peers.lock().unwrap();
+                                let p = peers.lock();
                                 p.senders.values().cloned().collect()
                             };
                             for sender in to_send {
@@ -318,7 +321,7 @@ pub fn start_server(
                             // exists; later peers still receive it through
                             // the handshake cache.
                             let to_send: Vec<Sender<NetMsg>> = {
-                                let p = peers.lock().unwrap();
+                                let p = peers.lock();
                                 p.senders.values().cloned().collect()
                             };
                             for sender in to_send {
@@ -330,7 +333,7 @@ pub fn start_server(
                         }
                         NetOutbound::ReadyToSim { frame } => {
                             let begin = {
-                                let mut p = peers.lock().unwrap();
+                                let mut p = peers.lock();
                                 p.host_ready_frame = Some(frame);
                                 maybe_begin_sim_locked(&mut p)
                             };
@@ -358,7 +361,7 @@ pub fn start_server(
                                 result,
                             });
                             let to_send: Vec<Sender<NetMsg>> = {
-                                let p = peers.lock().unwrap();
+                                let p = peers.lock();
                                 p.senders.values().cloned().collect()
                             };
                             for sender in to_send {
@@ -405,7 +408,6 @@ pub fn start_server(
                         };
                         active_connections_for_accept
                             .lock()
-                            .unwrap()
                             .insert(connection_id, shutdown_stream);
                         let peers = Arc::clone(&peers_for_accept);
                         let incoming_tx = incoming_tx.clone();
@@ -440,12 +442,9 @@ pub fn start_server(
                                     }
                                 });
                         match handle {
-                            Ok(handle) => peer_threads_for_accept.lock().unwrap().push(handle),
+                            Ok(handle) => peer_threads_for_accept.lock().push(handle),
                             Err(e) => {
-                                active_connections_for_accept
-                                    .lock()
-                                    .unwrap()
-                                    .remove(&connection_id);
+                                active_connections_for_accept.lock().remove(&connection_id);
                                 tracing::error!("failed to spawn peer worker: {e}");
                             }
                         }
@@ -505,7 +504,7 @@ fn broadcast_input(
     // Send to every peer.  Hold the lock briefly to clone the
     // sender list; the actual sends happen unlocked.
     let to_send: Vec<(u8, Sender<NetMsg>)> = {
-        let p = peers.lock().unwrap();
+        let p = peers.lock();
         p.senders.iter().map(|(k, v)| (*k, v.clone())).collect()
     };
     for (seat, sender) in to_send {
@@ -585,7 +584,7 @@ fn handle_incoming_peer(
     // Assign a seat — reuse the previously-held one if this nickname
     // is a returning peer.  Otherwise allocate the next fresh seat.
     let (assigned_seat_u8, write_rx, is_rejoin) = {
-        let mut p = peers.lock().unwrap();
+        let mut p = peers.lock();
         let (seat, rejoin) = if let Some(prior) = p.disconnected_seats.remove(&nickname) {
             tracing::info!(
                 nickname = %nickname,
@@ -649,7 +648,7 @@ fn handle_incoming_peer(
     // snapshot we follow up with that — mid-mission joiners adopt
     // it instead of trying to reproduce engine init from seed alone.
     {
-        let p = peers.lock().unwrap();
+        let p = peers.lock();
         if let Some(sender) = p.senders.get(&assigned_seat_u8) {
             sender
                 .send(NetMsg::Welcome {
@@ -660,8 +659,14 @@ fn handle_incoming_peer(
                     host_nickname: host_nickname.clone(),
                 })
                 .map_err(|_| "writer queue closed before Welcome")?;
-            let snapshot_frame = if let Some((frame, engine)) =
-                initial_snapshot.lock().ok().and_then(|g| g.clone())
+            // `InitialSnapshot` is a plain std mutex shared with the game
+            // loop; the snapshot value is only ever replaced wholesale, so
+            // recover it if a prior holder panicked instead of silently
+            // skipping the snapshot send.
+            let snapshot_frame = if let Some((frame, engine)) = initial_snapshot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
             {
                 let encode_start = web_time::Instant::now();
                 match bincode::serde::encode_to_vec(&engine, bincode::config::standard()) {
@@ -748,7 +753,7 @@ fn handle_incoming_peer(
     // rejoining peer takes back ownership of the PCs they were
     // controlling.
     {
-        let mut p = peers.lock().unwrap();
+        let mut p = peers.lock();
         p.senders.remove(&assigned_seat_u8);
         p.ready_seats.remove(&assigned_seat_u8);
         if let Some(nick) = p.nicknames.remove(&assigned_seat_u8) {
@@ -801,7 +806,7 @@ fn run_server_peer_reader(
                         result,
                     });
                     let to_send: Vec<Sender<NetMsg>> = {
-                        let p = peers.lock().unwrap();
+                        let p = peers.lock();
                         p.senders.values().cloned().collect()
                     };
                     for sender in to_send {
@@ -813,7 +818,7 @@ fn run_server_peer_reader(
                 }
                 Ok(NetMsg::ReadyToSim { frame }) => {
                     let begin = {
-                        let mut p = peers.lock().unwrap();
+                        let mut p = peers.lock();
                         p.ready_seats.insert(seat.0, frame);
                         maybe_begin_sim_locked(&mut p)
                     };
@@ -1163,7 +1168,7 @@ async fn run_client_io_inner(
         }
     };
 
-    *assigned.lock().unwrap() = Some(your_seat);
+    *assigned.lock() = Some(your_seat);
     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
     let _ = incoming_tx.send(NetEvent::MissionConfig {
         mission_id: mission_id.clone(),
@@ -1224,7 +1229,7 @@ async fn run_client_io_inner(
                         return;
                     }
                     tracing::info!(?new_seat, seed = new_seed, "client reconnected");
-                    *assigned.lock().unwrap() = Some(new_seat);
+                    *assigned.lock() = Some(new_seat);
                     let _ = incoming_tx.send(NetEvent::Reconnected);
                     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(new_seat));
                     let _ = incoming_tx.send(NetEvent::MissionConfig {

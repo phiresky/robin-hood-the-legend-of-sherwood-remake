@@ -98,6 +98,11 @@ tiny_http = "0.12"
 tungstenite = "0.30"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-tungstenite = "0.30"
+# Non-poisoning mutexes for the multiplayer peer state shared across
+# transport worker threads.
+parking_lot = "0.12"
+# Real memory / CPU-frequency queries for the options-menu hardware line.
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 # Read .zip mod packs for the custom-mission selector.
 zip = { version = "8", default-features = false, features = ["deflate"] }
 

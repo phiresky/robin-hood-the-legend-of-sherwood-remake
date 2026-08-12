@@ -41,7 +41,11 @@ pub enum ProcessorType {
 pub struct Hardware {
     processor_identifier: CString,
     processor_type: ProcessorType,
-    processor_speed: u16,
+    /// CPU frequency in MHz. `None` when the platform cannot report it
+    /// (e.g. wasm) — callers must render "unknown", never a made-up number.
+    processor_speed_mhz: Option<u16>,
+    /// Total physical memory in MB. `None` when unknown (e.g. wasm).
+    physical_memory_mb: Option<u64>,
 
     has_mmx: bool,
     has_3dnow: bool,
@@ -116,10 +120,13 @@ impl Hardware {
             }
         }
 
+        let (processor_speed_mhz, physical_memory_mb) = Self::query_speed_and_memory();
+
         Hardware {
             processor_identifier: CString::new(identifier).unwrap_or_default(),
             processor_type: proc_type,
-            processor_speed: 0,
+            processor_speed_mhz,
+            physical_memory_mb,
             has_mmx,
             has_3dnow,
             has_ext_3dnow,
@@ -170,6 +177,31 @@ impl Hardware {
         false
     }
 
+    /// Query CPU frequency (MHz) and total physical memory (MB) via
+    /// `sysinfo`. Values the platform cannot report stay `None`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn query_speed_and_memory() -> (Option<u16>, Option<u64>) {
+        use sysinfo::System;
+        let mut sys = System::new();
+        sys.refresh_memory();
+        sys.refresh_cpu_all();
+        let speed_mhz = sys
+            .cpus()
+            .first()
+            .map(|cpu| cpu.frequency())
+            .filter(|&mhz| mhz > 0)
+            .map(|mhz| u16::try_from(mhz).unwrap_or(u16::MAX));
+        let total_mb = sys.total_memory() / (1024 * 1024);
+        let memory_mb = (total_mb > 0).then_some(total_mb);
+        (speed_mhz, memory_mb)
+    }
+
+    /// Wasm has no host to query — both values are honestly unknown.
+    #[cfg(target_arch = "wasm32")]
+    fn query_speed_and_memory() -> (Option<u16>, Option<u64>) {
+        (None, None)
+    }
+
     /// Get machine architecture name.
     ///
     /// Uses `std::env::consts::ARCH` which returns the same value as
@@ -188,8 +220,9 @@ impl Hardware {
         self.processor_type
     }
 
-    pub fn processor_speed(&self) -> u16 {
-        self.processor_speed
+    /// CPU frequency in MHz, or `None` when the platform cannot report it.
+    pub fn processor_speed(&self) -> Option<u16> {
+        self.processor_speed_mhz
     }
 
     pub fn has_mmx(&self) -> bool {
@@ -232,22 +265,9 @@ impl Hardware {
         self.cache_l2
     }
 
-    // -- Memory queries (stub values) --
-
-    pub fn physical_memory_mb(&self) -> u16 {
-        512
-    }
-
-    pub fn free_physical_memory_mb(&self) -> u16 {
-        256
-    }
-
-    pub fn page_memory_mb(&self) -> u16 {
-        256
-    }
-
-    pub fn free_page_memory_mb(&self) -> u16 {
-        128
+    /// Total physical memory in MB, or `None` when unknown.
+    pub fn physical_memory_mb(&self) -> Option<u64> {
+        self.physical_memory_mb
     }
 }
 
@@ -303,13 +323,16 @@ mod tests {
         assert_eq!(ProcessorType::Unknown as i32, 19);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn memory_stubs_return_expected_values() {
+    fn native_memory_query_reports_real_total() {
         let hw = Hardware::detect();
-        assert_eq!(hw.physical_memory_mb(), 512);
-        assert_eq!(hw.free_physical_memory_mb(), 256);
-        assert_eq!(hw.page_memory_mb(), 256);
-        assert_eq!(hw.free_page_memory_mb(), 128);
+        // Any machine running this test suite has at least a few hundred
+        // MB of RAM, and sysinfo reports the real total on native.
+        let mb = hw
+            .physical_memory_mb()
+            .expect("native total memory must be known");
+        assert!(mb >= 128, "implausibly small memory total: {mb} MB");
     }
 
     #[test]
@@ -317,7 +340,8 @@ mod tests {
         let hw = Hardware::detect();
         assert!(!hw.processor_identifier.to_bytes().is_empty());
         assert!((hw.processor_type as i32) >= 0 && (hw.processor_type as i32) <= 19);
-        assert_eq!(hw.physical_memory_mb(), 512);
-        assert_eq!(hw.free_physical_memory_mb(), 256);
+        if let Some(mhz) = hw.processor_speed() {
+            assert!(mhz > 0);
+        }
     }
 }

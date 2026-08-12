@@ -37,15 +37,52 @@ fn sound_enabled(application_context: &crate::host::ApplicationContext) -> bool 
     application_context.options().sound_enabled
 }
 
-use std::sync::{Arc, Once};
+#[cfg(feature = "video")]
+use std::sync::{Arc, OnceLock};
 
 #[cfg(feature = "video")]
 use crate::window::GameWindow;
 #[cfg(feature = "video")]
 use robin_engine::sbfile::resolve_data_path;
 
+/// One-shot ffmpeg initialization. Stores the result instead of using
+/// `Once` + `expect` so a failed init surfaces as a playback error on
+/// every attempt rather than poisoning the `Once` and panicking on all
+/// later cinematics.
 #[cfg(feature = "video")]
-static FFMPEG_INIT: Once = Once::new();
+static FFMPEG_INIT: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// Drain every frame currently decodable from `dec`, resample each to
+/// packed f32 stereo via `res`, and append the sample pairs to
+/// `audio_frames`. Used both for per-packet decoding and for the final
+/// decoder flush after EOF.
+#[cfg(feature = "video")]
+fn drain_resampled_audio(
+    dec: &mut ffmpeg_next::decoder::Audio,
+    res: &mut ffmpeg_next::software::resampling::Context,
+    audio_frames: &mut Vec<kira::Frame>,
+) {
+    let mut frame = ffmpeg_next::frame::Audio::empty();
+    while dec.receive_frame(&mut frame).is_ok() {
+        let mut resampled = ffmpeg_next::frame::Audio::empty();
+        if res.run(&frame, &mut resampled).is_err() {
+            continue;
+        }
+        let n_samples = resampled.samples();
+        if n_samples == 0 {
+            continue;
+        }
+        let bytes = &resampled.data(0)[..n_samples * 2 * 4];
+        let f32_pairs: &[f32] = bytemuck::cast_slice(bytes);
+        audio_frames.reserve(n_samples);
+        for pair in f32_pairs.as_chunks::<2>().0 {
+            audio_frames.push(kira::Frame {
+                left: pair[0],
+                right: pair[1],
+            });
+        }
+    }
+}
 
 /// Play a cutscene video file.
 ///
@@ -71,9 +108,11 @@ pub async fn play_video(
     };
     tracing::info!("Playing video: {}", resolved.display());
 
-    FFMPEG_INIT.call_once(|| {
-        ffmpeg_next::init().expect("failed to initialize ffmpeg");
-    });
+    FFMPEG_INIT
+        .get_or_init(|| {
+            ffmpeg_next::init().map_err(|e| format!("failed to initialize ffmpeg: {e}"))
+        })
+        .clone()?;
 
     // ── Open container ──────────────────────────────────────────────
     let mut ictx = ffmpeg_next::format::input(&resolved)
@@ -149,57 +188,15 @@ pub async fn play_video(
     if let (Some(dec), Some(res)) = (audio_dec.as_mut(), audio_resampler.as_mut()) {
         // We rewind ictx after this scan so the video-pump pass can walk
         // packets again from the start.
-        let mut feed_audio = |packet: &ffmpeg_next::Packet| -> Result<(), ffmpeg_next::Error> {
-            dec.send_packet(packet)?;
-            let mut frame = ffmpeg_next::frame::Audio::empty();
-            while dec.receive_frame(&mut frame).is_ok() {
-                let mut resampled = ffmpeg_next::frame::Audio::empty();
-                if res.run(&frame, &mut resampled).is_err() {
-                    continue;
-                }
-                let n_samples = resampled.samples();
-                if n_samples == 0 {
-                    continue;
-                }
-                let bytes = &resampled.data(0)[..n_samples * 2 * 4];
-                let f32_pairs: &[f32] = bytemuck::cast_slice(bytes);
-                audio_frames.reserve(n_samples);
-                for pair in f32_pairs.as_chunks::<2>().0 {
-                    audio_frames.push(kira::Frame {
-                        left: pair[0],
-                        right: pair[1],
-                    });
-                }
-            }
-            Ok(())
-        };
         let aidx = audio_idx.unwrap();
         for (stream, packet) in ictx.packets() {
-            if stream.index() == aidx {
-                let _ = feed_audio(&packet);
+            if stream.index() == aidx && dec.send_packet(&packet).is_ok() {
+                drain_resampled_audio(dec, res, &mut audio_frames);
             }
         }
         // Flush decoder.
         let _ = dec.send_eof();
-        let mut frame = ffmpeg_next::frame::Audio::empty();
-        while dec.receive_frame(&mut frame).is_ok() {
-            let mut resampled = ffmpeg_next::frame::Audio::empty();
-            if res.run(&frame, &mut resampled).is_err() {
-                continue;
-            }
-            let n_samples = resampled.samples();
-            if n_samples == 0 {
-                continue;
-            }
-            let bytes = &resampled.data(0)[..n_samples * 2 * 4];
-            let f32_pairs: &[f32] = bytemuck::cast_slice(bytes);
-            for pair in f32_pairs.as_chunks::<2>().0 {
-                audio_frames.push(kira::Frame {
-                    left: pair[0],
-                    right: pair[1],
-                });
-            }
-        }
+        drain_resampled_audio(dec, res, &mut audio_frames);
         tracing::info!(
             "Audio decoded: {} frames ({} sec @ {} Hz)",
             audio_frames.len(),

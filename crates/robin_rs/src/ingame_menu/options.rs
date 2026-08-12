@@ -277,14 +277,14 @@ fn hardware_description(text: &super::resources::MenuText) -> String {
     let mb = text.get(MT_STR_MEGA_BYTES);
     let hw = Hardware::detect();
     let ident = hw.processor_identifier().to_string_lossy();
-    format!(
-        "{} : {}, {} {}\n{} : {} {}",
-        processor,
-        ident,
-        hw.processor_speed(),
-        mhz,
-        memory,
-        hw.physical_memory_mb(),
-        mb,
-    )
+    // Speed and memory can be unknown (e.g. wasm); omit those parts
+    // instead of showing an invented number.
+    let mut description = format!("{processor} : {ident}");
+    if let Some(speed) = hw.processor_speed() {
+        description.push_str(&format!(", {speed} {mhz}"));
+    }
+    if let Some(memory_mb) = hw.physical_memory_mb() {
+        description.push_str(&format!("\n{memory} : {memory_mb} {mb}"));
+    }
+    description
 }
