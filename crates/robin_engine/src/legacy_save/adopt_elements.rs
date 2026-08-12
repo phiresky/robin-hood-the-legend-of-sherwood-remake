@@ -3761,14 +3761,17 @@ mod tests {
         use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
         let mut element = crate::element::ElementData::default();
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[OrderType::RunningUpright as usize] = 224;
-        let mut scripts = vec![SpriteScript::default(); 240];
-        scripts[234].frame_ids = vec![0; 8];
-        element.sprite.scripts = std::sync::Arc::new(scripts.clone());
-        element.sprite.alternate_scripts = Some(std::sync::Arc::new(scripts));
-        element.sprite.conversion = std::sync::Arc::new(conversion.clone());
-        element.sprite.alternate_conversion = Some(std::sync::Arc::new(conversion));
+        let mut primary_conversion = vec![UNMAPPED; NONANIMATION_END];
+        primary_conversion[OrderType::RunningUpright as usize] = 224;
+        let mut alternate_conversion = vec![UNMAPPED; NONANIMATION_END];
+        alternate_conversion[OrderType::RunningUpright as usize] = 1_696;
+        let mut primary_scripts = vec![SpriteScript::default(); 240];
+        primary_scripts[234].frame_ids = vec![0; 8];
+        let alternate_scripts = vec![SpriteScript::default(); 1_712];
+        element.sprite.scripts = std::sync::Arc::new(primary_scripts);
+        element.sprite.alternate_scripts = Some(std::sync::Arc::new(alternate_scripts));
+        element.sprite.conversion = std::sync::Arc::new(primary_conversion);
+        element.sprite.alternate_conversion = Some(std::sync::Arc::new(alternate_conversion));
         element.sprite.use_alternate_profile = true;
         element
             .sprite
@@ -3816,6 +3819,11 @@ mod tests {
         apply_element_base(&mut element, converted);
 
         assert!(!element.sprite.use_alternate_profile);
+        assert_eq!(
+            element.sprite.row_for_action(OrderType::RunningUpright),
+            Some(224),
+            "saved primary-profile selection must replace the candidate's active alternate table"
+        );
         assert_eq!(element.sprite.position_iface.get_direction().as_u8(), 6);
         assert_eq!(element.sprite.current_row, 234);
         assert_eq!(element.sprite.current_frame, 7);
