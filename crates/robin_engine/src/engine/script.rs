@@ -3257,76 +3257,28 @@ impl EngineInner {
 
     fn dispatch_state_change_attentive_mode(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        _sim: &crate::sim_rng::SimulationContext,
+        _assets: &LevelAssets,
         owner: crate::element::EntityId,
         request: Option<crate::ai::AttentiveModeEffect>,
     ) {
         let Some(request) = request else {
             return;
         };
-        let deferred_before: std::collections::HashSet<_> = self
-            .orders
-            .sequence_manager
-            .deferred_elements_to_go()
-            .into_iter()
-            .collect();
+        // Original SetAttentiveMode launches the sequence and immediately
+        // writes mbWillBeAttentive, but ordinary attentive commands only
+        // register with RHSequenceManager. Their Go/Instruct happens in the
+        // manager Hourglass after every actor's Hourglass has completed
+        // (RHelementactorsoldier.cpp:2082-2114,
+        // RHsequence.cpp:235-287, RHengine.cpp:3737-3746).
         self.set_soldier_attentive_mode(owner, request.target, request.fast_officer_variant);
-        let attentive_deferred: Vec<_> = self
-            .orders
-            .sequence_manager
-            .deferred_elements_to_go()
-            .into_iter()
-            .filter(|element| !deferred_before.contains(element))
-            .filter(|(sequence_id, element_index)| {
-                self.orders
-                    .sequence_manager
-                    .get_element(*sequence_id, *element_index)
-                    .is_some_and(|element| element.owner == Some(owner))
-            })
-            .collect();
-        assert!(
-            attentive_deferred.len() <= 1,
-            "SetState attentive owner {} registered multiple elements: {attentive_deferred:?}",
-            owner.index()
-        );
-        for (sequence_id, element_index) in attentive_deferred {
-            let action = self
-                .orders
-                .sequence_manager
-                .take_deferred_owner_action(owner, sequence_id, element_index)
-                .unwrap_or_else(|detail| {
-                    panic!(
-                        "SetState attentive owner {} instruction failed: {detail}",
-                        owner.index()
-                    )
-                });
-            let Some(action) = action else {
-                continue;
-            };
-            let mut active_scripts = Vec::new();
-            self.dispatch_script_synchronous_action(sim, assets, action, &mut active_scripts)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "SetState attentive owner {} dispatch failed: {error:?}",
-                        owner.index()
-                    )
-                });
-            self.drain_script_synchronous_actions(sim, assets, &mut active_scripts)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "SetState attentive owner {} successor failed: {error:?}",
-                        owner.index()
-                    )
-                });
-        }
         if request.forget_after
             && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(owner)
             && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
         {
-            // ForgetAttentiveMode is the statement immediately after the
-            // synchronous SetAttentiveMode call. Keep it behind transition
-            // instruction while preserving the launched element.
+            // ForgetAttentiveMode is the statement immediately after
+            // SetAttentiveMode. It resets the flags after registration while
+            // preserving the still-deferred launched element.
             enemy.attentive = false;
             enemy.will_be_attentive = false;
         }
@@ -4118,73 +4070,18 @@ impl EngineInner {
             // caller tail detached from the synchronous script callback.
             if later_actor_effects.is_some() {
                 // These effects precede the virtual SetState call in the
-                // Original call stack.  In particular, FaceTo may launch and
-                // instruct a Turn here; SetState's later SetAttentiveMode can
-                // then synchronously displace that live Turn with a
-                // LeaveAttentiveMode element.  A movement-condolation caller
-                // may request deferred instruction for its own later tail,
-                // but that must not leak backward across this pre-callback
-                // statement boundary.
-                let deferred_before: std::collections::HashSet<_> = self
-                    .orders
-                    .sequence_manager
-                    .deferred_elements_to_go()
-                    .into_iter()
-                    .collect();
+                // Original call stack. FaceTo registers its Turn before
+                // SetState registers the attentive transition, but neither
+                // ordinary element is instructed until the later global
+                // sequence-manager Hourglass. Preserve that FIFO rather than
+                // making this owner boundary execute either element early.
                 self.drain_direct_ai_owner_boundary_mode(
                     sim,
                     owner,
                     assets,
                     owner_local_no_forecast,
-                    false,
+                    true,
                 );
-                let prefix_deferred: Vec<_> = self
-                    .orders
-                    .sequence_manager
-                    .deferred_elements_to_go()
-                    .into_iter()
-                    .filter(|element| !deferred_before.contains(element))
-                    .filter(|(sequence_id, element_index)| {
-                        self.orders
-                            .sequence_manager
-                            .get_element(*sequence_id, *element_index)
-                            .is_some_and(|element| element.owner == Some(owner))
-                    })
-                    .collect();
-                let mut active_scripts = Vec::new();
-                for (sequence_id, element_index) in prefix_deferred {
-                    let action = self
-                        .orders
-                        .sequence_manager
-                        .take_deferred_owner_action(owner, sequence_id, element_index)
-                        .unwrap_or_else(|detail| {
-                            panic!(
-                                "pre-SetState owner {} instruction failed: {detail}",
-                                owner.index()
-                            )
-                        });
-                    if let Some(action) = action {
-                        self.dispatch_script_synchronous_action(
-                            sim,
-                            assets,
-                            action,
-                            &mut active_scripts,
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "pre-SetState owner {} dispatch failed: {error:?}",
-                                owner.index()
-                            )
-                        });
-                        self.drain_script_synchronous_actions(sim, assets, &mut active_scripts)
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "pre-SetState owner {} successor failed: {error:?}",
-                                    owner.index()
-                                )
-                            });
-                    }
-                }
             }
 
             let source = match notification.source {

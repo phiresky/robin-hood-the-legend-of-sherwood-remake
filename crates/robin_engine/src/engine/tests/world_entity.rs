@@ -217,7 +217,7 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
 }
 
 #[test]
-fn pre_set_state_face_is_live_before_attentive_leave_preempts_it() {
+fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo() {
     use crate::ai::{
         AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
         AttentiveModeEffect, Substate,
@@ -267,12 +267,68 @@ fn pre_set_state_face_is_live_before_attentive_leave_preempts_it() {
             .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
     }
 
-    // This is the movement-condolation mode that exposed the bug: caller-tail
-    // Turn instruction is deferred, but the Face statement before SetState is
-    // an earlier synchronous boundary and must already be live.
+    // This is the movement-condolation mode that exposed the bug. Face and
+    // SetAttentiveMode both launch inline, but Original leaves their ordinary
+    // elements registered until the global sequence-manager Hourglass.
     engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
 
-    let owned: Vec<_> = engine
+    let owned_before_manager: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| (element.command, element.state))
+        .collect();
+    assert_eq!(
+        owned_before_manager,
+        [
+            (Command::Turn, SequenceState::Todo),
+            (Command::LeaveAttentiveMode, SequenceState::Todo),
+        ],
+        "Face must register before SetState's attentive tail without instructing either in the owner slot"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .len(),
+        2
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .is_none(),
+        "registered Face/Leave elements must not become actor-selected during the owner slot"
+    );
+    let enemy = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("Enemy test AI remains live");
+    assert!(
+        !enemy.will_be_attentive,
+        "SetAttentiveMode updates its gate immediately"
+    );
+
+    // Repeating the already-requested target must observe will_be_attentive
+    // and must not append a duplicate deferred Leave.
+    engine.set_soldier_attentive_mode(owner, false, false);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .len(),
+        2
+    );
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let owned_after_manager: Vec<_> = engine
         .orders
         .sequence_manager
         .sequences_iter()
@@ -281,12 +337,12 @@ fn pre_set_state_face_is_live_before_attentive_leave_preempts_it() {
         .map(|element| (element.command, element.state))
         .collect();
     assert!(
-        owned.contains(&(Command::Turn, SequenceState::Postponed)),
-        "the pre-SetState Face Turn must be live and postponed by the attentive transition; owned={owned:?}"
+        owned_after_manager.contains(&(Command::Turn, SequenceState::Postponed)),
+        "manager FIFO must start Face first, then let Leave postpone it; owned={owned_after_manager:?}"
     );
     assert!(
-        owned.contains(&(Command::LeaveAttentiveMode, SequenceState::InProgress)),
-        "SetState's later attentive tail must preempt the live Turn"
+        owned_after_manager.contains(&(Command::LeaveAttentiveMode, SequenceState::InProgress)),
+        "manager FIFO must leave the later attentive transition authoritative"
     );
     assert_eq!(
         engine
