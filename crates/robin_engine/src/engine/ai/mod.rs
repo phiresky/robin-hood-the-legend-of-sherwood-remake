@@ -159,6 +159,63 @@ fn patrol_turn_lifecycle_debug_config() -> &'static PatrolTurnLifecycleDebugConf
     })
 }
 
+#[derive(Debug)]
+struct ArcherStepBackLifecycleDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    creation_order: Option<u32>,
+    owner_handle: Option<u32>,
+}
+
+fn archer_step_back_lifecycle_debug_config() -> &'static ArcherStepBackLifecycleDebugConfig {
+    static CONFIG: std::sync::OnceLock<ArcherStepBackLifecycleDebugConfig> =
+        std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_ARCHER_STEP_BACK_LIFECYCLE").is_some();
+        if !enabled {
+            return ArcherStepBackLifecycleDebugConfig {
+                enabled: false,
+                frame: None,
+                creation_order: None,
+                owner_handle: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for ARCHERSTEP diagnostic: {error}")
+                })
+            })
+        };
+        ArcherStepBackLifecycleDebugConfig {
+            enabled,
+            frame: parse("PARITY_DEBUG_ARCHER_STEP_BACK_FRAME"),
+            creation_order: parse("PARITY_DEBUG_ARCHER_STEP_BACK_CREATION_ORDER"),
+            owner_handle: parse("PARITY_DEBUG_ARCHER_STEP_BACK_OWNER_HANDLE"),
+        }
+    })
+}
+
+/// Opt-in, stderr-only trace for the Save049 timer-driven archer step-back.
+/// Original executes `RHElementActor::Hourglass` before the NPC timer tail, so
+/// the authoritative installed order and sprite completion counters at context
+/// construction distinguish a late actor retirement from an AI `GoTo` issue.
+fn archer_step_back_lifecycle_debug_matches(
+    frame: u32,
+    creation_order: Option<u32>,
+    owner_handle: u32,
+) -> bool {
+    let config = archer_step_back_lifecycle_debug_config();
+    config.enabled
+        && config.frame.is_none_or(|expected| expected == frame)
+        && config
+            .creation_order
+            .is_none_or(|expected| Some(expected) == creation_order)
+        && config
+            .owner_handle
+            .is_none_or(|expected| expected == owner_handle)
+}
+
 impl EngineInner {
     fn patrol_turn_lifecycle_debug_matches(&self, owner: EntityId) -> bool {
         let config = patrol_turn_lifecycle_debug_config();
@@ -1749,6 +1806,26 @@ pub(super) fn build_ai_context_from_entity(
         concrete_self_animation,
         &entity.element_data().sprite,
     );
+    if archer_step_back_lifecycle_debug_matches(
+        frame,
+        original_creation_order,
+        elem.index_in_elements_list as u32,
+    ) {
+        let sprite = &elem.sprite;
+        eprintln!(
+            "[ARCHERSTEP frame={frame} co={original_creation_order:?} me={} phase=context installed={self_animation:?} concrete={concrete_self_animation:?} action_state={self_action_state:?} motion_state={:?} order_id={:?} last_execute_order_id={:?} sprite_action={:?} row={} sprite_frame={} frame_count={} done_frame={} done_counter={} reached_done={self_animation_reached_action_done}]",
+            elem.index_in_elements_list,
+            actor.map(|actor| actor.continuation.motion_state),
+            actor.and_then(|actor| actor.installed_order.map(|order| order.order_id)),
+            actor.and_then(|actor| actor.last_execute_order_id),
+            sprite.last_action,
+            sprite.current_row,
+            sprite.current_frame,
+            sprite.frame_count,
+            sprite.action_done_frame,
+            sprite.action_done_counter,
+        );
+    }
     tracing::trace!(
         target: "robin_engine::ai::goto",
         me = elem.index_in_elements_list,

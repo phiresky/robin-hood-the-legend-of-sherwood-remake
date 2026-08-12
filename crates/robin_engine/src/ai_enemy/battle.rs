@@ -19,6 +19,31 @@ use super::{
     archer, combat,
 };
 
+/// Keep the battle-side decision trace independently gated from the engine
+/// context trace. This diagnostic is process-local and stderr-only, so its
+/// disabled path cannot alter state, RNG consumption, or serialization.
+fn archer_step_back_lifecycle_debug_matches(
+    frame: u32,
+    creation_order: Option<u32>,
+    owner_handle: u32,
+) -> bool {
+    if std::env::var_os("PARITY_DEBUG_ARCHER_STEP_BACK_LIFECYCLE").is_none() {
+        return false;
+    }
+    let parse = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for ARCHERSTEP diagnostic: {error}")
+            })
+        })
+    };
+    parse("PARITY_DEBUG_ARCHER_STEP_BACK_FRAME").is_none_or(|expected| expected == frame)
+        && parse("PARITY_DEBUG_ARCHER_STEP_BACK_CREATION_ORDER")
+            .is_none_or(|expected| Some(expected) == creation_order)
+        && parse("PARITY_DEBUG_ARCHER_STEP_BACK_OWNER_HANDLE")
+            .is_none_or(|expected| expected == owner_handle)
+}
+
 /// `ReconsiderEnemyApproach` uses raw `RHposition` map coordinates and stores
 /// their Euclidean norm in a `UWORD`. This is deliberately different from the
 /// game's general aspect-corrected distance helpers.
@@ -1993,6 +2018,26 @@ impl EnemyAi {
                         grid,
                         ASPECT_RATIO,
                     ) {
+                        let debug_step_back = archer_step_back_lifecycle_debug_matches(
+                            ctx.frame,
+                            ctx.original_creation_order,
+                            self.base.me,
+                        );
+                        if debug_step_back {
+                            eprintln!(
+                                "[ARCHERSTEP frame={} co={:?} me={} phase=decision old_substate={old_substate:?} target={target} owner_pos={:?} enemy_pos={enemy_pos:?} goal={goal:?} animation={:?} action_state={:?} reached_done={} timer_running={} timer_ring={} already_on_point={}]",
+                                ctx.frame,
+                                ctx.original_creation_order,
+                                self.base.me,
+                                ctx.position,
+                                ctx.self_animation,
+                                ctx.self_action_state,
+                                ctx.self_animation_reached_action_done,
+                                self.base.timer_is_running,
+                                self.base.when_does_timer_ring,
+                                self.base.already_on_point,
+                            );
+                        }
                         self.go_to(
                             AiState::Attacking,
                             Substate::AttackingArcherRetireFromCombat,
@@ -2000,6 +2045,21 @@ impl EnemyAi {
                             GotoFlags::RUN,
                             ctx,
                         );
+                        if debug_step_back {
+                            eprintln!(
+                                "[ARCHERSTEP frame={} co={:?} me={} phase=after_goto state={:?} substate={:?} already_on_point={} couldnt_reachpoint={} halt={} additional_halts={} order_count={}]",
+                                ctx.frame,
+                                ctx.original_creation_order,
+                                self.base.me,
+                                self.base.current_state,
+                                self.base.current_substate,
+                                self.base.already_on_point,
+                                self.base.couldnt_reachpoint,
+                                self.base.outbox.actor.halt,
+                                self.base.outbox.actor.additional_halts,
+                                self.base.outbox.actor.orders.len(),
+                            );
+                        }
                     } else {
                         // Can't step back — fall back to shooting.
                         decision = Decision::Shoot;
