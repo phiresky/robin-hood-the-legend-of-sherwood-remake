@@ -165,6 +165,31 @@ impl EngineInner {
                         return Ok(());
                     }
                 }
+                let resolved_priority = {
+                    let element = self
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence_id, element_index)
+                        .ok_or_else(|| {
+                            format!(
+                                "missing synchronous owner element {sequence_id:?}/{element_index} before priority resolution"
+                            )
+                        })?;
+                    let resolver = Self::priority_resolver(&self.world.entities);
+                    resolver(element)
+                };
+                if let Some(element) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(sequence_id, element_index)
+                    && element.priority == crate::sequence::SequencePriority::NotYetSet
+                {
+                    // Actor::Instruct resolves priority after transition
+                    // generation and before comparing against the selected
+                    // element. Synchronous WAIT/native continuations must not
+                    // reach arbitration with the NotYetSet fallback.
+                    element.priority = resolved_priority;
+                }
                 if !self.arbitrate_instruct(sequence_id, element_index) {
                     return Ok(());
                 }

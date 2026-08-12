@@ -281,8 +281,8 @@ fn pre_set_state_face_is_live_before_attentive_leave_preempts_it() {
         .map(|element| (element.command, element.state))
         .collect();
     assert!(
-        owned.contains(&(Command::Turn, SequenceState::Interrupted)),
-        "the pre-SetState Face Turn must be live before the attentive transition displaces it; owned={owned:?}"
+        owned.contains(&(Command::Turn, SequenceState::Postponed)),
+        "the pre-SetState Face Turn must be live and postponed by the attentive transition; owned={owned:?}"
     );
     assert!(
         owned.contains(&(Command::LeaveAttentiveMode, SequenceState::InProgress)),
