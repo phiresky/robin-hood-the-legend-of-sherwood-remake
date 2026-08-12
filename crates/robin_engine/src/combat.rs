@@ -1348,6 +1348,16 @@ pub enum ProposedCombatAction {
     Parry,
 }
 
+/// Process-local label for the opt-in reactive sword-selection diagnostic.
+/// This is deliberately not part of any serialized simulation structure.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SwordStrikeProposalDebug {
+    pub frame: u32,
+    pub victim: u32,
+    pub victim_creation_order: u32,
+    pub attacker: u32,
+}
+
 /// Rough startup frames for the waiting→parrying transition animation.
 /// Callers read the real value from sprite data when available
 /// (via `StrikeSelectionContext::parry_startup_frames`).
@@ -1372,6 +1382,17 @@ pub fn propose_good_sword_strike(
     sword_strike_boredom: &mut Vec<u16>,
     also_parade: bool,
 ) -> Option<ProposedCombatAction> {
+    propose_good_sword_strike_with_debug(sim, ctx, nearby, sword_strike_boredom, also_parade, None)
+}
+
+pub(crate) fn propose_good_sword_strike_with_debug(
+    sim: &crate::sim_rng::SimulationContext,
+    ctx: &StrikeSelectionContext,
+    nearby: &[NearbyVictim],
+    sword_strike_boredom: &mut Vec<u16>,
+    also_parade: bool,
+    debug: Option<SwordStrikeProposalDebug>,
+) -> Option<ProposedCombatAction> {
     // Ensure boredom array is properly sized.
     if sword_strike_boredom.len() < NUM_NORMAL_SWORD_STRIKES {
         sword_strike_boredom.resize(NUM_NORMAL_SWORD_STRIKES, 0);
@@ -1383,8 +1404,52 @@ pub fn propose_good_sword_strike(
     // special strike. `(rand() % 100) >= max(50, fighting_ability)`.
     let threshold = ctx.fighting_ability.max(50) as u32;
     let mut only_parade = false;
-    if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SwordStrikeSelection, 0..100) >= threshold
-    {
+    let skill_roll =
+        crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SwordStrikeSelection, 0..100);
+    if let Some(debug) = debug {
+        eprintln!(
+            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_input skill={} blood={} direction={} elevation_bits={:#010x} camp={:?} swordfighting={} time_limit={} startup={:?} parry_startup={:?} also_parade={} skill_roll={} threshold={} boredom={:?} nearby_count={}]",
+            debug.frame,
+            debug.victim_creation_order,
+            debug.victim,
+            debug.attacker,
+            ctx.fighting_ability,
+            ctx.blood_alcohol,
+            ctx.attacker_direction,
+            ctx.attacker_elevation.to_bits(),
+            ctx.attacker_camp,
+            ctx.is_swordfighting,
+            time_limit,
+            ctx.strike_startup_frames,
+            ctx.parry_startup_frames,
+            also_parade,
+            skill_roll,
+            threshold,
+            sword_strike_boredom,
+            nearby.len(),
+        );
+        for (index, victim) in nearby.iter().enumerate() {
+            eprintln!(
+                "[REACTIVE_SWORD frame={} co={} victim={} phase=nearby index={} eligible={} dx_bits={:#010x} dy_bits={:#010x} distance_bits={:#010x} sector={} camp={:?} facing={} elevation_bits={:#010x} life={} primary={} walking_sword={}]",
+                debug.frame,
+                debug.victim_creation_order,
+                debug.victim,
+                index,
+                victim.eligible_for_regular_strikes,
+                victim.dx.to_bits(),
+                victim.dy_stretched.to_bits(),
+                victim.distance.to_bits(),
+                victim.direction_sector,
+                victim.camp,
+                victim.facing_direction,
+                victim.elevation.to_bits(),
+                victim.life_points,
+                victim.is_primary_target,
+                victim.is_walking_with_sword,
+            );
+        }
+    }
+    if skill_roll >= threshold {
         if also_parade {
             // NPCs always get parade fallback. PCs need a second
             // fighting_ability roll — higher skill means they're more likely
@@ -1443,6 +1508,16 @@ pub fn propose_good_sword_strike(
             };
 
             if !can_strike {
+                if let Some(debug) = debug {
+                    eprintln!(
+                        "[REACTIVE_SWORD frame={} co={} victim={} phase=candidate strike={:?} accepted=false reason=skill_or_alcohol boredom={}]",
+                        debug.frame,
+                        debug.victim_creation_order,
+                        debug.victim,
+                        strike,
+                        sword_strike_boredom[i],
+                    );
+                }
                 continue;
             }
 
@@ -1455,6 +1530,17 @@ pub fn propose_good_sword_strike(
                     .map(|f| f[i])
                     .unwrap_or(STRIKE_STARTUP_FRAMES[i]);
                 if limit < 1000 && startup + 2 >= limit {
+                    if let Some(debug) = debug {
+                        eprintln!(
+                            "[REACTIVE_SWORD frame={} co={} victim={} phase=candidate strike={:?} accepted=false reason=time_limit startup={} time_limit={}]",
+                            debug.frame,
+                            debug.victim_creation_order,
+                            debug.victim,
+                            strike,
+                            startup,
+                            limit,
+                        );
+                    }
                     continue;
                 }
             }
@@ -1465,6 +1551,12 @@ pub fn propose_good_sword_strike(
 
             // Friendly fire — skip this strike entirely.
             if num_victims == -1 {
+                if let Some(debug) = debug {
+                    eprintln!(
+                        "[REACTIVE_SWORD frame={} co={} victim={} phase=candidate strike={:?} accepted=false reason=friendly_fire raw_damage={}]",
+                        debug.frame, debug.victim_creation_order, debug.victim, strike, raw_damage,
+                    );
+                }
                 continue;
             }
 
@@ -1476,6 +1568,25 @@ pub fn propose_good_sword_strike(
                     (sword_strike_boredom[i] as f32 * SWORD_STRIKE_BOREDOM_MALUS_FACTOR) as i16;
             } else {
                 damage += 500;
+            }
+
+            if let Some(debug) = debug {
+                eprintln!(
+                    "[REACTIVE_SWORD frame={} co={} victim={} phase=candidate strike={:?} startup={} raw_damage={} victims={} boredom={} drunken={} adjusted_damage={} best_before={}]",
+                    debug.frame,
+                    debug.victim_creation_order,
+                    debug.victim,
+                    strike,
+                    ctx.strike_startup_frames
+                        .map(|frames| frames[i])
+                        .unwrap_or(STRIKE_STARTUP_FRAMES[i]),
+                    raw_damage,
+                    num_victims,
+                    sword_strike_boredom[i],
+                    drunken_circular_hit,
+                    damage,
+                    best_damage,
+                );
             }
 
             // Group strikes require > 1 victim.
@@ -1495,17 +1606,41 @@ pub fn propose_good_sword_strike(
     } // if !only_parade
 
     if let Some(strike) = best_strike {
-        return Some(ProposedCombatAction::Strike(strike));
+        let result = Some(ProposedCombatAction::Strike(strike));
+        if let Some(debug) = debug {
+            eprintln!(
+                "[REACTIVE_SWORD frame={} co={} victim={} phase=result action={:?} boredom={:?}]",
+                debug.frame,
+                debug.victim_creation_order,
+                debug.victim,
+                result,
+                sword_strike_boredom,
+            );
+        }
+        return result;
     }
 
     // Parade fallback: if no good strike and `also_parade` is true,
     // propose a parry if it can start in time.
     let parry_frames = ctx.parry_startup_frames.unwrap_or(PARRY_STARTUP_FRAMES);
-    if also_parade && (time_limit >= 1000 || parry_frames < time_limit) {
-        return Some(ProposedCombatAction::Parry);
+    let result = if also_parade && (time_limit >= 1000 || parry_frames < time_limit) {
+        Some(ProposedCombatAction::Parry)
+    } else {
+        None
+    };
+    if let Some(debug) = debug {
+        eprintln!(
+            "[REACTIVE_SWORD frame={} co={} victim={} phase=result action={:?} only_parade={} parry_frames={} boredom={:?}]",
+            debug.frame,
+            debug.victim_creation_order,
+            debug.victim,
+            result,
+            only_parade,
+            parry_frames,
+            sword_strike_boredom,
+        );
     }
-
-    None
+    result
 }
 
 // ═══════════════════════════════════════════════════════════════════

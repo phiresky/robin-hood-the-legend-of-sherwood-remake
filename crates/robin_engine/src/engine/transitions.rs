@@ -1170,7 +1170,7 @@ fn make_action_transition_soldier(
             "soldier leave-attentive exit transition"
         );
         if posture_after == crate::element::Posture::Upright {
-            push_anim_order(
+            push_anim_order_no_dir(
                 engine,
                 seq_id,
                 elem_idx,
@@ -2009,7 +2009,7 @@ fn make_final_action_transition_soldier(
             .map(|e| e.posture_after_transition)
             .unwrap_or_default();
         if posture_after == crate::element::Posture::Upright {
-            push_anim_order(
+            push_anim_order_no_dir(
                 engine,
                 seq_id,
                 elem_idx,
@@ -2703,7 +2703,9 @@ mod tests {
     #[test]
     fn soldier_enter_swordfight_fires_must_be_alerted() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, false));
+        let mut soldier = make_soldier(P::Upright, AS::Waiting, false);
+        soldier.element_data_mut().set_direction_goal(15);
+        let owner = engine.add_entity(soldier);
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2714,6 +2716,61 @@ mod tests {
             orders.contains(&OrderType::TransitionWaitingUprightWaitingAlerted),
             "expected attentive-mode transition, got {:?}",
             orders
+        );
+        assert_eq!(
+            order_compute_direction_for(
+                &engine,
+                seq,
+                idx,
+                OrderType::TransitionWaitingUprightWaitingAlerted,
+            ),
+            Some(false),
+            "Original attentive entry is an in-place transition"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+                .as_u8(),
+            15,
+            "booking attentive entry must preserve the live direction goal"
+        );
+    }
+
+    /// Original soldier Translate stamps the attentive-to-upright order with
+    /// `bComputeDirection = false`. This transition is also inserted as the
+    /// exit action for commands that require ordinary waiting; its zero target
+    /// must not turn a non-origin actor toward sector 9.
+    #[test]
+    fn attentive_exit_transition_preserves_direction_goal() {
+        let mut engine = EngineInner::new();
+        let mut soldier = make_soldier(P::Upright, AS::Waiting, true);
+        soldier.element_data_mut().set_direction_goal(1);
+        let owner = engine.add_entity(soldier);
+        let (seq, idx) = launch(&mut engine, owner, Command::SitDown);
+
+        assert!(generate_transition(&mut engine, owner, seq, idx));
+        assert_eq!(
+            order_compute_direction_for(
+                &engine,
+                seq,
+                idx,
+                OrderType::TransitionWaitingAlertedWaitingUpright,
+            ),
+            Some(false),
+            "Original attentive exit is an in-place transition"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+                .as_u8(),
+            1,
+            "booking attentive exit must preserve the live direction goal"
         );
     }
 

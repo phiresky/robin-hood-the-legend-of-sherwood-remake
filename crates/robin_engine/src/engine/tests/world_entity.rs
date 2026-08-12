@@ -217,6 +217,156 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
 }
 
 #[test]
+fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo() {
+    use crate::ai::{
+        AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
+        AttentiveModeEffect, Substate,
+    };
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier_entity = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = true;
+    enemy.base.current_state = AiState::Default;
+    enemy.base.current_substate = Substate::DefaultGotoPostTurn;
+    let owner = engine.add_entity(soldier_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let mut face_prefix = AiActorOutbox::default();
+    face_prefix
+        .orders
+        .push(crate::order::AiOrderIntent::face_direction(7));
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("Enemy test AI remains live");
+        ai.outbox
+            .reentrant
+            .owner_work
+            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+                outgoing_state: AiState::Default,
+                outgoing_substate: Substate::DefaultGotoPost,
+                incoming_state: AiState::Default,
+                incoming_substate: Substate::DefaultGotoPostTurn,
+                source: AiStateChangeSource::SelfActor,
+                actor_effects_before_callback: Some(face_prefix),
+            }));
+        ai.outbox
+            .actor
+            .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
+    }
+
+    // This is the movement-condolation mode that exposed the bug. Face and
+    // SetAttentiveMode both launch inline, but Original leaves their ordinary
+    // elements registered until the global sequence-manager Hourglass.
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    let owned_before_manager: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| (element.command, element.state))
+        .collect();
+    assert_eq!(
+        owned_before_manager,
+        [
+            (Command::Turn, SequenceState::Todo),
+            (Command::LeaveAttentiveMode, SequenceState::Todo),
+        ],
+        "Face must register before SetState's attentive tail without instructing either in the owner slot"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .len(),
+        2
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .is_none(),
+        "registered Face/Leave elements must not become actor-selected during the owner slot"
+    );
+    let enemy = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("Enemy test AI remains live");
+    assert!(
+        !enemy.will_be_attentive,
+        "SetAttentiveMode updates its gate immediately"
+    );
+
+    // Repeating the already-requested target must observe will_be_attentive
+    // and must not append a duplicate deferred Leave.
+    engine.set_soldier_attentive_mode(owner, false, false);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .len(),
+        2
+    );
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let owned_after_manager: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| (element.command, element.state))
+        .collect();
+    assert!(
+        owned_after_manager.contains(&(Command::Turn, SequenceState::Postponed)),
+        "manager FIFO must start Face first, then let Leave postpone it; owned={owned_after_manager:?}"
+    );
+    assert!(
+        owned_after_manager.contains(&(Command::LeaveAttentiveMode, SequenceState::InProgress)),
+        "manager FIFO must leave the later attentive transition authoritative"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(sequence, index)| engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, index))
+            .map(|element| element.command),
+        Some(Command::LeaveAttentiveMode)
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionWaitingAlertedWaitingUpright)
+    );
+}
+
+#[test]
 fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     use crate::ai::{LogLineType, Remark};
 
@@ -2624,6 +2774,129 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
     assert_eq!(resolved.effective.y, raw.y);
     assert_eq!(resolved.effective.sector, raw.sector);
     assert_eq!(resolved.effective.level, raw.level);
+}
+
+#[test]
+fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fallback() {
+    use crate::ai::{AiContext, AiState, Position, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::gate::{Door, DoorIndex};
+    use crate::order::OrderType;
+    use crate::sector::SectorNumber;
+    use crate::sequence::{SequenceElement, SequenceElementData};
+
+    let mut engine = EngineInner::new();
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let me_sector = crate::position_interface::SectorHandle::new(1);
+
+    for (id, position) in [
+        (owner_id, MapPoint::new(100.0, 0.0)),
+        (target_id, MapPoint::new(100.0, 25.0)),
+    ] {
+        let entity = engine.get_entity_mut(id).expect("roof-wait actor exists");
+        entity.element_data_mut().active = true;
+        entity.element_data_mut().set_position_map(position);
+        entity.element_data_mut().set_sector(me_sector);
+    }
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("roof-wait owner has Enemy AI");
+    owner.base.me = owner_id.index();
+    owner.base.primary_target = target_id.index();
+
+    // The target sprite is still on the owner's side. Original AI Position
+    // instead reports point_in/sector_in while this PassDoor is selected.
+    let mut door = Door {
+        sector_out: SectorNumber::new(1),
+        sector_in: SectorNumber::new(2),
+        point_out: MapPoint::new(100.0, 100.0),
+        point_in: MapPoint::new(100.0, 200.0),
+        ..Door::default()
+    };
+    door.lock_npc_villain();
+    engine.script_domains.interactables.doors = vec![door];
+
+    let mut pass = SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(target_id),
+        OrderType::WalkingUpright,
+    );
+    let SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    else {
+        panic!("PassDoor test element changed kind")
+    };
+    *gate_id = Some(DoorIndex(0));
+    *direction = 1;
+    let sequence_id = engine.orders.sequence_manager.launch_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+
+    let wait = crate::engine::ai::precompute_avenger_on_roof_wait_position(
+        &engine.world.entities,
+        &engine.script_domains.interactables.doors,
+        &engine.orders.sequence_manager,
+        owner_id,
+        target_id,
+        &|_| true,
+        &|_| None,
+    )
+    .expect("committed target side exposes the NPC-locked blocking gate");
+    assert_eq!(wait.x, 100.0);
+    assert_eq!(wait.y, 100.0);
+    assert_eq!(wait.sector, me_sector);
+
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("roof-wait owner retains Enemy AI");
+    owner.base.current_state = AiState::Attacking;
+    owner.base.current_substate = Substate::AttackingRunningToEnemy;
+    owner.base.couldnt_reachpoint = true;
+    owner.resume_reconsider_enemy_approach_after_go_near(
+        Position {
+            x: 100.0,
+            y: 200.0,
+            sector: crate::position_interface::SectorHandle::new(2),
+            level: 0,
+        },
+        Some(wait),
+        &AiContext::default(),
+    );
+    assert!(!owner.base.couldnt_reachpoint);
+    assert_eq!(
+        owner.base.current_substate,
+        Substate::AttackingRunToAvengerOnRoof
+    );
+    assert_eq!(owner.base.outbox.actor.orders.len(), 1);
+    assert_eq!(owner.base.outbox.actor.orders[0].target_x, 100.0);
+    assert_eq!(owner.base.outbox.actor.orders[0].target_y, 100.0);
+
+    // Without the selected PassDoor, both ordinary live positions are in the
+    // same sector. The roof special case must remain absent so the caller can
+    // retain couldn't-reachpoint and take its normal emergency fallback.
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(sequence_id, 0);
+    assert!(
+        crate::engine::ai::precompute_avenger_on_roof_wait_position(
+            &engine.world.entities,
+            &engine.script_domains.interactables.doors,
+            &engine.orders.sequence_manager,
+            owner_id,
+            target_id,
+            &|_| true,
+            &|_| None,
+        )
+        .is_none()
+    );
 }
 
 #[test]

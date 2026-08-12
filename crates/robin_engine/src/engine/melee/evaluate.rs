@@ -8,6 +8,32 @@ use crate::element::{ActionState, Command, Entity, EntityId};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_REACTIVE_SWORD").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for reactive sword diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_REACTIVE_SWORD_FRAME").is_none_or(|value| value == frame)
+}
+
+fn reactive_sword_debug_creation_order_matches(creation_order: u32) -> bool {
+    std::env::var("PARITY_DEBUG_REACTIVE_SWORD_CREATION_ORDER")
+        .ok()
+        .is_none_or(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!(
+                    "invalid PARITY_DEBUG_REACTIVE_SWORD_CREATION_ORDER={value:?} for reactive sword diagnostic: {error}"
+                )
+            }) == creation_order
+        })
+}
+
 fn opponent_sword_strike_time_limit(
     animation: Option<crate::order::OrderType>,
     frames_from_now: impl FnOnce() -> i16,
@@ -1466,6 +1492,34 @@ impl EngineInner {
                         | Some(crate::ai::Substate::AttackingMovingAroundOldEnemy)
                         | Some(crate::ai::Substate::AttackingApproachingNewEnemy)
                 );
+                let frame = self.control.frame_counter;
+                if reactive_sword_debug_frame_matches(frame) {
+                    let creation_order = self.world.original_creation_order(victim_id);
+                    if reactive_sword_debug_creation_order_matches(creation_order) {
+                        let known =
+                            self.get_entity(victim_id)
+                                .and_then(Entity::enemy_ai)
+                                .map(|ai| {
+                                    [
+                                        ai.known_enemy_strike_1,
+                                        ai.known_enemy_strike_2,
+                                        ai.known_enemy_strike_3,
+                                    ]
+                                });
+                        eprintln!(
+                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning strike={:?} substate={:?} swordfighting={} accepted_substate={} known={:?}]",
+                            frame,
+                            creation_order,
+                            victim_id.index(),
+                            attacker_id.index(),
+                            strike,
+                            npc_substate,
+                            is_swordfighting,
+                            in_swordfight_substate,
+                            known,
+                        );
+                    }
+                }
                 if in_swordfight_substate {
                     self.consider_to_begin_parade(sim, assets, victim_id, attacker_id, strike);
                 }
@@ -1881,6 +1935,21 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
+        let frame = self.control.frame_counter;
+        let debug = reactive_sword_debug_frame_matches(frame)
+            .then(|| {
+                let victim_creation_order = self.world.original_creation_order(victim_id);
+                reactive_sword_debug_creation_order_matches(victim_creation_order).then_some(
+                    crate::combat::SwordStrikeProposalDebug {
+                        frame,
+                        victim: victim_id.index(),
+                        victim_creation_order,
+                        attacker: attacker_id.index(),
+                    },
+                )
+            })
+            .flatten();
+        let mut nearby_debug_index = debug.map(|_| 0_usize);
         let nearby: Vec<crate::combat::NearbyVictim> = self
             .world
             .entities
@@ -1920,25 +1989,37 @@ impl EngineInner {
                     .actor_data()
                     .map(|a| a.action_state == ActionState::MovingSword)
                     .unwrap_or(false);
-                Some(crate::combat::NearbyVictim {
-                    eligible_for_regular_strikes,
-                    dx: vdx,
-                    dy_stretched: vdy,
-                    distance: dist,
-                    direction_sector: sector,
-                    camp: match e {
-                        Entity::Pc(_) => crate::element::Camp::Royalists,
-                        Entity::Soldier(s) => s.soldier.cached_camp,
-                        Entity::Civilian(c) => c.civilian.cached_camp,
-                        _ => crate::element::Camp::Error,
-                    },
-                    facing_direction: elem.direction(),
-                    elevation: elem.position().z,
-                    life_points: lp,
-                    defender_profile: def_prof,
-                    is_primary_target: principal_opponent.is_some_and(|p| eid == p),
+                let nearby = crate::combat::NearbyVictim {
+                        eligible_for_regular_strikes,
+                        dx: vdx,
+                        dy_stretched: vdy,
+                        distance: dist,
+                        direction_sector: sector,
+                        camp: match e {
+                            Entity::Pc(_) => crate::element::Camp::Royalists,
+                            Entity::Soldier(s) => s.soldier.cached_camp,
+                            Entity::Civilian(c) => c.civilian.cached_camp,
+                            _ => crate::element::Camp::Error,
+                        },
+                        facing_direction: elem.direction(),
+                        elevation: elem.position().z,
+                        life_points: lp,
+                        defender_profile: def_prof,
+                        is_primary_target: principal_opponent.is_some_and(|p| eid == p),
                     is_walking_with_sword,
-                })
+                };
+                if let (Some(debug), Some(index)) = (debug, nearby_debug_index.as_mut()) {
+                    eprintln!(
+                        "[REACTIVE_SWORD frame={} co={} victim={} phase=nearby_owner index={} target={}]",
+                        debug.frame,
+                        debug.victim_creation_order,
+                        debug.victim,
+                        *index,
+                        eid.index(),
+                    );
+                    *index += 1;
+                }
+                Some(nearby)
             })
             .collect();
 
@@ -2002,12 +2083,13 @@ impl EngineInner {
             is_npc: true,
         };
 
-        let proposed = crate::combat::propose_good_sword_strike(
+        let proposed = crate::combat::propose_good_sword_strike_with_debug(
             sim,
             &strike_ctx,
             &nearby,
             &mut victim_boredom,
             true, // also_parade — this is the reactive parry path
+            debug,
         );
 
         // Write back boredom state

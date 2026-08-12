@@ -165,6 +165,50 @@ impl EngineInner {
                         return Ok(());
                     }
                 }
+                if self
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+                    .is_some_and(|element| {
+                        matches!(
+                            element.state,
+                            crate::sequence::SequenceState::Terminated
+                                | crate::sequence::SequenceState::Impossible
+                                | crate::sequence::SequenceState::Interrupted
+                        )
+                    })
+                {
+                    // Original Instruct returns after GenerateTransition if
+                    // the transition cascade already made the element
+                    // terminal. It never assigns DeterminePriority to that
+                    // retained element.
+                    return Ok(());
+                }
+                let resolved_priority = {
+                    let element = self
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence_id, element_index)
+                        .ok_or_else(|| {
+                            format!(
+                                "missing synchronous owner element {sequence_id:?}/{element_index} before priority resolution"
+                            )
+                        })?;
+                    let resolver = Self::priority_resolver(&self.world.entities);
+                    resolver(element)
+                };
+                if let Some(element) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(sequence_id, element_index)
+                    && element.priority == crate::sequence::SequencePriority::NotYetSet
+                {
+                    // Actor::Instruct resolves priority after transition
+                    // generation and before comparing against the selected
+                    // element. Synchronous WAIT/native continuations must not
+                    // reach arbitration with the NotYetSet fallback.
+                    element.priority = resolved_priority;
+                }
                 if !self.arbitrate_instruct(sequence_id, element_index) {
                     return Ok(());
                 }

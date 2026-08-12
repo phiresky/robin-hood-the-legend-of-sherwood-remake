@@ -1746,10 +1746,9 @@ impl EngineInner {
         // Per-NPC frame-counter phase offset so not every NPC re-runs
         // detection on the same tick. The Original keys this with the
         // entity's creation order, not its current marrayElements slot.
-        let modified_frame = refresh_detection_modified_frame(
-            universal_frame,
-            self.original_static_creation_order(npc_id),
-        );
+        let original_creation_order = self.original_static_creation_order(npc_id);
+        let modified_frame =
+            refresh_detection_modified_frame(universal_frame, original_creation_order);
         let alert_status = viewer.alert_status;
         // Lacklandist ComputeVisibility lets Stare / Follow and non-Green
         // alert status bypass the per-entry cadence. Original's Royalist arm
@@ -3135,6 +3134,65 @@ impl EngineInner {
                     after_seen_last_frame = det.seen_last_frame,
                     "latch update"
                 );
+            }
+
+            let debug_them = std::env::var_os("PARITY_DEBUG_THEM_LIFECYCLE").is_some()
+                && std::env::var("PARITY_DEBUG_THEM_FRAME")
+                    .ok()
+                    .is_none_or(|value| {
+                        value.parse::<u32>().unwrap_or_else(|error| {
+                            panic!("invalid PARITY_DEBUG_THEM_FRAME={value:?}: {error}")
+                        }) == universal_frame
+                    })
+                && std::env::var("PARITY_DEBUG_THEM_CREATION_ORDER")
+                    .ok()
+                    .is_none_or(|value| {
+                        value.parse::<u32>().unwrap_or_else(|error| {
+                            panic!("invalid PARITY_DEBUG_THEM_CREATION_ORDER={value:?}: {error}")
+                        }) == original_creation_order
+                    });
+            if debug_them {
+                eprintln!(
+                    "[THEM frame={} co={} me={} phase=detection_latches committed={} stimuli={:?}]",
+                    universal_frame,
+                    original_creation_order,
+                    npc_id.index(),
+                    committed,
+                    enemy_stimuli
+                        .iter()
+                        .map(|stimulus| (stimulus.stimulus_type, stimulus.info))
+                        .collect::<Vec<_>>(),
+                );
+                for det in &npc.detectable_lists[enemy_idx] {
+                    let target_id = det.element.unwrap_or_else(|| {
+                        panic!(
+                            "Enemy detectable for NPC {} has no target in THEM diagnostic",
+                            npc_id.index()
+                        )
+                    });
+                    let target = enemy_targets
+                        .iter()
+                        .find(|target| target.id == target_id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Enemy target {} for NPC {} missing in THEM diagnostic",
+                                target_id.index(),
+                                npc_id.index()
+                            )
+                        });
+                    eprintln!(
+                        "[THEM frame={} co={} me={} phase=detection_entry target={} seen_now={} seen_last={} visibility={} dead={} unconscious={}]",
+                        universal_frame,
+                        original_creation_order,
+                        npc_id.index(),
+                        target_id.index(),
+                        det.seen_now,
+                        det.seen_last_frame,
+                        det.last_visibility,
+                        target.dead,
+                        target.unconscious,
+                    );
+                }
             }
 
             // The detection-built tick input is assembled before the latch
