@@ -692,6 +692,14 @@ impl EnemyAi {
         // enemies than the last view event.
         self.list_them.retain(|&h| h != 0); // basic cleanup
 
+        let debug_them = super::them_lifecycle_debug_matches(ctx);
+        if debug_them {
+            eprintln!(
+                "[THEM frame={} co={:?} me={} phase=battle_entry list={:?}]",
+                ctx.frame, ctx.original_creation_order, self.base.me, self.list_them,
+            );
+        }
+
         // `num_enemies_i_can_see` is captured BEFORE friend-seen enemies
         // are injected. This count gates the offensive-decision block;
         // the merged total (personal + friend-seen) gates the
@@ -935,6 +943,21 @@ impl EnemyAi {
                 }
                 idx += 1;
             }
+        }
+
+        if debug_them {
+            eprintln!(
+                "[THEM frame={} co={:?} me={} phase=battle_cleanup_after visible_count={} list={:?} unconscious={:?}]",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+                num_enemies_i_can_see,
+                self.list_them,
+                unconscious_enemies_from_them
+                    .iter()
+                    .map(|enemy| enemy.handle)
+                    .collect::<Vec<_>>(),
+            );
         }
 
         if num_enemies_i_can_see == 0 {

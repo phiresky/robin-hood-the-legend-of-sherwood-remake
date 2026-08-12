@@ -24,6 +24,25 @@ use serde::{Deserialize, Serialize};
 use crate::ai::*;
 use crate::entity_id::PcId;
 use crate::parameters_ai;
+
+/// Opt-in, process-local tracing for the Save018 Them-list lifecycle cohort.
+/// Environment reads and stderr output deliberately stay outside serialized AI
+/// state and do not consume simulation RNG.
+pub(super) fn them_lifecycle_debug_matches(ctx: &AiContext) -> bool {
+    if std::env::var_os("PARITY_DEBUG_THEM_LIFECYCLE").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for THEM diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_THEM_FRAME").is_none_or(|frame| frame == ctx.frame)
+        && parse_filter("PARITY_DEBUG_THEM_CREATION_ORDER")
+            .is_none_or(|creation_order| ctx.original_creation_order == Some(creation_order))
+}
 use crate::position_interface::ASPECT_RATIO;
 use util::soldier_detects_position_180;
 
@@ -1201,6 +1220,38 @@ impl EnemyAi {
         // geometric tick products. This includes unconscious enemies; the
         // cleanup (`!is_able_to_fight`) lives downstream in
         // `battle_decisions`.
+        let debug = them_lifecycle_debug_matches(ctx);
+        if debug {
+            eprintln!(
+                "[THEM frame={} co={:?} me={} phase=reinitialize_before state={:?} substate={:?} list={:?} seen={:?}]",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+                self.base.current_state,
+                self.base.current_substate,
+                self.list_them,
+                ctx.self_seen_enemy_handles,
+            );
+            for &handle in &ctx.self_seen_enemy_handles {
+                let target = ctx.entity_view(handle).unwrap_or_else(|| {
+                    panic!(
+                        "seen Enemy detectable {} for NPC {} has no entity snapshot",
+                        handle, self.base.me
+                    )
+                });
+                eprintln!(
+                    "[THEM frame={} co={:?} me={} phase=reinitialize_input target={} dead={} unconscious={} carried={} able={}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    handle,
+                    target.is_dead,
+                    target.is_unconscious,
+                    target.is_carried,
+                    target.is_able_to_fight,
+                );
+            }
+        }
         self.list_them.clear();
         for &handle in &ctx.self_seen_enemy_handles {
             let target = ctx.entity_view(handle).unwrap_or_else(|| {
@@ -1219,6 +1270,12 @@ impl EnemyAi {
             list_them = ?self.list_them,
             "reinitialize_them_list"
         );
+        if debug {
+            eprintln!(
+                "[THEM frame={} co={:?} me={} phase=reinitialize_after list={:?}]",
+                ctx.frame, ctx.original_creation_order, self.base.me, self.list_them,
+            );
+        }
     }
 
     fn initialize_patrol(&mut self) {
