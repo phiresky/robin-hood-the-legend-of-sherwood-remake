@@ -8413,6 +8413,9 @@ impl EngineInner {
         let first_frame_dist_raw = frame_dist_raw;
         let first_direction_differs_from_goal =
             sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
+        let fast_motion_outer_pre = sprite.position_iface.map_position();
+        let mut first_fast_commit = None;
+        let mut second_fast_operands = None;
         // Fast ladder/wall Execute contains two literal PerformMotion
         // calls, but returns immediately when the first one reaches the
         // order goal. RunningStairs has the same two-call loop without
@@ -8453,6 +8456,85 @@ impl EngineInner {
             && motion_state != MotionState::Terminated
             && !first_fast_call_terminates
         {
+            let first_speed = scaled_motion_distance(
+                first_frame_dist_raw,
+                speed_factor,
+                apply_speed_factor,
+                first_direction_differs_from_goal,
+            );
+            if first_speed != 0.0 {
+                let first_pre = sprite.position_iface.map_position();
+                let first_increment = sprite.position_iface.get_increment_map();
+                let anti_on = sprite.position_iface.is_anti_collision_on();
+                let (first_dx, first_dy, recovered, rebuild) = if anti_on
+                    && let Some(mover_snapshot) = anti_snapshots
+                        .get(actor_id)
+                        .and_then(|slot| slot.as_ref())
+                        .filter(|snapshot| snapshot.active)
+                        .cloned()
+                {
+                    let move_box = *sprite.position_iface.get_move_box();
+                    let half_diagonal = sprite.position_iface.get_half_diagonal();
+                    let was_deviated = sprite.position_iface.is_deviated();
+                    let mut state = super::anti_collision::AntiCollisionState {
+                        pi: &mut sprite.position_iface,
+                        move_box,
+                        half_diagonal,
+                        goal_map: goal,
+                    };
+                    let (dx, dy) = apply_prepared_anti_collision_step(
+                        &mover_snapshot,
+                        anti_snapshots,
+                        &self.ai.global.repulsive_points,
+                        prepared,
+                        &self.world.fast_grid,
+                        &mut state,
+                        first_increment.x,
+                        first_increment.y,
+                        first_speed,
+                        true,
+                    );
+                    (
+                        dx,
+                        dy,
+                        was_deviated && !state.pi.is_deviated(),
+                        state.pi.is_deviated() && state.pi.blocked_count == 0,
+                    )
+                } else {
+                    (
+                        first_increment.x * first_speed,
+                        first_increment.y * first_speed,
+                        false,
+                        false,
+                    )
+                };
+                let first_post = MapPoint::new(first_pre.x + first_dx, first_pre.y + first_dy);
+                sprite.position_iface.set_map_position(first_post);
+                if rebuild && (first_dx != 0.0 || first_dy != 0.0) {
+                    let raw = vector_to_sector_0_to_15(first_dx, first_dy);
+                    sprite.position_iface.set_direction(
+                        crate::position_interface::Direction::from_raw(i32::from(
+                            if order_reverse { raw ^ 8 } else { raw },
+                        )),
+                    );
+                    sprite.position_iface.reset_increment_computed();
+                    sprite.position_iface.compute_increment_all(false);
+                } else if recovered {
+                    sprite.position_iface.reset_increment_computed();
+                    sprite.position_iface.compute_increment_all(true);
+                }
+                if let Some(snapshot) = anti_snapshots
+                    .get_mut(actor_id)
+                    .and_then(|slot| slot.as_mut())
+                {
+                    super::anti_collision::sync_snapshot_after_move(
+                        snapshot,
+                        first_post,
+                        MapVec::new(first_dx, first_dy),
+                    );
+                }
+                first_fast_commit = Some((first_pre, first_increment, first_speed, first_post));
+            }
             let _ = sprite.position_iface.turn();
             let (second_state, second_distance) = sprite.perform_motion(
                 sim,
@@ -8467,6 +8549,10 @@ impl EngineInner {
             motion_state = second_state;
             second_frame_dist_raw = Some(second_distance);
             frame_dist_raw += second_distance;
+            second_fast_operands = Some((
+                sprite.position_iface.map_position(),
+                sprite.position_iface.get_increment_map(),
+            ));
         }
         // PerformMotion refreshes RHPositionInterface::mpTargetElement
         // when a new order is initialized. Anti-collision follows that
@@ -8559,7 +8645,11 @@ impl EngineInner {
                 direction_differs_from_goal,
             );
             (
-                first_speed + second_speed,
+                if first_fast_commit.is_some() {
+                    second_speed
+                } else {
+                    first_speed + second_speed
+                },
                 Some((first_speed, second_speed)),
             )
         } else {
@@ -9904,7 +9994,11 @@ impl EngineInner {
                 let nx = cached_increment.x;
                 let ny = cached_increment.y;
                 let anti_on = entity.position_iface().is_anti_collision_on();
-                let movement_diag_pre_position = entity.element_data().position_map();
+                let movement_diag_pre_position = if first_fast_commit.is_some() {
+                    fast_motion_outer_pre
+                } else {
+                    entity.element_data().position_map()
+                };
                 let movement_diag_old_position = entity.position_iface().old_map_position();
                 let movement_diag_deviated_before = entity.position_iface().is_deviated();
                 let movement_diag_blocked_count_before = entity.position_iface().blocked_count;
@@ -9912,17 +10006,16 @@ impl EngineInner {
                 // double-PerformMotion fast-climb dispatch. See the
                 // transition branch above for why the summed distance is
                 // insufficient even when both calls use one increment.
-                let split_motion_target =
-                    split_motion_speeds
-                        .filter(|_| !anti_on)
-                        .map(|(first_speed, second_speed)| {
-                            let mut target = entity.element_data().position_map();
-                            target.x += nx * first_speed;
-                            target.y += ny * first_speed;
-                            target.x += nx * second_speed;
-                            target.y += ny * second_speed;
-                            target
-                        });
+                let split_motion_target = split_motion_speeds
+                    .filter(|_| !anti_on && first_fast_commit.is_none())
+                    .map(|(first_speed, second_speed)| {
+                        let mut target = entity.element_data().position_map();
+                        target.x += nx * first_speed;
+                        target.y += ny * first_speed;
+                        target.x += nx * second_speed;
+                        target.y += ny * second_speed;
+                        target
+                    });
                 // Pull transient anti-collision context from position_iface
                 // (move box, half-diagonal) + the current path goal.  The
                 // persistent state (deviated / blocked_count / box_blocked /
@@ -10131,45 +10224,40 @@ impl EngineInner {
                 };
                 let movement_diag_split_calls =
                     if crate::movement_diagnostics::parity_movement_capture_active() {
-                        split_motion_speeds
-                            .map(|(first_speed, second_speed)| {
-                                let first_pre = movement_diag_pre_position;
-                                let first_delta = crate::coordinates::MapVec::new(
-                                    nx * first_speed,
-                                    ny * first_speed,
-                                );
-                                let first_post = crate::coordinates::MapPoint::new(
-                                    first_pre.x + first_delta.x,
-                                    first_pre.y + first_delta.y,
-                                );
-                                let second_delta = crate::coordinates::MapVec::new(
-                                    nx * second_speed,
-                                    ny * second_speed,
-                                );
-                                let second_post = crate::coordinates::MapPoint::new(
-                                    first_post.x + second_delta.x,
-                                    first_post.y + second_delta.y,
-                                );
-                                vec![
-                                    crate::movement_diagnostics::ParityMovementCall {
-                                        frame_distance_raw: first_frame_dist_raw.into(),
-                                        effective_distance: first_speed.into(),
-                                        pre_position: first_pre.into(),
-                                        requested_delta: first_delta.into(),
-                                        post_position: first_post.into(),
-                                    },
-                                    crate::movement_diagnostics::ParityMovementCall {
-                                        frame_distance_raw: second_frame_dist_raw
-                                            .expect("split speeds require a second motion distance")
-                                            .into(),
-                                        effective_distance: second_speed.into(),
-                                        pre_position: first_post.into(),
-                                        requested_delta: second_delta.into(),
-                                        post_position: second_post.into(),
-                                    },
-                                ]
-                            })
-                            .unwrap_or_default()
+                        split_motion_speeds.map_or_else(Vec::new, |(_, second_speed)| {
+                            let mut calls = Vec::with_capacity(2);
+                            if let Some((first_pre, first_increment, first_speed, first_post)) =
+                                first_fast_commit
+                            {
+                                calls.push(crate::movement_diagnostics::ParityMovementCall {
+                                    frame_distance_raw: first_frame_dist_raw.into(),
+                                    effective_distance: first_speed.into(),
+                                    pre_position: first_pre.into(),
+                                    requested_delta: MapVec::new(
+                                        first_increment.x * first_speed,
+                                        first_increment.y * first_speed,
+                                    )
+                                    .into(),
+                                    post_position: first_post.into(),
+                                });
+                            }
+                            let (second_pre, second_increment) = second_fast_operands
+                                .expect("split motion requires captured second-call operands");
+                            calls.push(crate::movement_diagnostics::ParityMovementCall {
+                                frame_distance_raw: second_frame_dist_raw
+                                    .expect("split speeds require a second motion distance")
+                                    .into(),
+                                effective_distance: second_speed.into(),
+                                pre_position: second_pre.into(),
+                                requested_delta: MapVec::new(
+                                    second_increment.x * second_speed,
+                                    second_increment.y * second_speed,
+                                )
+                                .into(),
+                                post_position: movement_diag_raw_post.into(),
+                            });
+                            calls
+                        })
                     } else {
                         Vec::new()
                     };
@@ -15468,6 +15556,160 @@ mod line_jump_tests {
             "entity-target PerformSeek hides START from the Original Execute arm"
         );
         assert!(!should_defer_pc_movement_state_start(false, false));
+    }
+
+    fn run_fast_wall_anti_collision_fixture(
+        first_distance: u16,
+    ) -> (MapPoint, crate::movement_diagnostics::ParityMovementStep) {
+        use crate::element::{
+            ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
+        };
+        use crate::fast_find_grid::GridSector;
+        use crate::order::Order;
+        use crate::sector::{LiftType, SectorNumber, SectorType};
+        use crate::sequence::SequenceElement;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(1760.418701171875, 1011.02197265625);
+        let goal = MapPoint::new(1762.0, 996.0);
+        let physical = OrderType::ClimbingWallDown;
+        let script = SpriteScript {
+            action_id: physical as u16,
+            action_done: 7,
+            average_speed: 4.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 32,
+            frame_ids: vec![1; 8],
+            delays: vec![0; 8],
+            distances: std::iter::once(first_distance)
+                .chain(std::iter::repeat_n(4, 7))
+                .collect(),
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
+            sound_ids: vec![0; 8],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[physical as usize] = 0;
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::OnWall,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        pc.element_data_mut().active = true;
+        pc.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        pc.element_data_mut().set_position_map(start);
+        pc.element_data_mut().set_direction_instantly(0);
+        pc.element_data_mut().set_sector(Some(
+            crate::position_interface::SectorHandle::new(1).unwrap(),
+        ));
+        pc.position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        pc.position_iface_mut().set_anti_collision_on(true);
+        let owner = engine.add_entity(pc);
+        {
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+            level.sector_number_map.insert(SectorNumber::new(1), 0);
+            level.sectors.push(GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: SectorType::LIFT,
+                layer: 0,
+                sector_number: SectorNumber::new(1),
+                door_index: None,
+                lift_type: Some(LiftType::Wall),
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: Some(goal),
+                high_exit_point: Some(start),
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::ClimbingWallDownFast,
+        );
+        movement.orders.push_back(Order::test_new(
+            OrderType::ClimbingWallDownFast,
+            goal.x,
+            goal.y,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        crate::movement_diagnostics::begin_parity_movement_capture();
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        let captures = crate::movement_diagnostics::take_parity_movement_capture();
+
+        let position = engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .position_map();
+        let capture = captures
+            .iter()
+            .find(|capture| capture.entity == owner)
+            .expect("fast wall owner must emit a production movement capture")
+            .clone();
+        (position, capture)
+    }
+
+    #[test]
+    fn fast_wall_anti_collision_commits_each_perform_motion_before_the_next() {
+        let (position, capture) = run_fast_wall_anti_collision_fixture(4);
+        assert_eq!(capture.split_calls.len(), 2);
+        assert_eq!(capture.split_calls[0].pre_position.x.bits, 1155272038);
+        assert_eq!(capture.split_calls[0].post_position.x.bits, 1155275468);
+        assert_eq!(capture.split_calls[1].pre_position.x.bits, 1155275468);
+        assert_eq!(capture.split_calls[1].post_position.x.bits, 1155278898);
+        assert_eq!(position.x.to_bits(), 1155278898);
+        assert_eq!(position.y.to_bits(), 1148896312);
+        assert_ne!(
+            position.x.to_bits(),
+            1155278899,
+            "one aggregated eight-unit commit reproduces the captured +1 ULP defect"
+        );
+    }
+
+    #[test]
+    fn zero_distance_first_fast_wall_call_still_executes_the_second() {
+        let (position, capture) = run_fast_wall_anti_collision_fixture(0);
+        assert_ne!(
+            position.x.to_bits(),
+            1155272038,
+            "the nonzero second PerformMotion must still commit"
+        );
+        assert_eq!(
+            capture.split_calls.len(),
+            1,
+            "Original emits no movement-step record for the zero-distance first call"
+        );
+        assert_eq!(capture.split_calls[0].frame_distance_raw.value, 4.0);
+        assert_eq!(capture.split_calls[0].pre_position.x.bits, 1155272038);
     }
 
     #[test]
