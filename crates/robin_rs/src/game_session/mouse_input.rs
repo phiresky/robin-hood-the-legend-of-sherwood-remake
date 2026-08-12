@@ -71,7 +71,8 @@ pub(super) fn handle_mouse_input(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
-    renderer: &Renderer,
+    screen_width: u16,
+    screen_height: u16,
     portrait_cache: &PortraitCache,
     frame_cmds: &mut FrameCommands,
     events: &[GameEvent],
@@ -81,7 +82,6 @@ pub(super) fn handle_mouse_input(
     ctrl_held: bool,
 ) {
     let engine = &mut manager.engine;
-    let local_seat = host.transport.local_seat;
     // ── Portrait action countdown ──
     // Decrements once per frame. MakeFast fires on double-click within window.
     if host.input.portrait_action_countdown > 0 {
@@ -123,934 +123,991 @@ pub(super) fn handle_mouse_input(
                 // `run_mission`'s always-on view-input pass so middle-
                 // drag panning works during replay; nothing to do here.
                 GameEvent::ViewportPan { .. } => {}
-                // ── Left mouse down ──
-                // LEFTDOWN starts a multi-selection drag.
                 GameEvent::MouseDown(mx, my, 1, clicks) => {
-                    host.input.left_mouse_down = true;
-                    host.input.is_dragging = true;
-                    host.input.left_mouse_start_screen =
-                        engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
-                    // When `next_left_double_is_simple` is set, the
-                    // next left-click is demoted to simple even if the window
-                    // reports a double-click.  Set by the multi-select
-                    // path so a box-select doesn't accidentally chain
-                    // into the double-click repeat path.
-                    if host.input.next_left_double_is_simple {
-                        host.input.left_double_click_pending = false;
-                        host.input.next_left_double_is_simple = false;
-                    } else {
-                        host.input.left_double_click_pending = clicks >= 2;
-                    }
-
-                    // Clear the swordfight mouse-way polyline at the
-                    // start of every left-drag.
-                    host.mouse_way.clear();
-
-                    let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
-                    let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
-
-                    if on_minimap {
-                        // Minimap click — start drag if map is deployed.
-                        // In the event-driven model, MouseDown on the
-                        // minimap is inherently "entered nicely".
-                        let cmd = PlayerCommand::MinimapMouseDown {
-                            click_pt,
-                            continuing_drag: host.engine_display.minimap().drag_start(),
-                        };
-                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        // Don't start multi-selection when clicking minimap
-                    } else if !host.input.ignore_next_drag
-                        && host.input.has_focus
-                        && let Some(map_pt) = host.viewport.screen_to_map(click_pt)
-                    {
-                        // Left-drag dispatch:
-                        //   - `ignore_next_drag` → entire body skipped.
-                        //   - `has_focus == false` (UI widget grabbed
-                        //     focus earlier this frame) → skip engine-
-                        //     level mouse dispatch.
-                        //   - NoAction / HelpToClimb (with posture
-                        //     HelpingToClimb) → start multi-selection.
-                        //   - NoAction additionally bails on alt or
-                        //     locker.
-                        //   - Apple / Stone / Hit / HitHard / Heal /
-                        //     Lever / Strangle → fire the matching
-                        //     drag action (see `resolve_action_drag`).
-                        let selected_action = engine.selected_action_for_seat(local_seat);
-                        let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
-                        match selected_action {
-                            Action::HelpToClimb => {
-                                let posture_ok = engine
-                                    .seat_selection(local_seat)
-                                    .first()
-                                    .and_then(|&id| engine.get_entity(id))
-                                    .map(|e| e.element_data().posture)
-                                    == Some(Posture::HelpingToClimb);
-                                if posture_ok && !is_swordfighting {
-                                    host.input.start_multi_selection(map_pt);
-                                }
-                            }
-                            Action::NoAction
-                                if !host.input.is_alt
-                                    && !engine.view_locked()
-                                    && !is_swordfighting =>
-                            {
-                                host.input.start_multi_selection(map_pt);
-                            }
-                            Action::Apple
-                            | Action::Stone
-                            | Action::Hit
-                            | Action::HitHard
-                            | Action::Heal
-                            | Action::Lever
-                            | Action::Strangle => {
-                                let cmds = crate::game_input::resolve_action_drag(
-                                    host, engine, assets, map_pt,
-                                );
-                                for cmd in &cmds {
-                                    frame_cmds.push(cmd.clone());
-                                }
-                                dispatch_local_commands(host, engine, assets, &cmds);
-                            }
-                            _ => {
-                                // Other actions (Bow, Net, Purse,
-                                // WaspNest, Shield/BigShield, Ale,
-                                // Beggar, Listen, Whistle, Eat, Guzzle)
-                                // have no drag arm — drag is a no-op
-                                // while they're armed.
-                            }
-                        }
-                    }
+                    on_left_mouse_down(engine, host, assets, frame_cmds, mx, my, clicks);
                 }
-
-                // ── Right mouse down: start deselection drag ──
-                // RIGHTDOWN starts a multi-unselection drag.  Only
-                // `NoAction` enables it, and only when not in
-                // swordfight, not Alt-held, and not Locker-latched —
-                // missing any of these guards caused right-drag to
-                // deselect PCs during swordfight, while an action was
-                // armed, etc.
-                GameEvent::MouseDown(_mx, _my, 3, _) => {
-                    host.input.right_mouse_down = true;
-
-                    // `has_focus` gate: a UI widget that grabbed
-                    // focus this frame blocks the deselection-drag
-                    // from starting.
-                    let guard_ok = !engine.is_seat_selection_swordfighting(local_seat)
-                        && engine.selected_action_for_seat(local_seat)
-                            == engine_profiles::Action::NoAction
-                        && !host.input.is_alt
-                        && !engine.view_locked()
-                        && host.input.has_focus;
-                    if guard_ok
-                        && let Some(map_pt) =
-                            host.viewport
-                                .screen_to_map(engine_coordinates::ScreenPoint::new(
-                                    _mx as f32, _my as f32,
-                                ))
-                    {
-                        host.input.start_multi_unselection(map_pt);
-                    }
+                GameEvent::MouseDown(mx, my, 3, _) => {
+                    on_right_mouse_down(engine, host, mx, my);
                 }
-
-                // Mouse move: update minimap drag or multi-select box
                 GameEvent::MouseMove { x, y, .. } => {
-                    let mouse_pt = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
-
-                    // While a left drag is in progress and the player
-                    // has a swordfighting PC selected (and isn't
-                    // holding alt or in another action mode), append
-                    // every mouse move to the swordfight gesture
-                    // polyline.  Gated on `is_dragging` (not
-                    // `left_mouse_down`) so a portrait re-arm on a
-                    // double-click stops the append path.
-                    if host.input.is_dragging
-                        && !host.input.is_alt
-                        && engine.selected_action_for_seat(local_seat) == Action::NoAction
-                        && engine.is_seat_selection_swordfighting(local_seat)
-                    {
-                        host.mouse_way.add_point(mouse_pt);
-                    }
-
-                    // ── Minimap hover / drag update ──
-                    // Single command handles ui_state, entered_nicely,
-                    // capture, and drag continuation.
-                    let cmd = PlayerCommand::MinimapMouseMove {
-                        mouse_pt,
-                        left_mouse_down: host.input.left_mouse_down,
-                        continuing_drag: host.input.left_mouse_down
-                            && host.engine_display.minimap().drag_start(),
-                    };
-                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-
-                    // Multi-selection box drag (only when not minimap-dragging).
-                    // Skip the entire drag body while
-                    // `ignore_next_drag` is latched — the drag never
-                    // started (guarded at MouseDown), so nothing to
-                    // update either way; keep the guard for safety.
-                    if host.input.left_mouse_down
-                        && !host.engine_display.minimap().drag_start()
-                        && host.input.multi_selection_active
-                        && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
-                    {
-                        host.input.update_multi_selection(map_pt);
-                    }
-                    if host.input.right_mouse_down
-                        && host.input.multi_unselection_active
-                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
-                    {
-                        host.input.update_multi_selection(map_pt);
-                    }
-
-                    // ── Action-drag dispatch ──
-                    // Fire the armed action on every mouse-move frame
-                    // while the left button is held: when an action
-                    // like Hit / Apple / Strangle is armed, the moment
-                    // the cursor crosses over a focusable target the
-                    // command launches immediately (not at MouseUp).
-                    //
-                    // Skip when dragging over the minimap — the
-                    // minimap captures the drag — and when
-                    // `ignore_next_drag` has suppressed this drag
-                    // cycle.
-                    if host.input.left_mouse_down
-                        && !host.engine_display.minimap().drag_start()
-                        && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
-                    {
-                        let selected_action = engine.selected_action_for_seat(local_seat);
-                        if matches!(
-                            selected_action,
-                            robin_engine::profiles::Action::Apple
-                                | robin_engine::profiles::Action::Stone
-                                | robin_engine::profiles::Action::Hit
-                                | robin_engine::profiles::Action::HitHard
-                                | robin_engine::profiles::Action::Heal
-                                | robin_engine::profiles::Action::Lever
-                                | robin_engine::profiles::Action::Strangle
-                        ) {
-                            let cmds = crate::game_input::resolve_action_drag(
-                                host, engine, assets, map_pt,
-                            );
-                            for cmd in &cmds {
-                                frame_cmds.push(cmd.clone());
-                            }
-                            dispatch_local_commands(host, engine, assets, &cmds);
-                        }
-                    }
+                    on_mouse_move(engine, host, assets, frame_cmds, x, y);
                 }
-
-                // ── Left mouse up: click action or box-select ──
                 GameEvent::MouseUp(mx, my, 1) => {
-                    host.input.left_mouse_down = false;
-                    // Drop the dragging flag on button release.
-                    host.input.is_dragging = false;
-                    // Clear the drag target on release so the next
-                    // drag starts fresh.
-                    host.input.target_drag = None;
-                    // Clear `ignore_next_drag` at the top of the click
-                    // handler so a one-shot drag suppression doesn't
-                    // persist past the button release.
-                    host.input.ignore_next_drag = false;
-                    let is_double = host.input.left_double_click_pending;
-                    host.input.left_double_click_pending = false;
-
-                    // ── Minimap click / drag-end handling ──
-                    // Checks dragged flag, dead zone, and dispatches
-                    // to open or center-on-click.  Also handles drag
-                    // release outside the minimap (cleans up drag
-                    // state so it doesn't linger).
-                    let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
-                    let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
-                    let minimap_handled = on_minimap || host.engine_display.minimap().drag_start();
-                    if minimap_handled {
-                        let center_on = host.engine_display.resolve_minimap_center(
-                            click_pt,
-                            on_minimap,
-                            host.viewport.level_size,
-                        );
-                        let cmd = PlayerCommand::MinimapMouseUp {
-                            on_minimap,
-                            center_on,
-                        };
-                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        host.input.cancel_multi_selection();
-                    }
-
-                    if minimap_handled {
-                        // Consumed by minimap — skip normal picking
-                    } else if !host.input.has_focus {
-                        // When a UI widget grabbed focus earlier this
-                        // frame, the engine-level left-click is
-                        // silently dropped. The active multi-selection
-                        // drag (if any) is still cleaned up below so
-                        // the next frame starts clean.
-                    } else if host.input.multi_selection_active && host.input.draw_multi_selection {
-                        // Drag was large enough — box-select all PCs in the area.
-                        // Shift adds to existing selection.
-                        let cmd = PlayerCommand::BoxSelect {
-                            pt1: host.input.multi_selection_pt1,
-                            pt2: host.input.multi_selection_pt2,
-                            shift: shift_held,
-                        };
-                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        tracing::info!(
-                            "Box-select: {} PCs selected",
-                            engine.seat_selection(local_seat).len()
-                        );
-                    } else {
-                        // Single click (drag too small or no drag started — e.g. panel clicks
-                        // where screen_to_map returns None so multi_selection never started).
-                        host.input.cancel_multi_selection();
-
-                        // If a swordfight gesture drag was being recorded, the LMB-up
-                        // commits that gesture — skip portrait hit-testing so a release
-                        // over a portrait doesn't accidentally select that PC.
-                        let swordfight_drag = engine.is_seat_selection_swordfighting(local_seat)
-                            && !host.mouse_way.is_empty();
-
-                        // Check portrait panel first (detailed sub-area hit-test).
-                        let portrait_hit = if swordfight_drag {
-                            None
-                        } else {
-                            ui_panel::hit_test_portrait_detailed(
-                                engine,
-                                local_seat,
-                                portrait_cache,
-                                renderer.screen_width(),
-                                renderer.screen_height(),
-                                mx as f32,
-                                my as f32,
-                            )
-                        };
-
-                        if let Some(hit) = portrait_hit {
-                            let pc_id = hit.pc_id;
-
-                            if let PortraitHitArea::QuickAction(slot) = hit.area {
-                                let has_macro = engine.has_quick_action(pc_id, slot);
-                                let is_recording_slot = engine.is_qa_recording_for(pc_id);
-                                if engine.is_recording_macro() && is_recording_slot {
-                                    let cmd = PlayerCommand::ChangeQaMemory { slot };
-                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                } else if has_macro {
-                                    let cmd = PlayerCommand::StartMacro {
-                                        pc: Some(pc_id),
-                                        slot,
-                                    };
-                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                } else {
-                                    continue;
-                                }
-                                host.input.multi_selection_active = false;
-                                host.input.multi_unselection_active = false;
-                                host.input.draw_multi_selection = false;
-                                continue;
-                            }
-
-                            // ── Portrait click while recording: stop & commit ──
-                            // Clicking the portrait of the PC currently
-                            // being recorded dispatches a
-                            // stop-recording-macro and swallows the
-                            // click.  Scoped to visage/scroll areas
-                            // (non-action-button, non-burned) so the
-                            // portrait body acts as the "commit macro"
-                            // button during recording.
-                            let macro_stop_handled = !hit.is_burned
-                                && !is_double
-                                && engine.is_qa_recording_for(pc_id)
-                                && matches!(
-                                    hit.area,
-                                    PortraitHitArea::TopScroll
-                                        | PortraitHitArea::BottomScroll
-                                        | PortraitHitArea::Visage
-                                );
-                            if macro_stop_handled {
-                                let cmd = PlayerCommand::StopRecordingMacro;
-                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                tracing::info!(
-                                    "Portrait click: stop recording macro on slot {}",
-                                    hit.slot
-                                );
-                                // Swallow the click.
-                                host.input.multi_selection_active = false;
-                                host.input.multi_unselection_active = false;
-                                host.input.draw_multi_selection = false;
-                                continue;
-                            }
-
-                            // ── Shield/Heal portrait targeting ──
-                            // When a Shield/BigShield/Heal action is
-                            // pending, clicking a non-burned portrait
-                            // commits that action on the portrait's PC.
-                            let mut portrait_action_handled = macro_stop_handled;
-                            if !hit.is_burned && !is_double && !macro_stop_handled {
-                                let selected_action = engine.selected_action_for_seat(local_seat);
-                                portrait_action_handled = match selected_action {
-                                    Action::Heal => {
-                                        // Target must be alive and injured (life < 100).
-                                        let can_heal = engine
-                                            .get_entity(pc_id)
-                                            .and_then(|e| e.pc_data())
-                                            .is_some_and(|pc| {
-                                                pc.life_points > 0 && pc.life_points < 100
-                                            });
-                                        if can_heal {
-                                            if let Some(&healer_id) =
-                                                engine.seat_selection(local_seat).first()
-                                            {
-                                                let cmd = PlayerCommand::LaunchInteraction {
-                                                    actor: healer_id,
-                                                    target: pc_id,
-                                                    command: Command::HealCmd,
-                                                    running: false,
-                                                };
-                                                dispatch_local_command(
-                                                    host, engine, frame_cmds, assets, &cmd,
-                                                );
-                                                let cancel = PlayerCommand::CancelAction {
-                                                    pc_id: healer_id,
-                                                };
-                                                dispatch_local_command(
-                                                    host, engine, frame_cmds, assets, &cancel,
-                                                );
-                                                tracing::info!(
-                                                    "Portrait heal: {:?} → heal {:?}",
-                                                    healer_id,
-                                                    pc_id
-                                                );
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                    Action::Shield | Action::BigShield => {
-                                        // While the engine is mid-prompt
-                                        // for the shield's protected
-                                        // target, the same-click commit
-                                        // shortcut is suppressed and the
-                                        // click falls through to the
-                                        // world protectee-selection path.
-                                        // Gated on
-                                        // `!engine.shield().is_protected`.
-                                        let mid_prompt = engine.shield().is_protected;
-                                        // Target must be alive and active.
-                                        let can_shield = !mid_prompt
-                                            && engine
-                                                .get_entity(pc_id)
-                                                .and_then(|e| e.pc_data())
-                                                .is_some_and(|pc| pc.life_points > 0);
-                                        if can_shield {
-                                            if let Some(&shielder_id) =
-                                                engine.seat_selection(local_seat).first()
-                                            {
-                                                let cmd = PlayerCommand::LaunchInteraction {
-                                                    actor: shielder_id,
-                                                    target: pc_id,
-                                                    command: Command::RaiseShield,
-                                                    running: false,
-                                                };
-                                                dispatch_local_command(
-                                                    host, engine, frame_cmds, assets, &cmd,
-                                                );
-                                                let cancel = PlayerCommand::CancelAction {
-                                                    pc_id: shielder_id,
-                                                };
-                                                dispatch_local_command(
-                                                    host, engine, frame_cmds, assets, &cancel,
-                                                );
-                                                tracing::info!(
-                                                    "Portrait shield: {:?} → protect {:?}",
-                                                    shielder_id,
-                                                    pc_id
-                                                );
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                    _ => false,
-                                };
-                            }
-
-                            if portrait_action_handled {
-                                // Click consumed by portrait action targeting
-                            } else if hit.is_burned {
-                                // ── Burned portrait clicks ──
-                                match hit.area {
-                                    PortraitHitArea::Amulet => {
-                                        // Amulet click revives from coma.
-                                        tracing::info!(
-                                            "Portrait amulet click: slot {}, reviving from coma",
-                                            hit.slot
-                                        );
-                                        let cmd = PlayerCommand::ResetComa { pc_id };
-                                        dispatch_local_command(
-                                            host, engine, frame_cmds, assets, &cmd,
-                                        );
-                                    }
-                                    PortraitHitArea::Guard => {
-                                        // Guard click centers on the guard.
-                                        if let Some(guard_pos) = engine.get_guard_position(pc_id) {
-                                            tracing::info!(
-                                                "Portrait guard click: centering on guard"
-                                            );
-                                            host.viewport.center_on_point(guard_pos);
-                                        }
-                                    }
-                                    PortraitHitArea::Trumpet => {
-                                        // Burned-branch trumpet click
-                                        // dispatches `SendReinforcement`,
-                                        // which clears `trumpet_enabled`
-                                        // (so the player can't queue a
-                                        // second replacement while the
-                                        // first is in flight), posts the
-                                        // PC message, arms
-                                        // `time_till_reinforcement`, and
-                                        // plays the new-peasant jingle.
-                                        tracing::info!(
-                                            "Portrait trumpet click: slot {}, requesting reinforcement",
-                                            hit.slot
-                                        );
-                                        let cmd = PlayerCommand::SendReinforcement { pc_id };
-                                        dispatch_local_command(
-                                            host, engine, frame_cmds, assets, &cmd,
-                                        );
-                                    }
-                                    _ => {
-                                        // Other burned areas: no action
-                                        // (double-click is a no-op in
-                                        // burned state).
-                                    }
-                                }
-                            } else if is_double {
-                                // ── Double-click on non-burned portrait ──
-                                // If the action countdown is active, a
-                                // double-click accelerates the
-                                // last-dispatched action (MakeFast).
-                                if host.input.portrait_action_countdown > 0 {
-                                    if let Some(fast_pc) = host.input.portrait_action_pc {
-                                        let cmd = PlayerCommand::MakePcFast { pc_id: fast_pc };
-                                        dispatch_local_command(
-                                            host, engine, frame_cmds, assets, &cmd,
-                                        );
-                                    }
-                                    host.input.portrait_action_countdown = 0;
-                                    host.input.portrait_action_pc = None;
-                                } else if engine.is_pc_selectable(assets, pc_id) {
-                                    let cmd = PlayerCommand::SelectPc {
-                                        pc_id,
-                                        append: false,
-                                    };
-                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                    tracing::info!(
-                                        "Portrait double-click: selected slot {}",
-                                        hit.slot
-                                    );
-                                } else if let Some(ent) = engine.get_entity(pc_id) {
-                                    host.viewport
-                                        .center_on_point(ent.position_iface().map_position());
-                                    tracing::info!(
-                                        "Portrait double-click: centering on non-selectable PC"
-                                    );
-                                }
-                            } else {
-                                // ── Normal click on non-burned portrait ──
-                                match hit.area {
-                                    PortraitHitArea::ActionButton(btn_idx) => {
-                                        // After a right-click cancel
-                                        // (all buttons deselected),
-                                        // clicking a button drops ammo
-                                        // instead of arming. Single =
-                                        // 1, Several (shift) = 5.
-                                        if host.input.portrait_drop_ammo_armed
-                                            && engine.selected_action_for_seat(local_seat)
-                                                == Action::NoAction
-                                        {
-                                            // Look up the action for this button index
-                                            let btn_action = engine
-                                                .get_entity(pc_id)
-                                                .and_then(|e| e.pc_data())
-                                                .and_then(|pc| {
-                                                    assets
-                                                        .profile_manager
-                                                        .get_character(pc.profile_index)
-                                                        .and_then(|p| {
-                                                            p.actions.get(btn_idx as usize).copied()
-                                                        })
-                                                })
-                                                .unwrap_or(Action::NoAction);
-                                            if btn_action != Action::NoAction {
-                                                let amount: u32 = if shift_held { 5 } else { 1 };
-                                                let cmd = PlayerCommand::DropAmmo {
-                                                    pc_id,
-                                                    action_id: btn_action as u32,
-                                                    amount,
-                                                };
-                                                dispatch_local_command(
-                                                    host, engine, frame_cmds, assets, &cmd,
-                                                );
-                                                tracing::info!(
-                                                    "Portrait drop ammo: slot {}, action {:?}, amount {}",
-                                                    hit.slot,
-                                                    btn_action,
-                                                    amount
-                                                );
-                                            }
-                                        } else {
-                                            // Normal action select path. Resolve the
-                                            // dispatch decision read-only before emitting
-                                            // the command, so the live and replay paths
-                                            // agree on the fallback-select branch.
-                                            let dispatched = engine
-                                                .can_dispatch_pc_action(assets, pc_id, btn_idx);
-                                            if dispatched {
-                                                let cmd = PlayerCommand::SelectAction {
-                                                    pc_id,
-                                                    action_index: btn_idx as u32,
-                                                };
-                                                dispatch_local_command(
-                                                    host, engine, frame_cmds, assets, &cmd,
-                                                );
-                                                host.input.portrait_drop_ammo_armed = false;
-                                                host.input.portrait_action_countdown = 5;
-                                                host.input.portrait_action_pc = engine
-                                                    .seat_selection(local_seat)
-                                                    .first()
-                                                    .copied();
-
-                                                // Action-button click only arms
-                                                // the action; the fire-on-target step
-                                                // happens on the second click of the
-                                                // two-click flow.  The armed-then-fire
-                                                // branch lives in the
-                                                // `portrait_action_handled` path
-                                                // above, which pulls the actor from
-                                                // the seat selection, uses the
-                                                // clicked portrait's PC as the
-                                                // target, and emits a trailing
-                                                // `CancelAction`.
-                                                //
-                                                // Shield/BigShield additionally have a
-                                                // two-click danger-point + protected
-                                                // state machine that a same-click
-                                                // shortcut cannot cover; sticking to
-                                                // the two-click flow keeps the path
-                                                // consistent.
-
-                                                tracing::info!(
-                                                    "Portrait action button {}: dispatched on slot {}",
-                                                    btn_idx,
-                                                    hit.slot
-                                                );
-                                            } else {
-                                                let cmd2 = PlayerCommand::SelectByPortrait {
-                                                    portrait_index: hit.slot as u32,
-                                                    append: ctrl_held,
-                                                };
-                                                dispatch_local_command(
-                                                    host, engine, frame_cmds, assets, &cmd2,
-                                                );
-                                                tracing::info!(
-                                                    "Portrait action button {} disabled on slot {}; selecting PC",
-                                                    btn_idx,
-                                                    hit.slot
-                                                );
-                                            }
-                                        }
-                                    }
-                                    PortraitHitArea::TopScroll
-                                    | PortraitHitArea::BottomScroll
-                                    | PortraitHitArea::Visage => {
-                                        center_on_reselected_portrait_pc(
-                                            host, engine, local_seat, pc_id, ctrl_held, hit.area,
-                                        );
-                                        let cmd = PlayerCommand::SelectByPortrait {
-                                            portrait_index: hit.slot as u32,
-                                            append: ctrl_held,
-                                        };
-                                        dispatch_local_command(
-                                            host, engine, frame_cmds, assets, &cmd,
-                                        );
-                                        tracing::info!(
-                                            "Portrait select: slot {}, area {:?}",
-                                            hit.slot,
-                                            hit.area
-                                        );
-                                    }
-                                    PortraitHitArea::QuickAction(_) => {
-                                        let cmd = PlayerCommand::SelectByPortrait {
-                                            portrait_index: hit.slot as u32,
-                                            append: ctrl_held,
-                                        };
-                                        dispatch_local_command(
-                                            host, engine, frame_cmds, assets, &cmd,
-                                        );
-                                        tracing::info!(
-                                            "Portrait select: slot {}, area {:?}",
-                                            hit.slot,
-                                            hit.area
-                                        );
-                                    }
-                                    // Amulet / Guard / Trumpet only matter on burned portraits,
-                                    // which branch earlier; on a non-burned portrait these
-                                    // areas don't exist, but if the hit-tester returns them
-                                    // we fall back to a plain select rather than dropping
-                                    // the click.
-                                    PortraitHitArea::Amulet
-                                    | PortraitHitArea::Guard
-                                    | PortraitHitArea::Trumpet => {
-                                        let cmd = PlayerCommand::SelectByPortrait {
-                                            portrait_index: hit.slot as u32,
-                                            append: ctrl_held,
-                                        };
-                                        dispatch_local_command(
-                                            host, engine, frame_cmds, assets, &cmd,
-                                        );
-                                    }
-                                }
-                            }
-                        } else {
-                            // ── Engine-level LMB release ──
-                            // Prologue:
-                            //   ignore_next_drag = false;
-                            //   if (ignore_next_left_click) {
-                            //       ignore_next_left_click = false;
-                            //       cancel multi-selection state;
-                            //       if (!ctrl_held) return;
-                            //       target_drag = None;
-                            //   }
-                            //   next_left_double_is_simple = false;
-                            // Clearing `ignore_next_drag` on every LMB
-                            // release lets a subsequent drag fire again
-                            // once the button is re-pressed.
-                            host.input.ignore_next_drag = false;
-                            let mut swallow_click = false;
-                            if host.input.ignore_next_left_click {
-                                host.input.ignore_next_left_click = false;
-                                // The next platform double-click is
-                                // already demoted at MouseDown via the
-                                // `next_left_double_is_simple` flag, so
-                                // there's nothing extra to do here.
-                                host.input.multi_selection_active = false;
-                                host.input.multi_unselection_active = false;
-                                host.input.draw_multi_selection = false;
-                                if !ctrl_held {
-                                    swallow_click = true;
-                                } else {
-                                    host.input.target_drag = None;
-                                }
-                            }
-                            host.input.next_left_double_is_simple = false;
-
-                            if !swallow_click
-                                && let Some(map_pt) = host.viewport.screen_to_map(
-                                    engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
-                                )
-                            {
-                                // Resolve swordfight first, then regular click
-                                let mut cmds = crate::game_input::resolve_swordfight(
-                                    host, engine, assets, map_pt, true,
-                                );
-                                if cmds.is_empty() {
-                                    cmds = crate::game_input::resolve_left_click(
-                                        host, engine, assets, map_pt, shift_held, ctrl_held,
-                                        is_double,
-                                    );
-                                }
-                                for cmd in &cmds {
-                                    frame_cmds.push(cmd.clone());
-                                }
-                                dispatch_local_commands(host, engine, assets, &cmds);
-                            }
-                        }
-                    }
-
-                    // Clean up multi-selection state at the end of the
-                    // left-click handler.
-                    host.input.multi_selection_active = false;
-                    host.input.multi_unselection_active = false;
-                    host.input.draw_multi_selection = false;
+                    on_left_mouse_up(
+                        engine,
+                        host,
+                        assets,
+                        portrait_cache,
+                        frame_cmds,
+                        screen_width,
+                        screen_height,
+                        mx,
+                        my,
+                        shift_held,
+                        ctrl_held,
+                    );
                 }
-
-                // ── Right mouse up: deselection box or right-click action ──
                 GameEvent::MouseUp(mx, my, 3) => {
-                    host.input.right_mouse_down = false;
-
-                    // When a UI widget grabbed focus earlier this
-                    // frame, the engine-level right-click is dropped.
-                    if !host.input.has_focus {
-                        host.input.cancel_multi_unselection();
-                        continue;
-                    }
-
-                    // While a macro is recording, right-click commits
-                    // (stop-recording-macro) and swallows the click.
-                    // Box-unselect, alt-view-cone clear, and the
-                    // map/portrait right-click resolver all wait for
-                    // the next right-click.
-                    if engine.is_recording_macro() {
-                        let cmd = PlayerCommand::StopRecordingMacro;
-                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        host.input.cancel_multi_unselection();
-                        host.input.ignore_next_drag = false;
-                        host.input.ignore_next_left_click = false;
-                        host.input.next_left_double_is_simple = false;
-                        host.input.multi_selection_active = false;
-                        host.input.multi_unselection_active = false;
-                        host.input.draw_multi_selection = false;
-                        continue;
-                    }
-
-                    if host.input.multi_unselection_active && host.input.draw_multi_selection {
-                        // Red deselection box was drawn — deselect PCs in area
-                        let cmd = PlayerCommand::BoxUnselect {
-                            pt1: host.input.multi_selection_pt1,
-                            pt2: host.input.multi_selection_pt2,
-                        };
-                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        tracing::info!(
-                            "Box-deselect: {} PCs remain selected",
-                            engine.selected_pc_ids().len()
-                        );
-                    } else if engine.is_alt_effective(&host.input)
-                        && host.selected_view_element.is_some()
-                    {
-                        // Alt+right-click while the view cone overlay
-                        // is active swallows the click:
-                        //   - permanent alt (lock on): unlocks alt
-                        //     without clearing the selected view
-                        //     element.
-                        //   - momentary alt: clears the selected view
-                        //     element.
-                        if engine.is_lock_alt() {
-                            let cmd = PlayerCommand::SetLockAlt(false);
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        } else {
-                            host.selected_view_element = None;
-                        }
-                        host.input.cancel_multi_unselection();
-                    } else {
-                        host.input.cancel_multi_unselection();
-
-                        // Right-click on minimap closes it.
-                        if host.engine_display.minimap().is_displayed()
-                            && host.engine_display.minimap().is_over_widget(
-                                engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
-                            )
-                        {
-                            let cmd = PlayerCommand::MinimapRightClick;
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        } else if let Some(hit) = ui_panel::hit_test_portrait_detailed(
-                            engine,
-                            local_seat,
-                            portrait_cache,
-                            renderer.screen_width(),
-                            renderer.screen_height(),
-                            mx as f32,
-                            my as f32,
-                        ) {
-                            if let PortraitHitArea::QuickAction(slot) = hit.area {
-                                let pc_id = hit.pc_id;
-                                let cmd = PlayerCommand::DeleteMacro {
-                                    pc: Some(pc_id),
-                                    slot,
-                                };
-                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                continue;
-                            }
-                            // Right-click on portrait action button → cancel action.
-                            let pc_id = hit.pc_id;
-                            let armed_action = engine.selected_action_for_seat(local_seat);
-                            let action_armed = matches!(
-                                armed_action,
-                                robin_engine::profiles::Action::Heal
-                                    | robin_engine::profiles::Action::Shield
-                                    | robin_engine::profiles::Action::BigShield
-                            );
-                            if !hit.is_burned
-                                && let PortraitHitArea::ActionButton(_) = hit.area
-                            {
-                                let cmd = PlayerCommand::CancelAction { pc_id };
-                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                host.input.portrait_drop_ammo_armed = true;
-                                tracing::info!(
-                                    "Portrait right-click: cancel action on slot {}",
-                                    hit.slot
-                                );
-                            } else if !hit.is_burned && action_armed {
-                                // When the pointer is inside a non-burned
-                                // portrait and a Heal/Shield/BigShield
-                                // action is armed, right-click cancels the
-                                // action regardless of which sub-widget
-                                // (visage / scroll / etc.) is under the
-                                // pointer.  Emit CancelAction for any
-                                // non-`ActionButton` area while an action
-                                // is armed.
-                                if let Some(&actor_id) = engine.seat_selection(local_seat).first() {
-                                    let cmd = PlayerCommand::CancelAction { pc_id: actor_id };
-                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                    tracing::info!(
-                                        "Portrait right-click while {:?} armed: cancel on slot {}",
-                                        armed_action,
-                                        hit.slot
-                                    );
-                                }
-                            } else if !hit.is_burned
-                                && engine.seat_selection(local_seat).contains(&pc_id)
-                                && matches!(
-                                    hit.area,
-                                    PortraitHitArea::TopScroll
-                                        | PortraitHitArea::BottomScroll
-                                        | PortraitHitArea::Visage
-                                )
-                            {
-                                // A right-click on lower/upper/visage of
-                                // an open (selected) non-burned portrait
-                                // unselects the PC.  Use
-                                // `TogglePcSelection` since we already
-                                // verified the PC is in the selection.
-                                let cmd = PlayerCommand::TogglePcSelection { pc_id };
-                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                                tracing::info!(
-                                    "Portrait right-click: unselect PC on slot {}",
-                                    hit.slot
-                                );
-                            }
-                            // Other portrait right-click areas: swallow
-                            // the click (don't fall through to map).
-                        } else {
-                            let cmds = crate::game_input::resolve_right_click(engine, local_seat);
-                            for cmd in &cmds {
-                                frame_cmds.push(cmd.clone());
-                            }
-                            dispatch_local_commands(host, engine, assets, &cmds);
-                        }
-                    }
-
-                    // Clean up: wipe the `IgnoreMouseEvent` flags and
-                    // the multi-selection state so the next frame
-                    // starts with a clean slate.  The macro-recording
-                    // short-circuit above already clears these;
-                    // duplicating the clears on the non-recording path
-                    // keeps the "flags are zero at end of RMB release"
-                    // invariant even when `resolve_right_click` ran.
-                    host.input.accept_mouse_event(true, true);
-                    host.input.next_left_double_is_simple = false;
-                    host.input.multi_unselection_active = false;
-                    host.input.multi_selection_active = false;
-                    host.input.draw_multi_selection = false;
+                    on_right_mouse_up(
+                        engine,
+                        host,
+                        assets,
+                        portrait_cache,
+                        frame_cmds,
+                        screen_width,
+                        screen_height,
+                        mx,
+                        my,
+                    );
                 }
-
                 _ => {}
             }
         }
+    }
+}
+
+// ─── Per-event handlers ─────────────────────────────────────────────
+
+/// Left-mouse-down: begin drags (multi-selection box, swordfight
+/// gesture polyline, per-action drag) and route minimap presses.
+fn on_left_mouse_down(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    frame_cmds: &mut FrameCommands,
+    mx: i32,
+    my: i32,
+    clicks: u8,
+) {
+    let local_seat = host.transport.local_seat;
+    {
+        host.input.left_mouse_down = true;
+        host.input.is_dragging = true;
+        host.input.left_mouse_start_screen =
+            engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
+        // When `next_left_double_is_simple` is set, the
+        // next left-click is demoted to simple even if the window
+        // reports a double-click.  Set by the multi-select
+        // path so a box-select doesn't accidentally chain
+        // into the double-click repeat path.
+        if host.input.next_left_double_is_simple {
+            host.input.left_double_click_pending = false;
+            host.input.next_left_double_is_simple = false;
+        } else {
+            host.input.left_double_click_pending = clicks >= 2;
+        }
+
+        // Clear the swordfight mouse-way polyline at the
+        // start of every left-drag.
+        host.mouse_way.clear();
+
+        let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
+        let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
+
+        if on_minimap {
+            // Minimap click — start drag if map is deployed.
+            // In the event-driven model, MouseDown on the
+            // minimap is inherently "entered nicely".
+            let cmd = PlayerCommand::MinimapMouseDown {
+                click_pt,
+                continuing_drag: host.engine_display.minimap().drag_start(),
+            };
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            // Don't start multi-selection when clicking minimap
+        } else if !host.input.ignore_next_drag
+            && host.input.has_focus
+            && let Some(map_pt) = host.viewport.screen_to_map(click_pt)
+        {
+            // Left-drag dispatch:
+            //   - `ignore_next_drag` → entire body skipped.
+            //   - `has_focus == false` (UI widget grabbed
+            //     focus earlier this frame) → skip engine-
+            //     level mouse dispatch.
+            //   - NoAction / HelpToClimb (with posture
+            //     HelpingToClimb) → start multi-selection.
+            //   - NoAction additionally bails on alt or
+            //     locker.
+            //   - Apple / Stone / Hit / HitHard / Heal /
+            //     Lever / Strangle → fire the matching
+            //     drag action (see `resolve_action_drag`).
+            let selected_action = engine.selected_action_for_seat(local_seat);
+            let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
+            match selected_action {
+                Action::HelpToClimb => {
+                    let posture_ok = engine
+                        .seat_selection(local_seat)
+                        .first()
+                        .and_then(|&id| engine.get_entity(id))
+                        .map(|e| e.element_data().posture)
+                        == Some(Posture::HelpingToClimb);
+                    if posture_ok && !is_swordfighting {
+                        host.input.start_multi_selection(map_pt);
+                    }
+                }
+                Action::NoAction
+                    if !host.input.is_alt && !engine.view_locked() && !is_swordfighting =>
+                {
+                    host.input.start_multi_selection(map_pt);
+                }
+                Action::Apple
+                | Action::Stone
+                | Action::Hit
+                | Action::HitHard
+                | Action::Heal
+                | Action::Lever
+                | Action::Strangle => {
+                    let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
+                    for cmd in &cmds {
+                        frame_cmds.push(cmd.clone());
+                    }
+                    dispatch_local_commands(host, engine, assets, &cmds);
+                }
+                _ => {
+                    // Other actions (Bow, Net, Purse,
+                    // WaspNest, Shield/BigShield, Ale,
+                    // Beggar, Listen, Whistle, Eat, Guzzle)
+                    // have no drag arm — drag is a no-op
+                    // while they're armed.
+                }
+            }
+        }
+    }
+}
+
+/// Right-mouse-down: start the deselection drag.  Only `NoAction`
+/// enables it, and only when not in swordfight, not Alt-held, and not
+/// Locker-latched — missing any of these guards caused right-drag to
+/// deselect PCs during swordfight, while an action was armed, etc.
+fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32) {
+    let local_seat = host.transport.local_seat;
+    {
+        host.input.right_mouse_down = true;
+
+        // `has_focus` gate: a UI widget that grabbed
+        // focus this frame blocks the deselection-drag
+        // from starting.
+        let guard_ok = !engine.is_seat_selection_swordfighting(local_seat)
+            && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
+            && !host.input.is_alt
+            && !engine.view_locked()
+            && host.input.has_focus;
+        if guard_ok
+            && let Some(map_pt) = host
+                .viewport
+                .screen_to_map(engine_coordinates::ScreenPoint::new(_mx as f32, _my as f32))
+        {
+            host.input.start_multi_unselection(map_pt);
+        }
+    }
+}
+
+/// Mouse-move: swordfight gesture polyline, minimap hover/drag,
+/// selection-box updates, and the per-frame action-drag dispatch.
+fn on_mouse_move(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    frame_cmds: &mut FrameCommands,
+    x: i32,
+    y: i32,
+) {
+    let local_seat = host.transport.local_seat;
+    {
+        let mouse_pt = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
+
+        // While a left drag is in progress and the player
+        // has a swordfighting PC selected (and isn't
+        // holding alt or in another action mode), append
+        // every mouse move to the swordfight gesture
+        // polyline.  Gated on `is_dragging` (not
+        // `left_mouse_down`) so a portrait re-arm on a
+        // double-click stops the append path.
+        if host.input.is_dragging
+            && !host.input.is_alt
+            && engine.selected_action_for_seat(local_seat) == Action::NoAction
+            && engine.is_seat_selection_swordfighting(local_seat)
+        {
+            host.mouse_way.add_point(mouse_pt);
+        }
+
+        // ── Minimap hover / drag update ──
+        // Single command handles ui_state, entered_nicely,
+        // capture, and drag continuation.
+        let cmd = PlayerCommand::MinimapMouseMove {
+            mouse_pt,
+            left_mouse_down: host.input.left_mouse_down,
+            continuing_drag: host.input.left_mouse_down
+                && host.engine_display.minimap().drag_start(),
+        };
+        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+
+        // Multi-selection box drag (only when not minimap-dragging).
+        // Skip the entire drag body while
+        // `ignore_next_drag` is latched — the drag never
+        // started (guarded at MouseDown), so nothing to
+        // update either way; keep the guard for safety.
+        if host.input.left_mouse_down
+            && !host.engine_display.minimap().drag_start()
+            && host.input.multi_selection_active
+            && !host.input.ignore_next_drag
+            && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
+        {
+            host.input.update_multi_selection(map_pt);
+        }
+        if host.input.right_mouse_down
+            && host.input.multi_unselection_active
+            && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
+        {
+            host.input.update_multi_selection(map_pt);
+        }
+
+        // ── Action-drag dispatch ──
+        // Fire the armed action on every mouse-move frame
+        // while the left button is held: when an action
+        // like Hit / Apple / Strangle is armed, the moment
+        // the cursor crosses over a focusable target the
+        // command launches immediately (not at MouseUp).
+        //
+        // Skip when dragging over the minimap — the
+        // minimap captures the drag — and when
+        // `ignore_next_drag` has suppressed this drag
+        // cycle.
+        if host.input.left_mouse_down
+            && !host.engine_display.minimap().drag_start()
+            && !host.input.ignore_next_drag
+            && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
+        {
+            let selected_action = engine.selected_action_for_seat(local_seat);
+            if matches!(
+                selected_action,
+                robin_engine::profiles::Action::Apple
+                    | robin_engine::profiles::Action::Stone
+                    | robin_engine::profiles::Action::Hit
+                    | robin_engine::profiles::Action::HitHard
+                    | robin_engine::profiles::Action::Heal
+                    | robin_engine::profiles::Action::Lever
+                    | robin_engine::profiles::Action::Strangle
+            ) {
+                let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
+                for cmd in &cmds {
+                    frame_cmds.push(cmd.clone());
+                }
+                dispatch_local_commands(host, engine, assets, &cmds);
+            }
+        }
+    }
+}
+
+/// Left-mouse-up: minimap release, box-select completion, portrait
+/// clicks, or the world left-click resolver.
+#[allow(clippy::too_many_arguments)]
+fn on_left_mouse_up(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    portrait_cache: &PortraitCache,
+    frame_cmds: &mut FrameCommands,
+    screen_width: u16,
+    screen_height: u16,
+    mx: i32,
+    my: i32,
+    shift_held: bool,
+    ctrl_held: bool,
+) {
+    let local_seat = host.transport.local_seat;
+    {
+        host.input.left_mouse_down = false;
+        // Drop the dragging flag on button release.
+        host.input.is_dragging = false;
+        // Clear the drag target on release so the next
+        // drag starts fresh.
+        host.input.target_drag = None;
+        // Clear `ignore_next_drag` at the top of the click
+        // handler so a one-shot drag suppression doesn't
+        // persist past the button release.
+        host.input.ignore_next_drag = false;
+        let is_double = host.input.left_double_click_pending;
+        host.input.left_double_click_pending = false;
+
+        // ── Minimap click / drag-end handling ──
+        // Checks dragged flag, dead zone, and dispatches
+        // to open or center-on-click.  Also handles drag
+        // release outside the minimap (cleans up drag
+        // state so it doesn't linger).
+        let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
+        let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
+        let minimap_handled = on_minimap || host.engine_display.minimap().drag_start();
+        if minimap_handled {
+            let center_on = host.engine_display.resolve_minimap_center(
+                click_pt,
+                on_minimap,
+                host.viewport.level_size,
+            );
+            let cmd = PlayerCommand::MinimapMouseUp {
+                on_minimap,
+                center_on,
+            };
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            host.input.cancel_multi_selection();
+        }
+
+        if minimap_handled {
+            // Consumed by minimap — skip normal picking
+        } else if !host.input.has_focus {
+            // When a UI widget grabbed focus earlier this
+            // frame, the engine-level left-click is
+            // silently dropped. The active multi-selection
+            // drag (if any) is still cleaned up below so
+            // the next frame starts clean.
+        } else if host.input.multi_selection_active && host.input.draw_multi_selection {
+            // Drag was large enough — box-select all PCs in the area.
+            // Shift adds to existing selection.
+            let cmd = PlayerCommand::BoxSelect {
+                pt1: host.input.multi_selection_pt1,
+                pt2: host.input.multi_selection_pt2,
+                shift: shift_held,
+            };
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            tracing::info!(
+                "Box-select: {} PCs selected",
+                engine.seat_selection(local_seat).len()
+            );
+        } else {
+            // Single click (drag too small or no drag started — e.g. panel clicks
+            // where screen_to_map returns None so multi_selection never started).
+            host.input.cancel_multi_selection();
+
+            // If a swordfight gesture drag was being recorded, the LMB-up
+            // commits that gesture — skip portrait hit-testing so a release
+            // over a portrait doesn't accidentally select that PC.
+            let swordfight_drag =
+                engine.is_seat_selection_swordfighting(local_seat) && !host.mouse_way.is_empty();
+
+            // Check portrait panel first (detailed sub-area hit-test).
+            let portrait_hit = if swordfight_drag {
+                None
+            } else {
+                ui_panel::hit_test_portrait_detailed(
+                    engine,
+                    local_seat,
+                    portrait_cache,
+                    screen_width,
+                    screen_height,
+                    mx as f32,
+                    my as f32,
+                )
+            };
+
+            if let Some(hit) = portrait_hit {
+                if on_portrait_click(
+                    engine, host, assets, frame_cmds, &hit, is_double, shift_held, ctrl_held,
+                ) {
+                    // `true` mirrors the original `continue`:
+                    // the click was fully consumed, skip the
+                    // trailing multi-selection cleanup.
+                    return;
+                }
+            } else {
+                on_world_click(
+                    engine, host, assets, frame_cmds, mx, my, shift_held, ctrl_held, is_double,
+                );
+            }
+        }
+
+        // Clean up multi-selection state at the end of the
+        // left-click handler.
+        host.input.multi_selection_active = false;
+        host.input.multi_unselection_active = false;
+        host.input.draw_multi_selection = false;
+    }
+}
+
+/// Left-mouse-up on a portrait: quick-action slots, macro commit,
+/// Shield/Heal portrait targeting, burned-portrait widgets, and
+/// portrait (re)selection.
+///
+/// Returns `true` when the click was fully consumed and the caller
+/// must skip its trailing multi-selection cleanup (the paths that were
+/// `continue` statements before extraction).
+fn on_portrait_click(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    frame_cmds: &mut FrameCommands,
+    hit: &ui_panel::PortraitHit,
+    is_double: bool,
+    shift_held: bool,
+    ctrl_held: bool,
+) -> bool {
+    let local_seat = host.transport.local_seat;
+    {
+        let pc_id = hit.pc_id;
+
+        if let PortraitHitArea::QuickAction(slot) = hit.area {
+            let has_macro = engine.has_quick_action(pc_id, slot);
+            let is_recording_slot = engine.is_qa_recording_for(pc_id);
+            if engine.is_recording_macro() && is_recording_slot {
+                let cmd = PlayerCommand::ChangeQaMemory { slot };
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            } else if has_macro {
+                let cmd = PlayerCommand::StartMacro {
+                    pc: Some(pc_id),
+                    slot,
+                };
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            } else {
+                return true;
+            }
+            host.input.multi_selection_active = false;
+            host.input.multi_unselection_active = false;
+            host.input.draw_multi_selection = false;
+            return true;
+        }
+
+        // ── Portrait click while recording: stop & commit ──
+        // Clicking the portrait of the PC currently
+        // being recorded dispatches a
+        // stop-recording-macro and swallows the
+        // click.  Scoped to visage/scroll areas
+        // (non-action-button, non-burned) so the
+        // portrait body acts as the "commit macro"
+        // button during recording.
+        let macro_stop_handled = !hit.is_burned
+            && !is_double
+            && engine.is_qa_recording_for(pc_id)
+            && matches!(
+                hit.area,
+                PortraitHitArea::TopScroll
+                    | PortraitHitArea::BottomScroll
+                    | PortraitHitArea::Visage
+            );
+        if macro_stop_handled {
+            let cmd = PlayerCommand::StopRecordingMacro;
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            tracing::info!("Portrait click: stop recording macro on slot {}", hit.slot);
+            // Swallow the click.
+            host.input.multi_selection_active = false;
+            host.input.multi_unselection_active = false;
+            host.input.draw_multi_selection = false;
+            return true;
+        }
+
+        // ── Shield/Heal portrait targeting ──
+        // When a Shield/BigShield/Heal action is
+        // pending, clicking a non-burned portrait
+        // commits that action on the portrait's PC.
+        let mut portrait_action_handled = macro_stop_handled;
+        if !hit.is_burned && !is_double && !macro_stop_handled {
+            let selected_action = engine.selected_action_for_seat(local_seat);
+            portrait_action_handled = match selected_action {
+                Action::Heal => {
+                    // Target must be alive and injured (life < 100).
+                    let can_heal = engine
+                        .get_entity(pc_id)
+                        .and_then(|e| e.pc_data())
+                        .is_some_and(|pc| pc.life_points > 0 && pc.life_points < 100);
+                    if can_heal {
+                        if let Some(&healer_id) = engine.seat_selection(local_seat).first() {
+                            let cmd = PlayerCommand::LaunchInteraction {
+                                actor: healer_id,
+                                target: pc_id,
+                                command: Command::HealCmd,
+                                running: false,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                            let cancel = PlayerCommand::CancelAction { pc_id: healer_id };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cancel);
+                            tracing::info!("Portrait heal: {:?} → heal {:?}", healer_id, pc_id);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                Action::Shield | Action::BigShield => {
+                    // While the engine is mid-prompt
+                    // for the shield's protected
+                    // target, the same-click commit
+                    // shortcut is suppressed and the
+                    // click falls through to the
+                    // world protectee-selection path.
+                    // Gated on
+                    // `!engine.shield().is_protected`.
+                    let mid_prompt = engine.shield().is_protected;
+                    // Target must be alive and active.
+                    let can_shield = !mid_prompt
+                        && engine
+                            .get_entity(pc_id)
+                            .and_then(|e| e.pc_data())
+                            .is_some_and(|pc| pc.life_points > 0);
+                    if can_shield {
+                        if let Some(&shielder_id) = engine.seat_selection(local_seat).first() {
+                            let cmd = PlayerCommand::LaunchInteraction {
+                                actor: shielder_id,
+                                target: pc_id,
+                                command: Command::RaiseShield,
+                                running: false,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                            let cancel = PlayerCommand::CancelAction { pc_id: shielder_id };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cancel);
+                            tracing::info!(
+                                "Portrait shield: {:?} → protect {:?}",
+                                shielder_id,
+                                pc_id
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+        }
+
+        if portrait_action_handled {
+            // Click consumed by portrait action targeting
+        } else if hit.is_burned {
+            // ── Burned portrait clicks ──
+            match hit.area {
+                PortraitHitArea::Amulet => {
+                    // Amulet click revives from coma.
+                    tracing::info!(
+                        "Portrait amulet click: slot {}, reviving from coma",
+                        hit.slot
+                    );
+                    let cmd = PlayerCommand::ResetComa { pc_id };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                }
+                PortraitHitArea::Guard => {
+                    // Guard click centers on the guard.
+                    if let Some(guard_pos) = engine.get_guard_position(pc_id) {
+                        tracing::info!("Portrait guard click: centering on guard");
+                        host.viewport.center_on_point(guard_pos);
+                    }
+                }
+                PortraitHitArea::Trumpet => {
+                    // Burned-branch trumpet click
+                    // dispatches `SendReinforcement`,
+                    // which clears `trumpet_enabled`
+                    // (so the player can't queue a
+                    // second replacement while the
+                    // first is in flight), posts the
+                    // PC message, arms
+                    // `time_till_reinforcement`, and
+                    // plays the new-peasant jingle.
+                    tracing::info!(
+                        "Portrait trumpet click: slot {}, requesting reinforcement",
+                        hit.slot
+                    );
+                    let cmd = PlayerCommand::SendReinforcement { pc_id };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                }
+                _ => {
+                    // Other burned areas: no action
+                    // (double-click is a no-op in
+                    // burned state).
+                }
+            }
+        } else if is_double {
+            // ── Double-click on non-burned portrait ──
+            // If the action countdown is active, a
+            // double-click accelerates the
+            // last-dispatched action (MakeFast).
+            if host.input.portrait_action_countdown > 0 {
+                if let Some(fast_pc) = host.input.portrait_action_pc {
+                    let cmd = PlayerCommand::MakePcFast { pc_id: fast_pc };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                }
+                host.input.portrait_action_countdown = 0;
+                host.input.portrait_action_pc = None;
+            } else if engine.is_pc_selectable(assets, pc_id) {
+                let cmd = PlayerCommand::SelectPc {
+                    pc_id,
+                    append: false,
+                };
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                tracing::info!("Portrait double-click: selected slot {}", hit.slot);
+            } else if let Some(ent) = engine.get_entity(pc_id) {
+                host.viewport
+                    .center_on_point(ent.position_iface().map_position());
+                tracing::info!("Portrait double-click: centering on non-selectable PC");
+            }
+        } else {
+            // ── Normal click on non-burned portrait ──
+            match hit.area {
+                PortraitHitArea::ActionButton(btn_idx) => {
+                    // After a right-click cancel
+                    // (all buttons deselected),
+                    // clicking a button drops ammo
+                    // instead of arming. Single =
+                    // 1, Several (shift) = 5.
+                    if host.input.portrait_drop_ammo_armed
+                        && engine.selected_action_for_seat(local_seat) == Action::NoAction
+                    {
+                        // Look up the action for this button index
+                        let btn_action = engine
+                            .get_entity(pc_id)
+                            .and_then(|e| e.pc_data())
+                            .and_then(|pc| {
+                                assets
+                                    .profile_manager
+                                    .get_character(pc.profile_index)
+                                    .and_then(|p| p.actions.get(btn_idx as usize).copied())
+                            })
+                            .unwrap_or(Action::NoAction);
+                        if btn_action != Action::NoAction {
+                            let amount: u32 = if shift_held { 5 } else { 1 };
+                            let cmd = PlayerCommand::DropAmmo {
+                                pc_id,
+                                action_id: btn_action as u32,
+                                amount,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                            tracing::info!(
+                                "Portrait drop ammo: slot {}, action {:?}, amount {}",
+                                hit.slot,
+                                btn_action,
+                                amount
+                            );
+                        }
+                    } else {
+                        // Normal action select path. Resolve the
+                        // dispatch decision read-only before emitting
+                        // the command, so the live and replay paths
+                        // agree on the fallback-select branch.
+                        let dispatched = engine.can_dispatch_pc_action(assets, pc_id, btn_idx);
+                        if dispatched {
+                            let cmd = PlayerCommand::SelectAction {
+                                pc_id,
+                                action_index: btn_idx as u32,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                            host.input.portrait_drop_ammo_armed = false;
+                            host.input.portrait_action_countdown = 5;
+                            host.input.portrait_action_pc =
+                                engine.seat_selection(local_seat).first().copied();
+
+                            // Action-button click only arms
+                            // the action; the fire-on-target step
+                            // happens on the second click of the
+                            // two-click flow.  The armed-then-fire
+                            // branch lives in the
+                            // `portrait_action_handled` path
+                            // above, which pulls the actor from
+                            // the seat selection, uses the
+                            // clicked portrait's PC as the
+                            // target, and emits a trailing
+                            // `CancelAction`.
+                            //
+                            // Shield/BigShield additionally have a
+                            // two-click danger-point + protected
+                            // state machine that a same-click
+                            // shortcut cannot cover; sticking to
+                            // the two-click flow keeps the path
+                            // consistent.
+
+                            tracing::info!(
+                                "Portrait action button {}: dispatched on slot {}",
+                                btn_idx,
+                                hit.slot
+                            );
+                        } else {
+                            let cmd2 = PlayerCommand::SelectByPortrait {
+                                portrait_index: hit.slot as u32,
+                                append: ctrl_held,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd2);
+                            tracing::info!(
+                                "Portrait action button {} disabled on slot {}; selecting PC",
+                                btn_idx,
+                                hit.slot
+                            );
+                        }
+                    }
+                }
+                PortraitHitArea::TopScroll
+                | PortraitHitArea::BottomScroll
+                | PortraitHitArea::Visage => {
+                    center_on_reselected_portrait_pc(
+                        host, engine, local_seat, pc_id, ctrl_held, hit.area,
+                    );
+                    let cmd = PlayerCommand::SelectByPortrait {
+                        portrait_index: hit.slot as u32,
+                        append: ctrl_held,
+                    };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                    tracing::info!("Portrait select: slot {}, area {:?}", hit.slot, hit.area);
+                }
+                PortraitHitArea::QuickAction(_) => {
+                    let cmd = PlayerCommand::SelectByPortrait {
+                        portrait_index: hit.slot as u32,
+                        append: ctrl_held,
+                    };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                    tracing::info!("Portrait select: slot {}, area {:?}", hit.slot, hit.area);
+                }
+                // Amulet / Guard / Trumpet only matter on burned portraits,
+                // which branch earlier; on a non-burned portrait these
+                // areas don't exist, but if the hit-tester returns them
+                // we fall back to a plain select rather than dropping
+                // the click.
+                PortraitHitArea::Amulet | PortraitHitArea::Guard | PortraitHitArea::Trumpet => {
+                    let cmd = PlayerCommand::SelectByPortrait {
+                        portrait_index: hit.slot as u32,
+                        append: ctrl_held,
+                    };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Left-mouse-up on the world (no portrait hit): swordfight-gesture
+/// commit or the regular left-click resolver.
+fn on_world_click(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    frame_cmds: &mut FrameCommands,
+    mx: i32,
+    my: i32,
+    shift_held: bool,
+    ctrl_held: bool,
+    is_double: bool,
+) {
+    // ── Engine-level LMB release ──
+    // Prologue:
+    //   ignore_next_drag = false;
+    //   if (ignore_next_left_click) {
+    //       ignore_next_left_click = false;
+    //       cancel multi-selection state;
+    //       if (!ctrl_held) return;
+    //       target_drag = None;
+    //   }
+    //   next_left_double_is_simple = false;
+    // Clearing `ignore_next_drag` on every LMB
+    // release lets a subsequent drag fire again
+    // once the button is re-pressed.
+    host.input.ignore_next_drag = false;
+    let mut swallow_click = false;
+    if host.input.ignore_next_left_click {
+        host.input.ignore_next_left_click = false;
+        // The next platform double-click is
+        // already demoted at MouseDown via the
+        // `next_left_double_is_simple` flag, so
+        // there's nothing extra to do here.
+        host.input.multi_selection_active = false;
+        host.input.multi_unselection_active = false;
+        host.input.draw_multi_selection = false;
+        if !ctrl_held {
+            swallow_click = true;
+        } else {
+            host.input.target_drag = None;
+        }
+    }
+    host.input.next_left_double_is_simple = false;
+
+    if !swallow_click
+        && let Some(map_pt) = host
+            .viewport
+            .screen_to_map(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
+    {
+        // Resolve swordfight first, then regular click
+        let mut cmds = crate::game_input::resolve_swordfight(host, engine, assets, map_pt, true);
+        if cmds.is_empty() {
+            cmds = crate::game_input::resolve_left_click(
+                host, engine, assets, map_pt, shift_held, ctrl_held, is_double,
+            );
+        }
+        for cmd in &cmds {
+            frame_cmds.push(cmd.clone());
+        }
+        dispatch_local_commands(host, engine, assets, &cmds);
+    }
+}
+
+/// Right-mouse-up: deselection box completion, macro-recording commit,
+/// alt view-cone clear, minimap close, portrait right-click handling,
+/// or the map right-click resolver.
+fn on_right_mouse_up(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    portrait_cache: &PortraitCache,
+    frame_cmds: &mut FrameCommands,
+    screen_width: u16,
+    screen_height: u16,
+    mx: i32,
+    my: i32,
+) {
+    let local_seat = host.transport.local_seat;
+    {
+        host.input.right_mouse_down = false;
+
+        // When a UI widget grabbed focus earlier this
+        // frame, the engine-level right-click is dropped.
+        if !host.input.has_focus {
+            host.input.cancel_multi_unselection();
+            return;
+        }
+
+        // While a macro is recording, right-click commits
+        // (stop-recording-macro) and swallows the click.
+        // Box-unselect, alt-view-cone clear, and the
+        // map/portrait right-click resolver all wait for
+        // the next right-click.
+        if engine.is_recording_macro() {
+            let cmd = PlayerCommand::StopRecordingMacro;
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            host.input.cancel_multi_unselection();
+            host.input.ignore_next_drag = false;
+            host.input.ignore_next_left_click = false;
+            host.input.next_left_double_is_simple = false;
+            host.input.multi_selection_active = false;
+            host.input.multi_unselection_active = false;
+            host.input.draw_multi_selection = false;
+            return;
+        }
+
+        if host.input.multi_unselection_active && host.input.draw_multi_selection {
+            // Red deselection box was drawn — deselect PCs in area
+            let cmd = PlayerCommand::BoxUnselect {
+                pt1: host.input.multi_selection_pt1,
+                pt2: host.input.multi_selection_pt2,
+            };
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            tracing::info!(
+                "Box-deselect: {} PCs remain selected",
+                engine.selected_pc_ids().len()
+            );
+        } else if engine.is_alt_effective(&host.input) && host.selected_view_element.is_some() {
+            // Alt+right-click while the view cone overlay
+            // is active swallows the click:
+            //   - permanent alt (lock on): unlocks alt
+            //     without clearing the selected view
+            //     element.
+            //   - momentary alt: clears the selected view
+            //     element.
+            if engine.is_lock_alt() {
+                let cmd = PlayerCommand::SetLockAlt(false);
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            } else {
+                host.selected_view_element = None;
+            }
+            host.input.cancel_multi_unselection();
+        } else {
+            host.input.cancel_multi_unselection();
+
+            // Right-click on minimap closes it.
+            if host.engine_display.minimap().is_displayed()
+                && host
+                    .engine_display
+                    .minimap()
+                    .is_over_widget(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
+            {
+                let cmd = PlayerCommand::MinimapRightClick;
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            } else if let Some(hit) = ui_panel::hit_test_portrait_detailed(
+                engine,
+                local_seat,
+                portrait_cache,
+                screen_width,
+                screen_height,
+                mx as f32,
+                my as f32,
+            ) {
+                if let PortraitHitArea::QuickAction(slot) = hit.area {
+                    let pc_id = hit.pc_id;
+                    let cmd = PlayerCommand::DeleteMacro {
+                        pc: Some(pc_id),
+                        slot,
+                    };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                    return;
+                }
+                // Right-click on portrait action button → cancel action.
+                let pc_id = hit.pc_id;
+                let armed_action = engine.selected_action_for_seat(local_seat);
+                let action_armed = matches!(
+                    armed_action,
+                    robin_engine::profiles::Action::Heal
+                        | robin_engine::profiles::Action::Shield
+                        | robin_engine::profiles::Action::BigShield
+                );
+                if !hit.is_burned
+                    && let PortraitHitArea::ActionButton(_) = hit.area
+                {
+                    let cmd = PlayerCommand::CancelAction { pc_id };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                    host.input.portrait_drop_ammo_armed = true;
+                    tracing::info!("Portrait right-click: cancel action on slot {}", hit.slot);
+                } else if !hit.is_burned && action_armed {
+                    // When the pointer is inside a non-burned
+                    // portrait and a Heal/Shield/BigShield
+                    // action is armed, right-click cancels the
+                    // action regardless of which sub-widget
+                    // (visage / scroll / etc.) is under the
+                    // pointer.  Emit CancelAction for any
+                    // non-`ActionButton` area while an action
+                    // is armed.
+                    if let Some(&actor_id) = engine.seat_selection(local_seat).first() {
+                        let cmd = PlayerCommand::CancelAction { pc_id: actor_id };
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        tracing::info!(
+                            "Portrait right-click while {:?} armed: cancel on slot {}",
+                            armed_action,
+                            hit.slot
+                        );
+                    }
+                } else if !hit.is_burned
+                    && engine.seat_selection(local_seat).contains(&pc_id)
+                    && matches!(
+                        hit.area,
+                        PortraitHitArea::TopScroll
+                            | PortraitHitArea::BottomScroll
+                            | PortraitHitArea::Visage
+                    )
+                {
+                    // A right-click on lower/upper/visage of
+                    // an open (selected) non-burned portrait
+                    // unselects the PC.  Use
+                    // `TogglePcSelection` since we already
+                    // verified the PC is in the selection.
+                    let cmd = PlayerCommand::TogglePcSelection { pc_id };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                    tracing::info!("Portrait right-click: unselect PC on slot {}", hit.slot);
+                }
+                // Other portrait right-click areas: swallow
+                // the click (don't fall through to map).
+            } else {
+                let cmds = crate::game_input::resolve_right_click(engine, local_seat);
+                for cmd in &cmds {
+                    frame_cmds.push(cmd.clone());
+                }
+                dispatch_local_commands(host, engine, assets, &cmds);
+            }
+        }
+
+        // Clean up: wipe the `IgnoreMouseEvent` flags and
+        // the multi-selection state so the next frame
+        // starts with a clean slate.  The macro-recording
+        // short-circuit above already clears these;
+        // duplicating the clears on the non-recording path
+        // keeps the "flags are zero at end of RMB release"
+        // invariant even when `resolve_right_click` ran.
+        host.input.accept_mouse_event(true, true);
+        host.input.next_left_double_is_simple = false;
+        host.input.multi_unselection_active = false;
+        host.input.multi_selection_active = false;
+        host.input.draw_multi_selection = false;
     }
 }
 

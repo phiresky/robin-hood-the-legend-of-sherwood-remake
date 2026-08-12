@@ -636,7 +636,6 @@ pub fn update_mouse(
     alt_held: bool,
     shift_held: bool,
 ) -> i32 {
-    use robin_engine::element::{Camp, Focus, Posture};
     use robin_engine::resource_ids::*;
 
     host.host_titbit_preview = None;
@@ -838,392 +837,272 @@ pub fn update_mouse(
             update_pc_popup_information(engine, host, assets, mouse_map_pt);
             cursor
         }
+        Action::Bow => cursor_for_bow(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Hit | Action::HitHard => {
+            cursor_for_hit(engine, host, assets, mouse_map_pt, shift_held)
+        }
+        Action::Apple => cursor_for_apple(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Stone => cursor_for_stone(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Purse => cursor_for_purse(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Heal => cursor_for_heal(engine, host, assets, mouse_map_pt, shift_held),
+        Action::WaspNest => cursor_for_wasp_nest(engine, host, assets, mouse_map_pt, shift_held),
+        Action::HelpToClimb => {
+            cursor_for_help_to_climb(engine, host, assets, mouse_map_pt, shift_held)
+        }
+        // Self-targeted consumables / whistle always show the OK cursor.
+        Action::Eat | Action::Guzzle | Action::Whistle => RHMOUSE_OK,
+        Action::Shield | Action::BigShield => {
+            cursor_for_shield(engine, host, assets, mouse_map_pt, shift_held)
+        }
+        Action::Net => cursor_for_net(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Lever => cursor_for_lever(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Ale => cursor_for_ale(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Strangle => cursor_for_strangle(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Beggar => cursor_for_beggar(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Listen => cursor_for_listen(engine, host, assets, mouse_map_pt, shift_held),
+        // Remaining actions.
+        _ => RHMOUSE_DEFAULT,
+    }
+}
 
-        // ── Bow ───────────────────
-        Action::Bow => {
-            if engine.seat_selection(host.transport.local_seat).is_empty() {
-                return RHMOUSE_BOW_NO;
+// ─── Per-action cursor arms ─────────────────────────────────────────
+//
+// One function per `update_mouse` action arm. All share the same
+// signature: read engine/host/assets and the mouse-map point, mutate
+// `host.input` focus/opacity/trajectory fields, and return the cursor
+// resource id.
+
+/// Bow cursor arm.
+fn cursor_for_bow(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::element::Camp;
+    use robin_engine::resource_ids::*;
+    {
+        if engine.seat_selection(host.transport.local_seat).is_empty() {
+            return RHMOUSE_BOW_NO;
+        }
+        let mut cursor = RHMOUSE_BOW_NO;
+        let pc_id = engine.seat_selection(host.transport.local_seat)[0];
+
+        // When recording a macro, take the shorter path — no
+        // range/trajectory checks, just BOW_YES over any
+        // focusable element, BOW_NO otherwise.  Opacity/shadow
+        // are cleared.
+        if engine.is_recording_macro() {
+            host.valid_trajectory = false;
+            host.input.mouse_opacity = 0;
+            host.input.mouse_shadow_color = 0;
+            if let Some(target_id) =
+                engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map_pt, Focus::Bow)
+            {
+                host.input.focused_entity_id = Some(target_id);
+                cursor = RHMOUSE_BOW_YES;
             }
-            let mut cursor = RHMOUSE_BOW_NO;
-            let pc_id = engine.seat_selection(host.transport.local_seat)[0];
+            return cursor;
+        }
 
-            // When recording a macro, take the shorter path — no
-            // range/trajectory checks, just BOW_YES over any
-            // focusable element, BOW_NO otherwise.  Opacity/shadow
-            // are cleared.
-            if engine.is_recording_macro() {
-                host.valid_trajectory = false;
-                host.input.mouse_opacity = 0;
-                host.input.mouse_shadow_color = 0;
-                if let Some(target_id) = engine.find_focusable_entity(
-                    assets,
-                    &host.draw_order.ids,
-                    mouse_map_pt,
-                    Focus::Bow,
-                ) {
-                    host.input.focused_entity_id = Some(target_id);
-                    cursor = RHMOUSE_BOW_YES;
-                }
-                return cursor;
-            }
+        // Check if PC is in building or wall/ladder lift.
+        let in_restricted = engine.is_selected_pc_in_restricted_sector();
 
-            // Check if PC is in building or wall/ladder lift.
-            let in_restricted = engine.is_selected_pc_in_restricted_sector();
+        // Opacity/shadow are set per-branch; declare without initializer
+        // so clippy doesn't warn about overwritten values.
+        let mut opacity: u16;
+        let mut shadow_color: u16;
 
-            // Opacity/shadow are set per-branch; declare without initializer
-            // so clippy doesn't warn about overwritten values.
-            let mut opacity: u16;
-            let mut shadow_color: u16;
+        if !in_restricted {
+            // Compute mouse opacity from shooting level.
+            opacity = engine
+                .calculate_shooting_level(assets, pc_id, mouse_map_pt)
+                .max(MOUSE_OPACITY_DEFAULT);
+            shadow_color = 0;
 
-            if !in_restricted {
-                // Compute mouse opacity from shooting level.
-                opacity = engine
-                    .calculate_shooting_level(assets, pc_id, mouse_map_pt)
-                    .max(MOUSE_OPACITY_DEFAULT);
-                shadow_color = 0;
+            if let Some(target_id) =
+                engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map_pt, Focus::Bow)
+            {
+                host.input.focused_entity_id = Some(target_id);
 
-                if let Some(target_id) = engine.find_focusable_entity(
-                    assets,
-                    &host.draw_order.ids,
-                    mouse_map_pt,
-                    Focus::Bow,
-                ) {
-                    host.input.focused_entity_id = Some(target_id);
+                // Get shoot type and bow target.
+                let (bow_target, shoot_mode) =
+                    engine.can_shoot_with_bow_at(assets, pc_id, target_id);
+                let is_long = shoot_mode == engine_weapons::ShootMode::Long;
 
-                    // Get shoot type and bow target.
-                    let (bow_target, shoot_mode) =
-                        engine.can_shoot_with_bow_at(assets, pc_id, target_id);
-                    let is_long = shoot_mode == engine_weapons::ShootMode::Long;
+                // Extract entity data before mutating host.input.
+                let target_info = engine.get_entity(target_id).map(|target| {
+                    let camp = match target {
+                        Entity::Soldier(s) => s.soldier.cached_camp,
+                        Entity::Civilian(_) => Camp::Lacklandists,
+                        _ => Camp::Error,
+                    };
+                    let is_npc = target.is_npc();
+                    let is_civilian = target.is_civilian();
+                    let is_fx_target = target.kind().is_fx_target();
+                    let is_vip = engine.is_entity_vip(assets, target);
+                    (camp, is_npc, is_civilian, is_fx_target, is_vip)
+                });
 
-                    // Extract entity data before mutating host.input.
-                    let target_info = engine.get_entity(target_id).map(|target| {
-                        let camp = match target {
-                            Entity::Soldier(s) => s.soldier.cached_camp,
-                            Entity::Civilian(_) => Camp::Lacklandists,
-                            _ => Camp::Error,
-                        };
-                        let is_npc = target.is_npc();
-                        let is_civilian = target.is_civilian();
-                        let is_fx_target = target.kind().is_fx_target();
-                        let is_vip = engine.is_entity_vip(assets, target);
-                        (camp, is_npc, is_civilian, is_fx_target, is_vip)
-                    });
-
-                    if bow_target == BowTarget::Valid {
-                        if let Some((camp, is_npc, is_civilian, is_fx_target, is_vip)) = target_info
-                        {
-                            if is_npc {
-                                if is_civilian {
-                                    cursor = if is_long {
-                                        RHMOUSE_BOW_CIVILIAN_LONG
-                                    } else {
-                                        RHMOUSE_BOW_CIVIL
-                                    };
-                                    opacity = 50;
-                                    shadow_color = MOUSE_BOW_CIVIL_COLOR;
-                                } else if is_vip {
-                                    cursor = if is_long {
-                                        RHMOUSE_BOW_VIP_LONG
-                                    } else {
-                                        RHMOUSE_BOW_VIP
-                                    };
-                                    opacity = 50;
-                                    shadow_color = MOUSE_BOW_VIP_COLOR;
-                                } else if camp != Camp::Royalists {
-                                    // Enemy target.
-                                    cursor = if is_long {
-                                        RHMOUSE_BOW_YES_LONG
-                                    } else {
-                                        RHMOUSE_BOW_YES
-                                    };
-                                }
-                                // same camp → stays BOW_NO
-
-                                if cursor != RHMOUSE_BOW_NO {
-                                    host.input.double_status_bar_entity_id = Some(target_id);
-                                }
-                            } else if is_fx_target {
+                if bow_target == BowTarget::Valid {
+                    if let Some((camp, is_npc, is_civilian, is_fx_target, is_vip)) = target_info {
+                        if is_npc {
+                            if is_civilian {
+                                cursor = if is_long {
+                                    RHMOUSE_BOW_CIVILIAN_LONG
+                                } else {
+                                    RHMOUSE_BOW_CIVIL
+                                };
+                                opacity = 50;
+                                shadow_color = MOUSE_BOW_CIVIL_COLOR;
+                            } else if is_vip {
+                                cursor = if is_long {
+                                    RHMOUSE_BOW_VIP_LONG
+                                } else {
+                                    RHMOUSE_BOW_VIP
+                                };
+                                opacity = 50;
+                                shadow_color = MOUSE_BOW_VIP_COLOR;
+                            } else if camp != Camp::Royalists {
+                                // Enemy target.
                                 cursor = if is_long {
                                     RHMOUSE_BOW_YES_LONG
                                 } else {
                                     RHMOUSE_BOW_YES
                                 };
                             }
-                        }
+                            // same camp → stays BOW_NO
 
-                        // Compute trajectory preview for long shots.
-                        // Only computes after TIME_TRAJECTORY_DISPLAY
-                        // (1) frames of mouse stillness, and only
-                        // once per hover (`valid_trajectory` guards
-                        // re-computation).
-                        const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                        if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
-                            && !host.valid_trajectory
-                        {
-                            apply_trajectory_preview(
-                                host,
-                                engine.compute_trajectory_preview(
-                                    assets, pc_id, target_id, shoot_mode,
-                                ),
-                            );
+                            if cursor != RHMOUSE_BOW_NO {
+                                host.input.double_status_bar_entity_id = Some(target_id);
+                            }
+                        } else if is_fx_target {
+                            cursor = if is_long {
+                                RHMOUSE_BOW_YES_LONG
+                            } else {
+                                RHMOUSE_BOW_YES
+                            };
                         }
-                    } else {
-                        host.valid_trajectory = false;
                     }
 
-                    // Out of range overrides everything.
-                    if bow_target == BowTarget::OutOfRange {
-                        cursor = RHMOUSE_BOW_OUT;
-                        opacity = 50;
-                        shadow_color = MOUSE_BOW_NO_COLOR;
-                    }
-                } else {
-                    host.valid_trajectory = false;
-                }
-            } else {
-                // In building/wall-ladder: no valid bow shot
-                opacity = 50;
-                shadow_color = MOUSE_BOW_NO_COLOR;
-                host.valid_trajectory = false;
-            }
-
-            host.input.mouse_opacity = opacity;
-            host.input.mouse_shadow_color = shadow_color;
-            cursor
-        }
-
-        // ── Hit ───────────────────
-        Action::Hit | Action::HitHard => {
-            let focused = engine.find_focusable_entity(
-                assets,
-                &host.draw_order.ids,
-                mouse_map_pt,
-                Focus::Hit,
-            );
-            if let Some(eid) = focused {
-                host.input.focused_entity_id = Some(eid);
-                RHMOUSE_HIT_YES
-            } else {
-                RHMOUSE_HIT_NO
-            }
-        }
-
-        // ── Apple ─────────────────
-        Action::Apple => {
-            let mut cursor = RHMOUSE_APPLE_NO;
-            let pc_id = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .copied();
-
-            if !engine.is_selected_pc_in_restricted_sector() {
-                if let Some(target_id) = engine.find_focusable_entity(
-                    assets,
-                    &host.draw_order.ids,
-                    mouse_map_pt,
-                    Focus::Apple,
-                ) {
-                    // Range check.
-                    let target_pos = engine
-                        .get_entity(target_id)
-                        .map(|t| t.element_data().position_map());
-                    let in_range = pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
-                        engine.is_in_range_for_projectile(
-                            assets,
-                            pid,
-                            tpos,
-                            Action::Apple,
-                            Some(target_id),
-                        )
-                    });
-
-                    if in_range {
-                        host.input.focused_entity_id = Some(target_id);
-                        cursor = RHMOUSE_APPLE_YES;
-
-                        // Compute the trajectory preview after a brief
-                        // hover stillness, mirroring the bow branch.
-                        // The arc is drawn only when the throw will
-                        // miss the target — see
-                        // `compute_trajectory_preview`.
-                        const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                        if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
-                            && !host.valid_trajectory
-                            && let Some(pid) = pc_id
-                        {
-                            let preview = engine.compute_trajectory_preview(
-                                assets,
-                                pid,
-                                target_id,
-                                engine_weapons::ShootMode::Long,
-                            );
-                            apply_trajectory_preview(host, preview);
-                        }
-                    } else {
-                        host.valid_trajectory = false;
-                    }
-                } else {
-                    host.valid_trajectory = false;
-                }
-            } else {
-                host.valid_trajectory = false;
-            }
-            cursor
-        }
-
-        // ── Stone ─────────────────
-        Action::Stone => {
-            let mut cursor = RHMOUSE_STONE_NO;
-            let pc_id = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .copied();
-
-            if !engine.is_selected_pc_in_restricted_sector() {
-                if let Some(target_id) = engine.find_focusable_entity(
-                    assets,
-                    &host.draw_order.ids,
-                    mouse_map_pt,
-                    Focus::Stone,
-                ) {
-                    let target_pos = engine
-                        .get_entity(target_id)
-                        .map(|t| t.element_data().position_map());
-                    let in_range = pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
-                        engine.is_in_range_for_projectile(
-                            assets,
-                            pid,
-                            tpos,
-                            Action::Stone,
-                            Some(target_id),
-                        )
-                    });
-
-                    if in_range {
-                        host.input.focused_entity_id = Some(target_id);
-                        let is_npc = engine
-                            .get_entity(target_id)
-                            .map(|t| t.is_npc())
-                            .unwrap_or(false);
-                        // Gate the double-status bar latch on
-                        // `!is_recording_macro` (the
-                        // recording-macro branch suppresses the
-                        // double-status overlay).
-                        if is_npc && !engine.is_recording_macro() {
-                            host.input.double_status_bar_entity_id = Some(target_id);
-                        }
-                        cursor = RHMOUSE_STONE_YES;
-
-                        const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                        if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
-                            && !host.valid_trajectory
-                            && let Some(pid) = pc_id
-                        {
-                            let preview = engine.compute_trajectory_preview(
-                                assets,
-                                pid,
-                                target_id,
-                                engine_weapons::ShootMode::Long,
-                            );
-                            apply_trajectory_preview(host, preview);
-                        }
-                    } else {
-                        host.valid_trajectory = false;
-                    }
-                } else {
-                    host.valid_trajectory = false;
-                }
-            } else {
-                host.valid_trajectory = false;
-            }
-            cursor
-        }
-
-        // ── Purse ─────────────────
-        Action::Purse => {
-            let mut cursor = RHMOUSE_PURSE_NO;
-            let mouse_elem = mouse_map_pt;
-            let pc_id = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .copied();
-
-            if !engine.is_selected_pc_in_restricted_sector()
-                && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
-            {
-                let in_range = pc_id.is_some_and(|pid| {
-                    engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Purse, None)
-                });
-                if in_range {
-                    cursor = RHMOUSE_PURSE_YES;
-
-                    // Trajectory preview for ground throws.
+                    // Compute trajectory preview for long shots.
+                    // Only computes after TIME_TRAJECTORY_DISPLAY
+                    // (1) frames of mouse stillness, and only
+                    // once per hover (`valid_trajectory` guards
+                    // re-computation).
                     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                    if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
-                        && !host.valid_trajectory
-                        && let Some(pid) = pc_id
-                    {
+                    if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY && !host.valid_trajectory {
                         apply_trajectory_preview(
                             host,
-                            engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
+                            engine.compute_trajectory_preview(assets, pc_id, target_id, shoot_mode),
                         );
                     }
                 } else {
                     host.valid_trajectory = false;
                 }
+
+                // Out of range overrides everything.
+                if bow_target == BowTarget::OutOfRange {
+                    cursor = RHMOUSE_BOW_OUT;
+                    opacity = 50;
+                    shadow_color = MOUSE_BOW_NO_COLOR;
+                }
             } else {
                 host.valid_trajectory = false;
             }
-            cursor
+        } else {
+            // In building/wall-ladder: no valid bow shot
+            opacity = 50;
+            shadow_color = MOUSE_BOW_NO_COLOR;
+            host.valid_trajectory = false;
         }
 
-        // ── Heal ──────────────────
-        Action::Heal => {
-            let focused = engine.find_focusable_entity(
+        host.input.mouse_opacity = opacity;
+        host.input.mouse_shadow_color = shadow_color;
+        cursor
+    }
+}
+
+/// Hit / HitHard cursor arm.
+fn cursor_for_hit(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let focused =
+            engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map_pt, Focus::Hit);
+        if let Some(eid) = focused {
+            host.input.focused_entity_id = Some(eid);
+            RHMOUSE_HIT_YES
+        } else {
+            RHMOUSE_HIT_NO
+        }
+    }
+}
+
+/// Apple cursor arm.
+fn cursor_for_apple(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let mut cursor = RHMOUSE_APPLE_NO;
+        let pc_id = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .copied();
+
+        if !engine.is_selected_pc_in_restricted_sector() {
+            if let Some(target_id) = engine.find_focusable_entity(
                 assets,
                 &host.draw_order.ids,
                 mouse_map_pt,
-                Focus::Heal,
-            );
-            if let Some(eid) = focused {
-                host.input.focused_entity_id = Some(eid);
-                RHMOUSE_HEAL_YES
-            } else {
-                RHMOUSE_HEAL_NO
-            }
-        }
-
-        // ── WaspNest ─────────────
-        Action::WaspNest => {
-            let mut cursor = RHMOUSE_WASP_NEST_NO;
-            let mouse_elem = mouse_map_pt;
-            let pc_id = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .copied();
-
-            if !engine.is_selected_pc_in_restricted_sector() {
-                let in_range = pc_id.is_some_and(|pid| {
+                Focus::Apple,
+            ) {
+                // Range check.
+                let target_pos = engine
+                    .get_entity(target_id)
+                    .map(|t| t.element_data().position_map());
+                let in_range = pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
                     engine.is_in_range_for_projectile(
                         assets,
                         pid,
-                        mouse_elem,
-                        Action::WaspNest,
-                        None,
+                        tpos,
+                        Action::Apple,
+                        Some(target_id),
                     )
                 });
-                if in_range {
-                    cursor = RHMOUSE_WASP_NEST_YES;
 
+                if in_range {
+                    host.input.focused_entity_id = Some(target_id);
+                    cursor = RHMOUSE_APPLE_YES;
+
+                    // Compute the trajectory preview after a brief
+                    // hover stillness, mirroring the bow branch.
+                    // The arc is drawn only when the throw will
+                    // miss the target — see
+                    // `compute_trajectory_preview`.
                     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
                     if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
                         && !host.valid_trajectory
                         && let Some(pid) = pc_id
                     {
-                        apply_trajectory_preview(
-                            host,
-                            engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
+                        let preview = engine.compute_trajectory_preview(
+                            assets,
+                            pid,
+                            target_id,
+                            engine_weapons::ShootMode::Long,
                         );
+                        apply_trajectory_preview(host, preview);
                     }
                 } else {
                     host.valid_trajectory = false;
@@ -1231,96 +1110,76 @@ pub fn update_mouse(
             } else {
                 host.valid_trajectory = false;
             }
-            cursor
+        } else {
+            host.valid_trajectory = false;
         }
+        cursor
+    }
+}
 
-        // ── HelpToClimb ─────────
-        Action::HelpToClimb => {
-            let posture = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .and_then(|&id| engine.get_entity(id))
-                .map(|e| e.element_data().posture)
-                .unwrap_or(Posture::Undefined);
+/// Stone cursor arm.
+fn cursor_for_stone(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let mut cursor = RHMOUSE_STONE_NO;
+        let pc_id = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .copied();
 
-            // If not in building/lift AND carrying on shoulders.
-            if !engine.is_selected_pc_in_restricted_sector()
-                && posture == Posture::CarryingOnShoulders
-            {
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
-            } else if posture == Posture::HelpingToClimb {
-                // Already helping → NoAction cursor.
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
-            } else {
-                RHMOUSE_OK
-            }
-        }
-
-        // ── Eat / Guzzle ──────────
-        Action::Eat | Action::Guzzle => RHMOUSE_OK,
-
-        // ── Whistle ────────────────
-        Action::Whistle => RHMOUSE_OK,
-
-        // ── Shield / BigShield ────
-        Action::Shield | Action::BigShield => {
-            let is_big = selected_action == Action::BigShield;
-
-            // Check the shield-protected flag.
-            if engine.shield().is_protected {
-                let focused = engine.find_focusable_pc(assets, mouse_map_pt, Focus::Shield);
-                if let Some(eid) = focused {
-                    host.input.focused_entity_id = Some(eid);
-                    if is_big {
-                        RHMOUSE_BIG_SHIELD_YES
-                    } else {
-                        RHMOUSE_SHIELD_YES
-                    }
-                } else if is_big {
-                    RHMOUSE_BIG_SHIELD_NO
-                } else {
-                    RHMOUSE_SHIELD_NO
-                }
-            } else {
-                // Not yet protected → point cursor.
-                if is_big {
-                    RHMOUSE_BIG_SHIELD_POINT
-                } else {
-                    RHMOUSE_SHIELD_POINT
-                }
-            }
-        }
-
-        // ── Net ───────────────────
-        Action::Net => {
-            let mut cursor = RHMOUSE_NET_NO;
-            let mouse_elem = mouse_map_pt;
-
-            let pc_id = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .copied();
-            if !engine.is_selected_pc_in_restricted_sector()
-                && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
-            {
-                let in_range = pc_id.is_some_and(|pid| {
-                    engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Net, None)
+        if !engine.is_selected_pc_in_restricted_sector() {
+            if let Some(target_id) = engine.find_focusable_entity(
+                assets,
+                &host.draw_order.ids,
+                mouse_map_pt,
+                Focus::Stone,
+            ) {
+                let target_pos = engine
+                    .get_entity(target_id)
+                    .map(|t| t.element_data().position_map());
+                let in_range = pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
+                    engine.is_in_range_for_projectile(
+                        assets,
+                        pid,
+                        tpos,
+                        Action::Stone,
+                        Some(target_id),
+                    )
                 });
-                if in_range {
-                    cursor = RHMOUSE_NET_YES;
 
-                    // Gate the YES cursor on a valid trajectory and
-                    // render the arc preview when the mouse has been
-                    // still long enough.
+                if in_range {
+                    host.input.focused_entity_id = Some(target_id);
+                    let is_npc = engine
+                        .get_entity(target_id)
+                        .map(|t| t.is_npc())
+                        .unwrap_or(false);
+                    // Gate the double-status bar latch on
+                    // `!is_recording_macro` (the
+                    // recording-macro branch suppresses the
+                    // double-status overlay).
+                    if is_npc && !engine.is_recording_macro() {
+                        host.input.double_status_bar_entity_id = Some(target_id);
+                    }
+                    cursor = RHMOUSE_STONE_YES;
+
                     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
                     if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
                         && !host.valid_trajectory
                         && let Some(pid) = pc_id
                     {
-                        apply_trajectory_preview(
-                            host,
-                            engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
+                        let preview = engine.compute_trajectory_preview(
+                            assets,
+                            pid,
+                            target_id,
+                            engine_weapons::ShootMode::Long,
                         );
+                        apply_trajectory_preview(host, preview);
                     }
                 } else {
                     host.valid_trajectory = false;
@@ -1328,83 +1187,516 @@ pub fn update_mouse(
             } else {
                 host.valid_trajectory = false;
             }
-            cursor
+        } else {
+            host.valid_trajectory = false;
         }
+        cursor
+    }
+}
 
-        // ── Lever ─────────────────
-        Action::Lever => {
-            let focused = engine.find_focusable_entity(
-                assets,
-                &host.draw_order.ids,
-                mouse_map_pt,
-                Focus::Lever,
-            );
+/// Purse cursor arm.
+fn cursor_for_purse(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let mut cursor = RHMOUSE_PURSE_NO;
+        let mouse_elem = mouse_map_pt;
+        let pc_id = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .copied();
+
+        if !engine.is_selected_pc_in_restricted_sector()
+            && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
+        {
+            let in_range = pc_id.is_some_and(|pid| {
+                engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Purse, None)
+            });
+            if in_range {
+                cursor = RHMOUSE_PURSE_YES;
+
+                // Trajectory preview for ground throws.
+                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+                if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
+                    && !host.valid_trajectory
+                    && let Some(pid) = pc_id
+                {
+                    apply_trajectory_preview(
+                        host,
+                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
+                    );
+                }
+            } else {
+                host.valid_trajectory = false;
+            }
+        } else {
+            host.valid_trajectory = false;
+        }
+        cursor
+    }
+}
+
+/// Heal cursor arm.
+fn cursor_for_heal(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let focused =
+            engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map_pt, Focus::Heal);
+        if let Some(eid) = focused {
+            host.input.focused_entity_id = Some(eid);
+            RHMOUSE_HEAL_YES
+        } else {
+            RHMOUSE_HEAL_NO
+        }
+    }
+}
+
+/// WaspNest cursor arm.
+fn cursor_for_wasp_nest(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let mut cursor = RHMOUSE_WASP_NEST_NO;
+        let mouse_elem = mouse_map_pt;
+        let pc_id = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .copied();
+
+        if !engine.is_selected_pc_in_restricted_sector() {
+            let in_range = pc_id.is_some_and(|pid| {
+                engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::WaspNest, None)
+            });
+            if in_range {
+                cursor = RHMOUSE_WASP_NEST_YES;
+
+                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+                if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
+                    && !host.valid_trajectory
+                    && let Some(pid) = pc_id
+                {
+                    apply_trajectory_preview(
+                        host,
+                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
+                    );
+                }
+            } else {
+                host.valid_trajectory = false;
+            }
+        } else {
+            host.valid_trajectory = false;
+        }
+        cursor
+    }
+}
+
+/// HelpToClimb cursor arm.
+fn cursor_for_help_to_climb(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    shift_held: bool,
+) -> i32 {
+    use robin_engine::element::Posture;
+    use robin_engine::resource_ids::*;
+    {
+        let posture = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .and_then(|&id| engine.get_entity(id))
+            .map(|e| e.element_data().posture)
+            .unwrap_or(Posture::Undefined);
+
+        // If not in building/lift AND carrying on shoulders.
+        if !engine.is_selected_pc_in_restricted_sector() && posture == Posture::CarryingOnShoulders
+        {
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+        } else if posture == Posture::HelpingToClimb {
+            // Already helping → NoAction cursor.
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+        } else {
+            RHMOUSE_OK
+        }
+    }
+}
+
+/// Shield / BigShield cursor arm.
+fn cursor_for_shield(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let is_big =
+            engine.selected_action_for_seat(host.transport.local_seat) == Action::BigShield;
+
+        // Check the shield-protected flag.
+        if engine.shield().is_protected {
+            let focused = engine.find_focusable_pc(assets, mouse_map_pt, Focus::Shield);
             if let Some(eid) = focused {
                 host.input.focused_entity_id = Some(eid);
-                RHMOUSE_LEVER_YES
+                if is_big {
+                    RHMOUSE_BIG_SHIELD_YES
+                } else {
+                    RHMOUSE_SHIELD_YES
+                }
+            } else if is_big {
+                RHMOUSE_BIG_SHIELD_NO
             } else {
-                RHMOUSE_LEVER_NO
+                RHMOUSE_SHIELD_NO
+            }
+        } else {
+            // Not yet protected → point cursor.
+            if is_big {
+                RHMOUSE_BIG_SHIELD_POINT
+            } else {
+                RHMOUSE_SHIELD_POINT
             }
         }
+    }
+}
 
-        // ── Ale ───────────────────
-        Action::Ale => {
-            // Validate mouse sector (no door, no wall/ladder).
-            if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
-                RHMOUSE_ALE_YES
+/// Net cursor arm.
+fn cursor_for_net(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let mut cursor = RHMOUSE_NET_NO;
+        let mouse_elem = mouse_map_pt;
+
+        let pc_id = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .copied();
+        if !engine.is_selected_pc_in_restricted_sector()
+            && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
+        {
+            let in_range = pc_id.is_some_and(|pid| {
+                engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Net, None)
+            });
+            if in_range {
+                cursor = RHMOUSE_NET_YES;
+
+                // Gate the YES cursor on a valid trajectory and
+                // render the arc preview when the mouse has been
+                // still long enough.
+                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+                if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
+                    && !host.valid_trajectory
+                    && let Some(pid) = pc_id
+                {
+                    apply_trajectory_preview(
+                        host,
+                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
+                    );
+                }
             } else {
-                RHMOUSE_ALE_NO
+                host.valid_trajectory = false;
             }
+        } else {
+            host.valid_trajectory = false;
         }
+        cursor
+    }
+}
 
-        // ── Strangle ──────────────
-        Action::Strangle => {
-            let focused = engine.find_focusable_entity(
-                assets,
-                &host.draw_order.ids,
-                mouse_map_pt,
-                Focus::Strangle,
+/// Lever cursor arm.
+fn cursor_for_lever(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let focused =
+            engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map_pt, Focus::Lever);
+        if let Some(eid) = focused {
+            host.input.focused_entity_id = Some(eid);
+            RHMOUSE_LEVER_YES
+        } else {
+            RHMOUSE_LEVER_NO
+        }
+    }
+}
+
+/// Ale cursor arm.
+fn cursor_for_ale(
+    engine: &mut Engine,
+    _host: &mut Host,
+    _assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        // Validate mouse sector (no door, no wall/ladder).
+        if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
+            RHMOUSE_ALE_YES
+        } else {
+            RHMOUSE_ALE_NO
+        }
+    }
+}
+
+/// Strangle cursor arm.
+fn cursor_for_strangle(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    _shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let focused = engine.find_focusable_entity(
+            assets,
+            &host.draw_order.ids,
+            mouse_map_pt,
+            Focus::Strangle,
+        );
+        if let Some(eid) = focused {
+            host.input.focused_entity_id = Some(eid);
+            RHMOUSE_STRANGLE_YES
+        } else {
+            RHMOUSE_STRANGLE_NO
+        }
+    }
+}
+
+/// Beggar cursor arm.
+fn cursor_for_beggar(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    shift_held: bool,
+) -> i32 {
+    use robin_engine::element::Posture;
+    use robin_engine::resource_ids::*;
+    {
+        let posture = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .and_then(|&id| engine.get_entity(id))
+            .map(|e| e.element_data().posture)
+            .unwrap_or(Posture::Undefined);
+        if posture == Posture::SimulatingBeggar {
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+        } else {
+            RHMOUSE_OK
+        }
+    }
+}
+
+/// Listen cursor arm.
+fn cursor_for_listen(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+    shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    {
+        let action_state = engine
+            .seat_selection(host.transport.local_seat)
+            .first()
+            .and_then(|&id| engine.get_entity(id))
+            .and_then(|e| e.actor_data())
+            .map(|a| a.action_state)
+            .unwrap_or(engine_element::ActionState::Waiting);
+        if action_state == engine_element::ActionState::Listening {
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+        } else {
+            RHMOUSE_OK
+        }
+    }
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_engine::campaign::Campaign;
+    use robin_engine::element::{
+        ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
+    };
+    use robin_engine::engine::{HostDisplayState, InputState};
+    use robin_engine::player_command::PlayerCommand;
+    use robin_engine::resource_ids::*;
+
+    fn fixture() -> (Engine, LevelAssets, Host) {
+        let mut assets = LevelAssets::new();
+        let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
+            .expect("test engine");
+        let host = Host::scratch(800.0, 600.0);
+        (engine, assets, host)
+    }
+
+    fn add_selected_pc(
+        engine: &mut Engine,
+        assets: &LevelAssets,
+    ) -> robin_engine::element::EntityId {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(10.0, 10.0));
+        element.sprite.position_iface.settle_current_position();
+        let pc = engine.test_add_entity(robin_engine::element::Entity::Pc(ActorPc {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 100,
+                playable: true,
+                ..Default::default()
+            },
+        }));
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &mut display,
+            &mut input,
+            assets,
+            &PlayerCommand::SelectPc {
+                pc_id: pc,
+                append: false,
+            },
+        );
+        pc
+    }
+
+    #[test]
+    fn hit_cursor_is_no_without_focusable_target() {
+        let (mut engine, assets, mut host) = fixture();
+        add_selected_pc(&mut engine, &assets);
+
+        let cursor = cursor_for_hit(
+            &mut engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+        );
+        assert_eq!(cursor, RHMOUSE_HIT_NO);
+        assert_eq!(host.input.focused_entity_id, None);
+    }
+
+    #[test]
+    fn heal_cursor_is_no_without_focusable_target() {
+        let (mut engine, assets, mut host) = fixture();
+        add_selected_pc(&mut engine, &assets);
+
+        let cursor = cursor_for_heal(
+            &mut engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+        );
+        assert_eq!(cursor, RHMOUSE_HEAL_NO);
+    }
+
+    #[test]
+    fn ale_cursor_rejects_invalid_ground_sector() {
+        // The blank test level has no sectors, so no cursor position is
+        // a valid ale-drop target.
+        let (mut engine, assets, mut host) = fixture();
+        add_selected_pc(&mut engine, &assets);
+
+        let cursor = cursor_for_ale(
+            &mut engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+        );
+        assert_eq!(cursor, RHMOUSE_ALE_NO);
+    }
+
+    #[test]
+    fn shield_cursor_tracks_big_variant_and_protection_state() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_selected_pc(&mut engine, &assets);
+
+        for (action, cursor_no, cursor_point) in [
+            (Action::Shield, RHMOUSE_SHIELD_NO, RHMOUSE_SHIELD_POINT),
+            (
+                Action::BigShield,
+                RHMOUSE_BIG_SHIELD_NO,
+                RHMOUSE_BIG_SHIELD_POINT,
+            ),
+        ] {
+            let mut display = HostDisplayState::default();
+            let mut input = InputState::default();
+            engine.apply_command(
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::SelectResolvedAction { pc_id: pc, action },
             );
-            if let Some(eid) = focused {
-                host.input.focused_entity_id = Some(eid);
-                RHMOUSE_STRANGLE_YES
+            let cursor = cursor_for_shield(
+                &mut engine,
+                &mut host,
+                &assets,
+                MapPoint::new(300.0, 300.0),
+                false,
+            );
+            let expected = if engine.shield().is_protected {
+                // Awaiting the protected-PC pick with nothing focusable
+                // under the cursor.
+                cursor_no
             } else {
-                RHMOUSE_STRANGLE_NO
-            }
+                // Awaiting the danger-point pick.
+                cursor_point
+            };
+            assert_eq!(cursor, expected);
         }
+    }
 
-        // ── Beggar ────────────────
-        Action::Beggar => {
-            let posture = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .and_then(|&id| engine.get_entity(id))
-                .map(|e| e.element_data().posture)
-                .unwrap_or(Posture::Undefined);
-            if posture == Posture::SimulatingBeggar {
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
-            } else {
-                RHMOUSE_OK
-            }
-        }
+    #[test]
+    fn strangle_cursor_is_no_without_focusable_target() {
+        let (mut engine, assets, mut host) = fixture();
+        add_selected_pc(&mut engine, &assets);
 
-        // ── Listen ────────────────
-        Action::Listen => {
-            let action_state = engine
-                .seat_selection(host.transport.local_seat)
-                .first()
-                .and_then(|&id| engine.get_entity(id))
-                .and_then(|e| e.actor_data())
-                .map(|a| a.action_state)
-                .unwrap_or(engine_element::ActionState::Waiting);
-            if action_state == engine_element::ActionState::Listening {
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
-            } else {
-                RHMOUSE_OK
-            }
-        }
-
-        // ── Remaining actions ───────────────────────────────
-        _ => RHMOUSE_DEFAULT,
+        let cursor = cursor_for_strangle(
+            &mut engine,
+            &mut host,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+        );
+        assert_eq!(cursor, RHMOUSE_STRANGLE_NO);
     }
 }
