@@ -1553,6 +1553,14 @@ pub enum CrossNpcAction {
     /// Money-fight looters set this as soon as they reserve a KO'd victim
     /// so other scanners skip the same body.
     SetLootedAfterMoneyFight { target: NpcHandle, looted: bool },
+    /// Legacy pending-work representation retained at its serialized ordinal.
+    /// New `GetReportFromSoldier` work must use [`Self::ConsiderReport`],
+    /// because Original also processes the shared report's body detectables.
+    UpdateReport {
+        target: NpcHandle,
+        report_type: ReportType,
+        seek_position: Position,
+    },
     /// Merge the officer's reconnaissance report into the target soldier's
     /// report. Broadcast inside `AlertSoldiers` so newly alerted soldiers
     /// pick up the officer's charly handle and report type before they run
