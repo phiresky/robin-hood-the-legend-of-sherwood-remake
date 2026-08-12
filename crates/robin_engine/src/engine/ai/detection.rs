@@ -1621,6 +1621,18 @@ impl EngineInner {
                 fighter.position.y = position.y;
             }
         }
+        for fighter in &mut tick_data.reconsider_swordfight_observation_fighters {
+            let id = self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} has missing observation fighter {} at its owner boundary",
+                    npc_id.index(),
+                    fighter.handle
+                )
+            });
+            fighter.raw_world_position = self
+                .boundary_position(id, npc_id, positions_before_movement, true)
+                .world;
+        }
         for soldier in &mut tick_data.camp_soldiers {
             let id = self.entity_id_for_index(soldier.handle).unwrap_or_else(|| {
                 panic!(

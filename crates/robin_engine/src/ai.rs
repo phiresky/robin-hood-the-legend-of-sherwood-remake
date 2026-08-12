@@ -65,7 +65,8 @@ mod contexts;
 pub use contexts::{
     AI_DOOR_RALLY_POINT_DISTANCE, AiContext, AiGlobalState, AiPerTickData, AntagonistInfo,
     DoorRallyPoint, FriendSwapCandidate, House, MyExitDoorInfo, PhalanxEnemySnapshot,
-    PhalanxMemberThemList, ReconsiderSwordfightFriend, ReinforcementDoorInfo, SleepingEnemyInfo,
+    PhalanxMemberThemList, ReconsiderSwordfightFriend, ReconsiderSwordfightObservationFighter,
+    ReinforcementDoorInfo, SleepingEnemyInfo,
 };
 
 mod effects;

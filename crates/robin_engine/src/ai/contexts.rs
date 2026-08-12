@@ -599,6 +599,24 @@ pub struct ReconsiderSwordfightFriend {
     pub number_of_opponents: u16,
 }
 
+/// Complete fighter-registry entry for `ReconsiderSwordfightObservation`.
+///
+/// The Original admits fighters with `RHElement::GetPosition()`, while the
+/// shared [`crate::ai_enemy::FighterSnapshot`] intentionally applies
+/// `RHArtificialIntelligence::Position`'s door-side forecast. Keep this
+/// call-site-specific raw position separate so other AI consumers retain the
+/// shared door-resolved semantics.
+#[derive(Debug, Clone, Copy)]
+pub struct ReconsiderSwordfightObservationFighter {
+    pub handle: HumanHandle,
+    pub raw_world_position: crate::coordinates::WorldPoint3D,
+    pub is_friendly: bool,
+    pub is_able_to_fight: bool,
+    pub is_soldier: bool,
+    pub primary_target: HumanHandle,
+    pub current_substate: u32,
+}
+
 /// Per-tick analysis data computed by the engine's detection loop.
 /// Populated once per detection tick, consumed by battle_decisions
 /// and swordfight tactics. Passed alongside AiContext.
@@ -642,6 +660,10 @@ pub struct AiPerTickData {
     /// from `nearby_fighters` so radius-based scans retain their exact domain.
     pub fighter_registry: Vec<crate::ai_enemy::FighterSnapshot>,
     pub nearby_fighters: Vec<crate::ai_enemy::FighterSnapshot>,
+    /// Complete registry in Original order for the observation-only raw
+    /// `GetPosition()` radius test. This must not replace `nearby_fighters`:
+    /// generic combat scans use the door-resolved AI position instead.
+    pub reconsider_swordfight_observation_fighters: Vec<ReconsiderSwordfightObservationFighter>,
     /// Complete opposing-camp fighter registry for `ReconsiderSwordfight`.
     /// Original applies no 500-unit prefilter here; each entry is admitted
     /// by `IsDetecting360Degrees`, whose radius depends on the observer.
@@ -924,6 +946,7 @@ impl AiPerTickData {
             primary_target_multiplicity: Vec::new(),
             fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),
+            reconsider_swordfight_observation_fighters: Vec::new(),
             reconsider_swordfight_enemies: Vec::new(),
             reconsider_swordfight_friends: Vec::new(),
             camp_soldiers: Vec::new(),

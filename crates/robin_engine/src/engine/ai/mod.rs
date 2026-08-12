@@ -2536,6 +2536,41 @@ impl EngineInner {
         tick.nearby_fighters =
             self.build_nearby_fighters_for(npc_id, assets, &scratch.ai_sight_obstacles);
         tick.fighter_registry = self.build_fighter_snapshots_for(npc_id, assets, None);
+        tick.reconsider_swordfight_observation_fighters = tick
+            .fighter_registry
+            .iter()
+            .map(|fighter| {
+                let id = self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
+                    panic!(
+                        "NPC {} observation fighter {} disappeared from the registry",
+                        npc_id.index(),
+                        fighter.handle
+                    )
+                });
+                let raw_world_position = self
+                    .world
+                    .entities
+                    .get(id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "NPC {} observation fighter {} has no live entity",
+                            npc_id.index(),
+                            fighter.handle
+                        )
+                    })
+                    .element_data()
+                    .position();
+                crate::ai::ReconsiderSwordfightObservationFighter {
+                    handle: fighter.handle,
+                    raw_world_position,
+                    is_friendly: fighter.is_friendly,
+                    is_able_to_fight: fighter.is_able_to_fight,
+                    is_soldier: fighter.is_soldier,
+                    primary_target: fighter.primary_target,
+                    current_substate: fighter.current_substate,
+                }
+            })
+            .collect();
         // KillNearbySleepingEnemies walks the live opposing-camp fighter
         // registry synchronously at the BattleDecisions boundary. Populate
         // this from the same live registry for every Think, including timer

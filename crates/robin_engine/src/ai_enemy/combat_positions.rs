@@ -2947,13 +2947,32 @@ impl EnemyAi {
         self.list_them.clear();
         let max_radius = parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as f32;
         let me_pos = ctx.position;
+        let me_world = tick
+            .reconsider_swordfight_observation_fighters
+            .iter()
+            .find(|fighter| fighter.handle == self.base.me)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ReconsiderSwordfightObservation owner {} is absent from its fighter registry",
+                    self.base.me
+                )
+            })
+            .raw_world_position;
+        let raw_max_norm_distance =
+            |fighter: &crate::ai::ReconsiderSwordfightObservationFighter| {
+                let dx = fighter.raw_world_position.x - me_world.x;
+                let dy = (fighter.raw_world_position.y - me_world.y)
+                    * crate::position_interface::INVERSE_ASPECT_RATIO;
+                let dz = fighter.raw_world_position.z - me_world.z;
+                dx.abs().max(dy.abs()).max(dz.abs())
+            };
         let mut local_mult: std::collections::BTreeMap<HumanHandle, u32> =
             std::collections::BTreeMap::new();
-        for f in &tick.nearby_fighters {
+        for f in &tick.reconsider_swordfight_observation_fighters {
             if f.is_friendly || !f.is_able_to_fight {
                 continue;
             }
-            let d = ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation);
+            let d = raw_max_norm_distance(f);
             if d >= max_radius {
                 continue;
             }
@@ -2971,13 +2990,13 @@ impl EnemyAi {
         //     substate against a primary target.
         self.base.list_us.clear();
         self.base.list_us.push(self.base.me);
-        for f in &tick.nearby_fighters {
+        for f in &tick.reconsider_swordfight_observation_fighters {
             if !f.is_friendly || f.handle == self.base.me || !f.is_able_to_fight {
                 continue;
             }
             // Original truncates `MaxNormDistance` to UWORD on the us-list
             // side before the radius comparison.
-            let d = ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            let d = raw_max_norm_distance(f) as u16;
             if f32::from(d) >= max_radius {
                 continue;
             }
@@ -3001,7 +3020,7 @@ impl EnemyAi {
             me = self.base.me,
             list_us = ?self.base.list_us,
             list_them = ?self.list_them,
-            nearby_fighters = tick.nearby_fighters.len(),
+            observation_fighters = tick.reconsider_swordfight_observation_fighters.len(),
             "ReconsiderSwordfightObservation rebuilt the us/them lists"
         );
 

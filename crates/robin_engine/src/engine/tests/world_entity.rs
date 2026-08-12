@@ -2735,6 +2735,178 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
 }
 
 #[test]
+fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapshots() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::order::OrderType;
+    use crate::sector::SectorNumber;
+    use crate::sequence::{SequenceElement, SequenceElementData};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    // Human handle zero is NULL in Original AI lists.
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let raw_near_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let raw_far_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+
+    for (id, x) in [(owner_id, 0.0), (raw_near_id, 20.0), (raw_far_id, 600.0)] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
+        else {
+            panic!("test fighter changed kind")
+        };
+        soldier.element.active = true;
+        soldier.npc.life_points = 100;
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test fighter has enemy AI")
+            .base
+            .me = id.index();
+        let world = WorldPoint3D::new(x, 0.0, 0.0);
+        soldier.element.set_position(world);
+        soldier
+            .element
+            .set_position_map(MapPoint::from_world_xyz(world.x, world.y, world.z));
+    }
+    let frame = engine.control.frame_counter;
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("observation owner has enemy AI");
+    owner.set_state(AiState::Attacking, Substate::AttackingObserve);
+    owner.base.launch_timer(0, frame);
+    // The engine clears the running latch when the due timer is emitted; the
+    // launch substate remains as the stale-event guard consumed by Think.
+    owner.base.timer_is_running = false;
+
+    engine.script_domains.interactables.doors = vec![
+        Door {
+            door_type: DoorType::Default,
+            sector_out: SectorNumber::new(7),
+            sector_in: SectorNumber::new(8),
+            point_out: MapPoint::new(600.0, 0.0),
+            point_in: MapPoint::new(580.0, 0.0),
+            ..Door::default()
+        },
+        Door {
+            door_type: DoorType::Default,
+            sector_out: SectorNumber::new(9),
+            sector_in: SectorNumber::new(10),
+            point_out: MapPoint::new(20.0, 0.0),
+            point_in: MapPoint::new(40.0, 0.0),
+            ..Door::default()
+        },
+    ];
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "reconsider_observation_pass_door_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission exposes the installed test doors"),
+    );
+    for (id, door_index) in [(raw_near_id, 0), (raw_far_id, 1)] {
+        let mut pass_door = SequenceElement::new_movement(
+            1,
+            crate::element::Command::PassDoor,
+            Some(id),
+            OrderType::WalkingWithSword,
+        );
+        let SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut pass_door.data
+        else {
+            panic!("PassDoor test element changed kind")
+        };
+        *gate_id = Some(DoorIndex(door_index));
+        *direction = 0;
+        let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let ctx = crate::engine::ai::build_ai_context_from_entity(
+        engine
+            .get_entity(owner_id)
+            .expect("observation owner exists"),
+        engine.control.frame_counter,
+        None,
+        engine.world.weather.is_forest_level,
+        engine.world.weather.ambiance,
+        engine.ai.standard_view_polygon_radius,
+        &scratch.ai_entity_views,
+        &scratch.ai_sight_obstacles,
+        &engine.world.fast_grid,
+        &assets.hiking_paths,
+        &engine.ai.global.all_soldier_handles,
+        engine.control.sim_config.difficulty,
+    );
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+
+    assert!(
+        !tick
+            .nearby_fighters
+            .iter()
+            .any(|fighter| fighter.handle == raw_near_id.index()),
+        "generic nearby scan must reject the raw-near fighter at its door-resolved far side"
+    );
+    assert!(
+        tick.nearby_fighters
+            .iter()
+            .any(|fighter| fighter.handle == raw_far_id.index()),
+        "generic nearby scan must retain the raw-far fighter at its door-resolved near side"
+    );
+    let observation_position = |handle| {
+        tick.reconsider_swordfight_observation_fighters
+            .iter()
+            .find(|fighter| fighter.handle == handle)
+            .expect("fighter exists in complete observation registry")
+            .raw_world_position
+    };
+    assert_eq!(observation_position(raw_near_id.index()).x, 20.0);
+    assert_eq!(observation_position(raw_far_id.index()).x, 600.0);
+
+    engine.dispatch_think_with_drain(
+        &sim,
+        owner_id,
+        &Stimulus::new(StimulusType::EventTimer),
+        &ctx,
+        &tick,
+        &assets,
+    );
+
+    let owner = engine
+        .get_entity(owner_id)
+        .and_then(Entity::enemy_ai)
+        .expect("observation owner retains enemy AI");
+    assert_eq!(
+        owner.base.list_us,
+        vec![owner_id.index(), raw_near_id.index()]
+    );
+}
+
+#[test]
 fn optical_ai_position_uses_carrier_boundary_but_keeps_target_world_bits() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
 
