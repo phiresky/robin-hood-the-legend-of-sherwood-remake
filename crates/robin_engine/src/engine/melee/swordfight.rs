@@ -688,9 +688,8 @@ impl EngineInner {
         // fight to unlink any active shield-protection.  NPC
         // sword-fights don't carry the protection link.
         if self
-            .get_entity(initiator)
-            .map(|e| e.is_pc())
-            .unwrap_or(false)
+            .expect_entity(initiator, "enter_swordfight initiator")
+            .is_pc()
         {
             self.set_shield_protected(initiator, None);
         }
@@ -720,10 +719,8 @@ impl EngineInner {
         // directly, so it must bypass this opponent Stop/Think boundary.
         let should_prepare_opponent = prepare_opponent
             && !self
-                .world
-                .entities
-                .get(opponent)
-                .and_then(|e| e.human_data())
+                .expect_entity(opponent, "enter_swordfight opponent")
+                .human_data()
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
         if should_prepare_opponent {
@@ -751,7 +748,10 @@ impl EngineInner {
                 crate::sequence::SequencePriority::Preference,
             );
             // Synchronous Think on the opponent if they're a soldier.
-            let is_soldier = matches!(self.world.entities.get(opponent), Some(Entity::Soldier(_)));
+            let is_soldier = matches!(
+                self.expect_entity(opponent, "enter_swordfight opponent"),
+                Entity::Soldier(_)
+            );
             if is_soldier {
                 let ctx = {
                     let entity = self
@@ -805,10 +805,8 @@ impl EngineInner {
         }
 
         let already_opponent = self
-            .world
-            .entities
-            .get(initiator)
-            .and_then(|e| e.human_data())
+            .expect_entity(initiator, "enter_swordfight initiator")
+            .human_data()
             .map(|h| h.opponents.contains(&opponent))
             .unwrap_or(false);
 
@@ -944,17 +942,13 @@ impl EngineInner {
             }
 
             // Don't enter swordfight with a charging knight.
-            let opponent_is_charging_rider = self
-                .world
-                .entities
-                .get(opponent)
-                .map(|e| {
-                    e.soldier_data().map(|s| s.rider).unwrap_or(false)
-                        && e.actor_data()
-                            .map(|a| a.action_state == ActionState::MovingFast)
-                            .unwrap_or(false)
-                })
-                .unwrap_or(false);
+            let opponent_is_charging_rider = {
+                let e = self.expect_entity(opponent, "enter_swordfight opponent");
+                e.soldier_data().map(|s| s.rider).unwrap_or(false)
+                    && e.actor_data()
+                        .map(|a| a.action_state == ActionState::MovingFast)
+                        .unwrap_or(false)
+            };
             if opponent_is_charging_rider {
                 return false;
             }
@@ -969,10 +963,8 @@ impl EngineInner {
 
         // Multi-opponent purging.
         let opponent_is_swordfighting = self
-            .world
-            .entities
-            .get(opponent)
-            .and_then(|e| e.human_data())
+            .expect_entity(opponent, "enter_swordfight opponent")
+            .human_data()
             .map(|h| !h.opponents.is_empty())
             .unwrap_or(false);
 
@@ -1032,17 +1024,13 @@ impl EngineInner {
             // Part 2: if both sides still have opponents, purge all
             // opponents from the royalist side.
             let initiator_has_opps = self
-                .world
-                .entities
-                .get(initiator)
-                .and_then(|e| e.human_data())
+                .expect_entity(initiator, "enter_swordfight initiator")
+                .human_data()
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
             let opponent_has_opps = self
-                .world
-                .entities
-                .get(opponent)
-                .and_then(|e| e.human_data())
+                .expect_entity(opponent, "enter_swordfight opponent")
+                .human_data()
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
 
@@ -1133,17 +1121,13 @@ impl EngineInner {
         // movement for an already-fighting entity would cancel their
         // in-progress walk-away / strafe during combat.
         let initiator_fresh = self
-            .world
-            .entities
-            .get(initiator)
-            .and_then(|e| e.actor_data())
+            .expect_entity(initiator, "enter_swordfight initiator")
+            .actor_data()
             .map(|a| !a.action_state.is_sword() && !a.action_state.is_shield())
             .unwrap_or(true);
         let opponent_fresh = self
-            .world
-            .entities
-            .get(opponent)
-            .and_then(|e| e.actor_data())
+            .expect_entity(opponent, "enter_swordfight opponent")
+            .actor_data()
             .map(|a| !a.action_state.is_sword() && !a.action_state.is_shield())
             .unwrap_or(true);
         // Whenever a movement element is torn down, the failed-path
@@ -1286,8 +1270,8 @@ impl EngineInner {
             // random draw here.
             if opp_count >= 1 {
                 let opp_swordfighting = self
-                    .get_entity(*opp_id)
-                    .and_then(|e| e.actor_data())
+                    .expect_entity(*opp_id, "quit_swordfight opponent")
+                    .actor_data()
                     .map(|a| a.action_state.is_sword())
                     .unwrap_or(false);
                 if opp_swordfighting {
@@ -1301,15 +1285,15 @@ impl EngineInner {
         // re-enabled, and a dead soldier shouldn't be re-pumped
         // through `think`.
         let entity_is_dead = self
-            .get_entity(entity_id)
-            .map(|e| e.is_dead())
-            .unwrap_or(false);
+            .expect_entity(entity_id, "quit_swordfight quitter")
+            .is_dead();
 
         // Always clear the entity's own opponent list. Relationship
         // cleanup deliberately leaves its current action and sequence
         // untouched.
         let mut enable_self_actions = false;
-        if let Some(entity) = self.world.entities.get_mut(entity_id) {
+        {
+            let entity = self.expect_entity_mut(entity_id, "quit_swordfight quitter");
             if let Some(human) = entity.human_data_mut() {
                 human.opponents.clear();
                 human.opponent_jump_lines.clear();
@@ -1326,7 +1310,11 @@ impl EngineInner {
         // When a non-dead soldier voluntarily quits a swordfight,
         // immediately pump EventQuitSwordfight into its own AI so it
         // can re-plan, rather than waiting for the next AI tick.
-        if !entity_is_dead && matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_)))
+        if !entity_is_dead
+            && matches!(
+                self.expect_entity(entity_id, "quit_swordfight quitter"),
+                Entity::Soldier(_)
+            )
         {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,
@@ -1440,9 +1428,9 @@ impl EngineInner {
     ) {
         // Only PCs can receive XP (they have HumanStatus via Campaign)
         let attacker_is_pc = self
-            .get_entity(attacker_id)
-            .map(|e| e.kind().is_pc())
-            .unwrap_or(false);
+            .expect_entity(attacker_id, "sword-kill XP attacker")
+            .kind()
+            .is_pc();
         if !attacker_is_pc {
             return;
         }

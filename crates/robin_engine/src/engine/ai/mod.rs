@@ -4973,9 +4973,7 @@ impl EngineInner {
         // Snapshot the body's position + `knocked_out_in_money_fight`
         // flag for the per-friend radius check below.
         let (body_pos, body_knocked_out_in_money_fight, body_is_soldier) = {
-            let Some(entity) = self.world.entities.get_mut(body_id) else {
-                return;
-            };
+            let entity = self.expect_entity(body_id, "broadcast_body_detectable body");
             let is_soldier = matches!(entity, Entity::Soldier(_));
             let pos = entity.element_data().position_map();
             let ko = entity
@@ -8315,17 +8313,10 @@ impl EngineInner {
 
         // Snapshot whether the entity is a civilian so we can pick
         // the right Say() remark after we re-borrow the AI base.
-        let is_civilian = self
-            .world
-            .entities
-            .get(npc_id)
-            .map(|e| e.is_civilian())
-            .unwrap_or(false);
+        let is_civilian = self.expect_entity(npc_id, "door-seek owner").is_civilian();
 
         {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
+            let entity = self.expect_entity_mut(npc_id, "door-seek owner");
             let Some(ai) = entity.ai_controller_mut() else {
                 return;
             };

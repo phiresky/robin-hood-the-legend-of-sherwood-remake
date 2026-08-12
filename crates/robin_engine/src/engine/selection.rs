@@ -826,9 +826,7 @@ impl EngineInner {
         // Engine-level climbing-or-in-building test — NOT the actor-level
         // variant (which has slightly different semantics).
         let is_climbing_or_in_building = |pc_id: EntityId| -> bool {
-            let Some(entity) = self.get_entity(pc_id) else {
-                return false;
-            };
+            let entity = self.expect_entity(pc_id, "retrieve_stature selected PC");
             let posture = entity.element_data().posture;
             if posture == Posture::OnWall || posture == Posture::OnLadder {
                 return true;
@@ -854,9 +852,9 @@ impl EngineInner {
                 return Stature::None;
             }
             let posture = self
-                .get_entity(id)
-                .map(|e| e.element_data().posture)
-                .unwrap_or(Posture::Upright);
+                .expect_entity(id, "retrieve_stature selected PC")
+                .element_data()
+                .posture;
             return match posture {
                 Posture::Lying | Posture::Crouched => Stature::Down,
                 _ => Stature::Up,

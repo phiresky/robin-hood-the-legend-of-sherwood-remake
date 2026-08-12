@@ -586,13 +586,10 @@ impl EnemyAi {
                 StimulusType::EventDone => {
                     self.create_list_of_near_money_fight_victims(ctx, tick);
 
-                    while self
-                        .money_fight_victims
-                        .first()
-                        .and_then(|h| ctx.entity_view(*h as HumanHandle))
-                        .map(|v| v.looted_after_money_fight)
-                        .unwrap_or(false)
-                    {
+                    while self.money_fight_victims.first().is_some_and(|h| {
+                        ctx.expect_entity_view(*h as HumanHandle, "money-fight victim")
+                            .looted_after_money_fight
+                    }) {
                         self.money_fight_victims.remove(0);
                     }
 
@@ -606,14 +603,14 @@ impl EnemyAi {
                             },
                         );
                         self.set_state(AiState::Wondering, Substate::WonderingApproachingToLoot);
-                        if let Some(view) = ctx.entity_view(next as HumanHandle) {
-                            self.base.go_near(
-                                view.position,
-                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                                crate::ai::GotoFlags::empty(),
-                                ctx,
-                            );
-                        }
+                        let view =
+                            ctx.expect_entity_view(next as HumanHandle, "money-fight victim");
+                        self.base.go_near(
+                            view.position,
+                            parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
+                            crate::ai::GotoFlags::empty(),
+                            ctx,
+                        );
                     } else {
                         self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                     }
@@ -1002,15 +999,17 @@ impl EnemyAi {
                     self.base.say(Remark::GoldBrawl);
                     //   seek_position = friend_in_trouble.position;
                     //   GoNear(seek_position, AI_HIT_DISTANCE, RUN);
-                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
-                        self.base.seek_position = view.position;
-                        self.base.go_near(
-                            view.position,
-                            parameters_ai::AI_HIT_DISTANCE,
-                            crate::ai::GotoFlags::RUN,
-                            ctx,
-                        );
-                    }
+                    let view = ctx.expect_entity_view(
+                        self.base.friend_in_trouble,
+                        "brawl-reaction friend in trouble",
+                    );
+                    self.base.seek_position = view.position;
+                    self.base.go_near(
+                        view.position,
+                        parameters_ai::AI_HIT_DISTANCE,
+                        crate::ai::GotoFlags::RUN,
+                        ctx,
+                    );
                     self.base.launch_timer(1, ctx.frame);
                 }
             }
@@ -1022,18 +1021,20 @@ impl EnemyAi {
                     // If target moved > 3 units from the seek position,
                     // update seek position and re-issue GoNear.
                     // Otherwise re-arm the timer.
-                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
-                        let dx = (self.base.seek_position.x - view.position.x).abs();
-                        let dy = (self.base.seek_position.y - view.position.y).abs();
-                        if dx.max(dy) > 3.0 {
-                            self.base.seek_position = view.position;
-                            self.base.go_near(
-                                view.position,
-                                parameters_ai::AI_HIT_DISTANCE,
-                                crate::ai::GotoFlags::RUN,
-                                ctx,
-                            );
-                        }
+                    let view = ctx.expect_entity_view(
+                        self.base.friend_in_trouble,
+                        "brawl-approach friend in trouble",
+                    );
+                    let dx = (self.base.seek_position.x - view.position.x).abs();
+                    let dy = (self.base.seek_position.y - view.position.y).abs();
+                    if dx.max(dy) > 3.0 {
+                        self.base.seek_position = view.position;
+                        self.base.go_near(
+                            view.position,
+                            parameters_ai::AI_HIT_DISTANCE,
+                            crate::ai::GotoFlags::RUN,
+                            ctx,
+                        );
                     }
                     self.base.launch_timer(1, ctx.frame);
                 }
@@ -1042,10 +1043,18 @@ impl EnemyAi {
                     // - if asleep (Sleeping) → skip hit, go to hitting;
                     // - if distance > AI_HIT_DISTANCE+3 → re-issue GoNear;
                     // - else actually transition to hitting.
-                    let friend_sleeping = ctx
-                        .entity_view(self.base.friend_in_trouble)
-                        .map(|v| v.ai_state == AiState::Sleeping)
-                        .unwrap_or(false);
+                    // An already-cleared brawl partner (handle 0)
+                    // deliberately skips the sleeping shortcut — the
+                    // original treats a missing partner as an error
+                    // arm, not as "asleep".
+                    let friend_sleeping = self.base.friend_in_trouble != 0
+                        && ctx
+                            .expect_entity_view(
+                                self.base.friend_in_trouble,
+                                "brawl-approach friend in trouble",
+                            )
+                            .ai_state
+                            == AiState::Sleeping;
                     if friend_sleeping {
                         // Drop the sleeping friend from
                         // `money_fight_enemies` so subsequent brawl
@@ -1076,9 +1085,8 @@ impl EnemyAi {
                     if self.base.friend_in_trouble != 0 {
                         let fit = self.base.friend_in_trouble as NpcHandle;
                         let is_unconscious = ctx
-                            .entity_view(fit as HumanHandle)
-                            .map(|v| v.is_unconscious)
-                            .unwrap_or(false);
+                            .expect_entity_view(fit as HumanHandle, "brawl-hitting friend")
+                            .is_unconscious;
                         if is_unconscious {
                             self.money_fight_enemies.retain(|h| *h != fit);
                         }
@@ -1097,11 +1105,16 @@ impl EnemyAi {
                         // stop_brawling_and_collect_money().
                         self.stop_brawling_and_collect_money(ctx, tick);
                     } else {
+                        // Handle 0 ("no brawl partner") deliberately
+                        // fails this gate and falls through to picking
+                        // the nearest remaining enemy.
                         let fit_ok = self.base.friend_in_trouble != 0
                             && !ctx
-                                .entity_view(self.base.friend_in_trouble)
-                                .map(|v| v.is_unconscious)
-                                .unwrap_or(true);
+                                .expect_entity_view(
+                                    self.base.friend_in_trouble,
+                                    "brawl-hitting friend",
+                                )
+                                .is_unconscious;
                         if fit_ok {
                             self.set_state(
                                 AiState::Wondering,
@@ -1141,9 +1154,8 @@ impl EnemyAi {
                     let fit = self.base.friend_in_trouble;
                     if fit != 0 && fit != self.base.me {
                         let is_soldier = ctx
-                            .entity_view(fit)
-                            .map(|v| v.is_soldier())
-                            .unwrap_or(false);
+                            .expect_entity_view(fit, "brawl-got-hit attacker")
+                            .is_soldier();
                         if is_soldier && !self.money_fight_enemies.contains(&(fit as NpcHandle)) {
                             self.money_fight_enemies.push(fit as NpcHandle);
                         }
@@ -1173,14 +1185,14 @@ impl EnemyAi {
                     if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
                         self.base.friend_in_trouble = next as HumanHandle;
                         self.set_state(AiState::Wondering, Substate::WonderingBrawlApproaching);
-                        if let Some(view) = ctx.entity_view(next as HumanHandle) {
-                            self.base.go_near(
-                                view.position,
-                                parameters_ai::AI_HIT_DISTANCE,
-                                crate::ai::GotoFlags::RUN,
-                                ctx,
-                            );
-                        }
+                        let view =
+                            ctx.expect_entity_view(next as HumanHandle, "brawl-recovering enemy");
+                        self.base.go_near(
+                            view.position,
+                            parameters_ai::AI_HIT_DISTANCE,
+                            crate::ai::GotoFlags::RUN,
+                            ctx,
+                        );
                         // maybe_officer_sees_me_fighting().
                         self.maybe_officer_sees_me_fighting(ctx, tick);
                     } else {
@@ -1196,10 +1208,14 @@ impl EnemyAi {
             Substate::WonderingApproachingToLoot => {
                 if stimulus_type == StimulusType::EventReachPoint {
                     let body = self.base.detected_body;
-                    let view = ctx.entity_view(body);
-                    let (body_pos, is_tied) = view
-                        .map(|v| (v.position, v.posture == crate::element::Posture::Tied))
-                        .unwrap_or((Position::default(), false));
+                    // A cleared body handle takes the too-far arm below;
+                    // a live handle must resolve to a view.
+                    let (body_pos, is_tied) = if body == 0 {
+                        (Position::default(), false)
+                    } else {
+                        let v = ctx.expect_entity_view(body, "loot-approach body");
+                        (v.position, v.posture == crate::element::Posture::Tied)
+                    };
                     let dx = body_pos.x - ctx.position.x;
                     let dy = body_pos.y - ctx.position.y;
                     let dist = dx.abs().max(dy.abs());
@@ -1267,13 +1283,10 @@ impl EnemyAi {
                         self.base.say(Remark::SearchingSoldierNothing);
                     }
 
-                    while self
-                        .money_fight_victims
-                        .first()
-                        .and_then(|h| ctx.entity_view(*h as HumanHandle))
-                        .map(|v| v.looted_after_money_fight)
-                        .unwrap_or(false)
-                    {
+                    while self.money_fight_victims.first().is_some_and(|h| {
+                        ctx.expect_entity_view(*h as HumanHandle, "money-fight victim")
+                            .looted_after_money_fight
+                    }) {
                         self.money_fight_victims.remove(0);
                     }
                     if !self.money_fight_victims.is_empty() {
@@ -1286,14 +1299,14 @@ impl EnemyAi {
                             },
                         );
                         self.set_state(AiState::Wondering, Substate::WonderingApproachingToLoot);
-                        if let Some(view) = ctx.entity_view(next as HumanHandle) {
-                            self.base.go_near(
-                                view.position,
-                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                                crate::ai::GotoFlags::empty(),
-                                ctx,
-                            );
-                        }
+                        let view =
+                            ctx.expect_entity_view(next as HumanHandle, "money-fight victim");
+                        self.base.go_near(
+                            view.position,
+                            parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
+                            crate::ai::GotoFlags::empty(),
+                            ctx,
+                        );
                     } else {
                         self.return_to_duty(sim, DutyFlags::KEEP_EMOTICON, ctx, tick);
                     }
@@ -1338,10 +1351,12 @@ impl EnemyAi {
                     );
                     self.base.set_emoticon(EmoticonType::None);
                     // GoNear(friend_in_trouble.position, 100);
-                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
-                        self.base
-                            .go_near(view.position, 100, crate::ai::GotoFlags::empty(), ctx);
-                    }
+                    let view = ctx.expect_entity_view(
+                        self.base.friend_in_trouble,
+                        "officer-seeing-brawl friend in trouble",
+                    );
+                    self.base
+                        .go_near(view.position, 100, crate::ai::GotoFlags::empty(), ctx);
                 }
             }
 
@@ -1425,16 +1440,15 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     // If antagonist is still approaching or awakening
                     // the brawl victim, re-arm timer; else end.
-                    let still_waiting = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| {
-                            matches!(
-                                v.ai_substate,
-                                Substate::WonderingApproachingBrawlVictim
-                                    | Substate::WonderingAwakenBrawlVictim
-                            )
-                        })
-                        .unwrap_or(false);
+                    let still_waiting = matches!(
+                        ctx.expect_entity_view(
+                            self.base.antagonist,
+                            "officer-finishing-brawl antagonist",
+                        )
+                        .ai_substate,
+                        Substate::WonderingApproachingBrawlVictim
+                            | Substate::WonderingAwakenBrawlVictim
+                    );
                     if still_waiting {
                         self.base.launch_timer(10, ctx.frame);
                     } else {
@@ -3853,9 +3867,8 @@ impl EnemyAi {
                     // bubble, and it is short-circuited behind the net
                     // check so a still-trapped body costs no LOS query.
                     let body_stuck = ctx
-                        .entity_view(self.base.detected_body)
-                        .map(|v| v.stuck_under_net)
-                        .unwrap_or(false);
+                        .expect_entity_view(self.base.detected_body, "seeking-net body")
+                        .stuck_under_net;
                     if !body_stuck && self.is_detecting(self.base.detected_body as HumanHandle, ctx)
                     {
                         // Resurrected.
@@ -3870,9 +3883,8 @@ impl EnemyAi {
                     // the SEARCH×4+TAKE sequence + transition to
                     // SeekingTakingNet.  Otherwise ReturnToDuty.
                     let body_stuck = ctx
-                        .entity_view(self.base.detected_body)
-                        .map(|v| v.stuck_under_net)
-                        .unwrap_or(false);
+                        .expect_entity_view(self.base.detected_body, "seeking-net body")
+                        .stuck_under_net;
                     if body_stuck {
                         if ctx.self_is_rider {
                             // Rider can't dismount to take the net;
@@ -3963,11 +3975,9 @@ impl EnemyAi {
                     //   dead|unconscious → RunToExamineBody
                     //   else → ReturnToDuty
                     let body = self.base.detected_body;
-                    let view = ctx.entity_view(body);
-                    let stuck = view.map(|v| v.stuck_under_net).unwrap_or(false);
-                    let examine = view
-                        .map(|v| !v.is_able_to_fight && !v.stuck_under_net)
-                        .unwrap_or(false);
+                    let view = ctx.expect_entity_view(body, "taking-net body");
+                    let stuck = view.stuck_under_net;
+                    let examine = !view.is_able_to_fight && !view.stuck_under_net;
                     if stuck || examine {
                         // `run_to_examine_body` internally forks on
                         // `stuck_under_net` and transitions into
@@ -4122,9 +4132,11 @@ impl EnemyAi {
                         // if the checkpoint charly has no patrol path,
                         // else PATROL radius.
                         let charly_has_path = ctx
-                            .entity_view(self.base.checkpoint_charly)
-                            .map(|v| v.has_patrol_path)
-                            .unwrap_or(false);
+                            .expect_entity_view(
+                                self.base.checkpoint_charly,
+                                "missed-charly checkpoint charly",
+                            )
+                            .has_patrol_path;
                         let radius = if charly_has_path {
                             parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
                         } else {
@@ -4222,10 +4234,10 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
                     // GoNear(antagonist.position, 40);
-                    if let Some(view) = ctx.entity_view(self.base.antagonist) {
-                        self.base
-                            .go_near(view.position, 40, crate::ai::GotoFlags::empty(), ctx);
-                    }
+                    let view = ctx
+                        .expect_entity_view(self.base.antagonist, "charly-sent-to-officer officer");
+                    self.base
+                        .go_near(view.position, 40, crate::ai::GotoFlags::empty(), ctx);
                     // unalert_all_near_charly_seekers(me).
                     // Drained engine-side via
                     // `pending_unalert_near_charly_seekers` — the
@@ -4273,9 +4285,9 @@ impl EnemyAi {
                     // Only re-arm if antagonist is in
                     // `OfficerWaitForCharly`; else ReturnToDuty.
                     let waits_for_charly = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| v.ai_substate == Substate::SeekingOfficerWaitForCharly)
-                        .unwrap_or(false);
+                        .expect_entity_view(self.base.antagonist, "charly-go-to-officer officer")
+                        .ai_substate
+                        == Substate::SeekingOfficerWaitForCharly;
                     if waits_for_charly {
                         // unalert_all_near_charly_seekers(me).
                         self.base.outbox.actor.unalert_near_charly_seekers =
@@ -4345,17 +4357,13 @@ impl EnemyAi {
                     // If antagonist is still in one of the
                     // "on the way" charly substates, face them, clear the
                     // emoticon and re-arm the timer; else ReturnToDuty.
-                    let is_on_the_way = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| {
-                            matches!(
-                                v.ai_substate,
-                                Substate::SeekingCharlySentToOfficer
-                                    | Substate::SeekingCharlyGoToOfficer
-                                    | Substate::SeekingCharlyGoToOfficerSeen
-                            )
-                        })
-                        .unwrap_or(false);
+                    let is_on_the_way = matches!(
+                        ctx.expect_entity_view(self.base.antagonist, "officer-wait-for-charly")
+                            .ai_substate,
+                        Substate::SeekingCharlySentToOfficer
+                            | Substate::SeekingCharlyGoToOfficer
+                            | Substate::SeekingCharlyGoToOfficerSeen
+                    );
                     if is_on_the_way {
                         self.base.face_entity(self.base.antagonist, ctx);
                         self.base.set_emoticon(EmoticonType::None);
@@ -4413,15 +4421,15 @@ impl EnemyAi {
                     // "where I want you to go" stand-in.  For the no-path
                     // case we use `initial_position` which is now available
                     // on the view.
-                    if let Some(view) = ctx.entity_view(self.base.antagonist) {
-                        let target = if view.has_patrol_path {
-                            // Best proxy without per-waypoint list.
-                            view.position
-                        } else {
-                            view.initial_position
-                        };
-                        self.base.point_to(target, ctx);
-                    }
+                    let view =
+                        ctx.expect_entity_view(self.base.antagonist, "officer-lecture charly");
+                    let target = if view.has_patrol_path {
+                        // Best proxy without per-waypoint list.
+                        view.position
+                    } else {
+                        view.initial_position
+                    };
+                    self.base.point_to(target, ctx);
                     self.set_state(
                         AiState::Seeking,
                         Substate::SeekingOfficerLectureCharlyPointing,
@@ -4460,9 +4468,9 @@ impl EnemyAi {
                     // If antagonist is still WaitForAlertingCivilian, re-arm
                     // timer; else end.
                     let officer_waiting = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| v.ai_substate == Substate::SeekingWaitForAlertingCivilian)
-                        .unwrap_or(false);
+                        .expect_entity_view(self.base.antagonist, "civilian-report soldier")
+                        .ai_substate
+                        == Substate::SeekingWaitForAlertingCivilian;
                     if officer_waiting {
                         self.base.launch_timer(20, ctx.frame);
                     } else {
@@ -4473,9 +4481,9 @@ impl EnemyAi {
                     // Only transition if antagonist still in
                     // wait-for-alerting-civilian; else ReturnToDuty.
                     let officer_waiting = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| v.ai_substate == Substate::SeekingWaitForAlertingCivilian)
-                        .unwrap_or(false);
+                        .expect_entity_view(self.base.antagonist, "civilian-report soldier")
+                        .ai_substate
+                        == Substate::SeekingWaitForAlertingCivilian;
                     if officer_waiting {
                         self.set_state(
                             AiState::Seeking,
@@ -4619,15 +4627,16 @@ impl EnemyAi {
                     // is effectively dead code in this dispatch.  We
                     // used to call `react(AI_MAX_ENEMY_REACTIONTIME)`
                     // unconditionally, which over-delayed engagement.
-                    let target_view = ctx.entity_view(self.base.primary_target);
-                    let target_anim = target_view.map(|v| v.current_animation);
-                    let distance = target_view
-                        .map(|v| {
-                            let dx = (v.position.x - ctx.position.x).abs();
-                            let dy = (v.position.y - ctx.position.y).abs();
-                            dx.max(dy)
-                        })
-                        .unwrap_or(f32::INFINITY);
+                    let target_view = ctx.expect_entity_view(
+                        self.base.primary_target,
+                        "reactiontime-turning target",
+                    );
+                    let target_anim = Some(target_view.current_animation);
+                    let distance = {
+                        let dx = (target_view.position.x - ctx.position.x).abs();
+                        let dy = (target_view.position.y - ctx.position.y).abs();
+                        dx.max(dy)
+                    };
 
                     if target_anim == Some(crate::order::OrderType::RunningUpright) {
                         // Enemy running — react fast to intercept.
@@ -5502,12 +5511,13 @@ impl EnemyAi {
                     //     else { SUBSTATE_KILLING_SLEEPING_ENEMY +
                     //            SWORDSTRIKE_DOWN on primary_target }
                     //   } else { GetBattleOverview }
-                    let view = ctx.entity_view(self.base.primary_target);
-                    let target_pos = view.map(|v| v.position);
-                    let target_unconscious = view.map(|v| v.is_unconscious).unwrap_or(false);
-                    let target_is_pc = view.map(|v| v.is_pc).unwrap_or(false);
-                    let target_in_coma = view.map(|v| v.in_coma).unwrap_or(false);
-                    let target_guard = view.and_then(|v| v.guard);
+                    let view = ctx
+                        .expect_entity_view(self.base.primary_target, "approach-sleeping target");
+                    let target_pos = Some(view.position);
+                    let target_unconscious = view.is_unconscious;
+                    let target_is_pc = view.is_pc;
+                    let target_in_coma = view.in_coma;
+                    let target_guard = view.guard;
 
                     if !target_unconscious {
                         self.get_battle_overview(0, ctx, tick);
@@ -6050,14 +6060,13 @@ impl EnemyAi {
                     // IsUnconscious() && IsInComa(). `is_pc` and `in_coma`
                     // both live on `AiEntityView`, so the full triplet is
                     // checkable here without approximation.
-                    let keep_watching = ctx
-                        .entity_view(self.base.primary_target)
-                        .map(|v| {
-                            let dx = (v.position.x - ctx.position.x).abs();
-                            let dy = (v.position.y - ctx.position.y).abs();
-                            v.is_pc && v.is_unconscious && v.in_coma && dx.max(dy) < 100.0
-                        })
-                        .unwrap_or(false);
+                    let keep_watching = {
+                        let v = ctx
+                            .expect_entity_view(self.base.primary_target, "menacing-coma target");
+                        let dx = (v.position.x - ctx.position.x).abs();
+                        let dy = (v.position.y - ctx.position.y).abs();
+                        v.is_pc && v.is_unconscious && v.in_coma && dx.max(dy) < 100.0
+                    };
                     if keep_watching {
                         self.base.launch_timer(20, ctx.frame);
                     } else {

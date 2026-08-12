@@ -2989,8 +2989,8 @@ impl EngineInner {
             return;
         };
         let is_mutual = self
-            .get_entity(principal_id)
-            .and_then(|e| e.human_data())
+            .expect_entity(principal_id, "sword-movement principal opponent")
+            .human_data()
             .and_then(|h| h.opponents.first().copied())
             .map(|opp| opp == entity_id)
             .unwrap_or(false);
@@ -3020,8 +3020,8 @@ impl EngineInner {
         };
 
         let is_mutual = self
-            .get_entity(principal_id)
-            .and_then(|e| e.human_data())
+            .expect_entity(principal_id, "sword-movement principal opponent")
+            .human_data()
             .and_then(|h| h.opponents.first().copied())
             .map(|opp| opp == entity_id)
             .unwrap_or(false);
@@ -3029,12 +3029,8 @@ impl EngineInner {
             return;
         }
 
-        let Some(me) = self.get_entity(entity_id) else {
-            return;
-        };
-        let Some(opponent) = self.get_entity(principal_id) else {
-            return;
-        };
+        let me = self.expect_entity(entity_id, "sword-movement provoke owner");
+        let opponent = self.expect_entity(principal_id, "sword-movement principal opponent");
         let me_pos = me.element_data().position();
         let opponent_pos = opponent.element_data().position();
         let dx = me_pos.x - opponent_pos.x;
@@ -4164,9 +4160,9 @@ impl EngineInner {
         // Does the entity have the lockpick contextual action?
         // Needed to choose the lockpick sub-element branch.
         let has_lockpick = self
-            .get_entity(entity_id)
-            .map(|e| e.actor_auth_info().has_lockpick)
-            .unwrap_or(false);
+            .expect_entity(entity_id, "gate-route lockpick check")
+            .actor_auth_info()
+            .has_lockpick;
 
         // Resolve sector → is_building via the fast grid. Returns false for
         // unknown sectors (ordinary motion areas are not buildings).
@@ -9667,9 +9663,8 @@ impl EngineInner {
             let crossed = self.check_for_line_crossing(assets, entity_id, old_pos, new_pos, layer);
             if crossed {
                 let is_human = self
-                    .get_entity(entity_id)
-                    .map(|e| e.is_human())
-                    .unwrap_or(false);
+                    .expect_entity(entity_id, "line-crossing mover")
+                    .is_human();
                 if is_human {
                     self.update_roll_after_crossing(assets, entity_id);
                 }
