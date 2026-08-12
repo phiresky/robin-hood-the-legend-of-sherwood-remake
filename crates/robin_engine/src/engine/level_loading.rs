@@ -23,6 +23,52 @@ struct MissionLevelBuilder {
     has_authored_content: bool,
 }
 
+fn debug_view_radius_light(
+    raw_index: usize,
+    raw: &crate::level_data::RawLightSector,
+    runtime_ambience_mask: u32,
+    decision: &str,
+    registered: Option<(u32, crate::sector::SectorNumber)>,
+) {
+    let mut sum_x = 0.0_f32;
+    let mut sum_y = 0.0_f32;
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for &(x, y) in &raw.polygon.points {
+        let x = f32::from(x);
+        let y = f32::from(y);
+        sum_x += x;
+        sum_y += y;
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+    let coefficient = if raw.polygon.points.is_empty() {
+        0.0
+    } else {
+        1.0 / raw.polygon.points.len() as f32
+    };
+    let barycentre_x = sum_x * coefficient;
+    let barycentre_y = sum_y * coefficient;
+    let grid_index = registered.map_or(-1, |(index, _)| i64::from(index));
+    let sector_number = registered.map_or(-1, |(_, number)| i64::from(i16::from(number)));
+    eprintln!(
+        "VRLIGHT {{\"engine\":\"rust\",\"stage\":\"sector\",\"raw_index\":{raw_index},\"layer\":{},\"ambience\":{},\"runtime_ambience_mask\":{runtime_ambience_mask},\"point_count\":{},\"barycentre_bits\":[{},{}],\"bbox_bits\":[{},{},{},{}],\"decision\":\"{decision}\",\"grid_index\":{grid_index},\"sector_number\":{sector_number}}}",
+        raw.layer,
+        raw.ambience,
+        raw.polygon.points.len(),
+        barycentre_x.to_bits(),
+        barycentre_y.to_bits(),
+        min_x.to_bits(),
+        min_y.to_bits(),
+        max_x.to_bits(),
+        max_y.to_bits(),
+    );
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct DoorStageOutput {
     authored_door_count: usize,
@@ -2949,20 +2995,55 @@ impl EngineInner {
             // inside a torch-lit polygon.
             let ambiance_mask = self.world.weather.ambiance.to_bitmask();
             let raw_light_sectors = std::mem::take(&mut staging.motion.light_sectors);
+            let debug_view_radius_lights = crate::ai_vision::view_radius_cache_debug_enabled();
+            if debug_view_radius_lights {
+                eprintln!(
+                    "VRLIGHT {{\"engine\":\"rust\",\"stage\":\"begin\",\"raw_count\":{},\"layer_count\":{},\"runtime_ambience_mask\":{ambiance_mask}}}",
+                    raw_light_sectors.len(),
+                    self.world.fast_grid.level.layers.len(),
+                );
+            }
             let mut light_added = 0usize;
             let mut light_skipped_ambience = 0usize;
             let mut light_skipped_layer = 0usize;
             let mut light_skipped_polygon = 0usize;
-            for raw in raw_light_sectors {
+            for (raw_index, raw) in raw_light_sectors.into_iter().enumerate() {
                 if (raw.ambience & ambiance_mask) == 0 {
+                    if debug_view_radius_lights {
+                        debug_view_radius_light(
+                            raw_index,
+                            &raw,
+                            ambiance_mask,
+                            "filtered_ambience",
+                            None,
+                        );
+                    }
                     light_skipped_ambience += 1;
                     continue;
                 }
                 if (raw.layer as usize) >= self.world.fast_grid.level.layers.len() {
+                    if debug_view_radius_lights {
+                        debug_view_radius_light(
+                            raw_index,
+                            &raw,
+                            ambiance_mask,
+                            "filtered_layer",
+                            None,
+                        );
+                    }
                     light_skipped_layer += 1;
                     continue;
                 }
                 if raw.polygon.points.len() < 3 {
+                    if debug_view_radius_lights {
+                        debug_view_radius_light(
+                            raw_index,
+                            &raw,
+                            ambiance_mask,
+                            "filtered_polygon",
+                            None,
+                        );
+                    }
                     light_skipped_polygon += 1;
                     continue;
                 }
@@ -2976,7 +3057,7 @@ impl EngineInner {
                 for &p in &pts {
                     bbox.expand_point(p);
                 }
-                self.world.fast_grid_mut().add_sector(
+                let grid_index = self.world.fast_grid_mut().add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
                         bounding_box: bbox,
@@ -2997,6 +3078,15 @@ impl EngineInner {
                     },
                     raw.layer,
                 );
+                if debug_view_radius_lights {
+                    debug_view_radius_light(
+                        raw_index,
+                        &raw,
+                        ambiance_mask,
+                        "registered",
+                        Some((grid_index, sector_number)),
+                    );
+                }
                 sector_number += 1;
                 light_added += 1;
             }

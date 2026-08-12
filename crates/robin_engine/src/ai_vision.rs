@@ -68,6 +68,10 @@ fn view_radius_cache_debug_config() -> &'static ViewRadiusCacheDebugConfig {
     })
 }
 
+pub(crate) fn view_radius_cache_debug_enabled() -> bool {
+    view_radius_cache_debug_config().enabled
+}
+
 #[derive(Clone, Copy)]
 struct ViewRadiusSectorDebugContext {
     viewer: EntityId,
