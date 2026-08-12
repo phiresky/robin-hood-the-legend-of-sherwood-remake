@@ -37,6 +37,67 @@ use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO, ObstacleHand
 use crate::sight_obstacle::ObstacleList;
 use crate::sight_obstacle::SightObstacle;
 
+struct ViewRadiusCacheDebugConfig {
+    enabled: bool,
+    from_frame: u32,
+    through_frame: u32,
+}
+
+fn view_radius_cache_debug_config() -> &'static ViewRadiusCacheDebugConfig {
+    static CONFIG: std::sync::OnceLock<ViewRadiusCacheDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_VIEW_RADIUS_CACHE").is_some();
+        let parse_frame = |name: &str, default| {
+            if !enabled {
+                return default;
+            }
+            std::env::var(name)
+                .ok()
+                .map(|value| {
+                    value
+                        .parse()
+                        .unwrap_or_else(|_| panic!("{name} must be a u32"))
+                })
+                .unwrap_or(default)
+        };
+        ViewRadiusCacheDebugConfig {
+            enabled,
+            from_frame: parse_frame("PARITY_DEBUG_VIEW_RADIUS_CACHE_FROM", 0),
+            through_frame: parse_frame("PARITY_DEBUG_VIEW_RADIUS_CACHE_THROUGH", u32::MAX),
+        }
+    })
+}
+
+pub(crate) fn debug_view_radius_cache_event(
+    stage: &str,
+    source: &str,
+    surface: Option<ObstacleHandle>,
+    requested_viewer: EntityId,
+    frame: u32,
+    stored: Option<ViewRadiusCacheEntry>,
+    radius: Option<f32>,
+    caller: &'static std::panic::Location<'static>,
+) {
+    let config = view_radius_cache_debug_config();
+    if !config.enabled || frame < config.from_frame || frame > config.through_frame {
+        return;
+    }
+
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let surface = surface.map_or(-1, |handle| i32::from(u16::from(handle)));
+    let stored_viewer = stored.map_or(-1, |entry| i64::from(entry.viewer.index()));
+    let stored_frame = stored.map_or(-1, |entry| i64::from(entry.frame));
+    let stored_radius_bits = stored.map_or(-1, |entry| i64::from(entry.radius.to_bits()));
+    let radius_bits = radius.map_or(-1, |radius| i64::from(radius.to_bits()));
+    eprintln!(
+        "VRCACHE {{\"engine\":\"rust\",\"seq\":{sequence},\"stage\":\"{stage}\",\"source\":\"{source}\",\"frame\":{frame},\"viewer_slot\":{},\"surface\":{surface},\"stored_viewer_slot\":{stored_viewer},\"stored_frame\":{stored_frame},\"stored_radius_bits\":{stored_radius_bits},\"radius_bits\":{radius_bits},\"caller\":\"{}:{}\"}}",
+        requested_viewer.index(),
+        caller.file(),
+        caller.line(),
+    );
+}
+
 /// One surface-owned `ComputeViewRadius` result, corresponding to Original's
 /// last-viewer, last-radius, and universal-frame fields.
 #[derive(
@@ -79,6 +140,7 @@ impl ViewRadiusCache {
         self.ground.is_none() && self.obstacles.iter().all(Option::is_none)
     }
 
+    #[track_caller]
     pub(crate) fn get(
         &self,
         surface: Option<ObstacleHandle>,
@@ -88,11 +150,25 @@ impl ViewRadiusCache {
         let entry = match surface {
             None => self.ground,
             Some(handle) => self.obstacles.get(usize::from(handle)).copied().flatten(),
-        }?;
-        (entry.viewer == viewer && entry.frame == frame && entry.radius != 0.0)
-            .then_some(entry.radius)
+        };
+        let result = entry.and_then(|entry| {
+            (entry.viewer == viewer && entry.frame == frame && entry.radius != 0.0)
+                .then_some(entry.radius)
+        });
+        debug_view_radius_cache_event(
+            "persistent_lookup",
+            "view_radius_cache",
+            surface,
+            viewer,
+            frame,
+            entry,
+            result,
+            std::panic::Location::caller(),
+        );
+        result
     }
 
+    #[track_caller]
     pub(crate) fn set(
         &mut self,
         surface: Option<ObstacleHandle>,
@@ -115,6 +191,16 @@ impl ViewRadiusCache {
                 self.obstacles[index] = entry;
             }
         }
+        debug_view_radius_cache_event(
+            "persistent_store",
+            "view_radius_cache",
+            surface,
+            viewer,
+            frame,
+            entry,
+            Some(radius),
+            std::panic::Location::caller(),
+        );
     }
 }
 

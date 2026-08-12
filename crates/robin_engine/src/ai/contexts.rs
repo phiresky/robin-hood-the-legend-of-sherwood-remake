@@ -321,6 +321,7 @@ impl AiContext {
         }
     }
 
+    #[track_caller]
     pub(crate) fn compute_view_radius_cached(
         &self,
         viewer: crate::element::EntityId,
@@ -330,8 +331,39 @@ impl AiContext {
         if let Some(&(stored_viewer, radius)) = self.view_radius_cache.borrow().get(&surface)
             && stored_viewer == viewer
         {
+            crate::ai_vision::debug_view_radius_cache_event(
+                "owner_hit",
+                "ai_context",
+                surface,
+                viewer,
+                self.frame,
+                Some(crate::ai_vision::ViewRadiusCacheEntry {
+                    viewer: stored_viewer,
+                    frame: self.frame,
+                    radius,
+                }),
+                Some(radius),
+                std::panic::Location::caller(),
+            );
             return radius;
         }
+        let stored = self.view_radius_cache.borrow().get(&surface).copied().map(
+            |(stored_viewer, radius)| crate::ai_vision::ViewRadiusCacheEntry {
+                viewer: stored_viewer,
+                frame: self.frame,
+                radius,
+            },
+        );
+        crate::ai_vision::debug_view_radius_cache_event(
+            "owner_miss",
+            "ai_context",
+            surface,
+            viewer,
+            self.frame,
+            stored,
+            None,
+            std::panic::Location::caller(),
+        );
         let radius = compute();
         // Original's getter uses zero as the miss sentinel even after its
         // setter stored a computed zero.
@@ -340,6 +372,24 @@ impl AiContext {
                 .borrow_mut()
                 .insert(surface, (viewer, radius));
         }
+        crate::ai_vision::debug_view_radius_cache_event(
+            if radius == 0.0 {
+                "owner_compute_zero"
+            } else {
+                "owner_store"
+            },
+            "ai_context",
+            surface,
+            viewer,
+            self.frame,
+            Some(crate::ai_vision::ViewRadiusCacheEntry {
+                viewer,
+                frame: self.frame,
+                radius,
+            }),
+            Some(radius),
+            std::panic::Location::caller(),
+        );
         radius
     }
 

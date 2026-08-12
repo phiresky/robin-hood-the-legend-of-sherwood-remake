@@ -1383,6 +1383,7 @@ impl EngineInner {
                 &self.ai.view_radius_cache,
                 npc_id,
                 universal_frame,
+                "refresh_detection",
             );
             let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
@@ -3491,6 +3492,7 @@ impl EngineInner {
             &self.ai.view_radius_cache,
             viewer_id,
             universal_frame,
+            "live_detection",
         );
         let visibility = ai_vision::compute_visibility_with_effective_radius(&q, || {
             view_radius_cache.get_or_compute(target_obstacle_handle, || {
@@ -4399,11 +4401,24 @@ impl EngineInner {
     }
 }
 
-#[derive(Default)]
 struct OwnerViewRadiusCache {
     values: std::cell::RefCell<
         std::collections::HashMap<Option<crate::position_interface::ObstacleHandle>, f32>,
     >,
+    diagnostic_viewer: Option<EntityId>,
+    diagnostic_frame: u32,
+    diagnostic_source: &'static str,
+}
+
+impl Default for OwnerViewRadiusCache {
+    fn default() -> Self {
+        Self {
+            values: std::cell::RefCell::default(),
+            diagnostic_viewer: None,
+            diagnostic_frame: 0,
+            diagnostic_source: "test",
+        }
+    }
 }
 
 impl OwnerViewRadiusCache {
@@ -4411,8 +4426,14 @@ impl OwnerViewRadiusCache {
         persistent: &crate::ai_vision::ViewRadiusCache,
         viewer: EntityId,
         frame: u32,
+        diagnostic_source: &'static str,
     ) -> Self {
-        let cache = Self::default();
+        let cache = Self {
+            diagnostic_viewer: Some(viewer),
+            diagnostic_frame: frame,
+            diagnostic_source,
+            ..Self::default()
+        };
         if let Some(radius) = persistent.get(None, viewer, frame) {
             cache.values.borrow_mut().insert(None, radius);
         }
@@ -4437,23 +4458,86 @@ impl OwnerViewRadiusCache {
         frame: u32,
     ) {
         for (&surface, &radius) in self.values.borrow().iter() {
+            crate::ai_vision::debug_view_radius_cache_event(
+                "owner_commit",
+                self.diagnostic_source,
+                surface,
+                viewer,
+                frame,
+                Some(crate::ai_vision::ViewRadiusCacheEntry {
+                    viewer,
+                    frame,
+                    radius,
+                }),
+                Some(radius),
+                std::panic::Location::caller(),
+            );
             persistent.set(surface, viewer, frame, radius);
         }
     }
 
+    #[track_caller]
     fn get_or_compute(
         &self,
         obstacle: Option<crate::position_interface::ObstacleHandle>,
         compute: impl FnOnce() -> f32,
     ) -> f32 {
         if let Some(radius) = self.values.borrow().get(&obstacle).copied() {
+            if let Some(viewer) = self.diagnostic_viewer {
+                crate::ai_vision::debug_view_radius_cache_event(
+                    "owner_hit",
+                    self.diagnostic_source,
+                    obstacle,
+                    viewer,
+                    self.diagnostic_frame,
+                    Some(crate::ai_vision::ViewRadiusCacheEntry {
+                        viewer,
+                        frame: self.diagnostic_frame,
+                        radius,
+                    }),
+                    Some(radius),
+                    std::panic::Location::caller(),
+                );
+            }
             return radius;
+        }
+        if let Some(viewer) = self.diagnostic_viewer {
+            crate::ai_vision::debug_view_radius_cache_event(
+                "owner_miss",
+                self.diagnostic_source,
+                obstacle,
+                viewer,
+                self.diagnostic_frame,
+                None,
+                None,
+                std::panic::Location::caller(),
+            );
         }
         let radius = compute();
         // Original uses zero as the cache-miss sentinel: a zero result from
         // ComputeViewRadius is recomputed on the next eligible target.
         if radius != 0.0 {
             self.values.borrow_mut().insert(obstacle, radius);
+        }
+        if let Some(viewer) = self.diagnostic_viewer {
+            crate::ai_vision::debug_view_radius_cache_event(
+                if radius == 0.0 {
+                    "owner_compute_zero"
+                } else {
+                    "owner_store"
+                },
+                self.diagnostic_source,
+                obstacle,
+                viewer,
+                self.diagnostic_frame,
+                Some(crate::ai_vision::ViewRadiusCacheEntry {
+                    viewer,
+                    frame: self.diagnostic_frame,
+                    radius,
+                }),
+                Some(radius),
+                std::panic::Location::caller(),
+            );
         }
         radius
     }
