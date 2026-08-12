@@ -2739,12 +2739,45 @@ impl EngineInner {
                 parry_startup_frames: parry_startup,
                 is_npc: true,
             };
-            let strike = match crate::combat::propose_good_sword_strike(
+            let debug = super::evaluate::reactive_sword_debug_frame_matches(current_frame)
+                .then(|| {
+                    let creation_order = self.world.original_creation_order(attack.soldier_id);
+                    super::evaluate::reactive_sword_debug_creation_order_matches(creation_order)
+                        .then_some(crate::combat::SwordStrikeProposalDebug {
+                            frame: current_frame,
+                            victim: attack.soldier_id.index(),
+                            victim_creation_order: creation_order,
+                            attacker: attack.target_id.index(),
+                        })
+                })
+                .flatten();
+            if let Some(debug) = debug {
+                let target_animation = self.live_actor_animation(attack.target_id);
+                let target_raw_frames = self.get_entity(attack.target_id).map(|target| {
+                    target
+                        .element_data()
+                        .sprite
+                        .frames_from_now_till_action_done()
+                });
+                eprintln!(
+                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=enemy_principal target={} animation={:?} raw_frames_from_now={:?} time_limit={:?}]",
+                    debug.frame,
+                    debug.victim_creation_order,
+                    debug.victim,
+                    debug.attacker,
+                    attack.target_id.index(),
+                    target_animation,
+                    target_raw_frames,
+                    opponent_time_limit,
+                );
+            }
+            let strike = match crate::combat::propose_good_sword_strike_with_debug(
                 sim,
                 &ctx,
                 &nearby,
                 &mut attack.boredom,
                 false,
+                debug,
             ) {
                 Some(crate::combat::ProposedCombatAction::Strike(s)) => Some(s),
                 _ => None,

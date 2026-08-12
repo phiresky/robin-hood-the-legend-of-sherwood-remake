@@ -8,7 +8,7 @@ use crate::element::{ActionState, Command, Entity, EntityId};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
-fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
+pub(super) fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
     if std::env::var_os("PARITY_DEBUG_REACTIVE_SWORD").is_none() {
         return false;
     }
@@ -22,7 +22,7 @@ fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
     parse_filter("PARITY_DEBUG_REACTIVE_SWORD_FRAME").is_none_or(|value| value == frame)
 }
 
-fn reactive_sword_debug_creation_order_matches(creation_order: u32) -> bool {
+pub(super) fn reactive_sword_debug_creation_order_matches(creation_order: u32) -> bool {
     std::env::var("PARITY_DEBUG_REACTIVE_SWORD_CREATION_ORDER")
         .ok()
         .is_none_or(|value| {
