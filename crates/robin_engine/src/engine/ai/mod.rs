@@ -7713,7 +7713,23 @@ impl EngineInner {
                         target_handle,
                         "AI reconsider swordfight target",
                     );
-                    self.direct_enter_swordfight(sim, assets, npc_id, target_id);
+                    if self.direct_enter_swordfight(sim, assets, npc_id, target_id) {
+                        let Entity::Soldier(soldier) = self
+                            .world
+                            .entities
+                            .get_mut(npc_id)
+                            .expect("successful AI swordfight rebalance owner disappeared")
+                        else {
+                            panic!("successful AI swordfight rebalance owner is not a soldier");
+                        };
+                        soldier
+                            .npc
+                            .ai_brain
+                            .enemy_mut()
+                            .expect("successful AI swordfight rebalance owner lost enemy AI")
+                            .base
+                            .primary_target = target_handle;
+                    }
                 }
             }
         }

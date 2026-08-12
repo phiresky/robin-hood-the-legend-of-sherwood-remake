@@ -8276,12 +8276,85 @@ mod tests {
             Some(&replacement),
             "direct EnterSwordFight must promote the replacement opponent"
         );
+        let Entity::Soldier(soldier) = engine.get_entity(owner).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(
+            soldier.npc.ai_brain.enemy().unwrap().base.primary_target,
+            replacement_handle,
+            "successful rebalance must promote the AI primary target"
+        );
         assert!(
             !engine
                 .orders
                 .sequence_manager
                 .element_is_about_to_be_launched(owner, Command::EnterSwordfight),
             "ReconsiderSwordfight's direct call must not author another Enter command"
+        );
+    }
+
+    #[test]
+    fn reconsider_rebalance_rejection_preserves_opponent_and_ai_primary_target() {
+        use crate::ai::EnterSwordfightRequest;
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let owner = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let old_primary = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let replacement = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 20.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        if let Some(human) = engine.get_entity_mut(owner).unwrap().human_data_mut() {
+            human.opponents = vec![old_primary];
+            human.opponent_jump_lines = vec![None];
+        }
+        if let Some(human) = engine.get_entity_mut(replacement).unwrap().human_data_mut() {
+            human.unconscious = true;
+        }
+        let old_primary_handle = (0..3)
+            .find(|slot| engine.world.entities.id_at_legacy_slot(*slot) == Some(old_primary))
+            .expect("old primary PC must occupy a legacy entity slot");
+        let replacement_handle = (0..3)
+            .find(|slot| engine.world.entities.id_at_legacy_slot(*slot) == Some(replacement))
+            .expect("replacement PC must occupy a legacy entity slot");
+        let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
+            unreachable!()
+        };
+        let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.primary_target = old_primary_handle;
+        ai.base.outbox.actor.enter_swordfight =
+            Some(EnterSwordfightRequest::Rebalance(replacement_handle));
+
+        engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+
+        let Entity::Soldier(soldier) = engine.get_entity(owner).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(soldier.human.opponents, vec![old_primary]);
+        assert_eq!(
+            soldier.npc.ai_brain.enemy().unwrap().base.primary_target,
+            old_primary_handle,
+            "failed EnterSwordFight must preserve the old AI primary target"
         );
     }
 

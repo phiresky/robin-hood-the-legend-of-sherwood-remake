@@ -2682,7 +2682,6 @@ impl EnemyAi {
                     // command's EventDone re-enter this branch recursively.
                     self.base.outbox.actor.enter_swordfight =
                         Some(EnterSwordfightRequest::Rebalance(nearest_enemy_of_solo));
-                    self.base.primary_target = nearest_enemy_of_solo;
                     return;
                 }
             }
