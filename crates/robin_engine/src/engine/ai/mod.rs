@@ -102,6 +102,30 @@ fn seek_area_owner_position_debug_matches(frame: u32, creation_order: u32) -> bo
             .is_none_or(|expected| creation_order == expected)
 }
 
+/// Opt-in, stderr-only provenance for the Save024
+/// `ReconsiderSwordfightObservation` fighter-list mismatch. Keep the enable
+/// check ahead of identity lookup so the disabled path performs no additional
+/// world reads.
+fn reconsider_observation_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_RECONSIDER_OBSERVATION").is_some()
+}
+
+fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle: u32) -> bool {
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for RECONSIDER diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME")
+        .is_none_or(|expected| frame == expected)
+        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_CREATION_ORDER")
+            .is_none_or(|expected| creation_order == expected)
+        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE")
+            .is_none_or(|expected| handle == expected)
+}
+
 #[derive(Debug)]
 struct PatrolTurnLifecycleDebugConfig {
     enabled: bool,
@@ -3079,6 +3103,75 @@ impl EngineInner {
                 }
             })
             .collect();
+        if reconsider_observation_debug_enabled() {
+            let creation_order = self.world.original_creation_order(npc_id);
+            if reconsider_observation_debug_matches(frame, creation_order, me_handle) {
+                eprintln!(
+                    "RECONSIDER {{\"event\":\"snapshot_begin\",\"frame\":{},\"owner\":{},\"owner_creation_order\":{},\"owner_state\":{:?},\"owner_substate\":{:?},\"registry_len\":{}}}",
+                    frame,
+                    me_handle,
+                    creation_order,
+                    soldier.npc.ai_state(),
+                    soldier.npc.ai_substate(),
+                    tick.reconsider_swordfight_observation_fighters.len(),
+                );
+                for (ordinal, fighter) in tick
+                    .reconsider_swordfight_observation_fighters
+                    .iter()
+                    .enumerate()
+                {
+                    let fighter_id =
+                        self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
+                            panic!(
+                                "RECONSIDER owner {npc_id:?} cannot resolve fighter {}",
+                                fighter.handle
+                            )
+                        });
+                    let entity = self.world.entities.get(fighter_id).unwrap_or_else(|| {
+                        panic!("RECONSIDER owner {npc_id:?} cannot read fighter {fighter_id:?}")
+                    });
+                    let current_sequence = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(fighter_id)
+                        .and_then(|(sequence_id, element_index)| {
+                            self.orders
+                                .sequence_manager
+                                .get_element(sequence_id, element_index)
+                                .map(|element| {
+                                    (sequence_id, element_index, element.command, element.state)
+                                })
+                        });
+                    let eligibility = match entity {
+                        Entity::Soldier(other) => Some((
+                            other.npc.life_points <= 0,
+                            other.human.unconscious,
+                            other.element.posture == crate::element::Posture::Tied,
+                            other.human.carrier.is_some(),
+                            other.element.active,
+                            other.npc.ai_state(),
+                            other.npc.ai_substate(),
+                        )),
+                        _ => None,
+                    };
+                    eprintln!(
+                        "RECONSIDER {{\"event\":\"snapshot_fighter\",\"frame\":{},\"owner_creation_order\":{},\"ordinal\":{},\"fighter\":{},\"fighter_creation_order\":{},\"friendly\":{},\"able\":{},\"raw\":[{},{},{}],\"soldier_eligibility\":{:?},\"current_sequence\":{:?}}}",
+                        frame,
+                        creation_order,
+                        ordinal,
+                        fighter.handle,
+                        self.world.original_creation_order(fighter_id),
+                        fighter.is_friendly,
+                        fighter.is_able_to_fight,
+                        fighter.raw_world_position.x,
+                        fighter.raw_world_position.y,
+                        fighter.raw_world_position.z,
+                        eligibility,
+                        current_sequence,
+                    );
+                }
+            }
+        }
         // KillNearbySleepingEnemies walks the live opposing-camp fighter
         // registry synchronously at the BattleDecisions boundary. Populate
         // this from the same live registry for every Think, including timer

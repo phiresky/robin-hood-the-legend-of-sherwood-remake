@@ -22,6 +22,23 @@ use super::{
     UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
 };
 
+fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_RECONSIDER_OBSERVATION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for RECONSIDER diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME")
+        .is_none_or(|expected| frame == expected)
+        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE")
+            .is_none_or(|expected| owner == expected)
+}
+
 fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
@@ -2966,17 +2983,60 @@ impl EnemyAi {
                 let dz = fighter.raw_world_position.z - me_world.z;
                 dx.abs().max(dy.abs()).max(dz.abs())
             };
+        let reconsider_debug = reconsider_observation_debug_matches(ctx.frame, self.base.me);
+        if reconsider_debug {
+            eprintln!(
+                "RECONSIDER {{\"event\":\"invoke\",\"frame\":{},\"owner\":{},\"state\":{:?},\"substate\":{:?},\"fighters\":{}}}",
+                ctx.frame,
+                self.base.me,
+                self.base.current_state,
+                self.base.current_substate,
+                tick.reconsider_swordfight_observation_fighters.len(),
+            );
+        }
         let mut local_mult: std::collections::BTreeMap<HumanHandle, u32> =
             std::collections::BTreeMap::new();
         for f in &tick.reconsider_swordfight_observation_fighters {
             if f.is_friendly || !f.is_able_to_fight {
+                if reconsider_debug {
+                    let d = raw_max_norm_distance(f);
+                    let rejection = if f.is_friendly { "friendly" } else { "unable" };
+                    eprintln!(
+                        "RECONSIDER {{\"event\":\"them_candidate\",\"frame\":{},\"owner\":{},\"fighter\":{},\"friendly\":{},\"able\":{},\"distance\":{},\"result\":{:?}}}",
+                        ctx.frame,
+                        self.base.me,
+                        f.handle,
+                        f.is_friendly,
+                        f.is_able_to_fight,
+                        d,
+                        rejection,
+                    );
+                }
                 continue;
             }
             let d = raw_max_norm_distance(f);
             if d >= max_radius {
+                if reconsider_debug {
+                    eprintln!(
+                        "RECONSIDER {{\"event\":\"them_candidate\",\"frame\":{},\"owner\":{},\"fighter\":{},\"friendly\":{},\"able\":{},\"distance\":{},\"result\":\"radius\"}}",
+                        ctx.frame, self.base.me, f.handle, f.is_friendly, f.is_able_to_fight, d,
+                    );
+                }
                 continue;
             }
-            if !self.is_detecting_180_degrees(f.handle, ctx) {
+            let detected = self.is_detecting_180_degrees(f.handle, ctx);
+            if reconsider_debug {
+                let result = if detected {
+                    "accepted"
+                } else {
+                    "not_detected_180"
+                };
+                eprintln!(
+                    "RECONSIDER {{\"event\":\"them_candidate\",\"frame\":{},\"owner\":{},\"fighter\":{},\"friendly\":{},\"able\":{},\"distance\":{},\"result\":{:?}}}",
+                    ctx.frame, self.base.me, f.handle, f.is_friendly, f.is_able_to_fight, d, result,
+                );
+            }
+            if !detected {
                 continue;
             }
             self.list_them.push(f.handle);
@@ -2992,11 +3052,42 @@ impl EnemyAi {
         self.base.list_us.push(self.base.me);
         for f in &tick.reconsider_swordfight_observation_fighters {
             if !f.is_friendly || f.handle == self.base.me || !f.is_able_to_fight {
+                if reconsider_debug {
+                    let d = raw_max_norm_distance(f) as u16;
+                    let rejection = if !f.is_friendly {
+                        "enemy"
+                    } else if f.handle == self.base.me {
+                        "self"
+                    } else {
+                        "unable"
+                    };
+                    eprintln!(
+                        "RECONSIDER {{\"event\":\"us_candidate\",\"frame\":{},\"owner\":{},\"fighter\":{},\"friendly\":{},\"able\":{},\"distance_uword\":{},\"result\":{:?}}}",
+                        ctx.frame,
+                        self.base.me,
+                        f.handle,
+                        f.is_friendly,
+                        f.is_able_to_fight,
+                        d,
+                        rejection,
+                    );
+                }
                 continue;
             }
             // Original truncates `MaxNormDistance` to UWORD on the us-list
             // side before the radius comparison.
             let d = raw_max_norm_distance(f) as u16;
+            if reconsider_debug {
+                let result = if f32::from(d) >= max_radius {
+                    "radius"
+                } else {
+                    "accepted"
+                };
+                eprintln!(
+                    "RECONSIDER {{\"event\":\"us_candidate\",\"frame\":{},\"owner\":{},\"fighter\":{},\"friendly\":{},\"able\":{},\"distance_uword\":{},\"result\":{:?}}}",
+                    ctx.frame, self.base.me, f.handle, f.is_friendly, f.is_able_to_fight, d, result,
+                );
+            }
             if f32::from(d) >= max_radius {
                 continue;
             }
