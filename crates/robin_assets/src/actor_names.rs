@@ -510,9 +510,7 @@ fn push_bonuses(mission: &LoadedMission, slots: &mut Slots) {
     // maps to a stable enum (Arrow, Apple, Purse, …) — good enough
     // for a readable `Bonuses.Apple_3` identifier.
     for b in &mission.bonuses {
-        let name = std::panic::catch_unwind(|| BonusItemType::from_u16(b.bonus_type))
-            .ok()
-            .map(|t| format!("{t:?}"));
+        let name = BonusItemType::from_u16(b.bonus_type).map(|t| format!("{t:?}"));
         slots.push_with_name(ActorSlotKind::Bonus, name);
     }
 }

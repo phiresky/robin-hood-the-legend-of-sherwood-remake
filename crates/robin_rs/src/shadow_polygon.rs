@@ -695,7 +695,7 @@ fn render_darken_inside_gpu_spans(
                     crossings.push(x);
                 }
             }
-            crossings.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+            crossings.sort_unstable_by(f32::total_cmp);
             let mut i = 0;
             while i + 1 < crossings.len() {
                 let x0 = (crossings[i].ceil() as i32).max(0);

@@ -828,8 +828,9 @@ pub enum BonusItemType {
 
 impl BonusItemType {
     /// Decode the raw level-data ordinal into a `BonusItemType`.
-    pub fn from_u16(value: u16) -> Self {
-        match value {
+    /// Returns `None` for unknown ordinals.
+    pub fn from_u16(value: u16) -> Option<Self> {
+        Some(match value {
             0 => Self::Arrow,
             1 => Self::Stone,
             2 => Self::Apple,
@@ -849,8 +850,8 @@ impl BonusItemType {
             16 => Self::RoyalSceptre,
             17 => Self::DomesdayBook,
             18 => Self::SwordOfTheState,
-            _ => panic!("invalid BonusType value: {value}"),
-        }
+            _ => return None,
+        })
     }
 }
 
