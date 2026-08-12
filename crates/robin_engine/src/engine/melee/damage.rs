@@ -389,6 +389,7 @@ impl EngineInner {
             .actor_data()
             .map(|a| a.action_state)
             .unwrap_or(ActionState::Waiting);
+        let victim_was_unconscious = victim.human_data().is_some_and(|human| human.unconscious);
         self.trace_sword_damage_lifecycle(
             "apply-before",
             victim_id,
@@ -461,6 +462,24 @@ impl EngineInner {
             .get_entity(victim_id)
             .map(get_life_points)
             .unwrap_or(raw_life_points_after);
+        let victim_went_unconscious = !victim_was_unconscious
+            && self
+                .expect_entity(victim_id, "sword-damage concussion victim")
+                .human_data()
+                .is_some_and(|human| human.unconscious);
+        if victim_went_unconscious {
+            let attacker_is_pc = attacker_id
+                .map(|id| {
+                    self.expect_entity(id, "sword-damage knockout attacker")
+                        .kind()
+                        .is_pc()
+                })
+                .unwrap_or(false);
+            // `SetConcussionOfTheBrain` closes its KO side effects inline,
+            // before control returns to `TranslateSwordDamage`: first
+            // QuitSwordFight, stars/healing setup, then the NPC override.
+            self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, false);
+        }
         // PC hurt/death speech belongs to the virtual SetLifePoints call
         // inside ReceiveSwordDamage. It uses the applied LP delta, before
         // TranslateSwordDamage later invokes the (PC no-op) SayOuch.
@@ -616,6 +635,7 @@ impl EngineInner {
                     &push_info,
                     result,
                     damage_element,
+                    victim_went_unconscious,
                 )
             } else {
                 false
@@ -894,6 +914,21 @@ impl EngineInner {
                 self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
                 self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets, None, None);
             }
+
+            // Original `RHElementActorHuman::TranslateSwordDamage` sends
+            // EVENT_GOOD_STRIKE to a soldier origin before testing the
+            // surviving victim's unconscious flag.  A knocked-out human
+            // then leaves the swordfight synchronously, before the
+            // FallingBack/Roll orders are translated below
+            // (`original-code/RHelementactorhuman.cpp:2643-2694`).
+            if !victim_died
+                && self
+                    .expect_entity(victim_id, "sword-damage knockout victim")
+                    .human_data()
+                    .is_some_and(|human| human.unconscious)
+            {
+                self.quit_swordfight(sim, assets, victim_id);
+            }
         }
 
         // Death push-vs-drop selector: a non-rider killed by a strike
@@ -948,7 +983,9 @@ impl EngineInner {
 
         // Handle state transitions after damage — skip for push strikes,
         // since apply_push_effect already handled death/KO transitions.
-        if !pushed {
+        if !pushed && victim_went_unconscious {
+            self.queue_knockout_orders(assets, victim_id, damage_element);
+        } else if !pushed {
             self.handle_post_damage(
                 sim,
                 assets,
@@ -2768,6 +2805,28 @@ impl EngineInner {
 
         tracing::info!(entity = ?victim_id, concussion, "Entity knocked out");
 
+        let falling_anim = self.queue_knockout_orders(assets, victim_id, damage_element);
+
+        // If a falling_back animation is going to play, leave the
+        // posture where it is — the animation-completion handler in
+        // tick_actor_animation_for will set Posture::Lying when the anim
+        // terminates.  Setting Lying now would snap the
+        // unconscious-star titbit to the crawling-offset position
+        // while the sprite is still visually standing through the
+        // falling animation, producing a floating-above-nothing
+        // star.  If no falling animation was selected (e.g. entity
+        // was in a posture that doesn't map to one), fall back to
+        // the original immediate-lying behavior so downstream code
+        // that assumes Lying for unconscious humans still works.
+        self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, !falling_anim);
+    }
+
+    fn queue_knockout_orders(
+        &mut self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        damage_element: (crate::sequence::SequenceId, usize),
+    ) -> bool {
         // Select falling-back animation.  The animation is inserted
         // as the next order on the active damage element, with the
         // element's priority lifted to NonInterruptable.
@@ -2793,27 +2852,15 @@ impl EngineInner {
             );
         }
 
-        // If a falling_back animation is going to play, leave the
-        // posture where it is — the animation-completion handler in
-        // tick_actor_animation_for will set Posture::Lying when the anim
-        // terminates.  Setting Lying now would snap the
-        // unconscious-star titbit to the crawling-offset position
-        // while the sprite is still visually standing through the
-        // falling animation, producing a floating-above-nothing
-        // star.  If no falling animation was selected (e.g. entity
-        // was in a posture that doesn't map to one), fall back to
-        // the original immediate-lying behavior so downstream code
-        // that assumes Lying for unconscious humans still works.
-        self.apply_knockout_side_effects(
-            sim,
-            assets,
-            victim_id,
-            attacker_is_pc,
-            falling_anim.is_none(),
-        );
+        if falling_anim.is_none() {
+            self.expect_entity_mut(victim_id, "knockout victim posture fallback")
+                .element_data_mut()
+                .posture = Posture::Lying;
+        }
 
         // Queue roll if on a slope.
         self.try_queue_roll(assets, victim_id, damage_element);
+        falling_anim.is_some()
     }
 
     pub(super) fn apply_knockout_side_effects(

@@ -3262,13 +3262,23 @@ mod tests {
     }
 
     fn assets_with_sword_profile(energy: u16, max_distance: u16) -> LevelAssets {
+        assets_with_sword_profile_effects(energy, max_distance, 4, 0)
+    }
+
+    fn assets_with_sword_profile_effects(
+        energy: u16,
+        max_distance: u16,
+        cutting: u16,
+        stunning: u16,
+    ) -> LevelAssets {
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();
         weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] = max_distance;
         weapon.thrusts[SwordStrike::A as usize].energy = energy;
         weapon.thrusts[SwordStrike::A as usize].minimal_distance = 0;
         weapon.thrusts[SwordStrike::A as usize].maximal_distance = max_distance;
-        weapon.thrusts[SwordStrike::A as usize].cutting = 4;
+        weapon.thrusts[SwordStrike::A as usize].cutting = cutting;
+        weapon.thrusts[SwordStrike::A as usize].stunning = stunning;
         profile_manager.hth_weapons.push(weapon);
         profile_manager
             .characters
@@ -6451,6 +6461,7 @@ mod tests {
             &PushStrikeInfo { repulsion: 100 },
             combat::SwordDamageResult::NO_DAMAGE_PARRIED,
             (sequence_id, 0),
+            false,
         ));
         assert!(
             engine.feedback.sound_sim.pending_exclamations.is_empty(),
@@ -6510,6 +6521,7 @@ mod tests {
             &PushStrikeInfo { repulsion: 100 },
             combat::SwordDamageResult::STUNNING_DAMAGE,
             (sequence, 0),
+            false,
         ));
 
         let element = engine
@@ -6660,12 +6672,20 @@ mod tests {
             let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
                 unreachable!()
             };
+            soldier.human.opponents.push(victim);
             let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
             ai.base.me = attacker.index();
             ai.base.current_state = AiState::Attacking;
             ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
             ai.hth_weapon_id = 1;
         }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(attacker);
         let assets = assets_with_sword_profile(1, 50);
         let mut damage =
             crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
@@ -6696,6 +6716,25 @@ mod tests {
             entry.line_type == LogLineType::Event
                 && entry.info == StimulusType::EventGoodStrike as u16
         }));
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![victim],
+            "a conscious surviving victim must retain the swordfight"
+        );
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![attacker]
+        );
         let damage = engine
             .orders
             .sequence_manager
@@ -6708,6 +6747,354 @@ mod tests {
                 .filter(|order| order.order_type != OrderType::Rolling)
                 .all(|order| !order.compute_direction),
             "TranslateSwordDamage sets bComputeDirection=false on its cutting-hit order"
+        );
+    }
+
+    #[test]
+    fn surviving_sword_knockout_quits_before_good_strike_and_fall_translation() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            soldier.human.opponents.push(victim);
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = attacker.index();
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+            ai.hth_weapon_id = 1;
+        }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(attacker);
+
+        let mut assets = assets_with_sword_profile_effects(1, 50, 4, 100);
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
+        obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        victim_entity.element_data_mut().set_obstacle_index(
+            crate::position_interface::ObstacleHandle::new(0),
+            Some(crate::position_interface::PlaneZCoeffs {
+                az: 1.0,
+                bz: 0.0,
+                dz: 0.0,
+            }),
+        );
+        victim_entity
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-5.0, -5.0),
+                crate::coordinates::MapVec::new(5.0, 5.0),
+            ));
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence_id, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(victim_entity.human_data().unwrap().unconscious);
+        assert!(
+            victim_entity.pc_data().unwrap().life_points > 0,
+            "fixture must exercise the surviving-knockout arm"
+        );
+        assert!(victim_entity.human_data().unwrap().opponents.is_empty());
+        let attacker_entity = engine.get_entity(attacker).unwrap();
+        assert!(attacker_entity.human_data().unwrap().opponents.is_empty());
+        let ai = attacker_entity.ai_controller().unwrap();
+        assert_eq!(ai.current_substate, Substate::AttackingQuittingSwordfight);
+        let good_strike_index = ai
+            .ai_log
+            .iter()
+            .position(|entry| {
+                entry.line_type == LogLineType::Event
+                    && entry.info == StimulusType::EventGoodStrike as u16
+            })
+            .expect("soldier origin must receive EVENT_GOOD_STRIKE");
+        let quit_index = ai
+            .ai_log
+            .iter()
+            .position(|entry| {
+                entry.line_type == LogLineType::ChangeState
+                    && entry.info == Substate::AttackingQuittingSwordfight as u16
+            })
+            .expect("reciprocal unlink must synchronously enter the quitting substate");
+        assert!(
+            quit_index < good_strike_index,
+            "SetConcussionOfTheBrain quits before TranslateSwordDamage informs the hitter"
+        );
+        let translated_orders = &engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .expect("knockout damage element remains registered")
+            .orders;
+        assert_eq!(
+            translated_orders.front().map(|order| order.order_type),
+            Some(OrderType::FallingBackUpright),
+            "TranslateSwordDamage's second quit remains before its knockout fall"
+        );
+        assert!(
+            translated_orders
+                .iter()
+                .any(|order| order.order_type == OrderType::Rolling),
+            "the real surviving-KO translation must still append Roll"
+        );
+    }
+
+    #[test]
+    fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
+        use crate::ai::{LogLineType, StimulusType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        let mut assets = assets_with_sword_profile_effects(1, 50, 4, 100);
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::A as usize];
+        thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+        thrust.repulsion = 100;
+
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence_id, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(victim_entity.human_data().unwrap().unconscious);
+        assert!(
+            get_life_points(victim_entity) > 0,
+            "fixture must exercise a surviving push knockout"
+        );
+        let lose_consciousness_callbacks = victim_entity
+            .ai_controller()
+            .unwrap()
+            .ai_log
+            .iter()
+            .filter(|entry| {
+                entry.line_type == LogLineType::Event
+                    && entry.info == StimulusType::EventLoseConsciousness as u16
+            })
+            .count();
+        assert_eq!(
+            lose_consciousness_callbacks, 1,
+            "TranslatePushDamage must not repeat SetConcussionOfTheBrain's synchronous callback"
+        );
+        assert_eq!(
+            victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .filter(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventQuitSwordfight as u16
+                })
+                .count(),
+            2,
+            "fresh animated push owns SetConcussion's first quit and TranslatePushDamage's second quit"
+        );
+        assert_eq!(
+            engine
+                .feedback
+                .titbit_manager
+                .titbits()
+                .iter()
+                .filter(|titbit| {
+                    titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
+                        && titbit.element_supplier.0 == victim.index()
+                })
+                .count(),
+            1,
+            "a fresh push knockout creates one unconscious-star visual"
+        );
+    }
+
+    #[test]
+    fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
+        use crate::ai::{LogLineType, StimulusType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.element_data_mut().posture = Posture::Carried;
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+        }
+        let assets = assets_with_sword_profile(1, 50);
+        // Model SetConcussionOfTheBrain's already-completed fresh-KO prefix,
+        // then enter the no-animation TranslatePushDamage arm.
+        engine.apply_knockout_side_effects(&sim, &assets, victim, true, false);
+        let damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .set_translating_element(Some((
+                victim,
+                crate::sequence::SequenceElementRef::new(sequence, 0),
+            )));
+
+        assert!(engine.apply_push_effect(
+            &sim,
+            &assets,
+            victim,
+            attacker,
+            &PushStrikeInfo { repulsion: 100 },
+            combat::SwordDamageResult::STUNNING_DAMAGE,
+            (sequence, 0),
+            true,
+        ));
+        engine.orders.sequence_manager.set_translating_element(None);
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(victim_entity.human_data().unwrap().unconscious);
+        assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+        assert_eq!(
+            victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .filter(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventLoseConsciousness as u16
+                })
+                .count(),
+            1,
+            "the no-animation TranslatePushDamage arm must not repeat a fresh KO callback"
+        );
+    }
+
+    #[test]
+    fn preexisting_unconscious_no_animation_push_still_applies_legacy_side_effects() {
+        use crate::ai::{LogLineType, StimulusType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.element_data_mut().posture = Posture::Carried;
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+        }
+        let assets = assets_with_sword_profile(1, 50);
+        let damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+
+        assert!(engine.apply_push_effect(
+            &sim,
+            &assets,
+            victim,
+            attacker,
+            &PushStrikeInfo { repulsion: 100 },
+            combat::SwordDamageResult::STUNNING_DAMAGE,
+            (sequence, 0),
+            false,
+        ));
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .filter(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventLoseConsciousness as u16
+                })
+                .count(),
+            1,
+            "an already-unconscious push still owns the legacy KO callback"
+        );
+        assert!(
+            engine
+                .feedback
+                .titbit_manager
+                .titbits()
+                .iter()
+                .any(|titbit| {
+                    titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
+                        && titbit.element_supplier.0 == victim.index()
+                })
         );
     }
 
