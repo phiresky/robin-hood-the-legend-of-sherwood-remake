@@ -4254,10 +4254,34 @@ impl EngineInner {
                             .front()
                             .map(|order| (order.order_type, order.order_id)),
                         element.orders.len(),
+                        element.cross_postponed,
                     )
                 });
+            let sequence_state =
+                self.orders
+                    .sequence_manager
+                    .get_sequence(seq_id)
+                    .map(|sequence| {
+                        sequence
+                            .elements
+                            .iter()
+                            .enumerate()
+                            .map(|(index, element)| {
+                                (
+                                    index,
+                                    element.owner,
+                                    element.command,
+                                    element.command_level,
+                                    element.state,
+                                    element.priority,
+                                    element.orders.len(),
+                                    element.cross_postponed,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    });
             let owner_state = element_state
-                .and_then(|(owner, _, _, _, _)| owner)
+                .and_then(|(owner, _, _, _, _, _)| owner)
                 .map(|owner| {
                     let selected = self
                         .orders
@@ -4283,6 +4307,7 @@ impl EngineInner {
                 ?seq_id,
                 elem_idx,
                 ?element_state,
+                ?sequence_state,
                 ?owner_state,
                 "do_next_order before popping front order"
             );
