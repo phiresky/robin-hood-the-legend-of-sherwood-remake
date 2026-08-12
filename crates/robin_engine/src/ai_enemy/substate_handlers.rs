@@ -3021,24 +3021,12 @@ impl EnemyAi {
                                 Substate::SeekingOfficerWaitForInstructedSoldier
                                 | Substate::SeekingOfficerWaitForInstructedGroup,
                             ) => {
-                                self.base.outbox.reentrant.cross_npc_actions.push(
-                                    CrossNpcAction::SendStimulus {
-                                        fallback_to_sender: None,
-                                        to_whole_patrol: false,
-                                        target: self.base.antagonist,
-                                        stimulus_type: StimulusType::CallReport,
-                                        info: StimulusInfo::Human(self.base.me),
+                                self.base.outbox.reentrant.owner_work.push(
+                                    crate::ai::AiOwnerWork::BeginSoldierGiveReport {
+                                        officer: self.base.antagonist,
+                                        current_frame: ctx.frame,
                                     },
                                 );
-                                self.base.say_with_flags(
-                                    Remark::TellsOfficerNothing,
-                                    crate::ai::SpeechFlags::MYTALK_1,
-                                );
-                                self.set_state(
-                                    AiState::Seeking,
-                                    Substate::SeekingSoldierGiveReportToOfficer,
-                                );
-                                self.base.launch_timer(100, ctx.frame);
                             }
                             _ => {
                                 self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);

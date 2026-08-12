@@ -201,6 +201,20 @@ pub enum AiOwnerWork {
         current_frame: u32,
     },
     SetEyeStatus(crate::element::EyeStatus),
+    /// Execute the synchronous officer `CALL_REPORT`, then the inline
+    /// `Say(TELLS_OFFICER_NOTHING, MYTALK_1)`, from the reached-officer arm.
+    BeginSoldierGiveReport {
+        officer: NpcHandle,
+        current_frame: u32,
+    },
+    /// Continue `SOLDIER_RETURN_TO_OFFICER::EVENT_REACHPOINT` after the
+    /// inline `Say(TELLS_OFFICER_NOTHING, MYTALK_1)` call has returned.
+    /// A rejected line invokes MYTALK synchronously while the caller is
+    /// still in its old substate; only afterward does Original enter the
+    /// give-report substate and launch its 100-frame fallback timer.
+    ResumeSoldierGiveReportAfterSpeech {
+        current_frame: u32,
+    },
 }
 
 #[derive(

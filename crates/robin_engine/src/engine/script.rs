@@ -3865,6 +3865,91 @@ impl EngineInner {
                     crate::ai_vision::set_view_status(npc, status);
                     continue;
                 }
+                crate::ai::AiOwnerWork::BeginSoldierGiveReport {
+                    officer,
+                    current_frame,
+                } => {
+                    let reporter = owner.index();
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!("give-report owner {} lost its AI", owner.index())
+                        })
+                        .outbox
+                        .reentrant
+                        .cross_npc_actions
+                        .insert(
+                            0,
+                            crate::ai::CrossNpcAction::SendStimulus {
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                                target: officer,
+                                stimulus_type: crate::ai::StimulusType::CallReport,
+                                info: crate::ai::StimulusInfo::Human(reporter),
+                            },
+                        );
+                    self.process_synchronous_reentrant_actions_for(sim, owner, assets);
+                    let ai = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "give-report owner {} vanished after CALL_REPORT",
+                                owner.index()
+                            )
+                        });
+                    ai.outbox.reentrant.owner_work.splice(
+                        0..0,
+                        [
+                            crate::ai::AiOwnerWork::Speech(crate::ai::AiSpeechAttempt {
+                                remark: crate::ai::Remark::TellsOfficerNothing,
+                                flags: crate::ai::SpeechFlags::MYTALK_1.bits(),
+                            }),
+                            crate::ai::AiOwnerWork::ResumeSoldierGiveReportAfterSpeech {
+                                current_frame,
+                            },
+                        ],
+                    );
+                    continue;
+                }
+                crate::ai::AiOwnerWork::ResumeSoldierGiveReportAfterSpeech { current_frame } => {
+                    let later_work = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
+                        .unwrap_or_else(|| {
+                            panic!("give-report owner {} lost its AI", owner.index())
+                        });
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "give-report continuation owner {} lost Enemy AI",
+                                owner.index()
+                            )
+                        });
+                    enemy.set_state(
+                        crate::ai::AiState::Seeking,
+                        crate::ai::Substate::SeekingSoldierGiveReportToOfficer,
+                    );
+                    enemy.base.outbox.reentrant.owner_work.push(
+                        crate::ai::AiOwnerWork::LaunchTimer {
+                            frames: 100,
+                            current_frame,
+                        },
+                    );
+                    enemy.base.outbox.reentrant.owner_work.extend(later_work);
+                    continue;
+                }
             };
 
             // Work produced by a FilterAIEvent callback belongs inside this

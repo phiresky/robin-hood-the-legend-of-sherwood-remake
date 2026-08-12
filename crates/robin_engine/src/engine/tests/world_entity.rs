@@ -3998,6 +3998,83 @@ fn review2_context_and_tick(
     (ctx, tick)
 }
 
+#[test]
+fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
+    use crate::ai::{AiState, LogLineType, Stimulus, StimulusType, Substate};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    {
+        let officer = engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("report officer has EnemyAi");
+        officer.set_state(
+            AiState::Seeking,
+            Substate::SeekingOfficerWaitForInstructedGroup,
+        );
+    }
+    {
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(soldier_id)
+            .expect("reporting soldier exists")
+        else {
+            panic!("reporting soldier changed kind")
+        };
+        soldier.element.blipped = true;
+        let reporter = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("reporting soldier has EnemyAi");
+        reporter.base.antagonist = officer_id.index();
+        reporter.set_state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
+    }
+
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, soldier_id);
+    engine.dispatch_think_with_drain(
+        &sim,
+        soldier_id,
+        &Stimulus::new(StimulusType::EventReachPoint),
+        &ctx,
+        &tick,
+        &assets,
+    );
+
+    let reporter = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("reporting soldier retains EnemyAi");
+    assert_eq!(
+        reporter.base.current_substate,
+        Substate::SeekingSoldierGiveReportToOfficer
+    );
+    assert!(reporter.base.timer_is_running);
+    assert_eq!(
+        reporter.base.when_does_timer_ring, 200,
+        "the rejected MYTALK callback runs in the return-to-officer substate; the later 100-frame timer must win"
+    );
+    assert!(
+        reporter
+            .base
+            .ai_log
+            .iter()
+            .any(|line| { line.line_type == LogLineType::SpeakImpossible && line.info == 0 })
+    );
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("report officer retains EnemyAi");
+    assert!(officer.base.ai_log.iter().any(|line| {
+        line.line_type == LogLineType::Event && line.info == StimulusType::CallReport as u16
+    }));
+    assert!(!officer.base.ai_log.iter().any(|line| {
+        line.line_type == LogLineType::Event && line.info == StimulusType::CallYourTalk1 as u16
+    }));
+    assert!(reporter.base.outbox.reentrant.owner_work.is_empty());
+    assert!(reporter.base.outbox.reentrant.cross_npc_actions.is_empty());
+}
+
 fn start_review_command_soldiers(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
