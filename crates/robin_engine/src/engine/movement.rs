@@ -1179,6 +1179,22 @@ fn projected_step_reaches_goal(
     projected.is_goal_reached(grid, target)
 }
 
+/// Publish an interleaved motion call's authoritative commit to the serial
+/// anti-collision snapshot. Goal snapping can make this differ from the raw
+/// requested displacement; offset repulsive geometry must follow the stored
+/// position, not the discarded overshoot.
+fn sync_snapshot_after_committed_step(
+    snapshot: &mut super::anti_collision::ActorSnapshot,
+    pre_position: MapPoint,
+    post_position: MapPoint,
+) {
+    super::anti_collision::sync_snapshot_after_move(
+        snapshot,
+        post_position,
+        post_position - pre_position,
+    );
+}
+
 /// Motion state observed by the Original Execute arm after `PerformSeek`.
 ///
 /// Entity-target `PerformSeek` consumes non-terminal sprite results and returns
@@ -8508,8 +8524,8 @@ impl EngineInner {
                         false,
                     )
                 };
-                let first_post = MapPoint::new(first_pre.x + first_dx, first_pre.y + first_dy);
-                sprite.position_iface.set_map_position(first_post);
+                let first_raw_post = MapPoint::new(first_pre.x + first_dx, first_pre.y + first_dy);
+                sprite.position_iface.set_map_position(first_raw_post);
                 if rebuild && (first_dx != 0.0 || first_dy != 0.0) {
                     let raw = vector_to_sector_0_to_15(first_dx, first_dy);
                     sprite.position_iface.set_direction(
@@ -8523,15 +8539,31 @@ impl EngineInner {
                     sprite.position_iface.reset_increment_computed();
                     sprite.position_iface.compute_increment_all(true);
                 }
+                // RHNONANIMATION_RUNNING_STAIRS is the one double-motion
+                // Execute arm which deliberately continues after its first
+                // PerformMotion returns TERMINATED.  That first call still
+                // owns the complete ordinary arrival branch: IsGoalReached,
+                // followed by the zero-tolerance goal snap.  The second
+                // Turn/PerformMotion therefore observes the snapped position,
+                // rather than both raw displacements being committed before a
+                // single aggregate arrival check.
+                let first_post = if order_action == OrderType::RunningStairs
+                    && sprite
+                        .position_iface
+                        .is_goal_reached(&self.world.fast_grid, prepass.goal_target_info)
+                    && order_tolerance == 0.0
+                    && !sprite.position_iface.is_deviated()
+                {
+                    sprite.position_iface.set_map_position(goal);
+                    goal
+                } else {
+                    first_raw_post
+                };
                 if let Some(snapshot) = anti_snapshots
                     .get_mut(actor_id)
                     .and_then(|slot| slot.as_mut())
                 {
-                    super::anti_collision::sync_snapshot_after_move(
-                        snapshot,
-                        first_post,
-                        MapVec::new(first_dx, first_dy),
-                    );
+                    sync_snapshot_after_committed_step(snapshot, first_pre, first_post);
                 }
                 first_fast_commit = Some((first_pre, first_increment, first_speed, first_post));
             }
@@ -15710,6 +15742,142 @@ mod line_jump_tests {
         );
         assert_eq!(capture.split_calls[0].frame_distance_raw.value, 4.0);
         assert_eq!(capture.split_calls[0].pre_position.x.bits, 1155272038);
+    }
+
+    #[test]
+    fn running_stairs_second_call_observes_first_call_arrival_snap() {
+        use crate::element::{
+            ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
+        };
+        use crate::order::Order;
+        use crate::sequence::SequenceElement;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(697.1148681640625, 1420.9931640625);
+        let goal = MapPoint::new(696.0, 1423.0);
+        let physical = OrderType::WalkingStairs;
+        let script = SpriteScript {
+            action_id: physical as u16,
+            action_done: 7,
+            average_speed: 5.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 40,
+            frame_ids: vec![1; 8],
+            delays: vec![0; 8],
+            distances: vec![5; 8],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
+            sound_ids: vec![0; 8],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[physical as usize] = 0;
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        pc.element_data_mut().active = true;
+        pc.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        pc.element_data_mut().set_position_map(start);
+        pc.element_data_mut().set_direction_instantly(11);
+        pc.position_iface_mut().set_anti_collision_on(false);
+        let owner = engine.add_entity(pc);
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningStairs,
+        );
+        movement
+            .orders
+            .push_back(Order::test_new(OrderType::RunningStairs, goal.x, goal.y));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        crate::movement_diagnostics::begin_parity_movement_capture();
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        let capture = crate::movement_diagnostics::take_parity_movement_capture()
+            .into_iter()
+            .find(|capture| capture.entity == owner)
+            .expect("running-stairs owner must emit a production movement capture");
+
+        assert_eq!(capture.split_calls.len(), 2);
+        assert_eq!(
+            capture.split_calls[0].pre_position.x.bits,
+            start.x.to_bits()
+        );
+        assert_eq!(
+            capture.split_calls[0].post_position.x.bits,
+            goal.x.to_bits()
+        );
+        assert_eq!(
+            capture.split_calls[0].post_position.y.bits,
+            goal.y.to_bits()
+        );
+        assert_eq!(capture.split_calls[1].pre_position.x.bits, goal.x.to_bits());
+        assert_eq!(capture.split_calls[1].pre_position.y.bits, goal.y.to_bits());
+        assert_ne!(
+            capture.split_calls[0].requested_delta.x.bits, 0,
+            "the first call must genuinely overshoot before its arrival snap"
+        );
+        assert_ne!(
+            capture.split_calls[1].requested_delta.x.bits, 0,
+            "RunningStairs must still execute its second PerformMotion after termination"
+        );
+
+        let offset_point = start + crate::coordinates::MapVec::new(7.0, -3.0);
+        let line_a = start + crate::coordinates::MapVec::new(-2.0, 4.0);
+        let line_b = start + crate::coordinates::MapVec::new(6.0, 4.0);
+        let mut snapshot = crate::engine::anti_collision::ActorSnapshot {
+            id: owner,
+            active: true,
+            is_actor: true,
+            is_human: true,
+            is_ignored_for_anti_collision: false,
+            position_map: start,
+            layer: 0,
+            sector: None,
+            posture: Posture::Upright,
+            element_kind: ElementKind::ActorPc,
+            target_element: None,
+            is_swordfighting: false,
+            repulsive_point: None,
+            extra_repulsive_points: vec![crate::repulsive::RepulsivePoint::new(
+                offset_point,
+                4.0,
+                12.0,
+            )],
+            repulsive_lines: vec![crate::repulsive::RepulsiveLine::new(
+                line_a, line_b, 0.0, 5.0,
+            )],
+        };
+        sync_snapshot_after_committed_step(&mut snapshot, start, goal);
+        let committed = goal - start;
+        assert_eq!(
+            snapshot.extra_repulsive_points[0].position,
+            offset_point + committed,
+            "offset repulsive geometry must follow the snapped commit, not the raw overshoot"
+        );
+        assert_eq!(snapshot.repulsive_lines[0].a, line_a + committed);
+        assert_eq!(snapshot.repulsive_lines[0].b, line_b + committed);
     }
 
     #[test]
