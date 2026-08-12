@@ -28,6 +28,53 @@ const BLIP_SUPER_DETECTION: f32 = 1.5;
 const BLIP_ON_SHOULDERS_FACTOR: f32 = 1.3;
 const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 
+#[derive(Clone, Copy)]
+struct VisibilityStageDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    viewer_creation_order: Option<u32>,
+    target_slot: Option<u32>,
+}
+
+fn visibility_stage_debug_config() -> &'static VisibilityStageDebugConfig {
+    static CONFIG: std::sync::OnceLock<VisibilityStageDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_VISIBILITY_STAGE").is_some();
+        let parse = |name: &str| {
+            if !enabled {
+                return None;
+            }
+            std::env::var(name).ok().map(|value| {
+                value
+                    .parse::<u32>()
+                    .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
+            })
+        };
+        VisibilityStageDebugConfig {
+            enabled,
+            frame: parse("PARITY_DEBUG_VISIBILITY_STAGE_FRAME"),
+            viewer_creation_order: parse("PARITY_DEBUG_VISIBILITY_STAGE_VIEWER_CREATION_ORDER"),
+            target_slot: parse("PARITY_DEBUG_VISIBILITY_STAGE_TARGET_SLOT"),
+        }
+    })
+}
+
+fn visibility_stage_debug_enabled(
+    frame: u32,
+    viewer_creation_order: u32,
+    target: EntityId,
+) -> bool {
+    let config = visibility_stage_debug_config();
+    config.enabled
+        && config.frame.is_none_or(|expected| expected == frame)
+        && config
+            .viewer_creation_order
+            .is_none_or(|expected| expected == viewer_creation_order)
+        && config
+            .target_slot
+            .is_none_or(|expected| expected == target.index())
+}
+
 /// One live PC/soldier entry in an NPC's mixed Enemy detectable list.
 /// Rebuilt at that NPC's creation slot so earlier NPC Think mutations are
 /// visible, while preserving the list's own insertion order during the scan.
@@ -1906,13 +1953,31 @@ impl EngineInner {
                 // target and every target while indoors still enter; all
                 // others must lie in the GetPositionGround world-X/Y
                 // radius/aspect bounding box.
-                if !refresh_detection_scans_target(
+                let scan_decision = refresh_detection_scans_target(
                     det.last_visibility,
                     viewer_inside_building,
                     me_ground_position,
                     view_radius,
                     target.ground_position,
-                ) {
+                );
+                let debug_visibility_stage = visibility_stage_debug_enabled(
+                    universal_frame,
+                    original_creation_order,
+                    target_id,
+                );
+                if debug_visibility_stage {
+                    eprintln!(
+                        "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"outer_gate\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision}}}",
+                        npc_id.index(),
+                        target_id.index(),
+                        det.last_visibility.to_bits(),
+                        me_ground_position.x.to_bits(),
+                        me_ground_position.y.to_bits(),
+                        target.ground_position.x.to_bits(),
+                        target.ground_position.y.to_bits(),
+                    );
+                }
+                if !scan_decision {
                     tracing::trace!(
                         observer = ?npc_id,
                         target = ?target_id,
@@ -2089,6 +2154,50 @@ impl EngineInner {
                             effective_view_radius.set(Some(radius));
                             radius
                         });
+                    if debug_visibility_stage {
+                        let dx = q.target_world.x - q.viewer_world.x;
+                        let dy = q.target_world.y - q.viewer_world.y;
+                        let stretched_y = dy * crate::position_interface::INVERSE_ASPECT_RATIO;
+                        let dz = q.target_world.z - q.viewer_world.z;
+                        let square_distance = dx * dx + stretched_y * stretched_y;
+                        let square_distance_3d = square_distance + dz * dz;
+                        let view_dot = dx * q.view_forward.0 + stretched_y * q.view_forward.1;
+                        eprintln!(
+                            "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
+                            npc_id.index(),
+                            target_id.index(),
+                            q.viewer_world.x.to_bits(),
+                            q.viewer_world.y.to_bits(),
+                            q.viewer_world.z.to_bits(),
+                            q.target_world.x.to_bits(),
+                            q.target_world.y.to_bits(),
+                            q.target_world.z.to_bits(),
+                            q.viewer_direction,
+                            q.view_forward.0.to_bits(),
+                            q.view_forward.1.to_bits(),
+                            q.viewer_eye_status as u8,
+                            q.viewer_in_building,
+                            q.target_in_same_building,
+                            q.target_is_active_and_outside_building,
+                            target.dead,
+                            q.target_unconscious,
+                            q.target_passing_door,
+                            q.target_posture as u8,
+                            q.target_action_state as u8,
+                            dx.to_bits(),
+                            dy.to_bits(),
+                            stretched_y.to_bits(),
+                            dz.to_bits(),
+                            square_distance.to_bits(),
+                            square_distance_3d.to_bits(),
+                            view_dot.to_bits(),
+                            q.view_radius,
+                            effective_view_radius
+                                .get()
+                                .map_or(-1, |radius| i64::from(radius.to_bits())),
+                            visibility.to_bits(),
+                        );
+                    }
                     tracing::trace!(
                         observer = ?npc_id,
                         target = ?target_id,
