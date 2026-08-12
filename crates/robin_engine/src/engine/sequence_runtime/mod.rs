@@ -3075,7 +3075,7 @@ mod sequence_phase_context_tests {
             .sequence_manager
             .get_element(instant_seq, 0)
             .expect("instant raise-shield element remains inspectable");
-        assert_eq!(instant.state, SequenceState::Terminated);
+        assert_eq!(instant.state, SequenceState::InProgress);
         assert_eq!(
             instant.orders.front().map(|order| order.order_type),
             Some(OrderType::WaitingShield)

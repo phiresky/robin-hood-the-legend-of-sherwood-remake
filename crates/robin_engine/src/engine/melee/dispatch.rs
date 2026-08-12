@@ -825,7 +825,11 @@ impl<'a> ShieldCommandContext<'a> {
             entity.set_posture(Posture::Upright);
         }
         self.push_order(seq_id, elem_idx, crate::order::OrderType::WaitingShield);
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        // RHElementActorHuman::Translate(RAISE_SHIELD_INSTANTLY) leaves the
+        // WAITING_SHIELD order installed. Actor::Instruct then marks the
+        // accepted, still-selected element IN_PROGRESS; it does not terminate
+        // this command at translation time.
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 
     /// Dispatch a LowerShield command.
@@ -1404,6 +1408,10 @@ mod shield_order_tests {
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::HoldingShield
+        );
+        assert_eq!(
+            sequence_manager.get_element(sequence_id, 0).unwrap().state,
+            SequenceState::InProgress
         );
         assert_eq!(
             sequence_manager

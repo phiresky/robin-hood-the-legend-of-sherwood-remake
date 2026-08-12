@@ -3165,6 +3165,120 @@ fn injury_postponement_rebuilds_eat_with_a_fresh_ability_identity() {
 }
 
 #[test]
+fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_replaces_it() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::default();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        hth_weapon_id: 1,
+        ..Default::default()
+    });
+    profiles.hth_weapons.push(Default::default());
+    assert!(assets.profile_manager.get_hth_weapon(1).is_some());
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::Waiting;
+
+    let first = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_generic(
+            1,
+            Command::RaiseShieldInstantly,
+            Some(owner),
+        ));
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let first_element = engine
+        .orders
+        .sequence_manager
+        .get_element(first, 0)
+        .expect("instant shield raise remains registered");
+    assert_eq!(first_element.state, SequenceState::InProgress);
+    assert_eq!(
+        first_element.current_order().map(|order| order.order_type),
+        Some(OrderType::WaitingShield)
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((first, 0)),
+        "Original Actor::Instruct keeps the accepted instant raise selected"
+    );
+
+    // A second normal-priority instant raise is a real current-owner control:
+    // from HOLDING_SHIELD Original generates LOWERING_SHIELD, interrupts the
+    // first normal element, and installs the replacement's WAITING_SHIELD.
+    let redundant = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_generic(
+            1,
+            Command::RaiseShieldInstantly,
+            Some(owner),
+        ));
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(redundant, 0)
+            .expect("redundant instant raise remains inspectable")
+            .state,
+        SequenceState::InProgress
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((redundant, 0))
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::LoweringShield)
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(first, 0)
+            .expect("replaced instant raise remains inspectable")
+            .state,
+        SequenceState::Interrupted
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(redundant, 0)
+            .unwrap()
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect::<Vec<_>>(),
+        [OrderType::LoweringShield, OrderType::WaitingShield]
+    );
+}
+
+#[test]
 fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     use crate::element::{Command, Posture};
     use crate::movement::{AbilityKind, ActiveAbility};
