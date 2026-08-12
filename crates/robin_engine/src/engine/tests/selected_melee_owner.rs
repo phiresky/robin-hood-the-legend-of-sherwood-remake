@@ -564,6 +564,115 @@ fn push_done_uses_original_aspect_scaled_rectangle() {
 }
 
 #[test]
+fn push_done_uses_ground_positions_but_warning_keeps_map_positions() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .position_iface_mut()
+        .set_position(WorldPoint3D::new(0.0, 50.0, 0.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .position_iface_mut()
+        .set_position(WorldPoint3D::new(0.0, 5.0, 2.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(0);
+    install_selected_melee(&mut engine, attacker, victim);
+
+    let mut assets = straight_warning_assets(0, 45);
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    let thrust = &mut profiles.hth_weapons[0].thrusts[SwordStrike::A as usize];
+    thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+    thrust.repulsion = 20;
+
+    let (_, warnings) =
+        super::super::melee::capture_strike_warnings(|| run_owner_walk(&mut engine, &assets));
+    assert!(
+        warnings.is_empty(),
+        "the START warning uses map Y, where elevation makes the front distance 47 > 45"
+    );
+    for _ in 0..3 {
+        run_owner_walk(&mut engine, &assets);
+    }
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+            }),
+        "the DONE effect uses ground Y, where the front distance is exactly 45"
+    );
+}
+
+#[test]
+fn push_done_flat_positions_match_warning_geometry() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .position_iface_mut()
+        .set_position(WorldPoint3D::new(0.0, 50.0, 0.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .position_iface_mut()
+        .set_position(WorldPoint3D::new(0.0, 5.0, 0.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(0);
+    install_selected_melee(&mut engine, attacker, victim);
+
+    let mut assets = straight_warning_assets(0, 45);
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    let thrust = &mut profiles.hth_weapons[0].thrusts[SwordStrike::A as usize];
+    thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+    thrust.repulsion = 20;
+
+    let (_, warnings) =
+        super::super::melee::capture_strike_warnings(|| run_owner_walk(&mut engine, &assets));
+    assert_eq!(warnings, vec![(attacker, victim)]);
+    for _ in 0..3 {
+        run_owner_walk(&mut engine, &assets);
+    }
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+            }),
+        "flat map and ground positions agree at the inclusive maximum range"
+    );
+}
+
+#[test]
 fn smalltalk_done_uses_ground_positions_for_back_hit_gate() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));

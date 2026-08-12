@@ -222,6 +222,7 @@ impl EngineInner {
                         attacker_id,
                         attacker_pos: (attacker_pos.x, attacker_pos.y),
                         attacker_elevation: attacker.position_iface().get_elevation(),
+                        position_space: PushStrikePositionSpace::Map,
                         dir_x,
                         dir_y,
                         min_distance: min_dist,
@@ -1495,16 +1496,18 @@ impl EngineInner {
                 let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
                 let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
                 let half_width = thrust.repulsion as f32 / 2.0;
-                let attacker_elevation = self
+                let attacker = self
                     .get_entity(attacker_id)
-                    .map(|e| e.position_iface().get_elevation())
-                    .unwrap_or(0.0);
+                    .unwrap_or_else(|| panic!("push-strike attacker {attacker_id:?} is missing"));
+                let attacker_elevation = attacker.position_iface().get_elevation();
+                let attacker_ground = attacker.ground_position();
                 collect_push_victims(
                     &self.world.entities,
                     &PushStrikeParams {
                         attacker_id,
-                        attacker_pos,
+                        attacker_pos: (attacker_ground.x, attacker_ground.y),
                         attacker_elevation,
+                        position_space: PushStrikePositionSpace::Ground,
                         dir_x,
                         dir_y,
                         min_distance: min_dist,

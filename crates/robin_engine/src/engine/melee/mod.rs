@@ -2169,11 +2169,18 @@ struct PushStrikeParams {
     attacker_id: EntityId,
     attacker_pos: (f32, f32),
     attacker_elevation: f32,
+    position_space: PushStrikePositionSpace,
     dir_x: f32,
     dir_y: f32,
     min_distance: f32,
     max_distance: f32,
     half_width: f32,
+}
+
+#[derive(Clone, Copy)]
+enum PushStrikePositionSpace {
+    Map,
+    Ground,
 }
 
 /// Collect possible victims for a push (rectangle) sword strike.
@@ -2191,6 +2198,7 @@ fn collect_push_victims(
         attacker_id,
         attacker_pos,
         attacker_elevation,
+        position_space,
         dir_x,
         dir_y,
         min_distance,
@@ -2229,10 +2237,21 @@ fn collect_push_victims(
         if (attacker_elevation - victim_elev).abs() > MAX_ELEVATION_SWORDFIGHT {
             continue;
         }
-        // Original's rectangle is projected from GetPositionMap().
-        let pos = entity.element_data().position_map();
-        let dx = pos.x - attacker_pos.0;
-        let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+        let (pos_x, pos_y) = match position_space {
+            // GetPossibleVictimsOfPushSwordStrike, used by WarnForStrike,
+            // projects from GetPositionMap(). ExecutePushSwordStrike's DONE
+            // effect instead projects from GetPositionGround().
+            PushStrikePositionSpace::Map => {
+                let map = entity.element_data().position_map();
+                (map.x, map.y)
+            }
+            PushStrikePositionSpace::Ground => {
+                let ground = entity.ground_position();
+                (ground.x, ground.y)
+            }
+        };
+        let dx = pos_x - attacker_pos.0;
+        let dy = (pos_y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         if dx.abs().max(dy.abs()) >= 150.0 {
             continue;
         }
