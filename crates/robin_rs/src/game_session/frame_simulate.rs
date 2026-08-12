@@ -157,19 +157,23 @@ async fn drive_scripted_modal_lanes(
     mut rendered: bool,
 ) -> bool {
     let auto_dismiss = mode == ScriptedModalMode::AutoDismiss;
+    let mut modal_ctx = ModalContext {
+        window,
+        renderer: &mut presentation.renderer,
+        cursor_res: &mut resources.cursor,
+        cursor_renderer: &mut presentation.sprites.cursor_renderer,
+        audio_backend: &mut audio.backend,
+        sample_loader: &audio.sample_loader,
+        menu_resources: &mut resources.menu,
+        replay_recorder: &mut runtime.replay_recorder,
+    };
     if auto_dismiss {
         drain_pending_dialogues(
             host,
-            window,
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
-            &mut audio.backend,
+            &mut modal_ctx,
             &mut resources.text,
             game,
             &resources.level_descriptors,
-            &mut resources.menu,
-            &mut runtime.replay_recorder,
             &mut frame.replay_modal_dismissals,
             true,
         )
@@ -187,18 +191,7 @@ async fn drive_scripted_modal_lanes(
             ui.active_modal = Some(ActiveModal::Dialogue(Box::new(batch)));
         }
         if ui.active_modal.is_some() {
-            let outcome = tick_active_modal(
-                &mut ui.active_modal,
-                host,
-                window,
-                &mut presentation.renderer,
-                &mut resources.cursor,
-                &mut presentation.sprites.cursor_renderer,
-                &mut audio.backend,
-                &audio.sample_loader,
-                &mut resources.menu,
-                &mut runtime.replay_recorder,
-            );
+            let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
             debug_assert_eq!(outcome, ActiveModalOutcome::None);
             rendered = true;
         }
@@ -207,32 +200,18 @@ async fn drive_scripted_modal_lanes(
     if !rendered && auto_dismiss {
         drain_pending_popup_scroll(
             host,
-            window,
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
-            &mut audio.backend,
-            &audio.sample_loader,
+            &mut modal_ctx,
             &mut resources.text,
             &resources.level_descriptors,
-            &mut resources.menu,
-            &mut runtime.replay_recorder,
             &mut frame.replay_modal_dismissals,
             manager.engine.frame_counter(),
         )
         .await;
         drain_pending_sherwood_stat(
             host,
-            window,
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
+            &mut modal_ctx,
             &manager.engine,
             profiles,
-            &mut audio.backend,
-            &audio.sample_loader,
-            &mut resources.menu,
-            &mut runtime.replay_recorder,
             &mut frame.replay_modal_dismissals,
         )
         .await;
@@ -240,10 +219,9 @@ async fn drive_scripted_modal_lanes(
         if ui.active_modal.is_none()
             && let Some(batch) = start_active_popup_scroll_batch(
                 host,
-                &mut presentation.renderer,
+                &mut modal_ctx,
                 &mut resources.text,
                 &resources.level_descriptors,
-                &mut resources.menu,
                 &mut frame.replay_modal_dismissals,
                 manager.engine.frame_counter(),
             )
@@ -253,27 +231,16 @@ async fn drive_scripted_modal_lanes(
         if ui.active_modal.is_none()
             && let Some(batch) = start_active_sherwood_report(
                 host,
+                &mut modal_ctx,
                 &manager.engine,
                 profiles,
-                &mut resources.menu,
                 &mut frame.replay_modal_dismissals,
             )
         {
             ui.active_modal = Some(ActiveModal::PopupScroll(Box::new(batch)));
         }
         if ui.active_modal.is_some() {
-            let outcome = tick_active_modal(
-                &mut ui.active_modal,
-                host,
-                window,
-                &mut presentation.renderer,
-                &mut resources.cursor,
-                &mut presentation.sprites.cursor_renderer,
-                &mut audio.backend,
-                &audio.sample_loader,
-                &mut resources.menu,
-                &mut runtime.replay_recorder,
-            );
+            let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
             debug_assert_eq!(outcome, ActiveModalOutcome::None);
             rendered = true;
         }
@@ -282,14 +249,9 @@ async fn drive_scripted_modal_lanes(
     if !rendered && auto_dismiss {
         drain_pending_debriefings(
             host,
-            window,
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
+            &mut modal_ctx,
             &mut resources.text,
             &resources.level_descriptors,
-            &resources.menu,
-            &mut runtime.replay_recorder,
             &mut frame.replay_modal_dismissals,
         )
         .await;
@@ -297,27 +259,16 @@ async fn drive_scripted_modal_lanes(
         if ui.active_modal.is_none()
             && let Some(batch) = start_active_debriefing_batch(
                 host,
+                &mut modal_ctx,
                 &mut resources.text,
                 &resources.level_descriptors,
-                &resources.menu,
                 &mut frame.replay_modal_dismissals,
             )
         {
             ui.active_modal = Some(ActiveModal::Debriefing(Box::new(batch)));
         }
         if ui.active_modal.is_some() {
-            let outcome = tick_active_modal(
-                &mut ui.active_modal,
-                host,
-                window,
-                &mut presentation.renderer,
-                &mut resources.cursor,
-                &mut presentation.sprites.cursor_renderer,
-                &mut audio.backend,
-                &audio.sample_loader,
-                &mut resources.menu,
-                &mut runtime.replay_recorder,
-            );
+            let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
             debug_assert_eq!(outcome, ActiveModalOutcome::None);
             rendered = true;
         }
@@ -379,18 +330,17 @@ fn drive_leave_mission_prompt(
     if ui.active_modal.is_none() {
         return rendered;
     }
-    let outcome = tick_active_modal(
-        &mut ui.active_modal,
-        host,
+    let mut modal_ctx = ModalContext {
         window,
-        &mut presentation.renderer,
-        &mut resources.cursor,
-        &mut presentation.sprites.cursor_renderer,
-        &mut audio.backend,
-        &audio.sample_loader,
-        &mut resources.menu,
-        &mut runtime.replay_recorder,
-    );
+        renderer: &mut presentation.renderer,
+        cursor_res: &mut resources.cursor,
+        cursor_renderer: &mut presentation.sprites.cursor_renderer,
+        audio_backend: &mut audio.backend,
+        sample_loader: &audio.sample_loader,
+        menu_resources: &mut resources.menu,
+        replay_recorder: &mut runtime.replay_recorder,
+    };
+    let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
     if outcome == ActiveModalOutcome::QuitMissionRequested {
         let cmd = PlayerCommand::QuitMissionRequested;
         dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);

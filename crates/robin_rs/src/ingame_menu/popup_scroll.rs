@@ -24,12 +24,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::gfx_types::Keycode;
 
+use crate::game_session::ModalContext;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::{FrameWnd, WidgetPicture};
 use robin_engine::resource_ids;
-use robin_engine::sound_config::SoundConfig;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TextFontTable, TextWidgetState, TooltipState,
@@ -87,13 +87,9 @@ fn needs_bkgnd_colorization(universal_frame: u32) -> bool {
     LAST_FRAME.load(Ordering::Relaxed) != universal_frame
 }
 
-/// Display a popup-scroll window with optional title, optional picture,
-/// and paginated body.
-///
-/// Blocks until the player dismisses the window (clicks OK, presses
-/// Enter, Space, or Escape).  When the body text overflows the text
-/// box, the function loops, showing further pages on each successive
-/// OK.
+/// Everything needed to show one popup-scroll window: the modal kind
+/// used for replay bookkeeping, the (optional) pre-recorded replay
+/// dismissal, and the content of the parchment itself.
 ///
 /// `picture` is the optional pre-loaded portrait / illustration shown
 /// in the top-right corner of the scroll.  `None` means no picture.
@@ -101,56 +97,75 @@ fn needs_bkgnd_colorization(universal_frame: u32) -> bool {
 /// the lookup — popup-text pictures live in the level `.res` (same
 /// file the text table came from), not in `DEFAULT.RES` which
 /// `IngameMenuResources` owns.
-#[allow(clippy::too_many_arguments)]
-pub async fn show_popup_scroll(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &mut IngameMenuResources,
+pub struct PopupScrollItem {
+    pub kind: engine_player_command::ModalKind,
+    pub title: Option<String>,
+    pub picture: Option<MenuSurface>,
+    pub body: String,
+    pub body_font_name: Option<String>,
+    pub align: TextAlign,
+    pub universal_frame: u32,
+    /// When present, `show_popup_scroll` short-circuits without
+    /// opening a window — the replay path reproduces the recorded
+    /// dismissal edge only.
+    pub replay_result: Option<engine_player_command::DialogResult>,
+}
+
+/// Display a popup-scroll window with optional title, optional picture,
+/// and paginated body.
+///
+/// Blocks until the player dismisses the window (clicks OK, presses
+/// Enter, Space, or Escape).  When the body text overflows the text
+/// box, the function loops, showing further pages on each successive
+/// OK.
+pub(crate) async fn show_popup_scroll(
+    ctx: &mut ModalContext<'_>,
     sound: &mut SoundManager,
-    _sound_cfg: &SoundConfig,
-    audio_backend: Option<&mut dyn AudioBackend>,
-    _sound_enabled: bool,
-    sample_loader: &SampleLoader,
-    mut cursor: Option<ModalCursor<'_>>,
-    title: Option<&str>,
-    picture: Option<MenuSurface>,
-    body: &str,
-    body_font_name: Option<&str>,
-    align: TextAlign,
-    universal_frame: u32,
-    replay_result: Option<engine_player_command::DialogResult>,
     modal_net: Option<super::ModalNet<'_>>,
+    item: PopupScrollItem,
 ) -> engine_player_command::DialogResult {
     // During replay, skip the interactive pages entirely — the window
     // is purely informational so the only thing to reproduce is the
     // dismissal edge. Matches what `show_dialogue` does.
-    if let Some(res) = replay_result {
+    if let Some(res) = item.replay_result {
         return res;
     }
 
+    let ModalContext {
+        window,
+        renderer,
+        cursor_res,
+        cursor_renderer,
+        audio_backend,
+        sample_loader,
+        menu_resources,
+        ..
+    } = ctx;
+    let resources = menu_resources
+        .as_mut()
+        .expect("show_popup_scroll requires ingame menu resources");
     let mut state = PopupScrollModalState::new(
-        event_pump,
+        window,
         renderer,
         resources,
-        title.map(str::to_string),
-        picture,
-        body.to_string(),
-        body_font_name.map(str::to_string),
-        align,
-        universal_frame,
+        item.title,
+        item.picture,
+        item.body,
+        item.body_font_name,
+        item.align,
+        item.universal_frame,
     );
-    let mut audio_slot = audio_backend;
+    let mut cursor =
+        super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
     loop {
         let result = state.tick(
-            event_pump,
+            window,
             renderer,
             resources,
             sound,
-            audio_slot
-                .as_mut()
-                .map(|b| &mut **b as &mut dyn AudioBackend),
-            sample_loader,
-            cursor.as_mut().map(|c| c.reborrow()),
+            audio_backend.as_mut().map(|b| b as &mut dyn AudioBackend),
+            *sample_loader,
+            Some(cursor.reborrow()),
             modal_net.as_ref(),
         );
         if let Some(result) = result {
