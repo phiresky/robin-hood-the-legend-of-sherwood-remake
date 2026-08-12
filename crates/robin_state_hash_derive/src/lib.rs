@@ -8,7 +8,9 @@
 //!
 //! The derived impl walks every field in declaration order, calling
 //! each field's `StateHash::state_hash`. For enums it hashes the
-//! discriminant first, then each variant's fields.
+//! discriminant first, then each variant's fields. Enum discriminants are
+//! deliberately hashed by declaration index: reordering variants changes
+//! hashes, which is fine because state hashes never persist across builds.
 //!
 //! Fields omitted from serialization via `#[serde(skip)]` or
 //! `#[serde(skip_serializing)]` are represented by an explicit skipped-field
@@ -80,8 +82,11 @@ fn enum_body(data: &DataEnum) -> syn::Result<TokenStream2> {
                         patterns.push(quote! { #id: _ });
                         calls.push(skipped_hash_call());
                     } else {
-                        patterns.push(quote! { #id });
-                        calls.push(hash_call(quote! { #id }));
+                        // Rename bindings so a field named e.g. `state` cannot
+                        // shadow the generated hasher parameter `state`.
+                        let binding = syn::Ident::new(&format!("__f_{id}"), id.span());
+                        patterns.push(quote! { #id: #binding });
+                        calls.push(hash_call(quote! { #binding }));
                     }
                 }
                 quote! {

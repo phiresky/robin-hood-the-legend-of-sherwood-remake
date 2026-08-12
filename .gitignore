@@ -6,7 +6,8 @@
 /android/build/
 /android/app/build/
 /android/assets/Data/datadir.bin
-/original-code/
+# no trailing slash: in worktrees this is a symlink to the parent checkout
+/original-code
 /merge-claude-worktrees
 
 # Editor / IDE
@@ -52,14 +53,16 @@
 
 # Local API credentials
 /concept-maps/.env
-/original-code
 
+__pycache__/
 
 # temporary
 
+/extra-content/
+/prompt.md
+/todo-tmp.md
 /parity-hang-diagnostics
-/parity-random-save-replays-60s-15x
-/parity-random-save-replays
+/parity-random-save-replays*
 /parity-save-replays
 /concept-maps
 /factorio-mods

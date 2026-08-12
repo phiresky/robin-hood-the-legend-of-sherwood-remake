@@ -28,15 +28,12 @@ web-time = "1"
 fastrand = "2"
 bitflags = { version = "2", features = ["serde"] }
 num_enum = "0.7"
-anyhow = "1"
 strum = "0.28.0"
 strum_macros = "0.28.0"
-byteorder = "1"
 md5_crate = { package = "md-5", version = "0.11" }
 geo = { version = "0.33", features = ["serde"] }
 robin_util = { path = "../robin_util" }
 robin_state_hash_derive = { path = "../robin_state_hash_derive" }
-bytemuck = "1"
 nonmax = { version = "0.5", features = ["serde"] }
 bitcode = { version = "0.6", features = ["serde"] }
 bincode = { version = "2", features = ["serde"] }

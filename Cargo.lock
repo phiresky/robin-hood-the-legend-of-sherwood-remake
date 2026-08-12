@@ -3538,12 +3538,9 @@ dependencies = [
 name = "robin_engine"
 version = "0.0.0"
 dependencies = [
- "anyhow",
  "bincode",
  "bitcode",
  "bitflags 2.13.1",
- "bytemuck",
- "byteorder",
  "enum-map",
  "fastrand",
  "geo",

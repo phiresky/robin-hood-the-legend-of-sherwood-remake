@@ -171,7 +171,6 @@ pub mod debug_stub;
 pub mod draw_manager;
 pub mod focus_manager;
 pub mod font;
-pub mod font_manager;
 pub mod game;
 pub mod game_input;
 pub mod game_render;
