@@ -3,6 +3,28 @@
 //! Extracted from the original `melee.rs` mega-file.
 
 use super::*;
+
+fn strike_effect_debug_matches(
+    frame: u32,
+    attacker_creation_order: u32,
+    victim_creation_order: u32,
+) -> bool {
+    if std::env::var_os("PARITY_DEBUG_STRIKE_EFFECT").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for strike-effect diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_STRIKE_EFFECT_FRAME").is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_ATTACKER_CREATION_ORDER")
+            .is_none_or(|expected| expected == attacker_creation_order)
+        && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_VICTIM_CREATION_ORDER")
+            .is_none_or(|expected| expected == victim_creation_order)
+}
 use crate::combat::{self};
 use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::profiles::WeaponThrustKind;
@@ -502,6 +524,15 @@ impl EngineInner {
             crate::sprite::FrameProgression::Default,
             false,
         );
+        let (current_frame, frame_count, action_done_frame, action_done_counter) = {
+            let sprite = &entity.element_data().sprite;
+            (
+                sprite.current_frame,
+                sprite.frame_count,
+                sprite.action_done_frame,
+                sprite.action_done_counter,
+            )
+        };
         tracing::trace!(
             "tick_straight_melee_for: entity={} order_id={} strike={:?} anim={:?} dir={} motion={:?}",
             attacker_id.index(),
@@ -517,6 +548,17 @@ impl EngineInner {
             motion,
             crate::sprite::MotionState::Terminated | crate::sprite::MotionState::Aborted
         );
+
+        let frame = self.control.frame_counter;
+        let attacker_creation_order = self.world.original_creation_order(attacker_id);
+        let victim_creation_order = self.world.original_creation_order(target_id);
+        if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
+            eprintln!(
+                "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=pulse strike={strike:?} animation={animation:?} motion={motion:?} started={started} hit={hit} completed={completed} sprite_frame={current_frame} frame_count={frame_count} action_done_frame={action_done_frame} action_done_counter={action_done_counter}]",
+                attacker_id.index(),
+                target_id.index(),
+            );
+        }
 
         if started {
             self.begin_selected_melee_motion(sim, assets, attacker_id);
@@ -577,6 +619,35 @@ impl EngineInner {
         let in_range = profile
             .map(|profile| combat::is_strike_in_range(profile, strike, distance))
             .unwrap_or(distance <= 50.0);
+        let frame = self.control.frame_counter;
+        let attacker_creation_order = self.world.original_creation_order(attacker_id);
+        let victim_creation_order = self.world.original_creation_order(victim_id);
+        if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
+            let attacker = self.expect_entity(attacker_id, "strike-effect diagnostic attacker");
+            let victim = self.expect_entity(victim_id, "strike-effect diagnostic victim");
+            let attacker_direction = attacker.element_data().direction();
+            let victim_direction = direction_to(&self.world.entities, attacker_id, victim_id);
+            let angle_delta = (i16::from(attacker_direction) - victim_direction).rem_euclid(16);
+            let attacker_has_victim = attacker
+                .human_data()
+                .is_some_and(|human| human.opponents.contains(&victim_id));
+            let victim_has_attacker = victim
+                .human_data()
+                .is_some_and(|human| human.opponents.contains(&attacker_id));
+            let non_mutual = attacker_has_victim != victim_has_attacker;
+            let already_hit = attacker
+                .human_data()
+                .is_some_and(|human| human.sword_sweep.victims.contains(&victim_id));
+            let queued = in_range && profile_idx.is_some();
+            eprintln!(
+                "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=candidate strike={strike:?} attacker_sector={:?} victim_sector={:?} attacker_direction={attacker_direction} victim_direction={victim_direction} angle_delta={angle_delta} distance_bits={:#010x} in_range={in_range} attacker_has_victim={attacker_has_victim} victim_has_attacker={victim_has_attacker} non_mutual={non_mutual} already_hit={already_hit} profile_idx={profile_idx:?} queue={queued}]",
+                attacker_id.index(),
+                victim_id.index(),
+                attacker.element_data().sector(),
+                victim.element_data().sector(),
+                distance.to_bits(),
+            );
+        }
         if in_range {
             if let Some(profile_idx) = profile_idx {
                 self.queue_sword_damage(sim, assets, victim_id, attacker_id, strike, profile_idx);
