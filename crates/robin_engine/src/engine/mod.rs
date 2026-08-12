@@ -1192,6 +1192,19 @@ impl EngineInner {
         self.world.entities.get(id)
     }
 
+    /// Get a reference to an entity that is required to exist at this point
+    /// in the simulation (e.g. an active melee participant or a live AI
+    /// target established earlier in the same logic flow).  Panics with the
+    /// given context when the entity is missing: a vanished required entity
+    /// indicates corrupted sim state or a port bug, and must not silently
+    /// decay into a default gameplay decision.
+    #[track_caller]
+    pub(crate) fn expect_entity<I: Into<EntityId>>(&self, id: I, ctx: &str) -> &Entity {
+        let id = id.into();
+        self.get_entity(id)
+            .unwrap_or_else(|| panic!("required entity {id:?} missing ({ctx})"))
+    }
+
     /// Return the authoritative Original `RHElement::mulCreationOrder` for
     /// an entity.
     ///
@@ -4476,6 +4489,16 @@ impl EngineInner {
     /// Get a mutable reference to an entity by ID.
     pub(crate) fn get_entity_mut<I: Into<EntityId>>(&mut self, id: I) -> Option<&mut Entity> {
         self.world.entities.get_mut(id)
+    }
+
+    /// Mutable counterpart of [`Self::expect_entity`]: the entity is required
+    /// to exist and its absence is a sim-state corruption, not a normal
+    /// condition.
+    #[track_caller]
+    pub(crate) fn expect_entity_mut<I: Into<EntityId>>(&mut self, id: I, ctx: &str) -> &mut Entity {
+        let id = id.into();
+        self.get_entity_mut(id)
+            .unwrap_or_else(|| panic!("required entity {id:?} missing ({ctx})"))
     }
 
     /// Remove an entity. Leaves a None hole (IDs are stable).

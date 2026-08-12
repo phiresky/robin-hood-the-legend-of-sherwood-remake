@@ -520,6 +520,23 @@ impl AiContext {
         self.entity_views.get(&handle)
     }
 
+    /// Look up a handle that the calling logic has already established as a
+    /// live participant (an active brawl partner, a primary target mid-
+    /// engagement, a loot-list entry, …).  Such a handle failing to resolve
+    /// means the snapshot lost a required entity — corrupted sim state or a
+    /// port bug — so this panics instead of letting the caller silently take
+    /// a default gameplay branch.  Callers must still guard the handle-`0`
+    /// "no entity" sentinel themselves where "none" is a legal state.
+    #[track_caller]
+    pub fn expect_entity_view(
+        &self,
+        handle: u32,
+        ctx: &str,
+    ) -> &crate::ai_entity_view::AiEntityView {
+        self.entity_view(handle)
+            .unwrap_or_else(|| panic!("required entity view for handle {handle} missing ({ctx})"))
+    }
+
     /// Resolve a raw legacy human/object handle through the live entity-view
     /// snapshot without guessing its typed [`crate::element::EntityId`] kind.
     pub fn entity_id(&self, handle: u32) -> Option<crate::element::EntityId> {
