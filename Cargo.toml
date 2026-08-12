@@ -10,22 +10,6 @@ members = [
     "crates/robin_assets",
     "crates/robin_state_hash_derive",
 ]
-[workspace.dependencies]
-windows = "0.62"
-windows-core = "0.62"
-ash = "0.38"
-spirv-cross2 = { version = "0.6", default-features = false }
-objc2-metal = { version = "0.3" }
-objc2 = { version = "0.6" }
-glow = { version = "0.16.0" }
-glfw = { version = "0.59.0" }
-wgpu = { version = "30", default-features = false }
-wgpu-types = { version = "30" }
-clap = { version = "=4.3.0", features = ["derive"] }
-rayon = { version = "1.10.0" }
-gpu-allocator = { version = "0.28.0", default-features = false, features = ["hashbrown"] }
-image = { version = "0.25.8", features = ["tga", "jpeg", "png", "bmp"], default-features = false }
-
 [patch.crates-io]
 # proc-macro-error2 2.0.1 re-exports a private `extern crate proc_macro`,
 # which is a future hard error. Keep the same crate/version and apply the

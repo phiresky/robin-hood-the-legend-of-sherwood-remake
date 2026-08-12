@@ -16,18 +16,11 @@
 //!
 //! # Scope
 //!
-//! [`EngineInner::generate_transition`] is the public entry point.  A
-//! future integration task will wire this into `arbitrate_instruct`,
-//! replacing (and deleting) the narrower
-//! [`EngineInner::auto_leave_disguise_if_needed`] helper in
-//! [`crate::engine::tick`].  For now this module is self-contained and
-//! exercised only by its own unit tests.
-
-// The entire module is not yet wired into `arbitrate_instruct` — the
-// follow-up integration task will flip that switch.  Suppress
-// unused-code lints for now so the dead-code warnings don't drown out
-// real issues during development.
-#![allow(dead_code)]
+//! [`EngineInner::generate_transition`] is the public entry point and is
+//! wired into the live instruct/sequence pipeline: it runs from sequence
+//! arbitration and phase handling as well as script synchronisation, so
+//! transitions here are exercised in normal gameplay in addition to this
+//! module's unit tests.
 
 use crate::element::{ActionState, Command, EntityId, Posture};
 use crate::element_kinds::{
@@ -55,21 +48,35 @@ struct TransitionCtx {
     /// command.
     movement_action: Option<OrderType>,
     /// The actor's current posture.
+    // TODO: never read by any live branch yet; needs C++-comparison
+    // triage before deciding whether a missing parity branch should
+    // consume it or the field should be dropped.
+    #[allow(dead_code)]
     actor_posture: Posture,
     /// The actor's current action state.
+    // TODO: unread pending C++-comparison triage (see actor_posture).
+    #[allow(dead_code)]
     actor_action_state: ActionState,
     /// The posture the actor is scheduled to have once transition
     /// orders finish.
+    // TODO: unread pending C++-comparison triage (see actor_posture).
+    #[allow(dead_code)]
     posture_after_transition: Posture,
     /// The action state scheduled after transition orders finish.
+    // TODO: unread pending C++-comparison triage (see actor_posture).
+    #[allow(dead_code)]
     action_state_after_transition: ActionState,
     /// Whether this element is part of a movement chain — movement
     /// sub-elements inherit their transition orders from the
     /// surrounding movement sequence, so a few action-transition
     /// branches skip the redundant queue on them.
+    // TODO: unread pending C++-comparison triage (see actor_posture).
+    #[allow(dead_code)]
     is_part_of_movement: bool,
     /// Soldier attentive flag.  Only meaningful for soldier actors;
     /// defaults to `false` for everyone else.
+    // TODO: unread pending C++-comparison triage (see actor_posture).
+    #[allow(dead_code)]
     attentive: bool,
     /// For PC `WAIT` in a force-crouched sector: overrides the default
     /// upright flag set with crouched flags.  Plumbed via the context
@@ -2101,11 +2108,6 @@ impl EngineInner {
     ///
     /// Returns `false` when the transition is impossible (caller should
     /// mark the element `Impossible`) and `true` otherwise.
-    ///
-    /// Not yet wired into `arbitrate_instruct`.  A follow-up task will
-    /// do that and delete the narrower
-    /// [`EngineInner::auto_leave_disguise_if_needed`] which this fully
-    /// subsumes.
     pub(crate) fn generate_transition(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

@@ -59,6 +59,13 @@ struct Nested {
     list: Vec<u8>,
 }
 
+// A struct-variant field named `state` must not shadow the generated
+// hasher parameter; the derive renames variant bindings to avoid that.
+#[derive(StateHash)]
+enum ShadowProne {
+    Named { state: u32, other: u32 },
+}
+
 #[derive(StateHash)]
 enum Mood {
     Happy,
@@ -198,6 +205,15 @@ fn nested_struct() {
         list: vec![1, 2, 3],
     };
     assert_eq!(compute(&a), compute(&b));
+}
+
+#[test]
+fn struct_variant_field_named_state_compiles_and_hashes() {
+    let a = ShadowProne::Named { state: 1, other: 2 };
+    let b = ShadowProne::Named { state: 1, other: 2 };
+    let c = ShadowProne::Named { state: 9, other: 2 };
+    assert_eq!(compute(&a), compute(&b));
+    assert_ne!(compute(&a), compute(&c));
 }
 
 #[test]
