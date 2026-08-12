@@ -1117,7 +1117,7 @@ impl EngineInner {
 
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-helpers"))]
         self.backfill_test_entity_identity(id);
         id
     }
@@ -1136,7 +1136,7 @@ impl EngineInner {
     /// A fixture that seeded its own campaign roster is adopted rather than
     /// extended: the PC claims the first unclaimed description carrying its
     /// character profile, so a seeded ammo or coma status stays reachable.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-helpers"))]
     fn backfill_test_entity_identity(&mut self, id: EntityId) {
         let handle = id.index();
         match self.world.entities.get_mut(id) {

@@ -1746,9 +1746,26 @@ fn pattern_to_command(pattern: MouseWayPattern) -> Option<Command> {
     })
 }
 
+// ─── Tests ──────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robin_engine::campaign::Campaign;
+    use robin_engine::element::{
+        ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind, HumanData,
+        NpcData, ObjectData, PcData, SoldierData,
+    };
+    use robin_engine::engine::{HostDisplayState, InputState};
+
+    /// `PlayerCommand` intentionally has no `PartialEq` (it carries f32
+    /// payloads); command sequences are compared via their exhaustive
+    /// `Debug` form instead.
+    macro_rules! assert_cmds {
+        ($left:expr, $right:expr) => {
+            assert_eq!(format!("{:?}", $left), format!("{:?}", $right))
+        };
+    }
 
     #[test]
     fn sword_seek_distance_distinguishes_simple_click_from_thrust_a_gesture() {
@@ -1764,5 +1781,756 @@ mod tests {
             sword_seek_distance_for_weapon(&weapon, Command::SwordstrikeThrustA, false),
             54.0
         );
+    }
+
+    fn fixture() -> (Engine, LevelAssets, Host) {
+        let mut assets = LevelAssets::new();
+        let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
+            .expect("test engine");
+        let host = Host::scratch(800.0, 600.0);
+        (engine, assets, host)
+    }
+
+    /// A live, selectable PC at `(x, y)`. Zero-size sprites hit-test as a
+    /// 20-unit radius around the entity position, so clicks at the exact
+    /// position always register.
+    fn add_pc(engine: &mut Engine, x: f32, y: f32, posture: Posture) -> EntityId {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(x, y));
+        // Settle the position interface so the freshly-placed PC does
+        // not read as in motion (position != old-position after a raw
+        // position write).
+        element.sprite.position_iface.settle_current_position();
+        engine.test_add_entity(engine_element::Entity::Pc(ActorPc {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 100,
+                playable: true,
+                ..Default::default()
+            },
+        }))
+    }
+
+    fn add_soldier(engine: &mut Engine, x: f32, y: f32, life_points: i16) -> EntityId {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(x, y));
+        engine.test_add_entity(engine_element::Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                life_points,
+                ..Default::default()
+            },
+            soldier: SoldierData::default(),
+        }))
+    }
+
+    fn add_bonus(engine: &mut Engine, x: f32, y: f32) -> EntityId {
+        let mut element = ElementData {
+            kind: ElementKind::ObjectBonus,
+            active: true,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(x, y));
+        engine.test_add_entity(engine_element::Entity::Bonus(ElementBonus {
+            element,
+            object: ObjectData::default(),
+        }))
+    }
+
+    fn apply(engine: &mut Engine, assets: &LevelAssets, cmd: PlayerCommand) {
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(&mut display, &mut input, assets, &cmd);
+    }
+
+    fn select(engine: &mut Engine, assets: &LevelAssets, pc_id: EntityId) {
+        apply(
+            engine,
+            assets,
+            PlayerCommand::SelectPc {
+                pc_id,
+                append: false,
+            },
+        );
+    }
+
+    fn arm_action(engine: &mut Engine, assets: &LevelAssets, pc_id: EntityId, action: Action) {
+        apply(
+            engine,
+            assets,
+            PlayerCommand::SelectResolvedAction { pc_id, action },
+        );
+    }
+
+    // ── pattern_to_command ──
+
+    #[test]
+    fn pattern_to_command_maps_every_thrust() {
+        let cases = [
+            (MouseWayPattern::ThrustA, Command::SwordstrikeThrustA),
+            (MouseWayPattern::ThrustB, Command::SwordstrikeThrustB),
+            (MouseWayPattern::ThrustC, Command::SwordstrikeThrustC),
+            (MouseWayPattern::ThrustD, Command::SwordstrikeThrustD),
+            (MouseWayPattern::ThrustE, Command::SwordstrikeThrustE),
+            (MouseWayPattern::ThrustF, Command::SwordstrikeThrustF),
+            (MouseWayPattern::ThrustG, Command::SwordstrikeThrustG),
+            (MouseWayPattern::ThrustH, Command::SwordstrikeThrustH),
+            (MouseWayPattern::ThrustI, Command::SwordstrikeThrustI),
+        ];
+        for (pattern, expected) in cases {
+            assert_eq!(pattern_to_command(pattern), Some(expected));
+        }
+    }
+
+    #[test]
+    fn pattern_to_command_rejects_non_strikes() {
+        assert_eq!(pattern_to_command(MouseWayPattern::None), None);
+        assert_eq!(pattern_to_command(MouseWayPattern::Attempt), None);
+    }
+
+    // ── resolve_left_click ──
+
+    #[test]
+    fn left_click_empty_ground_without_selection_is_noop_and_clears_cache() {
+        let (engine, assets, mut host) = fixture();
+        host.input.element_old_click = Some(EntityId::Pc(robin_engine::entity_id::PcId(3)));
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(100.0, 100.0),
+            false,
+            false,
+            false,
+        );
+
+        assert!(cmds.is_empty());
+        assert_eq!(host.input.element_old_click, None);
+    }
+
+    #[test]
+    fn left_click_on_pc_without_selection_selects_it() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 50.0, 50.0, Posture::Upright);
+        host.draw_order.ids.push(pc);
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(50.0, 50.0),
+            false,
+            false,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![PlayerCommand::SelectPc {
+                pc_id: pc,
+                append: false
+            }]
+        );
+        assert_eq!(host.input.element_old_click, Some(pc));
+    }
+
+    #[test]
+    fn left_click_shift_appends_to_selection() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 50.0, 50.0, Posture::Upright);
+        host.draw_order.ids.push(pc);
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(50.0, 50.0),
+            true,
+            false,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![PlayerCommand::SelectPc {
+                pc_id: pc,
+                append: true
+            }]
+        );
+    }
+
+    #[test]
+    fn left_click_ctrl_on_unselected_pc_toggles_selection() {
+        let (mut engine, mut assets, mut host) = fixture();
+        let selected = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let other = add_pc(&mut engine, 200.0, 200.0, Posture::Upright);
+        host.draw_order.ids.extend([selected, other]);
+        select(&mut engine, &mut assets, selected);
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(200.0, 200.0),
+            false,
+            true,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![PlayerCommand::TogglePcSelection { pc_id: other }]
+        );
+        assert_eq!(host.input.element_old_click, Some(other));
+    }
+
+    #[test]
+    fn left_click_ground_with_selection_issues_group_move() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        host.input.valid_position_for_move = true;
+        host.input.selected_sector_idx =
+            Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap());
+
+        let dest = MapPoint::new(300.0, 300.0);
+        let cmds = resolve_left_click(&mut host, &engine, &assets, dest, false, false, false);
+
+        assert_cmds!(
+            cmds,
+            vec![PlayerCommand::GroupMove {
+                actors: vec![pc],
+                destination: dest,
+                running: false,
+                show_marker: true,
+                goal_override: None,
+            }]
+        );
+        assert_eq!(host.input.element_old_click, None);
+    }
+
+    #[test]
+    fn double_click_ground_not_recording_accelerates_instead_of_moving() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        host.input.valid_position_for_move = true;
+        host.input.selected_sector_idx =
+            Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap());
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            true,
+        );
+
+        assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
+    }
+
+    #[test]
+    fn left_click_ground_without_valid_move_position_is_noop() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        // valid_position_for_move stays false.
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            false,
+        );
+
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn double_click_with_unavailable_armed_action_is_swallowed() {
+        // No character profiles exist in the fixture, so any armed
+        // action fails the availability pre-check and the double-click
+        // must be dropped before dispatch.
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Whistle);
+        assert_eq!(
+            engine.selected_action_for_seat(host.transport.local_seat),
+            Action::Whistle
+        );
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            true,
+        );
+
+        assert!(cmds.is_empty());
+    }
+
+    // ── resolve_action_left_click (via resolve_left_click) ──
+
+    #[test]
+    fn whistle_click_launches_and_disarms() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Whistle);
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: pc,
+                    command: Command::WhistleCmd,
+                },
+                PlayerCommand::UnselectAllActions,
+            ]
+        );
+    }
+
+    #[test]
+    fn eat_click_launches_eat_ability() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Eat);
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: pc,
+                    command: Command::EatCmd,
+                },
+                PlayerCommand::UnselectAllActions,
+            ]
+        );
+    }
+
+    #[test]
+    fn listen_click_enters_listen_from_inactive_phase() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Listen);
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: pc,
+                    command: Command::EnterListen,
+                },
+                PlayerCommand::UnselectAllActions,
+            ]
+        );
+    }
+
+    #[test]
+    fn purse_click_is_gated_on_valid_trajectory() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Purse);
+        host.valid_trajectory = false;
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            false,
+        );
+
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn net_click_is_gated_on_valid_trajectory() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Net);
+        host.valid_trajectory = false;
+
+        let cmds = resolve_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            false,
+            false,
+            false,
+        );
+
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn beggar_double_click_while_simulating_accelerates() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::SimulatingBeggar);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Beggar);
+        // The double-click availability pre-check would swallow this
+        // (no profiles), so call the action resolver directly.
+        let seat = host.transport.local_seat;
+        let cmds = resolve_action_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            seat,
+            Action::Beggar,
+            true,
+        );
+
+        assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
+    }
+
+    #[test]
+    fn beggar_click_from_default_posture_enters_beggar() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        let seat = host.transport.local_seat;
+
+        let cmds = resolve_action_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            seat,
+            Action::Beggar,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: pc,
+                    command: Command::EnterBeggar,
+                },
+                PlayerCommand::UnselectAllActions,
+            ]
+        );
+    }
+
+    #[test]
+    fn help_to_climb_click_from_default_posture_launches() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        let seat = host.transport.local_seat;
+
+        let cmds = resolve_action_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            seat,
+            Action::HelpToClimb,
+            false,
+        );
+
+        assert_cmds!(
+            cmds,
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: pc,
+                    command: Command::EnterHelpingClimb,
+                },
+                PlayerCommand::UnselectAllActions,
+            ]
+        );
+    }
+
+    #[test]
+    fn help_to_climb_click_while_helping_falls_through_to_walk() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::HelpingToClimb);
+        select(&mut engine, &assets, pc);
+        let seat = host.transport.local_seat;
+
+        let cmds = resolve_action_left_click(
+            &mut host,
+            &engine,
+            &assets,
+            MapPoint::new(300.0, 300.0),
+            seat,
+            Action::HelpToClimb,
+            false,
+        );
+
+        assert!(cmds.is_empty());
+    }
+
+    // ── resolve_right_click / resolve_right_click_stop ──
+
+    #[test]
+    fn right_click_without_selection_is_noop() {
+        let (engine, _assets, host) = fixture();
+        assert!(resolve_right_click(&engine, host.transport.local_seat).is_empty());
+    }
+
+    #[test]
+    fn right_click_stops_idle_upright_pc() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+
+        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        assert_cmds!(cmds, vec![PlayerCommand::StopPc { pc_id: pc }]);
+    }
+
+    #[test]
+    fn right_click_drops_carried_corpse_when_idle() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::CarryingCorpse);
+        select(&mut engine, &assets, pc);
+
+        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        assert_cmds!(
+            cmds,
+            vec![PlayerCommand::LaunchSelfAbility {
+                actor: pc,
+                command: Command::DropCorpse,
+            }]
+        );
+    }
+
+    #[test]
+    fn right_click_climbs_down_from_shoulders_when_idle() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::OnShoulders);
+        select(&mut engine, &assets, pc);
+
+        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        assert_cmds!(
+            cmds,
+            vec![PlayerCommand::LaunchSelfAbility {
+                actor: pc,
+                command: Command::ClimbDownFromShoulders,
+            }]
+        );
+    }
+
+    #[test]
+    fn right_click_ignores_idle_climb_helper() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::HelpingToClimb);
+        select(&mut engine, &assets, pc);
+
+        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn right_click_with_generic_action_armed_only_disarms() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Apple);
+
+        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        assert_cmds!(cmds, vec![PlayerCommand::UnselectAllActions]);
+    }
+
+    #[test]
+    fn right_click_with_hit_action_stops_then_disarms() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Hit);
+
+        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        assert_cmds!(
+            cmds,
+            vec![
+                PlayerCommand::StopPc { pc_id: pc },
+                PlayerCommand::UnselectAllActions,
+            ]
+        );
+    }
+
+    #[test]
+    fn right_click_with_bow_armed_and_empty_queue_disarms() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Bow);
+
+        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        assert_cmds!(cmds, vec![PlayerCommand::UnselectAllActions]);
+    }
+
+    // ── resolve_action_drag ──
+
+    #[test]
+    fn action_drag_without_armed_action_is_noop() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+
+        let cmds = resolve_action_drag(&mut host, &engine, &assets, MapPoint::new(50.0, 50.0));
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn action_drag_respects_ignore_latch() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Hit);
+        host.input.ignore_next_drag = true;
+
+        let cmds = resolve_action_drag(&mut host, &engine, &assets, MapPoint::new(50.0, 50.0));
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn action_drag_clears_stale_target_when_focus_lost() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        arm_action(&mut engine, &assets, pc, Action::Hit);
+        host.input.target_drag = Some(pc);
+
+        // Nothing focusable under the cursor: the stale drag target
+        // must be cleared so a later re-hover can re-fire.
+        let cmds = resolve_action_drag(&mut host, &engine, &assets, MapPoint::new(700.0, 700.0));
+        assert!(cmds.is_empty());
+        assert_eq!(host.input.target_drag, None);
+    }
+
+    // ── resolve_swordfight ──
+
+    #[test]
+    fn swordfight_resolution_requires_engaged_selection() {
+        let (mut engine, assets, mut host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+
+        let cmds = resolve_swordfight(&mut host, &engine, &assets, MapPoint::new(50.0, 50.0), true);
+        assert!(cmds.is_empty());
+    }
+
+    // ── determine_use_command ──
+
+    #[test]
+    fn use_command_on_missing_target_is_none() {
+        let (mut engine, assets, _host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let ghost = EntityId::Soldier(robin_engine::entity_id::SoldierId(99));
+
+        assert_eq!(determine_use_command(&engine, &assets, pc, ghost), None);
+    }
+
+    #[test]
+    fn use_command_on_dead_soldier_is_search() {
+        let (mut engine, assets, _host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let corpse = add_soldier(&mut engine, 60.0, 60.0, 0);
+
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc, corpse),
+            Some(Command::SearchCmd)
+        );
+    }
+
+    #[test]
+    fn use_command_on_bonus_is_take() {
+        let (mut engine, assets, _host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let bonus = add_bonus(&mut engine, 60.0, 60.0);
+
+        assert_eq!(
+            determine_use_command(&engine, &assets, pc, bonus),
+            Some(Command::Take)
+        );
+    }
+
+    // ── resolve_double_click_repeat ──
+
+    #[test]
+    fn double_click_repeat_on_soldier_accelerates_when_not_recording() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        let soldier = add_soldier(&mut engine, 60.0, 60.0, 10);
+
+        let cmds =
+            resolve_double_click_repeat(&engine, &assets, soldier, host.transport.local_seat);
+        assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
+    }
+
+    #[test]
+    fn double_click_repeat_on_missing_target_is_noop() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        select(&mut engine, &assets, pc);
+        let ghost = EntityId::Soldier(robin_engine::entity_id::SoldierId(99));
+
+        let cmds = resolve_double_click_repeat(&engine, &assets, ghost, host.transport.local_seat);
+        assert!(cmds.is_empty());
     }
 }

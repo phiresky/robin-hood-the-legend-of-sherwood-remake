@@ -3346,6 +3346,15 @@ impl Engine {
     // `robin_rs` enables the feature in its `[dev-dependencies]`
     // block so its round-trip tests compile.
 
+    /// Insert a fully-formed entity into a test engine. Input-resolution
+    /// tests need live entities to click on; the blank `new_for_test`
+    /// level has none and the production spawn path requires proto data.
+    #[cfg(feature = "test-helpers")]
+    #[doc(hidden)]
+    pub fn test_add_entity(&mut self, entity: crate::element::Entity) -> EntityId {
+        self.inner.add_entity(entity)
+    }
+
     #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub fn test_set_mission_flags(&mut self, quit_won: bool, quit_lost: bool, mission_won: bool) {
