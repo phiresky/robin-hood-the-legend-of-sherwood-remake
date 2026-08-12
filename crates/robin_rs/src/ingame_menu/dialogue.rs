@@ -849,46 +849,52 @@ pub struct BatchDialogue<'a> {
 /// early-exit on Abort.  Returns one `DialogResult` per entry so
 /// callers can record each dismissal to a replay recorder.
 ///
-/// Re-borrowing the shared `audio` and `cursor` each iteration keeps
-/// the inner `show_dialogue` call's borrow scope short so the outer
-/// batch function can loop without aliasing conflicts.
-#[allow(clippy::too_many_arguments)]
-pub async fn show_dialogue_batch(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &mut IngameMenuResources,
+/// Re-borrowing the shared audio backend and cursor each iteration
+/// keeps the inner `show_dialogue` call's borrow scope short so the
+/// outer batch function can loop without aliasing conflicts.
+pub(crate) async fn show_dialogue_batch(
+    ctx: &mut crate::game_session::ModalContext<'_>,
     sound: &mut SoundManager,
-    sound_config: &robin_engine::sound_config::SoundConfig,
-    mut audio: Option<&mut dyn AudioBackend>,
-    sound_enabled: bool,
-    mut cursor: Option<ModalCursor<'_>>,
     entries: &[BatchDialogue<'_>],
 ) -> Vec<DialogResult> {
+    let crate::game_session::ModalContext {
+        window,
+        renderer,
+        cursor_res,
+        cursor_renderer,
+        audio_backend,
+        menu_resources,
+        ..
+    } = ctx;
+    let resources = menu_resources
+        .as_mut()
+        .expect("show_dialogue_batch requires ingame menu resources");
+    let sound_config = robin_engine::sound_config::SoundConfig::default();
+    let sound_enabled = audio_backend.is_some();
+    let mut cursor =
+        super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
     let mut results = Vec::with_capacity(entries.len());
     for entry in entries {
         if entry.sentences.is_empty() {
             results.push(DialogResult::Completed);
             continue;
         }
-        // Explicit reborrow: `audio.as_mut().map(|b| &mut **b)` yields
-        // a fresh `Option<&mut dyn AudioBackend>` whose borrow ends the
-        // moment `show_dialogue` returns, so the next iteration can
-        // borrow `audio` again.  `as_deref_mut()` on the loop variable
-        // confuses the borrow checker here because the inferred
-        // lifetime escapes into the function-return slot.
+        // Explicit reborrow each iteration yields a fresh
+        // `Option<&mut dyn AudioBackend>` whose borrow ends the moment
+        // `show_dialogue` returns, so the next iteration can borrow
+        // the backend again.
         let audio_ref: Option<&mut dyn AudioBackend> =
-            audio.as_mut().map(|b| &mut **b as &mut dyn AudioBackend);
-        let cursor_ref = cursor.as_mut().map(|c| c.reborrow());
+            audio_backend.as_mut().map(|b| b as &mut dyn AudioBackend);
         let modal_net = entry.modal_net.as_ref().map(|net| net.reborrow());
         let result = show_dialogue(
-            event_pump,
+            window,
             renderer,
             resources,
             sound,
-            sound_config,
+            &sound_config,
             audio_ref,
             sound_enabled,
-            cursor_ref,
+            Some(cursor.reborrow()),
             entry.sentences,
             entry.replay_result,
             modal_net,

@@ -46,16 +46,17 @@ pub mod yesno;
 
 pub use buy_blazons::{BuyBlazonsOutcome, show_buy_blazons};
 pub use debriefing::{DebriefingModalState, DebriefingOutcome, show_debriefing};
+pub(crate) use dialogue::show_dialogue_batch;
 pub use dialogue::{
     BatchDialogue, DIALOGUE_PORTRAIT_IDS, DialogueModalState, DialogueSentence, show_dialogue,
-    show_dialogue_batch,
 };
 pub use layout::{MENU_H, MENU_W, MenuButton, MenuTransform};
 pub use mission_state::{MissionStatePopupState, show_mission_state_popup};
 pub use modal_net::ModalNet;
 pub use options::show_options;
 pub use pause::{PauseMenu, PauseMenuOutcome};
-pub use popup_scroll::{PopupScrollModalState, show_popup_scroll};
+pub(crate) use popup_scroll::show_popup_scroll;
+pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};
 pub use resources::{IngameMenuResources, MenuSurface};
 pub use save_load::{SaveLoadMode, SaveLoadOutcome, show_save_load};
 pub use yesno::{YesNoModalState, show_file_not_found, show_yesno};

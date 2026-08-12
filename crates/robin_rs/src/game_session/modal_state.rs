@@ -10,9 +10,9 @@ use crate::host::Host;
 use crate::host::HostSignal;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
-    self, BatchDialogue, DebriefingModalState, DebriefingOutcome, DialogueModalState,
-    DialogueSentence, IngameMenuResources, MenuSurface, MissionStatePopupState, ModalNet,
-    PopupScrollModalState, layout::TextAlign,
+    self, DebriefingModalState, DebriefingOutcome, DialogueModalState, DialogueSentence,
+    IngameMenuResources, MissionStatePopupState, ModalNet, PopupScrollItem, PopupScrollModalState,
+    layout::TextAlign,
 };
 use crate::renderer::Renderer;
 use crate::window::{GameWindow, start_text_input};
@@ -29,43 +29,288 @@ use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sound_config::SoundConfig;
 use std::collections::VecDeque;
 
+/// Presentation-side plumbing every modal lane needs: the event pump,
+/// the renderer, cursor drawing, audio output, the shared ingame-menu
+/// resources, and the replay recorder that logs each dismissal.
+///
+/// The engine/host half deliberately stays out of this bundle —
+/// functions that need it take `&mut Host` alongside the context, and
+/// pull `host.audio.sound` / `host.transport.net` from disjoint fields
+/// so the two borrows coexist.
+pub(crate) struct ModalContext<'a> {
+    pub window: &'a mut GameWindow,
+    pub renderer: &'a mut Renderer,
+    pub cursor_res: &'a mut ResourceManager,
+    pub cursor_renderer: &'a mut CursorRenderer,
+    pub audio_backend: &'a mut Option<KiraAudioBackend>,
+    pub sample_loader: &'a SampleLoader,
+    pub menu_resources: &'a mut Option<IngameMenuResources>,
+    pub replay_recorder: &'a mut Option<ReplayRecorder>,
+}
+
+/// One modal screen driven frame-by-frame inside a [`ModalBatch`].
+///
+/// Each lane (dialogue, popup scroll, debriefing) supplies the same
+/// life cycle: pop an item, short-circuit on a pre-recorded replay
+/// result, otherwise open the screen and tick it until it yields an
+/// outcome, record the dismissal, and move to the next item.  The
+/// shared driver lives in [`ModalBatch::tick`] so a fix to the batch
+/// flow can't miss one of the lanes.
+pub(super) trait ModalScreen: Sized {
+    /// Queued content for one screen of this lane.
+    type Item;
+    /// What the screen reports when the player dismisses it.
+    type Outcome;
+    /// Warning logged (once per tick) when the menu resources vanish
+    /// mid-batch; the batch is dropped in that case.
+    const MISSING_RESOURCES_WARN: &'static str;
+
+    fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind;
+    fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult>;
+
+    /// Open the screen for `item`.  Only called after the driver has
+    /// verified `ctx.menu_resources` is populated.
+    fn begin(host: &mut Host, ctx: &mut ModalContext<'_>, item: Self::Item) -> Self;
+
+    /// Advance the screen by one frame; `Some` means dismissed.
+    fn step(
+        &mut self,
+        kind: &engine_player_command::ModalKind,
+        host: &mut Host,
+        ctx: &mut ModalContext<'_>,
+    ) -> Option<Self::Outcome>;
+
+    /// Map the screen's outcome onto the replay-recorded result.
+    fn to_result(outcome: &Self::Outcome) -> engine_player_command::DialogResult;
+
+    /// Lane-specific reaction to a dismissal (e.g. dropping the queued
+    /// remainder on an emergency end).  Default: nothing.
+    fn on_dismiss(_outcome: &Self::Outcome, _pending: &mut VecDeque<Self::Item>) {}
+}
+
+/// A queue of modal items plus the currently open screen, advanced one
+/// frame per [`Self::tick`] call.
+pub(super) struct ModalBatch<S: ModalScreen> {
+    pending: VecDeque<S::Item>,
+    current: Option<(engine_player_command::ModalKind, S)>,
+}
+
+pub(super) type ActiveDialogueBatch = ModalBatch<DialogueModalState>;
+pub(super) type ActivePopupScrollBatch = ModalBatch<PopupScrollModalState>;
+pub(super) type ActiveDebriefingBatch = ModalBatch<DebriefingModalState>;
+
+impl<S: ModalScreen> ModalBatch<S> {
+    fn new(pending: VecDeque<S::Item>) -> Self {
+        Self {
+            pending,
+            current: None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pending.is_empty() && self.current.is_none()
+    }
+
+    fn tick(&mut self, host: &mut Host, ctx: &mut ModalContext<'_>) {
+        if ctx.menu_resources.is_none() {
+            tracing::warn!("{}", S::MISSING_RESOURCES_WARN);
+            self.pending.clear();
+            self.current = None;
+            return;
+        }
+
+        if self.current.is_none()
+            && let Some(item) = self.pending.pop_front()
+        {
+            if let Some(result) = S::item_replay_result(&item) {
+                if let Some(recorder) = ctx.replay_recorder.as_mut() {
+                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
+                        kind: S::item_kind(&item),
+                        result,
+                    });
+                }
+            } else {
+                let kind = S::item_kind(&item);
+                let screen = S::begin(host, ctx, item);
+                self.current = Some((kind, screen));
+            }
+        }
+
+        let Some((kind, screen)) = self.current.as_mut() else {
+            return;
+        };
+
+        if let Some(outcome) = screen.step(kind, host, ctx) {
+            let result = S::to_result(&outcome);
+            if let Some(recorder) = ctx.replay_recorder.as_mut() {
+                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
+                    kind: kind.clone(),
+                    result,
+                });
+            }
+            S::on_dismiss(&outcome, &mut self.pending);
+            self.current = None;
+        }
+    }
+}
+
 pub(super) struct ActiveDialogueItem {
-    dialog_id: i32,
     kind: engine_player_command::ModalKind,
     sentences: Vec<DialogueSentence>,
     replay_result: Option<engine_player_command::DialogResult>,
 }
 
-pub(super) struct ActiveDialogueBatch {
-    pending: VecDeque<ActiveDialogueItem>,
-    current: Option<(i32, engine_player_command::ModalKind, DialogueModalState)>,
-}
+impl ModalScreen for DialogueModalState {
+    type Item = ActiveDialogueItem;
+    type Outcome = engine_player_command::DialogResult;
+    const MISSING_RESOURCES_WARN: &'static str =
+        "DisplayDialog: menu resources unavailable — dropping active dialogue";
 
-impl ActiveDialogueBatch {
-    fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.current.is_none()
+    fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind {
+        item.kind.clone()
+    }
+
+    fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult> {
+        item.replay_result
+    }
+
+    fn begin(_host: &mut Host, ctx: &mut ModalContext<'_>, item: Self::Item) -> Self {
+        let ModalContext {
+            window,
+            renderer,
+            menu_resources,
+            ..
+        } = ctx;
+        let resources = menu_resources
+            .as_mut()
+            .expect("ModalBatch::tick verified menu resources before begin");
+        DialogueModalState::new(window, renderer, resources, item.sentences)
+    }
+
+    fn step(
+        &mut self,
+        kind: &engine_player_command::ModalKind,
+        host: &mut Host,
+        ctx: &mut ModalContext<'_>,
+    ) -> Option<Self::Outcome> {
+        let ModalContext {
+            window,
+            renderer,
+            cursor_res,
+            cursor_renderer,
+            audio_backend,
+            menu_resources,
+            ..
+        } = ctx;
+        let resources = menu_resources
+            .as_mut()
+            .expect("ModalBatch::tick verified menu resources before step");
+        let sound_cfg = SoundConfig::default();
+        let sound_enabled = audio_backend.is_some();
+        let modal_net = host
+            .transport
+            .net
+            .as_ref()
+            .map(|net| ModalNet::new(net, kind.clone()));
+        let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+        self.tick(
+            window,
+            renderer,
+            resources,
+            &mut host.audio.sound,
+            &sound_cfg,
+            audio_backend
+                .as_mut()
+                .map(|b| b as &mut dyn crate::sound::AudioBackend),
+            sound_enabled,
+            Some(&cursor),
+            modal_net.as_ref(),
+        )
+    }
+
+    fn to_result(outcome: &Self::Outcome) -> engine_player_command::DialogResult {
+        *outcome
     }
 }
 
-pub(super) struct ActivePopupScrollItem {
-    kind: engine_player_command::ModalKind,
-    title: Option<String>,
-    picture: Option<MenuSurface>,
-    body: String,
-    body_font_name: Option<String>,
-    align: TextAlign,
-    universal_frame: u32,
-    replay_result: Option<engine_player_command::DialogResult>,
-}
+impl ModalScreen for PopupScrollModalState {
+    type Item = PopupScrollItem;
+    type Outcome = engine_player_command::DialogResult;
+    const MISSING_RESOURCES_WARN: &'static str =
+        "DisplayPopupText: menu resources unavailable — dropping active popup";
 
-pub(super) struct ActivePopupScrollBatch {
-    pending: VecDeque<ActivePopupScrollItem>,
-    current: Option<(engine_player_command::ModalKind, PopupScrollModalState)>,
-}
+    fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind {
+        item.kind.clone()
+    }
 
-impl ActivePopupScrollBatch {
-    fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.current.is_none()
+    fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult> {
+        item.replay_result
+    }
+
+    fn begin(_host: &mut Host, ctx: &mut ModalContext<'_>, item: Self::Item) -> Self {
+        let ModalContext {
+            window,
+            renderer,
+            menu_resources,
+            ..
+        } = ctx;
+        let resources = menu_resources
+            .as_mut()
+            .expect("ModalBatch::tick verified menu resources before begin");
+        PopupScrollModalState::new(
+            window,
+            renderer,
+            resources,
+            item.title,
+            item.picture,
+            item.body,
+            item.body_font_name,
+            item.align,
+            item.universal_frame,
+        )
+    }
+
+    fn step(
+        &mut self,
+        kind: &engine_player_command::ModalKind,
+        host: &mut Host,
+        ctx: &mut ModalContext<'_>,
+    ) -> Option<Self::Outcome> {
+        let ModalContext {
+            window,
+            renderer,
+            cursor_res,
+            cursor_renderer,
+            audio_backend,
+            sample_loader,
+            menu_resources,
+            ..
+        } = ctx;
+        let resources = menu_resources
+            .as_mut()
+            .expect("ModalBatch::tick verified menu resources before step");
+        let modal_net = host
+            .transport
+            .net
+            .as_ref()
+            .map(|net| ModalNet::new(net, kind.clone()));
+        let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+        self.tick(
+            window,
+            renderer,
+            resources,
+            &mut host.audio.sound,
+            audio_backend
+                .as_mut()
+                .map(|b| b as &mut dyn crate::sound::AudioBackend),
+            *sample_loader,
+            Some(cursor),
+            modal_net.as_ref(),
+        )
+    }
+
+    fn to_result(outcome: &Self::Outcome) -> engine_player_command::DialogResult {
+        *outcome
     }
 }
 
@@ -76,14 +321,66 @@ pub(super) struct ActiveDebriefingItem {
     replay_result: Option<engine_player_command::DialogResult>,
 }
 
-pub(super) struct ActiveDebriefingBatch {
-    pending: VecDeque<ActiveDebriefingItem>,
-    current: Option<(engine_player_command::ModalKind, DebriefingModalState)>,
-}
+impl ModalScreen for DebriefingModalState {
+    type Item = ActiveDebriefingItem;
+    type Outcome = DebriefingOutcome;
+    const MISSING_RESOURCES_WARN: &'static str =
+        "DisplayDebriefing: menu resources unavailable — dropping active debriefing";
 
-impl ActiveDebriefingBatch {
-    fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.current.is_none()
+    fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind {
+        item.kind.clone()
+    }
+
+    fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult> {
+        item.replay_result
+    }
+
+    fn begin(_host: &mut Host, ctx: &mut ModalContext<'_>, item: Self::Item) -> Self {
+        let resources = ctx
+            .menu_resources
+            .as_ref()
+            .expect("ModalBatch::tick verified menu resources before begin");
+        DebriefingModalState::new(
+            resources, item.body, None, 0, item.won, false, None, false, false,
+        )
+    }
+
+    fn step(
+        &mut self,
+        _kind: &engine_player_command::ModalKind,
+        _host: &mut Host,
+        ctx: &mut ModalContext<'_>,
+    ) -> Option<Self::Outcome> {
+        let ModalContext {
+            window,
+            renderer,
+            cursor_res,
+            cursor_renderer,
+            menu_resources,
+            ..
+        } = ctx;
+        let resources = menu_resources
+            .as_ref()
+            .expect("ModalBatch::tick verified menu resources before step");
+        let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+        self.tick(window, renderer, resources, Some(cursor))
+    }
+
+    fn to_result(outcome: &Self::Outcome) -> engine_player_command::DialogResult {
+        if matches!(outcome, DebriefingOutcome::EmergencyEnd) {
+            engine_player_command::DialogResult::Aborted
+        } else {
+            engine_player_command::DialogResult::Completed
+        }
+    }
+
+    fn on_dismiss(outcome: &Self::Outcome, pending: &mut VecDeque<Self::Item>) {
+        if matches!(outcome, DebriefingOutcome::EmergencyEnd) {
+            // We flatten the queued phase ordering, so dropping the
+            // remaining items is the conservative no-surprise
+            // behavior on an external close.
+            pending.clear();
+        }
     }
 }
 
@@ -225,104 +522,21 @@ pub(super) fn start_active_dialogue_batch(
         let kind = engine_player_command::ModalKind::Dialog { dialog_id };
         let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
         pending.push_back(ActiveDialogueItem {
-            dialog_id,
             kind,
             sentences,
             replay_result,
         });
     }
 
-    (!pending.is_empty()).then_some(ActiveDialogueBatch {
-        pending,
-        current: None,
-    })
+    (!pending.is_empty()).then(|| ModalBatch::new(pending))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn tick_active_dialogue_batch(
-    batch: &mut ActiveDialogueBatch,
-    host: &mut Host,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<KiraAudioBackend>,
-    menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
-) {
-    let Some(resources) = menu_resources.as_mut() else {
-        tracing::warn!("DisplayDialog: menu resources unavailable — dropping active dialogue");
-        batch.pending.clear();
-        batch.current = None;
-        return;
-    };
-
-    if batch.current.is_none()
-        && let Some(item) = batch.pending.pop_front()
-    {
-        if let Some(result) = item.replay_result {
-            if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                    kind: item.kind,
-                    result,
-                });
-            }
-        } else {
-            let state = DialogueModalState::new(event_pump, renderer, resources, item.sentences);
-            batch.current = Some((item.dialog_id, item.kind, state));
-        }
-    }
-
-    let Some((dialog_id, kind, state)) = batch.current.as_mut() else {
-        return;
-    };
-
-    let sound_cfg = SoundConfig::default();
-    let sound_enabled = audio_backend.is_some();
-    let modal_net = host
-        .transport
-        .net
-        .as_ref()
-        .map(|net| ModalNet::new(net, kind.clone()));
-    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-    if let Some(result) = state.tick(
-        event_pump,
-        renderer,
-        resources,
-        &mut host.audio.sound,
-        &sound_cfg,
-        audio_backend
-            .as_mut()
-            .map(|b| b as &mut dyn crate::sound::AudioBackend),
-        sound_enabled,
-        Some(&cursor),
-        modal_net.as_ref(),
-    ) {
-        if let Some(recorder) = replay_recorder.as_mut() {
-            recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                kind: engine_player_command::ModalKind::Dialog {
-                    dialog_id: *dialog_id,
-                },
-                result,
-            });
-        }
-        batch.current = None;
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_dialogues(
     host: &mut Host,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<KiraAudioBackend>,
+    ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     game: &Game,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
     headless: bool,
 ) {
@@ -347,17 +561,16 @@ pub(super) async fn drain_pending_dialogues(
                 let kind = engine_player_command::ModalKind::Dialog { dialog_id };
                 let result = pop_matching_dismissal(replay_modal_dismissals, &kind)
                     .unwrap_or(engine_player_command::DialogResult::Completed);
-                if let Some(recorder) = replay_recorder.as_mut() {
+                if let Some(recorder) = ctx.replay_recorder.as_mut() {
                     recorder
                         .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 }
             }
             return;
         }
-        if let (Some(descriptors), Some(resources)) = (&level_descriptors, menu_resources) {
-            let sound_cfg = SoundConfig::default();
-            let sound_enabled = audio_backend.is_some();
-
+        if let Some(descriptors) = level_descriptors
+            && ctx.menu_resources.is_some()
+        {
             // Pre-build every entry so we can hand a contiguous
             // slice to `show_dialogue_batch`.  `replay_result` pulls
             // from the per-frame replay queue so playback reproduces
@@ -376,7 +589,7 @@ pub(super) async fn drain_pending_dialogues(
                 }
                 sentences_per_id.push((dialog_id, sentences));
             }
-            let entries: Vec<BatchDialogue<'_>> = sentences_per_id
+            let entries: Vec<ingame_menu::BatchDialogue<'_>> = sentences_per_id
                 .iter()
                 .map(|(dialog_id, sentences)| {
                     let kind = engine_player_command::ModalKind::Dialog {
@@ -388,7 +601,7 @@ pub(super) async fn drain_pending_dialogues(
                         .net
                         .as_ref()
                         .map(|net| ModalNet::new(net, kind.clone()));
-                    BatchDialogue {
+                    ingame_menu::BatchDialogue {
                         sentences: sentences.as_slice(),
                         replay_result,
                         modal_net,
@@ -396,23 +609,10 @@ pub(super) async fn drain_pending_dialogues(
                 })
                 .collect();
 
-            let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-            let results = ingame_menu::show_dialogue_batch(
-                event_pump,
-                renderer,
-                resources,
-                &mut host.audio.sound,
-                &sound_cfg,
-                audio_backend
-                    .as_mut()
-                    .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                sound_enabled,
-                cursor,
-                &entries,
-            )
-            .await;
+            let results =
+                ingame_menu::show_dialogue_batch(ctx, &mut host.audio.sound, &entries).await;
 
-            if let Some(recorder) = replay_recorder {
+            if let Some(recorder) = ctx.replay_recorder.as_mut() {
                 for ((dialog_id, _), result) in sentences_per_id.iter().zip(results.iter().copied())
                 {
                     let kind = engine_player_command::ModalKind::Dialog {
@@ -426,13 +626,11 @@ pub(super) async fn drain_pending_dialogues(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn start_active_popup_scroll_batch(
     host: &mut Host,
-    renderer: &mut Renderer,
+    ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    menu_resources: &mut Option<IngameMenuResources>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
     universal_frame: u32,
 ) -> Option<ActivePopupScrollBatch> {
@@ -440,13 +638,13 @@ pub(super) fn start_active_popup_scroll_batch(
         return None;
     }
     let text_ids: Vec<i32> = host.effects.take_popup_texts();
-    let Some(resources) = menu_resources.as_mut() else {
+    if ctx.menu_resources.is_none() {
         tracing::warn!(
             "DisplayPopupText: menu resources unavailable — dropping {} popup(s)",
             text_ids.len()
         );
         return None;
-    };
+    }
 
     let mut pending = VecDeque::with_capacity(text_ids.len());
     for text_id in text_ids {
@@ -473,10 +671,14 @@ pub(super) fn start_active_popup_scroll_batch(
                 RHID_DEFAULT_POPUP_SCROLL_PICTURE,
             )
         };
-        let picture = resources.picture_from(renderer, text_res, picture_id);
+        let picture = ctx
+            .menu_resources
+            .as_mut()
+            .expect("checked above")
+            .picture_from(ctx.renderer, text_res, picture_id);
         let kind = engine_player_command::ModalKind::PopupText { text_id };
         let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-        pending.push_back(ActivePopupScrollItem {
+        pending.push_back(PopupScrollItem {
             kind,
             title: None,
             picture,
@@ -488,24 +690,20 @@ pub(super) fn start_active_popup_scroll_batch(
         });
     }
 
-    (!pending.is_empty()).then_some(ActivePopupScrollBatch {
-        pending,
-        current: None,
-    })
+    (!pending.is_empty()).then(|| ModalBatch::new(pending))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn start_active_sherwood_report(
     host: &mut Host,
+    ctx: &mut ModalContext<'_>,
     engine: &Engine,
     profiles: &engine_profiles::ProfileManager,
-    menu_resources: &mut Option<IngameMenuResources>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActivePopupScrollBatch> {
     if !host.effects.take_sherwood_report() {
         return None;
     }
-    let Some(resources) = menu_resources.as_mut() else {
+    let Some(resources) = ctx.menu_resources.as_ref() else {
         tracing::warn!("DisplaySherwoodReport: menu resources unavailable — skipped");
         return None;
     };
@@ -530,7 +728,7 @@ pub(super) fn start_active_sherwood_report(
     );
     let kind = engine_player_command::ModalKind::SherwoodReport;
     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-    let item = ActivePopupScrollItem {
+    let item = PopupScrollItem {
         kind,
         title: None,
         picture: None,
@@ -541,24 +739,21 @@ pub(super) fn start_active_sherwood_report(
         replay_result,
     };
 
-    Some(ActivePopupScrollBatch {
-        pending: VecDeque::from([item]),
-        current: None,
-    })
+    Some(ModalBatch::new(VecDeque::from([item])))
 }
 
 pub(super) fn start_active_debriefing_batch(
     host: &mut Host,
+    ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    menu_resources: &Option<IngameMenuResources>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActiveDebriefingBatch> {
     if host.effects.debriefing_count() == 0 {
         return None;
     }
     let ids: Vec<DebriefingTextId> = host.effects.take_debriefings();
-    let (Some(descriptors), Some(_resources)) = (level_descriptors, menu_resources) else {
+    let Some(descriptors) = level_descriptors else {
         tracing::warn!(
             "DisplayDebriefing: level descriptors or menu resources unavailable — \
              dropping {} debriefing(s)",
@@ -566,6 +761,14 @@ pub(super) fn start_active_debriefing_batch(
         );
         return None;
     };
+    if ctx.menu_resources.is_none() {
+        tracing::warn!(
+            "DisplayDebriefing: level descriptors or menu resources unavailable — \
+             dropping {} debriefing(s)",
+            ids.len()
+        );
+        return None;
+    }
 
     let (lose_ids, win_ids): (Vec<_>, Vec<_>) = ids
         .into_iter()
@@ -610,166 +813,13 @@ pub(super) fn start_active_debriefing_batch(
         }
     }
 
-    (!pending.is_empty()).then_some(ActiveDebriefingBatch {
-        pending,
-        current: None,
-    })
+    (!pending.is_empty()).then(|| ModalBatch::new(pending))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn tick_active_popup_scroll_batch(
-    batch: &mut ActivePopupScrollBatch,
-    host: &mut Host,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<KiraAudioBackend>,
-    sample_loader: &SampleLoader,
-    menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
-) {
-    let Some(resources) = menu_resources.as_mut() else {
-        tracing::warn!("DisplayPopupText: menu resources unavailable — dropping active popup");
-        batch.pending.clear();
-        batch.current = None;
-        return;
-    };
-
-    if batch.current.is_none()
-        && let Some(item) = batch.pending.pop_front()
-    {
-        if let Some(result) = item.replay_result {
-            if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                    kind: item.kind,
-                    result,
-                });
-            }
-        } else {
-            let state = PopupScrollModalState::new(
-                event_pump,
-                renderer,
-                resources,
-                item.title,
-                item.picture,
-                item.body,
-                item.body_font_name,
-                item.align,
-                item.universal_frame,
-            );
-            batch.current = Some((item.kind, state));
-        }
-    }
-
-    let Some((kind, state)) = batch.current.as_mut() else {
-        return;
-    };
-
-    let modal_net = host
-        .transport
-        .net
-        .as_ref()
-        .map(|net| ModalNet::new(net, kind.clone()));
-    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-    if let Some(result) = state.tick(
-        event_pump,
-        renderer,
-        resources,
-        &mut host.audio.sound,
-        audio_backend
-            .as_mut()
-            .map(|b| b as &mut dyn crate::sound::AudioBackend),
-        sample_loader,
-        Some(cursor),
-        modal_net.as_ref(),
-    ) {
-        if let Some(recorder) = replay_recorder.as_mut() {
-            recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                kind: kind.clone(),
-                result,
-            });
-        }
-        batch.current = None;
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn tick_active_debriefing_batch(
-    batch: &mut ActiveDebriefingBatch,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
-    _host: &Host,
-    menu_resources: &Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
-) {
-    let Some(resources) = menu_resources.as_ref() else {
-        tracing::warn!(
-            "DisplayDebriefing: menu resources unavailable — dropping active debriefing"
-        );
-        batch.pending.clear();
-        batch.current = None;
-        return;
-    };
-    if batch.current.is_none()
-        && let Some(item) = batch.pending.pop_front()
-    {
-        if let Some(result) = item.replay_result {
-            if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                    kind: item.kind,
-                    result,
-                });
-            }
-        } else {
-            batch.current = Some((
-                item.kind,
-                DebriefingModalState::new(
-                    resources, item.body, None, 0, item.won, false, None, false, false,
-                ),
-            ));
-        }
-    }
-    let Some((kind, state)) = batch.current.as_mut() else {
-        return;
-    };
-    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-    if let Some(outcome) = state.tick(event_pump, renderer, resources, Some(cursor)) {
-        let result = if matches!(outcome, DebriefingOutcome::EmergencyEnd) {
-            engine_player_command::DialogResult::Aborted
-        } else {
-            engine_player_command::DialogResult::Completed
-        };
-        if let Some(recorder) = replay_recorder.as_mut() {
-            recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                kind: kind.clone(),
-                result,
-            });
-        }
-        if matches!(outcome, DebriefingOutcome::EmergencyEnd) {
-            // We flatten the queued phase ordering, so dropping the
-            // remaining items is the conservative no-surprise
-            // behavior on an external close.
-            batch.pending.clear();
-        }
-        batch.current = None;
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) fn tick_active_modal(
     active_modal: &mut Option<ActiveModal>,
     host: &mut Host,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<KiraAudioBackend>,
-    sample_loader: &SampleLoader,
-    menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
+    ctx: &mut ModalContext<'_>,
 ) -> ActiveModalOutcome {
     let Some(modal) = active_modal.as_mut() else {
         return ActiveModalOutcome::None;
@@ -777,51 +827,21 @@ pub(super) fn tick_active_modal(
 
     match modal {
         ActiveModal::Dialogue(batch) => {
-            tick_active_dialogue_batch(
-                batch,
-                host,
-                event_pump,
-                renderer,
-                cursor_res,
-                cursor_renderer,
-                audio_backend,
-                menu_resources,
-                replay_recorder,
-            );
+            batch.tick(host, ctx);
             if batch.is_empty() {
                 *active_modal = None;
             }
             ActiveModalOutcome::None
         }
         ActiveModal::PopupScroll(batch) => {
-            tick_active_popup_scroll_batch(
-                batch,
-                host,
-                event_pump,
-                renderer,
-                cursor_res,
-                cursor_renderer,
-                audio_backend,
-                sample_loader,
-                menu_resources,
-                replay_recorder,
-            );
+            batch.tick(host, ctx);
             if batch.is_empty() {
                 *active_modal = None;
             }
             ActiveModalOutcome::None
         }
         ActiveModal::Debriefing(batch) => {
-            tick_active_debriefing_batch(
-                batch,
-                event_pump,
-                renderer,
-                cursor_res,
-                cursor_renderer,
-                host,
-                menu_resources,
-                replay_recorder,
-            );
+            batch.tick(host, ctx);
             if batch.is_empty() {
                 *active_modal = None;
             }
@@ -833,7 +853,7 @@ pub(super) fn tick_active_modal(
             replay_result,
         } => {
             if let Some(result) = replay_result.take() {
-                if let Some(recorder) = replay_recorder.as_mut() {
+                if let Some(recorder) = ctx.replay_recorder.as_mut() {
                     recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: kind.clone(),
                         result,
@@ -855,13 +875,22 @@ pub(super) fn tick_active_modal(
                     }
                 };
             }
+            let ModalContext {
+                window,
+                renderer,
+                cursor_res,
+                cursor_renderer,
+                menu_resources,
+                replay_recorder,
+                ..
+            } = ctx;
             let Some(resources) = menu_resources.as_ref() else {
                 tracing::warn!("mission-state popup: menu resources unavailable — skipped");
                 *active_modal = None;
                 return ActiveModalOutcome::None;
             };
             let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-            if let Some(confirmed) = state.tick(event_pump, renderer, resources, Some(cursor)) {
+            if let Some(confirmed) = state.tick(window, renderer, resources, Some(cursor)) {
                 if let Some(recorder) = replay_recorder.as_mut() {
                     let result = if confirmed {
                         engine_player_command::DialogResult::Completed
@@ -890,19 +919,11 @@ pub(super) fn tick_active_modal(
 ///
 /// Script natives `DisplayPopupText` and the `DisplayAllPopupTexts`
 /// cheat push text IDs onto `pending_popup_texts`.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_popup_scroll(
     host: &mut Host,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<KiraAudioBackend>,
-    sample_loader: &SampleLoader,
+    ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
     universal_frame: u32,
 ) {
@@ -911,7 +932,7 @@ pub(super) async fn drain_pending_popup_scroll(
     // cheat push text IDs onto `pending_popup_texts`.
     if host.effects.popup_text_count() != 0 {
         let text_ids: Vec<i32> = host.effects.take_popup_texts();
-        let Some(resources) = menu_resources.as_mut() else {
+        if ctx.menu_resources.is_none() {
             // Without `IngameMenuResources` the parchment background, OK
             // button sprite, and font cache are all unavailable — we
             // genuinely cannot render anything, so drop the queue.
@@ -920,9 +941,7 @@ pub(super) async fn drain_pending_popup_scroll(
                 text_ids.len()
             );
             return;
-        };
-        let sound_cfg = SoundConfig::default();
-        let sound_enabled = audio_backend.is_some();
+        }
         for text_id in text_ids {
             // Always show a parchment body — when the level
             // resource, text table, or popup-text id can't be
@@ -966,7 +985,11 @@ pub(super) async fn drain_pending_popup_scroll(
                     RHID_DEFAULT_POPUP_SCROLL_PICTURE,
                 )
             };
-            let picture = resources.picture_from(renderer, text_res, picture_id);
+            let picture = ctx
+                .menu_resources
+                .as_mut()
+                .expect("checked above")
+                .picture_from(ctx.renderer, text_res, picture_id);
             let kind = engine_player_command::ModalKind::PopupText { text_id };
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host
@@ -974,30 +997,19 @@ pub(super) async fn drain_pending_popup_scroll(
                 .net
                 .as_ref()
                 .map(|net| ModalNet::new(net, kind.clone()));
-            let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-            let result = ingame_menu::show_popup_scroll(
-                event_pump,
-                renderer,
-                resources,
-                &mut host.audio.sound,
-                &sound_cfg,
-                audio_backend
-                    .as_mut()
-                    .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                sound_enabled,
-                sample_loader,
-                cursor,
-                None,
+            let item = PopupScrollItem {
+                kind: kind.clone(),
+                title: None,
                 picture,
-                &text,
-                None,
-                TextAlign::Justified,
+                body: text,
+                body_font_name: None,
+                align: TextAlign::Justified,
                 universal_frame,
                 replay_result,
-                modal_net,
-            )
-            .await;
-            if let Some(recorder) = replay_recorder.as_mut() {
+            };
+            let result =
+                ingame_menu::show_popup_scroll(ctx, &mut host.audio.sound, modal_net, item).await;
+            if let Some(recorder) = ctx.replay_recorder.as_mut() {
                 recorder.push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
             }
         }
@@ -1007,26 +1019,18 @@ pub(super) async fn drain_pending_popup_scroll(
 /// Drain a script-queued Sherwood stat report for the frame.
 ///
 /// Script native `DisplaySherwoodReport` sets `pending_sherwood_report`.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_sherwood_stat(
     host: &mut Host,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
+    ctx: &mut ModalContext<'_>,
     engine: &Engine,
     profiles: &engine_profiles::ProfileManager,
-    audio_backend: &mut Option<KiraAudioBackend>,
-    sample_loader: &SampleLoader,
-    menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) {
     // ── Drain pending Sherwood stat report ──
     // Script native `DisplaySherwoodReport` sets
     // `pending_sherwood_report`.
     if host.effects.take_sherwood_report() {
-        if let Some(resources) = menu_resources.as_mut() {
+        if let Some(resources) = ctx.menu_resources.as_ref() {
             let campaign = engine.campaign();
             let sherwood = SherwoodStat;
             // The Sherwood stat panel pulls score / preserved lives
@@ -1049,8 +1053,6 @@ pub(super) async fn drain_pending_sherwood_stat(
                 &score_info,
                 &resources.menu_text,
             );
-            let sound_cfg = SoundConfig::default();
-            let sound_enabled = audio_backend.is_some();
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host
@@ -1060,30 +1062,19 @@ pub(super) async fn drain_pending_sherwood_stat(
                 .map(|net| ModalNet::new(net, kind.clone()));
             // The Sherwood report uses the "Debrief" font and is
             // left-aligned (not the popup-scroll default).
-            let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-            let result = ingame_menu::show_popup_scroll(
-                event_pump,
-                renderer,
-                resources,
-                &mut host.audio.sound,
-                &sound_cfg,
-                audio_backend
-                    .as_mut()
-                    .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                sound_enabled,
-                sample_loader,
-                cursor,
-                None,
-                None,
-                &text,
-                Some("Debrief"),
-                TextAlign::Left,
-                engine.frame_counter(),
+            let item = PopupScrollItem {
+                kind: kind.clone(),
+                title: None,
+                picture: None,
+                body: text,
+                body_font_name: Some("Debrief".to_string()),
+                align: TextAlign::Left,
+                universal_frame: engine.frame_counter(),
                 replay_result,
-                modal_net,
-            )
-            .await;
-            if let Some(recorder) = replay_recorder.as_mut() {
+            };
+            let result =
+                ingame_menu::show_popup_scroll(ctx, &mut host.audio.sound, modal_net, item).await;
+            if let Some(recorder) = ctx.replay_recorder.as_mut() {
                 recorder.push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
             }
         } else {
@@ -1098,17 +1089,11 @@ pub(super) async fn drain_pending_sherwood_stat(
 ///
 /// Cheat `DisplayAllDebriefings` pushes typed text IDs onto
 /// `pending_debriefings`.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_debriefings(
     host: &mut Host,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
+    ctx: &mut ModalContext<'_>,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
-    menu_resources: &Option<IngameMenuResources>,
-    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) {
     // ── Drain pending debriefing requests ──
@@ -1120,12 +1105,14 @@ pub(super) async fn drain_pending_debriefings(
     // independently.
     if host.effects.debriefing_count() != 0 {
         let ids: Vec<DebriefingTextId> = host.effects.take_debriefings();
-        if let (Some(descriptors), Some(resources)) = (&level_descriptors, &menu_resources) {
+        if let Some(descriptors) = level_descriptors
+            && ctx.menu_resources.is_some()
+        {
             let (lose_ids, win_ids): (Vec<_>, Vec<_>) = ids
                 .into_iter()
                 .partition(|text_id| matches!(text_id, DebriefingTextId::Lose { .. }));
 
-            // Lose phase: each `Display(loseVec, false, false)` call.
+            // Lose phase: one pass over the queued lose texts.
             for text_id in lose_ids {
                 let DebriefingTextId::Lose { index } = text_id else {
                     unreachable!("lose_ids was partitioned from DebriefingTextId::Lose");
@@ -1147,11 +1134,20 @@ pub(super) async fn drain_pending_debriefings(
                     // debriefing texts but never invokes the stat
                     // overload — stats don't appear in this flow, so
                     // pass `None`.
+                    let ModalContext {
+                        window,
+                        renderer,
+                        cursor_res,
+                        cursor_renderer,
+                        menu_resources,
+                        ..
+                    } = &mut *ctx;
+                    let resources = menu_resources.as_ref().expect("checked above");
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     ingame_menu::show_debriefing(
-                        event_pump, renderer, resources, cursor, &text, None, 0, false, false,
-                        // Cheat path passes `bRestartAllowed=false`, so
-                        // the quick-load translator is never enabled.
+                        window, renderer, resources, cursor, &text, None, 0, false, false,
+                        // Cheat path passes no restart, so the
+                        // quick-load translator is never enabled.
                         None, false, false,
                     )
                     .await
@@ -1161,7 +1157,7 @@ pub(super) async fn drain_pending_debriefings(
                 } else {
                     engine_player_command::DialogResult::Completed
                 };
-                if let Some(recorder) = replay_recorder.as_mut() {
+                if let Some(recorder) = ctx.replay_recorder.as_mut() {
                     recorder
                         .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 }
@@ -1173,7 +1169,7 @@ pub(super) async fn drain_pending_debriefings(
                 }
             }
 
-            // Win phase: fresh `Display(winVec, true, false)` call.
+            // Win phase: a fresh pass over the queued win texts.
             for text_id in win_ids {
                 let DebriefingTextId::Win { index } = text_id else {
                     unreachable!("win_ids was partitioned from DebriefingTextId::Win");
@@ -1191,9 +1187,18 @@ pub(super) async fn drain_pending_debriefings(
                 let debrief_outcome = if let Some(result) = replay_result {
                     debriefing_replay_result(result)
                 } else {
+                    let ModalContext {
+                        window,
+                        renderer,
+                        cursor_res,
+                        cursor_renderer,
+                        menu_resources,
+                        ..
+                    } = &mut *ctx;
+                    let resources = menu_resources.as_ref().expect("checked above");
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     ingame_menu::show_debriefing(
-                        event_pump, renderer, resources, cursor, &text, None, 0, true, false, None,
+                        window, renderer, resources, cursor, &text, None, 0, true, false, None,
                         false, false,
                     )
                     .await
@@ -1203,7 +1208,7 @@ pub(super) async fn drain_pending_debriefings(
                 } else {
                     engine_player_command::DialogResult::Completed
                 };
-                if let Some(recorder) = replay_recorder.as_mut() {
+                if let Some(recorder) = ctx.replay_recorder.as_mut() {
                     recorder
                         .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 }

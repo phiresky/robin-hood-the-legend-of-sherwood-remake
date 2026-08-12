@@ -58,6 +58,7 @@ pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
 use frame_simulate::{FrameSimulationFlags, FrameSimulationOutcome, InteractiveFrameSimulation};
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
 use interactive::{InteractiveFrontend, InteractiveMission, RenderViewState};
+pub(crate) use modal_state::ModalContext;
 use modal_state::{
     ActiveModal, ActiveModalOutcome, drain_pending_console_display, drain_pending_debriefings,
     drain_pending_dialogues, drain_pending_popup_scroll, drain_pending_sherwood_stat,
