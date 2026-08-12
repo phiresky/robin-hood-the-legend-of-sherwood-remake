@@ -2904,9 +2904,17 @@ impl SequenceManager {
         self.elements_to_go.contains(&(seq_id, elem_idx))
     }
 
+    /// Snapshot the deferred manager FIFO without changing registration.
+    /// Synchronous engine boundaries use this to identify only the elements
+    /// authored by a nested statement while leaving older and foreign-owner
+    /// work in place.
+    pub(crate) fn deferred_elements_to_go(&self) -> Vec<(SequenceId, usize)> {
+        self.elements_to_go.iter().copied().collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn v48_elements_to_go(&self) -> Vec<(SequenceId, usize)> {
-        self.elements_to_go.iter().copied().collect()
+        self.deferred_elements_to_go()
     }
 
     /// Get a reference to a specific element within a sequence.

@@ -217,6 +217,100 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
 }
 
 #[test]
+fn pre_set_state_face_is_live_before_attentive_leave_preempts_it() {
+    use crate::ai::{
+        AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
+        AttentiveModeEffect, Substate,
+    };
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier_entity = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = true;
+    enemy.base.current_state = AiState::Default;
+    enemy.base.current_substate = Substate::DefaultGotoPostTurn;
+    let owner = engine.add_entity(soldier_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let mut face_prefix = AiActorOutbox::default();
+    face_prefix
+        .orders
+        .push(crate::order::AiOrderIntent::face_direction(7));
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("Enemy test AI remains live");
+        ai.outbox
+            .reentrant
+            .owner_work
+            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+                outgoing_state: AiState::Default,
+                outgoing_substate: Substate::DefaultGotoPost,
+                incoming_state: AiState::Default,
+                incoming_substate: Substate::DefaultGotoPostTurn,
+                source: AiStateChangeSource::SelfActor,
+                actor_effects_before_callback: Some(face_prefix),
+            }));
+        ai.outbox
+            .actor
+            .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
+    }
+
+    // This is the movement-condolation mode that exposed the bug: caller-tail
+    // Turn instruction is deferred, but the Face statement before SetState is
+    // an earlier synchronous boundary and must already be live.
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    let owned: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| (element.command, element.state))
+        .collect();
+    assert!(
+        owned.contains(&(Command::Turn, SequenceState::Interrupted)),
+        "the pre-SetState Face Turn must be live before the attentive transition displaces it; owned={owned:?}"
+    );
+    assert!(
+        owned.contains(&(Command::LeaveAttentiveMode, SequenceState::InProgress)),
+        "SetState's later attentive tail must preempt the live Turn"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(sequence, index)| engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, index))
+            .map(|element| element.command),
+        Some(Command::LeaveAttentiveMode)
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionWaitingAlertedWaitingUpright)
+    );
+}
+
+#[test]
 fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     use crate::ai::{LogLineType, Remark};
 
