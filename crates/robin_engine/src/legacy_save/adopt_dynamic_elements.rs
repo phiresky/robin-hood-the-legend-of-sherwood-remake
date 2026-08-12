@@ -799,11 +799,11 @@ mod tests {
         let mut engine = EngineInner::new();
         engine
             .world
-            .fast_grid
+            .fast_grid_mut()
             .add_move_box_half_diagonal(MoveBoxHalfDiagonal::new(2.0, 3.0));
         engine
             .world
-            .fast_grid
+            .fast_grid_mut()
             .add_move_box_half_diagonal(MoveBoxHalfDiagonal::new(7.0, 11.0));
         let mut assets = LevelAssets::new();
         std::sync::Arc::make_mut(&mut assets.profile_manager)

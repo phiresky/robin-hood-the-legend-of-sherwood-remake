@@ -951,10 +951,81 @@ pub struct PathFinderRuntime {
 /// deterministic engine movement queues, so the remaining pathfinder
 /// snapshot is just the attempt count plus per-area obstacle state
 /// table.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PathFinder {
     pub number_of_attempts: u16,
     pub states: Vec<Vec<u32>>,
+    /// Memoized query workspace: the runtime graph partitioned for the
+    /// current `states`, rebuilt from the level graph whenever `states`
+    /// changes. Pure memoization of `runtime_from_graph`, so it never
+    /// affects results — it only avoids re-cloning and re-partitioning
+    /// the whole graph on every `find_path` call. Excluded from
+    /// snapshots, hashing, and clones; a restored `PathFinder` simply
+    /// rebuilds it on the next query.
+    #[serde(skip)]
+    cache: Option<Box<PathFinderCache>>,
+}
+
+/// See [`PathFinder::cache`].
+#[derive(Debug)]
+struct PathFinderCache {
+    /// The reusable A* workspace, including the partitioned graph.
+    runtime: PathFinderRuntime,
+    /// `PathFinder::states` value the partition was derived from.
+    states_key: Vec<Vec<u32>>,
+    /// Per-node search-state values captured right after the runtime was
+    /// built. Every query starts by restoring these, so a reused runtime
+    /// observes exactly the values a freshly cloned graph would carry.
+    pristine_search_state: Vec<NodeSearchState>,
+}
+
+/// The A*-mutable subset of [`PathGraphNode`], used to reset a memoized
+/// runtime graph to its just-built values before each query.
+#[derive(Debug, Clone, Copy)]
+struct NodeSearchState {
+    visited: bool,
+    distance_from_source: f32,
+    distance_to_goal: f32,
+    score: f32,
+    previous_link_on_path: Option<LinkIdx>,
+    leave_place: u8,
+    enter_place: u8,
+}
+
+impl NodeSearchState {
+    fn capture(node: &PathGraphNode) -> Self {
+        Self {
+            visited: node.visited,
+            distance_from_source: node.distance_from_source,
+            distance_to_goal: node.distance_to_goal,
+            score: node.score,
+            previous_link_on_path: node.previous_link_on_path,
+            leave_place: node.leave_place,
+            enter_place: node.enter_place,
+        }
+    }
+
+    fn restore(&self, node: &mut PathGraphNode) {
+        node.visited = self.visited;
+        node.distance_from_source = self.distance_from_source;
+        node.distance_to_goal = self.distance_to_goal;
+        node.score = self.score;
+        node.previous_link_on_path = self.previous_link_on_path;
+        node.leave_place = self.leave_place;
+        node.enter_place = self.enter_place;
+    }
+}
+
+impl Clone for PathFinder {
+    fn clone(&self) -> Self {
+        // The memo cache is per-instance scratch; a clone (rollback
+        // snapshot) rebuilds it lazily on its first query.
+        Self {
+            number_of_attempts: self.number_of_attempts,
+            states: self.states.clone(),
+            cache: None,
+        }
+    }
 }
 
 impl Default for PathFinder {
@@ -968,6 +1039,7 @@ impl PathFinder {
         Self {
             number_of_attempts: 1,
             states: Vec::new(),
+            cache: None,
         }
     }
 
@@ -1009,6 +1081,9 @@ impl PathFinder {
     /// default state is absent, so otherwise-valid patrol and move segments
     /// are rejected by the fast grid.
     pub fn initialize_from_graph(&mut self, graph: &PathGraph, grid: &mut FastFindGrid) {
+        // The memoized query workspace belongs to the previous level graph;
+        // a fresh level with coincidentally equal `states` must not reuse it.
+        self.cache = None;
         let mut runtime = PathFinderRuntime::new();
         runtime.graph = graph.clone();
         runtime.initialize();
@@ -1050,7 +1125,7 @@ impl PathFinder {
 
     #[allow(clippy::too_many_arguments)]
     pub fn find_path(
-        &self,
+        &mut self,
         graph: &PathGraph,
         grid: &FastFindGrid,
         layer: u16,
@@ -1060,8 +1135,45 @@ impl PathFinder {
         goal: MapPoint,
         use_first_point: bool,
     ) -> Option<Vec<MapPoint>> {
-        let mut runtime = self.runtime_from_graph(graph);
-        runtime.find_path(
+        // Memoize the partitioned runtime graph across queries: rebuilding
+        // it is a pure function of (level graph, `self.states`), and
+        // `initialize_from_graph` drops the memo when the level graph
+        // itself is replaced.
+        let cache_valid = self
+            .cache
+            .as_ref()
+            .is_some_and(|cache| cache.states_key == self.states);
+        if !cache_valid {
+            let runtime = self.runtime_from_graph(graph);
+            let pristine_search_state = runtime
+                .graph
+                .nodes
+                .iter()
+                .map(NodeSearchState::capture)
+                .collect();
+            self.cache = Some(Box::new(PathFinderCache {
+                runtime,
+                states_key: self.states.clone(),
+                pristine_search_state,
+            }));
+        }
+        let cache = self
+            .cache
+            .as_mut()
+            .expect("pathfinder query cache was just ensured above");
+        // Every query must observe exactly the node values a fresh graph
+        // clone would carry, not leftovers from the previous query.
+        for (node, pristine) in cache
+            .runtime
+            .graph
+            .nodes
+            .iter_mut()
+            .zip(&cache.pristine_search_state)
+        {
+            pristine.restore(node);
+        }
+        cache.runtime.number_of_attempts = self.number_of_attempts;
+        cache.runtime.find_path(
             grid,
             layer,
             sector,
@@ -2481,7 +2593,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ConvertSector failed")]
     fn test_find_path_missing_sector_conversion_panics() {
-        let pf = PathFinder::new();
+        let mut pf = PathFinder::new();
         let graph = PathGraph::new();
         pf.find_path(
             &graph,
@@ -2682,6 +2794,85 @@ mod tests {
         let path = path.unwrap();
         // Direct path: just source and goal
         assert_eq!(path.len(), 1); // Only goal (source is at front after reverse, but direct path returns just goal)
+    }
+
+    #[test]
+    fn memoized_find_path_matches_fresh_pathfinder_across_repeats_and_toggles() {
+        // Every query after the first reuses the memoized runtime graph, so
+        // repeated identical queries must return exactly what a freshly
+        // constructed pathfinder returns — including after a node-routed A*
+        // left search-state values behind, and after a state change forced a
+        // rebuild.
+        let mut grid = FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+
+        let mut graph = PathGraph::new();
+        // Skeleton wall between source and goal so the direct fast-return is
+        // blocked and A* has to route through the node above the wall.
+        graph.static_mut().move_layers.push(vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: vec![geo2d::segment(
+                geo2d::pt(100.0, 60.0),
+                geo2d::pt(100.0, 140.0),
+            )],
+            motion_obstacles: Vec::new(),
+        }]);
+        graph
+            .static_mut()
+            .half_diagonals
+            .push(MoveBoxHalfDiagonal::new(10.0, 10.0));
+        graph
+            .static_mut()
+            .sector_conversion
+            .push(SectorToArea { sector: 0, area: 0 });
+        graph.nodes.push(PathGraphNode {
+            position: MapPoint::new(100.0, 30.0),
+            vector_to_node: MapVec::new(1.0, 0.0),
+            vector_from_node: MapVec::new(1.0, 0.0),
+            required_state: 0,
+            configurations: vec![15],
+            link_indices: Vec::new(),
+            alternative_link_indices: Vec::new(),
+            visited: false,
+            distance_from_source: 0.0,
+            distance_to_goal: 0.0,
+            score: 0.0,
+            previous_link_on_path: None,
+            leave_place: 0,
+            enter_place: 0,
+        });
+        graph.layers = vec![vec![vec![vec![NodeIdx(0)]]]];
+        graph.alternative_layers = vec![vec![vec![Vec::new()]]];
+        graph.states = vec![vec![0]];
+
+        let source = MapPoint::new(50.0, 100.0);
+        let goal = MapPoint::new(150.0, 100.0);
+        // `use_first_point = false` forbids the direct fast-return, forcing
+        // the query through link_source + A* node expansion every time.
+        let run = |pf: &mut PathFinder| pf.find_path(&graph, &grid, 0, 0, 0, source, goal, false);
+
+        let mut memoized = PathFinder::new();
+        memoized.states = graph.states.clone();
+        let first = run(&mut memoized);
+        assert!(
+            first.as_ref().is_some_and(|path| path.len() > 1),
+            "fixture must produce a node-routed path, got {first:?}"
+        );
+        for _ in 0..3 {
+            let mut fresh = PathFinder::new();
+            fresh.states = graph.states.clone();
+            assert_eq!(run(&mut memoized), run(&mut fresh));
+        }
+
+        // A state change must invalidate the memo (and stay equivalent to a
+        // fresh pathfinder that starts from the same states).
+        let mut appeared = Vec::new();
+        let mut line_toggles = Vec::new();
+        memoized.toggle_obstacle_state(&graph, 0, 0, 0, &mut appeared, &mut line_toggles);
+        let mut fresh = PathFinder::new();
+        fresh.states = memoized.states.clone();
+        assert_eq!(run(&mut memoized), run(&mut fresh));
     }
 
     #[test]

@@ -99,7 +99,7 @@ impl LegacyPathAdoptionPlan {
         engine.orders.failed_path_requests = self.failed;
         engine.orders.pending_path_requests = self.pending;
         engine.world.pathfinder.states = self.pathfinder_states;
-        engine.world.fast_grid.line_active = self.line_active;
+        engine.world.fast_grid_mut().line_active = self.line_active;
     }
 }
 
@@ -626,7 +626,7 @@ mod tests {
     fn graph_state_preflight_synchronizes_motion_lines_without_mutating_engine() {
         let mut engine = EngineInner::new();
         engine.world.pathfinder.states = vec![vec![0x5555_5555]];
-        engine.world.fast_grid.line_active = vec![false, true];
+        engine.world.fast_grid_mut().line_active = vec![false, true];
 
         let mut graph = PathGraph::new();
         graph.states = vec![vec![0]];

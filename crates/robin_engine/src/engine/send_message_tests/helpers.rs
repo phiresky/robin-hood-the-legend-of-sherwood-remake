@@ -1026,7 +1026,7 @@ pub(super) fn bind_script_actor(
         &simulation,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     assert!(
         engine
@@ -1087,7 +1087,7 @@ pub(super) fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, 
         &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     assert!(
         engine

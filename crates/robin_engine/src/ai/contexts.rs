@@ -275,8 +275,10 @@ pub struct AiContext {
         >,
     >,
     /// FastFindGrid snapshot used for `IsReachable` line-of-sight queries
-    /// from AI code that only has an `AiContext`.
-    pub fast_grid: crate::fast_find_grid::FastFindGrid,
+    /// from AI code that only has an `AiContext`. `Arc`-shared with the
+    /// engine's copy-on-write grid, so building a context is a refcount
+    /// bump while the snapshot stays frozen at its build instant.
+    pub fast_grid: std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
     /// Shared mission hiking paths from [`LevelAssets`]. Static level data
     /// threaded through context so individual AI controllers do not each cache
     /// their own Arc attachment.

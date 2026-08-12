@@ -989,7 +989,7 @@ pub(super) fn build_ai_context_from_entity(
     standard_view_polygon_radius: u16,
     entity_views: &SharedAiEntityViews,
     sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    fast_grid: &std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
     hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
     all_soldier_handles: &std::sync::Arc<Vec<u32>>,
     difficulty: crate::player_profile::DifficultyLevel,
@@ -3501,7 +3501,7 @@ impl EngineInner {
         ambush_points_count: usize,
         entity_views: &SharedAiEntityViews,
         sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
-        fast_grid: &crate::fast_find_grid::FastFindGrid,
+        fast_grid: &std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
         ambiance: crate::engine::types::Ambiance,
         all_soldier_handles: &std::sync::Arc<Vec<u32>>,
         all_soldier_entity_ids: &[EntityId],
@@ -11344,7 +11344,7 @@ impl EngineInner {
         self.refresh_selected_default_wait_identity(source_id, &mut ctx);
         let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
         let global = &mut self.ai.global;
-        let grid = use_formation.then_some(&self.world.fast_grid);
+        let grid = use_formation.then_some(&*self.world.fast_grid);
         self.world
             .entities
             .get_mut(source_id)

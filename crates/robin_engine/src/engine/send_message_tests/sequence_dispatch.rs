@@ -13,7 +13,7 @@ fn nested_sequence_actions_finish_before_parent_tail() {
         &simulation,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     assert!(
         engine
@@ -160,7 +160,7 @@ fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
         &simulation,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     assert!(
         engine
@@ -257,7 +257,7 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
         &simulation,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     assert!(
         engine
@@ -330,7 +330,7 @@ fn scroll_send_message_preserves_this_scroll_through_child_and_resume() {
         &simulation,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     let script = engine.scripts.mission.as_mut().expect("script installed");
     assert!(script.bind_actor(
@@ -381,7 +381,7 @@ fn scroll_ownerless_send_message_preserves_this_scroll_in_global_and_parent() {
         &simulation,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     engine
         .scripts

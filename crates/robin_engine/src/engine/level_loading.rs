@@ -1150,7 +1150,7 @@ mod mission_level_builder_tests {
         );
 
         for sector_number in [0_i16, 1_i16] {
-            let level = engine.world.fast_grid.level_mut();
+            let level = engine.world.fast_grid_mut().level_mut();
             let grid_index = level.sectors.len();
             level
                 .sector_number_map
@@ -2372,12 +2372,14 @@ impl EngineInner {
         // Size the grid from map dimensions.
         let grid_w = level_w / 64;
         let grid_h = level_h / 64;
-        self.world.fast_grid.size_map(grid_w, grid_h);
+        self.world.fast_grid_mut().size_map(grid_w, grid_h);
         let conventional_layers = u16::try_from(motion_data.layers.len())
             .expect("motion layer count exceeds u16")
             .checked_sub(1)
             .expect("motion data has no lift layer");
-        self.world.fast_grid.allocate_layers(conventional_layers);
+        self.world
+            .fast_grid_mut()
+            .allocate_layers(conventional_layers);
 
         // Register the already-loaded sight obstacles with the grid so
         // per-cell queries (`get_obstacle_indices`) can restrict the
@@ -2393,7 +2395,7 @@ impl EngineInner {
         for (obs_idx, layer, box_ground) in obstacle_metadata {
             if let Some(idx) = crate::sight_obstacle::SightObstacleIndex::new(obs_idx) {
                 self.world
-                    .fast_grid
+                    .fast_grid_mut()
                     .add_obstacle_index(idx, layer, &box_ground);
             }
         }
@@ -2406,7 +2408,7 @@ impl EngineInner {
         let mut added = 0usize;
         for raw in raw_masks {
             if let Some(mask) = crate::mask::RuntimeMask::from_raw(&raw) {
-                self.world.fast_grid.add_mask(mask);
+                self.world.fast_grid_mut().add_mask(mask);
                 added += 1;
             }
         }
@@ -2464,7 +2466,7 @@ impl EngineInner {
                 right_obstacle = ?right,
                 "loading elevation line"
             );
-            self.world.fast_grid.add_line(line, raw.layer);
+            self.world.fast_grid_mut().add_line(line, raw.layer);
             elev_added += 1;
         }
         if !elev_raw.is_empty() {
@@ -2506,7 +2508,7 @@ impl EngineInner {
                     );
                     line.initialize_motion_normal(true);
                     line.set_repulsive(true);
-                    self.world.fast_grid.add_line(line, layer_idx as u16);
+                    self.world.fast_grid_mut().add_line(line, layer_idx as u16);
                 }
                 // Emit cone-limited repulsive points at inward corners
                 // of the motion area.  `det(v1, v2) < 0` marks an
@@ -2529,7 +2531,7 @@ impl EngineInner {
                                 crate::geo2d::cross(limit_left.to_geo(), limit_right.to_geo())
                                     < 0.0;
                             self.world
-                                .fast_grid
+                                .fast_grid_mut()
                                 .level_mut()
                                 .level_repulsive_points
                                 .push(crate::fast_find_grid::LevelRepulsivePoint {
@@ -2588,7 +2590,7 @@ impl EngineInner {
                         );
                         line.initialize_motion_normal(false);
                         line.set_repulsive(true);
-                        let line_idx = self.world.fast_grid.add_line(line, layer_idx as u16);
+                        let line_idx = self.world.fast_grid_mut().add_line(line, layer_idx as u16);
                         line_indices.push(line_idx);
                     }
                     // Obstacle-corner repulsive points: `det(v1, v2) > 0`
@@ -2610,7 +2612,7 @@ impl EngineInner {
                                     crate::geo2d::cross(limit_left.to_geo(), limit_right.to_geo())
                                         < 0.0;
                                 self.world
-                                    .fast_grid
+                                    .fast_grid_mut()
                                     .level_mut()
                                     .level_repulsive_points
                                     .push(crate::fast_find_grid::LevelRepulsivePoint {
@@ -2663,7 +2665,7 @@ impl EngineInner {
         // ── Part 2: Pathfinder graph ──
         if !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.pathfinder_graph)
-                .load_from_proto_stream(&mut self.world.fast_grid, &motion_data.graph_bytes)
+                .load_from_proto_stream(self.world.fast_grid_mut(), &motion_data.graph_bytes)
         {
             tracing::error!("Failed to load pathfinder graph: {e}");
         }
@@ -2674,9 +2676,13 @@ impl EngineInner {
         // ── Part 4: Initialize pathfinder obstacle states ──
         // Must happen after graph is loaded, not during engine.initialize() which
         // runs before load_background_map processes the motion data.
-        self.world
-            .pathfinder
-            .initialize_from_graph(assets.pathfinder_graph.as_ref(), &mut self.world.fast_grid);
+        {
+            let world = &mut self.world;
+            let grid = std::sync::Arc::make_mut(&mut world.fast_grid);
+            world
+                .pathfinder
+                .initialize_from_graph(assets.pathfinder_graph.as_ref(), grid);
+        }
 
         // ── Part 5: Register sectors in grid blocks ──
         //
@@ -2710,7 +2716,7 @@ impl EngineInner {
                         bbox.expand_point(p);
                     }
 
-                    self.world.fast_grid.add_sector(
+                    self.world.fast_grid_mut().add_sector(
                         crate::fast_find_grid::GridSector {
                             points: pts,
                             bounding_box: bbox,
@@ -2747,7 +2753,7 @@ impl EngineInner {
                             obs_bbox.expand_point(p);
                         }
 
-                        self.world.fast_grid.add_sector(
+                        self.world.fast_grid_mut().add_sector(
                             crate::fast_find_grid::GridSector {
                                 points: obs_pts,
                                 bounding_box: obs_bbox,
@@ -2796,7 +2802,7 @@ impl EngineInner {
                     continue;
                 };
                 {
-                    let level = self.world.fast_grid.level_mut();
+                    let level = self.world.fast_grid_mut().level_mut();
                     if let Some(gs) = level.sectors.get_mut(lift_grid_idx) {
                         // The motion loader must already have marked the
                         // area as a lift.  Panic so malformed level data
@@ -2860,7 +2866,7 @@ impl EngineInner {
                      `initialize_motion_from_level_data` must agree on the \
                      area/obstacle count"
                 );
-                self.world.fast_grid.add_sector(
+                self.world.fast_grid_mut().add_sector(
                     crate::fast_find_grid::GridSector {
                         points: Vec::new(),
                         bounding_box: crate::coordinates::MapBBox::new(),
@@ -2921,7 +2927,7 @@ impl EngineInner {
                 for &p in &pts {
                     bbox.expand_point(p);
                 }
-                self.world.fast_grid.add_sector(
+                self.world.fast_grid_mut().add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
                         bounding_box: bbox,
@@ -3019,7 +3025,7 @@ impl EngineInner {
                     shadow.initialize_3d(found_top_plane.as_ref());
 
                     self.world
-                        .fast_grid
+                        .fast_grid_mut()
                         .level_mut()
                         .shadow_data
                         .insert(sector_idx, shadow);
@@ -3207,7 +3213,7 @@ impl EngineInner {
             let jl1_helper_needed = jl1.helper_needed;
             let jl2_helper_needed = jl2.helper_needed;
             {
-                let level = self.world.fast_grid.level_mut();
+                let level = self.world.fast_grid_mut().level_mut();
                 level.jump_lines.push(jl1);
                 level.jump_lines.push(jl2);
 
@@ -3351,7 +3357,7 @@ impl EngineInner {
                 underlying_sector: zone_sector[zi]
                     .and_then(crate::fast_find_grid::SectorIndex::new),
             };
-            self.world.fast_grid.add_sector(gs, zone.layer);
+            self.world.fast_grid_mut().add_sector(gs, zone.layer);
             registered += 1;
         }
         if registered > 0 {
@@ -3419,7 +3425,7 @@ impl EngineInner {
             return;
         }
 
-        self.world.fast_grid.level_mut().door_projection_infos = self
+        self.world.fast_grid_mut().level_mut().door_projection_infos = self
             .script_domains
             .interactables
             .doors
@@ -3456,7 +3462,7 @@ impl EngineInner {
                 missing_values.insert(i16::from(*sector_number));
                 continue;
             };
-            let level = self.world.fast_grid.level_mut();
+            let level = self.world.fast_grid_mut().level_mut();
             if let Some(gs) = level.sectors.get_mut(grid_idx)
                 && gs.sector_type.is_motion()
                 && gs.sector_type.is_area()
@@ -3779,26 +3785,26 @@ impl EngineInner {
                 }
 
                 let door_active = door.active;
-                let idx = self.world.fast_grid.add_sector(
-                    crate::fast_find_grid::GridSector { points: pts,
-                    bounding_box: bbox,
-                    sector_type: SectorType::DOOR | SectorType::MOUSE,
-                    layer,
-                    sector_number: crate::sector::SectorNumber::new(-1), /* Doors don't have motion sector numbers */
-                    door_index: Some(door_idx as u32),
-                    lift_type: None,
-                    lift_direction: 0,
-                    force_crouched: false,
-                    building_index: None,
-                    low_exit_point: None,
-                    high_exit_point: None,
-                    lowest_door_index: None, jump_line_indices: Vec::new(),
-                    gate_indices: Vec::new(),
-                    underlying_sector: None,
-                },
-                    layer,
-                );
-                self.world.fast_grid.set_sector_active(idx, door_active);
+                let idx = self.world.fast_grid_mut().add_sector(crate::fast_find_grid::GridSector { points: pts,
+                bounding_box: bbox,
+                sector_type: SectorType::DOOR | SectorType::MOUSE,
+                layer,
+                sector_number: crate::sector::SectorNumber::new(-1), /* Doors don't have motion sector numbers */
+                door_index: Some(door_idx as u32),
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None, jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+                                },
+                layer,);
+                self.world
+                    .fast_grid_mut()
+                    .set_sector_active(idx, door_active);
                 door_sectors_registered += 1;
             }
             tracing::info!(
@@ -3816,7 +3822,7 @@ impl EngineInner {
         // DetermineMovementAnimation. Populate the Rust cache after the
         // The canonical door table is fully loaded; an earlier motion-sector pass
         // may run before these doors exist.
-        for gs in &mut self.world.fast_grid.level_mut().sectors {
+        for gs in &mut self.world.fast_grid_mut().level_mut().sectors {
             if gs.sector_type.is_lift() || gs.lift_type.is_some() {
                 gs.low_exit_point = None;
                 gs.high_exit_point = None;
@@ -3836,7 +3842,13 @@ impl EngineInner {
                 else {
                     continue;
                 };
-                let Some(gs) = self.world.fast_grid.level_mut().sectors.get_mut(grid_idx) else {
+                let Some(gs) = self
+                    .world
+                    .fast_grid_mut()
+                    .level_mut()
+                    .sectors
+                    .get_mut(grid_idx)
+                else {
                     continue;
                 };
                 if !(gs.sector_type.is_lift() || gs.lift_type.is_some()) {
@@ -3989,7 +4001,7 @@ impl EngineInner {
 
             // Old sectors: active = true (visible before patch fires)
             if let Some(idx) = register_sector(
-                &mut self.world.fast_grid,
+                self.world.fast_grid_mut(),
                 &raw.old_mouse_sector,
                 mouse_patch,
                 true,
@@ -3998,7 +4010,7 @@ impl EngineInner {
                 old_sector_indices.push(idx);
             }
             if let Some(idx) = register_sector(
-                &mut self.world.fast_grid,
+                self.world.fast_grid_mut(),
                 &raw.old_masking_sector,
                 mouse_motion,
                 true,
@@ -4008,7 +4020,7 @@ impl EngineInner {
             }
             // New sectors: active = false (hidden until patch fires)
             if let Some(idx) = register_sector(
-                &mut self.world.fast_grid,
+                self.world.fast_grid_mut(),
                 &raw.new_mouse_sector,
                 mouse_patch,
                 false,
@@ -4017,7 +4029,7 @@ impl EngineInner {
                 new_sector_indices.push(idx);
             }
             if let Some(idx) = register_sector(
-                &mut self.world.fast_grid,
+                self.world.fast_grid_mut(),
                 &raw.new_masking_sector,
                 mouse_motion,
                 false,
@@ -4044,7 +4056,7 @@ impl EngineInner {
             // Register the apply polygon as a cross-sector + build its
             // LINE_PATCH boundary lines carrying this patch's index.
             let apply_sector_idx = register_sector(
-                &mut self.world.fast_grid,
+                self.world.fast_grid_mut(),
                 &raw.apply_sector,
                 cross_patch_apply,
                 true,
@@ -4053,7 +4065,7 @@ impl EngineInner {
             if let Some(idx) = apply_sector_idx
                 && let Some(patch_index) = crate::patch::PatchIndex::new(patch_idx as u32)
             {
-                self.world.fast_grid.add_sector_lines_for_patch(
+                self.world.fast_grid_mut().add_sector_lines_for_patch(
                     idx,
                     patch_layer,
                     patch_index,
@@ -4063,14 +4075,14 @@ impl EngineInner {
 
             // Register the no-apply polygon identically, minus the APPLY bit.
             if let Some(idx) = register_sector(
-                &mut self.world.fast_grid,
+                self.world.fast_grid_mut(),
                 &raw.no_apply_sector,
                 cross_patch,
                 true,
                 patch_layer,
             ) && let Some(patch_index) = crate::patch::PatchIndex::new(patch_idx as u32)
             {
-                self.world.fast_grid.add_sector_lines_for_patch(
+                self.world.fast_grid_mut().add_sector_lines_for_patch(
                     idx,
                     patch_layer,
                     patch_index,
@@ -4096,7 +4108,9 @@ impl EngineInner {
             let new_mask_indices: Vec<crate::mask::MaskIndex> =
                 raw.new_masks.iter().map(resolve_mask).collect();
             for &mask_index in &new_mask_indices {
-                self.world.fast_grid.set_mask_active(mask_index, false);
+                self.world
+                    .fast_grid_mut()
+                    .set_mask_active(mask_index, false);
             }
 
             self.script_domains

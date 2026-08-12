@@ -1730,14 +1730,14 @@ fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
     obstacle.rebuild_geometry();
 
     let ctx = AiContext {
-        fast_grid: crate::fast_find_grid::FastFindGrid {
+        fast_grid: std::sync::Arc::new(crate::fast_find_grid::FastFindGrid {
             level: std::sync::Arc::new(level),
             line_active: Vec::new(),
             sector_active: vec![true],
             mask_active: Vec::new(),
             lift_state: std::collections::BTreeMap::new(),
             sector_type_overlay: std::collections::BTreeMap::new(),
-        },
+        }),
         sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
             static_obstacles: std::sync::Arc::new(vec![obstacle]),
             dynamic_obstacles: std::sync::Arc::new(Vec::new()),
@@ -1831,14 +1831,14 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
     obstacle.rebuild_geometry();
 
     let ctx = AiContext {
-        fast_grid: crate::fast_find_grid::FastFindGrid {
+        fast_grid: std::sync::Arc::new(crate::fast_find_grid::FastFindGrid {
             level: std::sync::Arc::new(level),
             line_active: Vec::new(),
             sector_active: vec![true],
             mask_active: Vec::new(),
             lift_state: std::collections::BTreeMap::new(),
             sector_type_overlay: std::collections::BTreeMap::new(),
-        },
+        }),
         sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
             static_obstacles: std::sync::Arc::new(vec![obstacle]),
             dynamic_obstacles: std::sync::Arc::new(Vec::new()),

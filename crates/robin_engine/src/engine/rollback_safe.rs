@@ -3941,7 +3941,7 @@ mod tests {
     fn parity_world_interactables_preserves_lift_runtime_state() {
         let mut inner = EngineInner::new();
         let sector_number = crate::sector::SectorNumber::new(47);
-        let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid.level);
+        let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid_mut().level);
         level.sector_number_map.insert(sector_number, 0);
         level.sectors.push(crate::fast_find_grid::GridSector {
             points: Vec::new(),
@@ -3961,7 +3961,7 @@ mod tests {
             gate_indices: Vec::new(),
             underlying_sector: None,
         });
-        inner.world.fast_grid.lift_state.insert(
+        inner.world.fast_grid_mut().lift_state.insert(
             0,
             crate::fast_find_grid::LiftRuntimeState {
                 occupants_pc: 2,
@@ -4011,7 +4011,7 @@ mod tests {
                 occupant_indices: vec![first, second],
                 ..Default::default()
             });
-        let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid.level);
+        let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid_mut().level);
         level.sectors.push(crate::fast_find_grid::GridSector {
             points: Vec::new(),
             bounding_box: crate::coordinates::MapBBox::new(),
@@ -4032,7 +4032,7 @@ mod tests {
         });
         inner
             .world
-            .fast_grid
+            .fast_grid_mut()
             .or_sector_type_overlay(0, crate::sector::SectorType::APEX);
         let mut assets = LevelAssets::new();
         std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).push(0);
@@ -4426,7 +4426,7 @@ mod tests {
         let mut live = Engine { inner: live_inner };
 
         let mut malformed_inner = EngineInner::new();
-        malformed_inner.world.fast_grid.line_active.push(true);
+        malformed_inner.world.fast_grid_mut().line_active.push(true);
         let malformed = Engine {
             inner: malformed_inner,
         };

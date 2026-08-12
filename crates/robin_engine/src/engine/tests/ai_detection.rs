@@ -1833,7 +1833,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
             ..Door::default()
         },
     ];
-    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
     level.sector_number_map.insert(building_sector, 0);
     level.sectors.push(GridSector {
         points: Vec::new(),

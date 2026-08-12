@@ -298,7 +298,7 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
         &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     if let Some(ref mut s) = engine.scripts.mission {
         assert!(s.bind_actor(
@@ -731,7 +731,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     let mission = engine
         .scripts
@@ -1688,7 +1688,7 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     let mut engine = EngineInner::new();
     engine.world.entities = entity_store;
     engine.ai.global = ai_global;
-    engine.world.fast_grid = fast_grid;
+    engine.world.fast_grid = std::sync::Arc::new(fast_grid);
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
@@ -5433,7 +5433,7 @@ fn bind_state_change_actor(engine: &mut EngineInner, actor: EntityId, class_name
         &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     assert!(
         engine
@@ -5608,7 +5608,7 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
             ..Door::default()
         },
     ];
-    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
     level.sector_number_map.insert(building_sector, 0);
     level.sectors.push(GridSector {
         points: Vec::new(),
@@ -6218,8 +6218,8 @@ fn fleeing_panic_classification_occurs_after_no_event_callback_mutation() {
         });
     }
     bind_state_change_actor(&mut engine, actor, "PostFilterPanicProbe");
-    engine.world.fast_grid.size_map(64, 64);
-    engine.world.fast_grid.allocate_layers(1);
+    engine.world.fast_grid_mut().size_map(64, 64);
+    engine.world.fast_grid_mut().allocate_layers(1);
     let sector = crate::position_interface::SectorHandle::new(1).unwrap();
     {
         let element = engine
