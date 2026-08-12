@@ -32,7 +32,7 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
-fn gate_builder_retains_direct_pass_direction_for_ai_position() {
+fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
     use crate::coordinates::MapPoint;
     use crate::engine::MissionScript;
     use crate::engine::movement::GoalShape;
@@ -157,6 +157,84 @@ fn gate_builder_retains_direct_pass_direction_for_ai_position() {
     assert_eq!(
         indirect_position.sector,
         crate::position_interface::SectorHandle::new(0)
+    );
+
+    let capture_locked_camera = |direct| {
+        use crate::sequence::{Field, FieldValue};
+
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(minimal_mission());
+        let mut pc_entity = make_test_pc(crate::element::Posture::Upright);
+        let Entity::Pc(pc) = &mut pc_entity else {
+            unreachable!()
+        };
+        pc.pc.has_lockpick = true;
+        let owner = engine.add_entity(pc_entity);
+        engine.script_domains.interactables.doors = vec![Door {
+            point_out: MapPoint::new(1298.0, 539.0),
+            point_in: MapPoint::new(1265.0, 505.0),
+            sector_out: SectorNumber::new(0),
+            sector_in: SectorNumber::new(14),
+            locked_pc: true,
+            unlockable: true,
+            ..Door::default()
+        }];
+
+        let sequence_id = engine
+            .build_gate_movement_sequence(
+                &crate::sim_rng::test_context(),
+                owner,
+                vec![GatePathStep {
+                    door_index: DoorIndex(0),
+                    direct,
+                }],
+                GoalShape::Point {
+                    point: MapPoint::new(1400.0, 600.0),
+                    tolerance: 0.0,
+                },
+                0,
+                OrderType::RunningUpright,
+                true,
+                1.0,
+                MoveFlags::empty(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                false,
+            )
+            .expect("locked door route");
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .get_sequence(sequence_id)
+            .expect("locked gate sequence");
+        assert!(
+            sequence
+                .elements
+                .iter()
+                .any(|element| element.command == Command::UnlockDoor),
+            "fixture must exercise the lockpick branch"
+        );
+        let turn = sequence
+            .elements
+            .iter()
+            .find(|element| element.command == Command::Turn)
+            .expect("lockpick Turn element");
+        match turn.get_property(Field::CameraPoint) {
+            Some(FieldValue::GeoPoint2D { x, y }) => MapPoint::new(*x, *y),
+            other => panic!("lockpick Turn camera point changed: {other:?}"),
+        }
+    };
+
+    assert_eq!(
+        capture_locked_camera(true),
+        MapPoint::new(1265.0, 505.0),
+        "direct traversal faces point_in, the gate exit"
+    );
+    assert_eq!(
+        capture_locked_camera(false),
+        MapPoint::new(1298.0, 539.0),
+        "indirect traversal faces point_out, the gate exit"
     );
 }
 

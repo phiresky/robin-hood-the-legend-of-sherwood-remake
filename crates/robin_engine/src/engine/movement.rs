@@ -4566,10 +4566,10 @@ impl EngineInner {
             // — the unlock animation flips `locked_pc` off and the
             // caller re-issues the move command to resume the path.
             if shot.is_locked_pc_unlockable && has_lockpick {
-                // TURN toward the gate entry (point_in for direct,
-                // point_out for indirect), so the sprite faces the
-                // lock while picking it.
-                let camera_pt = if shot.direct { shot.exit } else { shot.entry };
+                // Original uses `mbDirect ? pointIn : pointOut`, which is
+                // the path-local exit for either traversal direction, so the
+                // sprite faces the lock while picking it.
+                let camera_pt = shot.exit;
                 let mut turn = SequenceElement::new_generic(level, Command::Turn, Some(entity_id));
                 turn.set_property(
                     Field::CameraPoint,
