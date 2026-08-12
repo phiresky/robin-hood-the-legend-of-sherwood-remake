@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{GroundBBox, MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
 use crate::geo2d;
+use geo::Rect;
 
 // ---------------------------------------------------------------------------
 // SectorIndex — nominal newtype
@@ -1139,6 +1140,38 @@ fn block_index_from_cell_raw(
         + (grid_width as usize) * ((cy as usize) + (layer as usize) * (grid_height as usize))
 }
 
+/// Clamp a world-space rect to the inclusive grid-cell range it covers,
+/// returning `(x_min, y_min, x_max, y_max)`.
+///
+/// The original engine did no clamping here at all: it asserted that
+/// every queried rect lay inside the grid and indexed blocks directly,
+/// so off-grid rects were simply outside its contract (out-of-range
+/// block reads in release builds). We clamp defensively instead: rects
+/// partially off-grid are clamped to the border, and rects fully
+/// off-grid (or an empty/unloaded grid) yield an empty range
+/// (`min > max`), so `min..=max` loops visit no cells rather than
+/// spuriously touching cell (0, 0).
+#[inline]
+fn rect_to_cell_range(rect: &Rect<f32>, grid_width: u16, grid_height: u16) -> (u16, u16, u16, u16) {
+    const EMPTY: (u16, u16, u16, u16) = (1, 1, 0, 0);
+    if grid_width == 0 || grid_height == 0 {
+        return EMPTY;
+    }
+    let x_min = (rect.min().x / GRID_CELL_SIZE_F).floor() as i32;
+    let y_min = (rect.min().y / GRID_CELL_SIZE_F).floor() as i32;
+    let x_max = (rect.max().x / GRID_CELL_SIZE_F).floor() as i32;
+    let y_max = (rect.max().y / GRID_CELL_SIZE_F).floor() as i32;
+    if x_max < 0 || y_max < 0 || x_min >= i32::from(grid_width) || y_min >= i32::from(grid_height) {
+        return EMPTY;
+    }
+    (
+        x_min.max(0) as u16,
+        y_min.max(0) as u16,
+        x_max.min(i32::from(grid_width) - 1) as u16,
+        y_max.min(i32::from(grid_height) - 1) as u16,
+    )
+}
+
 impl FastFindGrid {
     // ── Construction ──
 
@@ -1248,8 +1281,18 @@ impl FastFindGrid {
 
     // ── Getters ──
 
+    /// Index of the lift layer (one below the special layer).
+    ///
+    /// Only meaningful once level geometry is loaded; the original
+    /// engine assumed a loaded level here, so calling this on an
+    /// unloaded grid is a bug and panics rather than returning a
+    /// wrapped-around fake layer index.
     #[inline]
     pub fn lift_layer(&self) -> u16 {
+        assert!(
+            self.level.special_layer != 0,
+            "lift_layer() called before level grid geometry was loaded"
+        );
         self.level.special_layer - 1
     }
 
@@ -1280,12 +1323,8 @@ impl FastFindGrid {
         }
         // Add to overlapping grid blocks
         if let Some(rect) = line.bbox.0 {
-            let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_width.saturating_sub(1));
-            let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_height.saturating_sub(1));
+            let (x_min, y_min, x_max, y_max) =
+                rect_to_cell_range(&rect, level.grid_width, level.grid_height);
 
             for cy in y_min..=y_max {
                 for cx in x_min..=x_max {
@@ -1419,12 +1458,8 @@ impl FastFindGrid {
         // bbox overlap, so cells the polygon merely brushes by are not
         // registered.
         if let Some(rect) = sector.bounding_box.0 {
-            let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_width.saturating_sub(1));
-            let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_height.saturating_sub(1));
+            let (x_min, y_min, x_max, y_max) =
+                rect_to_cell_range(&rect, level.grid_width, level.grid_height);
 
             for cy in y_min..=y_max {
                 for cx in x_min..=x_max {
@@ -1480,12 +1515,8 @@ impl FastFindGrid {
         }
 
         if let Some(rect) = bbox.0 {
-            let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_width.saturating_sub(1));
-            let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_height.saturating_sub(1));
+            let (x_min, y_min, x_max, y_max) =
+                rect_to_cell_range(&rect, level.grid_width, level.grid_height);
 
             for cy in y_min..=y_max {
                 for cx in x_min..=x_max {
@@ -1536,12 +1567,8 @@ impl FastFindGrid {
         let Some(rect) = bbox.0 else {
             return;
         };
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, level.grid_width, level.grid_height);
 
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
@@ -1588,12 +1615,8 @@ impl FastFindGrid {
             0
         };
         if let Some(rect) = bbox.0 {
-            let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-            let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_width.saturating_sub(1));
-            let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-                .min(level.grid_height.saturating_sub(1));
+            let (x_min, y_min, x_max, y_max) =
+                rect_to_cell_range(&rect, level.grid_width, level.grid_height);
             for cy in y_min..=y_max {
                 for cx in x_min..=x_max {
                     let block_idx = block_index_from_cell_raw(
@@ -1626,12 +1649,8 @@ impl FastFindGrid {
         if (layer as usize) >= self.level.layers.len() {
             return Vec::new();
         }
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
         let mut result: Vec<crate::sight_obstacle::SightObstacleIndex> = Vec::new();
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
@@ -1670,12 +1689,8 @@ impl FastFindGrid {
             return Vec::new();
         }
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let mut visited = QueryVisited::new(self.level.masks.len());
         let mut result: Vec<crate::mask::MaskIndex> = Vec::new();
@@ -1783,12 +1798,8 @@ impl FastFindGrid {
             return Vec::new();
         }
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let mut visited = QueryVisited::new(self.level.masks.len());
         let mut result: Vec<crate::mask::MaskIndex> = Vec::new();
@@ -2322,12 +2333,8 @@ impl FastFindGrid {
             None => return,
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         for cy in y_min..=y_max {
@@ -2377,12 +2384,8 @@ impl FastFindGrid {
             None => return Vec::new(),
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
@@ -2424,12 +2427,8 @@ impl FastFindGrid {
             None => return Vec::new(),
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
@@ -2534,12 +2533,8 @@ impl FastFindGrid {
             None => return Vec::new(),
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
@@ -2658,12 +2653,8 @@ impl FastFindGrid {
             None => return Vec::new(),
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
@@ -2709,12 +2700,8 @@ impl FastFindGrid {
             None => return Vec::new(),
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
         let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
         let mut visited = QueryVisited::new(self.level.lines.len());
@@ -2761,12 +2748,8 @@ impl FastFindGrid {
             return Vec::new();
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
         let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
         let mut visited = QueryVisited::new(self.level.lines.len());
@@ -2914,12 +2897,8 @@ impl FastFindGrid {
             None => return Vec::new(),
         };
 
-        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
-        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_width.saturating_sub(1));
-        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
-            .min(self.level.grid_height.saturating_sub(1));
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
@@ -3787,6 +3766,33 @@ impl ThickMoveCorridor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rect_to_cell_range_clamps_and_rejects_off_grid_rects() {
+        // In-grid rect maps to the covered cells.
+        let r = Rect::new((10.0f32, 10.0), (130.0, 70.0));
+        assert_eq!(rect_to_cell_range(&r, 8, 8), (0, 0, 2, 1));
+
+        // Partially off-grid rect is clamped to the border.
+        let r = Rect::new((-100.0f32, -5.0), (70.0, 900.0));
+        assert_eq!(rect_to_cell_range(&r, 8, 8), (0, 0, 1, 7));
+
+        // Fully off-grid (left/above the grid): empty range, so
+        // `min..=max` loops visit no cells — in particular not (0, 0).
+        let r = Rect::new((-500.0f32, -500.0), (-100.0, -100.0));
+        let (x_min, y_min, x_max, y_max) = rect_to_cell_range(&r, 8, 8);
+        assert!(x_min > x_max && y_min > y_max);
+
+        // Fully off-grid (right of the grid): empty range too.
+        let r = Rect::new((10_000.0f32, 10.0), (10_100.0, 20.0));
+        let (x_min, _, x_max, _) = rect_to_cell_range(&r, 8, 8);
+        assert!(x_min > x_max);
+
+        // Unloaded / zero-sized grid: no cells.
+        let r = Rect::new((10.0f32, 10.0), (20.0, 20.0));
+        let (x_min, _, x_max, _) = rect_to_cell_range(&r, 0, 0);
+        assert!(x_min > x_max);
+    }
 
     #[test]
     fn downward_lift_release_clamps_an_unreserved_wall_route_to_zero() {
