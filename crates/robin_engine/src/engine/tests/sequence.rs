@@ -1505,8 +1505,9 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
     );
 }
 
-#[test]
-fn final_move_seek_inside_building_installs_refreshing_seek_hold() {
+fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
+    stale_sprite_motion: crate::sprite::MotionState,
+) {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::position_interface::SectorHandle;
@@ -1519,7 +1520,7 @@ fn final_move_seek_inside_building_installs_refreshing_seek_hold() {
     let owner = engine.add_entity(make_test_pc(Posture::Upright));
     let start = MapPoint::new(10.0, 20.0);
     let target_position = MapPoint::new(30.0, 40.0);
-    let target = engine.add_entity(make_test_soldier(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
     {
         let element = engine.get_entity_mut(owner).unwrap().element_data_mut();
         element.set_position_map(start);
@@ -1530,8 +1531,16 @@ fn final_move_seek_inside_building_installs_refreshing_seek_hold() {
         element.set_position_map(target_position);
         element.set_sector(SectorHandle::new(42));
     }
+    let post_seek_order_id = engine.orders.allocate_order_id();
+    let mut post_seek_element = SequenceElement::new_generic(1, Command::Wait, Some(owner));
+    post_seek_element.orders.push_back(crate::order::Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        post_seek_order_id,
+    ));
     let mut post_seek = Sequence::new();
-    post_seek.append_element(SequenceElement::new_generic(1, Command::Wait, Some(owner)));
+    post_seek.append_element(post_seek_element);
     {
         let actor = engine
             .get_entity_mut(owner)
@@ -1592,11 +1601,18 @@ fn final_move_seek_inside_building_installs_refreshing_seek_hold() {
         "final Move|SEEK must not take the ordinary building teleport branch"
     );
 
-    assert!(engine.tick_refreshing_seek_for_owner(
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .last_motion_state = Some(stale_sprite_motion);
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    engine.tick_actor_owner_envelopes(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
-        owner,
-    ));
+        &positions,
+    );
     assert_eq!(
         engine
             .get_entity(owner)
@@ -1615,6 +1631,174 @@ fn final_move_seek_inside_building_installs_refreshing_seek_hold() {
             .state,
         SequenceState::Terminated,
         "same-building SEEK_IN_BUILDINGS starts the attached post-seek tail"
+    );
+    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+    assert_eq!(
+        actor.continuation.motion_state,
+        crate::sprite::MotionState::InProgress,
+        "RefreshingSeek returns InProgress independently of the stale sprite edge"
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_motion_state,
+        Some(stale_sprite_motion),
+        "the non-animation RefreshingSeek arm must not fabricate a sprite motion"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        None,
+        "the attached post-seek sequence waits for the later manager phase"
+    );
+    let (replacement_sequence, replacement_order) = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .find_map(|candidate| {
+            candidate.elements.first().and_then(|element| {
+                (element.owner == Some(owner)
+                    && element.command == Command::Wait
+                    && element.state == SequenceState::Todo)
+                    .then(|| element.current_order().map(|order| (candidate.id, order)))
+                    .flatten()
+            })
+        })
+        .expect("same-building refresh queues the attached post-seek sequence");
+    assert_ne!(replacement_sequence, sequence);
+    assert_eq!(replacement_order.order_id, post_seek_order_id);
+    assert_eq!(replacement_order.order_type, OrderType::WaitingUpright);
+}
+
+#[test]
+fn refreshing_seek_owner_envelope_ignores_stale_aborted_sprite_motion() {
+    assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
+        crate::sprite::MotionState::Aborted,
+    );
+}
+
+#[test]
+fn refreshing_seek_owner_envelope_ignores_stale_done_sprite_motion() {
+    assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
+        crate::sprite::MotionState::Done,
+    );
+}
+
+#[test]
+fn point_refreshing_seek_returns_terminated_without_refreshing() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RefreshingSeek);
+    movement
+        .orders
+        .push_back(Order::test_new(OrderType::RefreshingSeek, 0.0, 0.0));
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    assert_eq!(
+        engine.tick_refreshing_seek_for_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            owner,
+        ),
+        Some(MotionState::Terminated)
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress,
+        "derived Execute returns Terminated; base Actor completion retires the element"
+    );
+}
+
+#[test]
+fn point_refreshing_seek_with_successor_projects_back_to_in_progress() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let refreshing_order_id = engine.orders.allocate_order_id();
+    let successor_order_id = engine.orders.allocate_order_id();
+    let mut refreshing =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RefreshingSeek);
+    refreshing.orders.push_back(Order::new(
+        OrderType::RefreshingSeek,
+        0.0,
+        0.0,
+        refreshing_order_id,
+    ));
+    refreshing.orders.push_back(Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        successor_order_id,
+    ));
+    let sequence = engine.orders.sequence_manager.launch_element(refreshing);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    engine.tick_actor_owner_envelopes(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        &positions,
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((sequence, 0)),
+        "DoNextOrder keeps the same element selected when Proceed returns another order"
+    );
+    let successor = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("point RefreshingSeek retains its same-element successor");
+    assert_eq!(
+        successor.state,
+        SequenceState::InProgress,
+        "same-element Proceed must not retire the movement element"
+    );
+    assert_eq!(successor.command, Command::Move);
+    assert_eq!(
+        successor.current_order().map(|order| order.order_id),
+        Some(successor_order_id)
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::InProgress
     );
 }
 

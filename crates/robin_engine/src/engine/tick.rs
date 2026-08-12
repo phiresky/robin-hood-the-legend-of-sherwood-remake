@@ -1289,6 +1289,22 @@ fn specialized_execute_motion(
     }
 }
 
+pub(super) trait IntoExplicitExecuteMotion {
+    fn into_explicit_execute_motion(self) -> Option<crate::sprite::MotionState>;
+}
+
+impl IntoExplicitExecuteMotion for () {
+    fn into_explicit_execute_motion(self) -> Option<crate::sprite::MotionState> {
+        None
+    }
+}
+
+impl IntoExplicitExecuteMotion for Option<crate::sprite::MotionState> {
+    fn into_explicit_execute_motion(self) -> Option<crate::sprite::MotionState> {
+        self
+    }
+}
+
 fn project_post_completion_motion(
     current: crate::sprite::MotionState,
     selected_element_impossible: bool,
@@ -3704,7 +3720,7 @@ impl EngineInner {
         );
     }
 
-    pub(super) fn tick_actor_animation_action_change_slots_with_hooks(
+    pub(super) fn tick_actor_animation_action_change_slots_with_hooks<ExecuteMotion>(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3718,9 +3734,11 @@ impl EngineInner {
             Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
             Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
             Option<std::num::NonZeroU32>,
-        ),
+        ) -> ExecuteMotion,
         mut after_slot: impl FnMut(&mut Self, EntityId, crate::order::OrderType),
-    ) {
+    ) where
+        ExecuteMotion: IntoExplicitExecuteMotion,
+    {
         let mut original_slots = self
             .world
             .entities
@@ -4031,7 +4049,7 @@ impl EngineInner {
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                             entity_id,
                         ));
-                        execute_owner_arm(
+                        let explicit_execute_motion = execute_owner_arm(
                             self,
                             entity_id,
                             movement_selection,
@@ -4039,20 +4057,31 @@ impl EngineInner {
                             bow_selection,
                             ability_selection,
                             beggar_selection,
+                        )
+                        .into_explicit_execute_motion();
+                        let specialized_execute_motion = explicit_execute_motion.or_else(|| {
+                            (!validity_short_circuited)
+                                .then_some(selected_owner_family)
+                                .flatten()
+                                .filter(|family| *family != ExecuteOwnerFamily::GenericAnimation)
+                                .and_then(|_| {
+                                    specialized_execute_motion(
+                                        self.world.entities.get(entity_id).and_then(|entity| {
+                                            entity.element_data().sprite.last_motion_state
+                                        }),
+                                        beggar_selection.is_some(),
+                                        movement_entity_target_seek,
+                                    )
+                                })
+                        });
+                        let explicit_execute_in_progress = matches!(
+                            explicit_execute_motion,
+                            Some(crate::sprite::MotionState::InProgress)
                         );
-                        let specialized_execute_motion = (!validity_short_circuited)
-                            .then_some(selected_owner_family)
-                            .flatten()
-                            .filter(|family| *family != ExecuteOwnerFamily::GenericAnimation)
-                            .and_then(|_| {
-                                specialized_execute_motion(
-                                    self.world.entities.get(entity_id).and_then(|entity| {
-                                        entity.element_data().sprite.last_motion_state
-                                    }),
-                                    beggar_selection.is_some(),
-                                    movement_entity_target_seek,
-                                )
-                            });
+                        let explicit_execute_terminated = matches!(
+                            explicit_execute_motion,
+                            Some(crate::sprite::MotionState::Terminated)
+                        );
                         if let Some(motion) = specialized_execute_motion {
                             // Movement/combat/ability owners are derived Execute
                             // arms just like the generic animation switch below.
@@ -4070,6 +4099,7 @@ impl EngineInner {
                             .motion_state = motion;
                         }
                         if !validity_short_circuited
+                            && explicit_execute_motion.is_none()
                             && selected_owner_family.is_some()
                             && self.world.entities.get(entity_id).is_some_and(|entity| {
                                 entity.element_data().sprite.last_motion_state
@@ -4109,6 +4139,14 @@ impl EngineInner {
                             } else {
                                 self.tick_actor_animation_for(sim, assets, entity_id)
                             };
+                        if explicit_execute_terminated {
+                            let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
+                                panic!(
+                                    "actor {entity_id:?} returned explicit Terminated without an entry-latched order"
+                                )
+                            });
+                            outcomes.seq_advance.push((seq_id, elem_idx));
+                        }
                         // Falling-hit/pushed/lift flight is part of this
                         // actor's selected Execute arm in Original. Advance it
                         // before the derived NPC tail so later creation slots
@@ -4317,8 +4355,8 @@ impl EngineInner {
                                             && live_order.order_id == entry_order
                                     })
                             });
-                        let selected_specialized_order_advanced =
-                            specialized_order_advanced_after_execute(
+                        let selected_specialized_order_advanced = !explicit_execute_in_progress
+                            && specialized_order_advanced_after_execute(
                                 specialized_execute_motion,
                                 selected_order_rewritten_by_stop,
                                 selected_element_retired,
@@ -4370,7 +4408,7 @@ impl EngineInner {
                             // rewrite the Execute return already held by Actor.
                             actor.continuation.motion_state = project_post_completion_motion(
                                 actor.continuation.motion_state,
-                                selected_element_impossible,
+                                selected_element_impossible && !explicit_execute_in_progress,
                                 installed_successor_exists,
                                 selected_specialized_order_advanced,
                             );
@@ -4624,17 +4662,20 @@ impl EngineInner {
                     .and_then(Entity::actor_data)
                     .is_some_and(|actor| actor.execution_frozen);
                 if execution_frozen {
-                    return;
+                    return None;
                 }
                 // RefreshSeek is part of this exact actor's PerformSeek
                 // Execute arm. Sampling here preserves creation-order
                 // visibility of the moving target, and a replacement does
                 // not itself execute until this owner returns next frame.
                 if movement.is_some() {
-                    if engine.tick_refreshing_seek_for_owner(sim, assets, owner)
-                        || engine.tick_refresh_seek_for_owner(sim, assets, owner)
+                    if let Some(motion) =
+                        engine.tick_refreshing_seek_for_owner(sim, assets, owner)
                     {
-                        return;
+                        return Some(motion);
+                    }
+                    if engine.tick_refresh_seek_for_owner(sim, assets, owner) {
+                        return Some(crate::sprite::MotionState::InProgress);
                     }
                 }
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);
@@ -4682,6 +4723,7 @@ impl EngineInner {
                 if let Some(order_id) = selected_beggar {
                     engine.tick_beggar_bid_for(sim, assets, owner, order_id);
                 }
+                None
             },
             |engine, owner, derived_tail_order_type| {
                 let is_human = engine

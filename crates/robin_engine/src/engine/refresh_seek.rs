@@ -37,6 +37,7 @@ use crate::order::OrderType;
 use crate::sequence::{
     CascadeFlags, MoveFlags, Sequence, SequenceElement, SequenceElementData, SequenceId,
 };
+use crate::sprite::MotionState;
 
 #[inline]
 fn seek_refresh_wait_elapsed(wait: u32) -> bool {
@@ -102,13 +103,13 @@ impl crate::engine::EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) -> bool {
+    ) -> Option<MotionState> {
         let Some((seq_id, elem_idx)) = self
             .orders
             .sequence_manager
             .current_element_for_actor(owner)
         else {
-            return false;
+            return None;
         };
         let Some((target, action, flags, tolerance)) = self
             .orders
@@ -134,15 +135,15 @@ impl crate::engine::EngineInner {
                 Some((*target, *action, *flags, *tolerance))
             })
         else {
-            return false;
+            return None;
         };
 
         let Some(target) = target else {
             // The point-target arm returns TERMINATED without refreshing.
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
-            return true;
+            // Actor::Hourglass owns the subsequent DoNextOrder; retiring the
+            // element here would skip that base completion boundary and lose
+            // a synchronously exposed successor.
+            return Some(MotionState::Terminated);
         };
         let target_position = self
             .get_entity(target)
@@ -163,7 +164,7 @@ impl crate::engine::EngineInner {
             tolerance,
             target_position,
         );
-        true
+        Some(MotionState::InProgress)
     }
 
     /// Prepare a selected Seek for the terminal `SetState` used by Original's
@@ -1120,6 +1121,153 @@ mod tests {
                 .unwrap()
                 .state,
             SequenceState::InProgress
+        );
+    }
+
+    fn assert_moved_target_refresh_returns_explicit_in_progress(
+        stale_sprite_motion: MotionState,
+        target_sector: u16,
+        expected_entry_state: SequenceState,
+    ) {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = crate::engine::EngineInner::new();
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(crate::profiles::CharacterProfile::default());
+        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
+        let target = engine.add_entity(test_pc_at(80.0, 10.0, target_sector));
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -6.0, -4.0, 6.0, 4.0,
+            ));
+
+        let mut seek =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        seek.orders.push_back(crate::order::Order::test_new(
+            OrderType::WalkingUpright,
+            0.0,
+            0.0,
+        ));
+        if let SequenceElementData::Movement {
+            flags,
+            element,
+            tolerance,
+            ..
+        } = &mut seek.data
+        {
+            *flags = MoveFlags::SEEK;
+            *element = Some(target);
+            *tolerance = 10.0;
+        }
+        let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(seek_seq, 0);
+        {
+            let owner_entity = engine.get_entity_mut(owner).unwrap();
+            owner_entity.element_data_mut().sprite.last_motion_state = Some(stale_sprite_motion);
+            let actor = owner_entity.actor_data_mut().unwrap();
+            actor.active_movement = ActiveMovement::new(seek_seq, 0);
+            actor.seek_target = Some(target);
+            actor.seek_distance = 10.0;
+            actor.seek_refresh_wait = 0;
+            actor.last_seek_target_position = MapPoint::new(60.0, 10.0);
+        }
+
+        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        engine.tick_actor_owner_envelopes(&sim, &assets, &positions);
+
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert_eq!(actor.continuation.motion_state, MotionState::InProgress);
+        if expected_entry_state == SequenceState::Impossible {
+            assert_eq!(
+                actor.installed_order, None,
+                "failed RefreshSeek returns before installing replacement work"
+            );
+        }
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .element_data()
+                .sprite
+                .last_motion_state,
+            Some(stale_sprite_motion),
+            "RefreshSeek returns before Sprite::PerformMotion"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seek_seq, 0)
+                .unwrap()
+                .state,
+            expected_entry_state
+        );
+        if expected_entry_state == SequenceState::Interrupted {
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner),
+                None,
+                "RefreshSeek registers its replacement for the later manager phase"
+            );
+            let replacement = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .find(|element| {
+                    element.owner == Some(owner)
+                        && element.command == Command::Move
+                        && element.state == SequenceState::Todo
+                })
+                .expect("RefreshSeek must leave a fresh movement queued for Hourglass");
+            let SequenceElementData::Movement {
+                flags,
+                element,
+                destination,
+                ..
+            } = &replacement.data
+            else {
+                panic!("RefreshSeek replacement changed element kind")
+            };
+            assert!(flags.contains(MoveFlags::SEEK));
+            assert_eq!(*element, Some(target));
+            assert_eq!(*destination, MapPoint::new(80.0, 10.0));
+        }
+    }
+
+    #[test]
+    fn moved_target_refresh_returns_in_progress_over_stale_terminated_sprite_motion() {
+        assert_moved_target_refresh_returns_explicit_in_progress(
+            MotionState::Terminated,
+            1,
+            SequenceState::Interrupted,
+        );
+    }
+
+    #[test]
+    fn moved_target_refresh_returns_in_progress_over_stale_done_sprite_motion() {
+        assert_moved_target_refresh_returns_explicit_in_progress(
+            MotionState::Done,
+            1,
+            SequenceState::Interrupted,
+        );
+    }
+
+    #[test]
+    fn failed_moved_target_refresh_keeps_explicit_in_progress_motion() {
+        assert_moved_target_refresh_returns_explicit_in_progress(
+            MotionState::Aborted,
+            2,
+            SequenceState::Impossible,
         );
     }
 
