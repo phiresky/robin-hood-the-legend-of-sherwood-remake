@@ -3085,11 +3085,14 @@ impl EnemyAi {
     fn seeking_arrow_reactiontime(&mut self, stimulus_type: StimulusType, ctx: &AiContext) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             self.base.say(Remark::Arrow);
-            self.go_near(
+            // Original `SUBSTATE_SEEKING_ARROW_REACTIONTIME` uses plain
+            // `GoTo(mposSeekPosition, GOTO_RUN)`.  The nearby seek-point
+            // adjustment already happened when the arrow stimulus arrived;
+            // this movement must not add GoNear's stop-distance tolerance.
+            self.go_to(
                 AiState::Seeking,
                 Substate::SeekingArrow,
                 self.base.seek_position,
-                parameters_ai::AI_MIN_SEARCHNOISE_DISTANCE,
                 GotoFlags::RUN,
                 ctx,
             );
@@ -9890,6 +9893,48 @@ mod tests {
                 .iter()
                 .any(|work| matches!(work, AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }))
         );
+    }
+
+    #[test]
+    fn arrow_reactiontime_uses_plain_goto_without_near_tolerance() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingArrowReactiontime;
+        ai.base.seek_position = Position {
+            x: 1030.0,
+            y: 2424.0,
+            sector: crate::position_interface::SectorHandle::new(18),
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            position: Position {
+                x: 706.0,
+                y: 2666.0,
+                sector: crate::position_interface::SectorHandle::new(18),
+                ..Position::default()
+            },
+            self_is_soldier: true,
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingArrow);
+        assert_eq!(ai.base.last_goto_flags, GotoFlags::RUN);
+        assert!(!ai.base.stop_before_end_of_path);
+        let [movement] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("arrow reactiontime must author exactly one movement")
+        };
+        assert_eq!((movement.target_x, movement.target_y), (1030.0, 2424.0));
+        assert_eq!(movement.tolerance, 0.0);
     }
 
     #[test]
