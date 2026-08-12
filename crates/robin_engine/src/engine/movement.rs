@@ -10086,28 +10086,7 @@ impl EngineInner {
         // and the animation driver plays it; its own `do_next_order`
         // on completion then terminates the element.
         for (seq_id, elem_idx) in order_pops {
-            let owner = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .and_then(|element| element.owner);
-            self.do_next_order(seq_id, elem_idx);
-            let exhausted = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|element| element.state == crate::sequence::SequenceState::Terminated);
-            if exhausted && let Some(owner) = owner {
-                // A replacement Move can be registered before this actor's
-                // slot and instructed afterward. Genuine exhaustion of the
-                // outgoing movement clears PositionGoalMap in Original; do
-                // not let the later MoveWaiting instruction resurrect its
-                // queue-time retained snapshot. Interrupted handoffs keep
-                // their snapshot and retain the existing replacement rule.
-                self.orders
-                    .sequence_manager
-                    .clear_retained_movement_goals_for_actor(owner);
-            }
+            self.pop_selected_movement_order(seq_id, elem_idx);
         }
         for (entity_id, external_direction, movement_direction) in
             terminal_pc_direction_goal_restores
@@ -12315,6 +12294,51 @@ impl EngineInner {
     }
 }
 
+impl EngineInner {
+    fn pop_selected_movement_order(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        let selected = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| {
+                let owner = element.owner?;
+                (element.state == crate::sequence::SequenceState::InProgress
+                    && element.data.is_movement()
+                    && self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(owner)
+                        == Some((seq_id, elem_idx)))
+                .then_some((owner, element.orders.len() == 1))
+            });
+        let Some((owner, final_order_will_exhaust)) = selected else {
+            // The pop was collected before a synchronous callback selected a
+            // replacement. It no longer owns either the actor order or its
+            // sprite goal, so applying it now would mutate the replacement.
+            return;
+        };
+
+        if final_order_will_exhaust {
+            // `RHElementActor::DoNextOrder` exhausts the selected Move, and
+            // its synchronous `SendCondolationCard` clears PositionGoalMap
+            // before a postponed replacement is instructed. Rust's
+            // `do_next_order` drives that same synchronous promotion.
+            // Invalidate the replacement's queue-time snapshot first, or a
+            // promoted MoveWaiting can restore the outgoing goal during the
+            // callback and hide the selected-element clear until its first
+            // Execute.
+            self.orders
+                .sequence_manager
+                .clear_retained_movement_goals_for_actor(owner);
+        }
+        self.do_next_order(seq_id, elem_idx);
+    }
+}
+
 #[cfg(test)]
 mod orphaned_sword_movement_tests {
     use super::*;
@@ -13558,10 +13582,10 @@ mod orphaned_sword_movement_tests {
 mod movement_transition_state_tests {
     use super::*;
     use crate::element::{
-        ActionState, ActorData, ActorPc, ActorSoldier, Camp, Command, ElementData, ElementKind,
-        Entity, HumanData, NpcData, PcData, Posture, SoldierData,
+        ActionState, ActorData, ActorPc, ActorSoldier, AiBrain, Camp, Command, ElementData,
+        ElementKind, Entity, HumanData, NpcData, PcData, Posture, SoldierData,
     };
-    use crate::order::Order;
+    use crate::order::{AiOrderIntent, Order};
     use crate::sequence::{
         MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority,
     };
@@ -13720,6 +13744,446 @@ mod movement_transition_state_tests {
                 .order_id,
             second_order_id,
             "the terminated transition must advance to its same-action successor"
+        );
+    }
+
+    #[test]
+    fn exhausted_stop_transition_clears_goal_before_queued_point_goto_promotion() {
+        let mut engine = EngineInner::new();
+        let old_goal = MapPoint::new(263.0, 794.0);
+        let new_goal = MapPoint::new(363.0, 794.0);
+        let stop_transition = OrderType::TransitionRunningUprightWaitingUpright;
+        let start_transition = OrderType::TransitionWaitingUprightRunningUpright;
+        let script = |action: OrderType| SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![0; 2],
+            distances: vec![0; 2],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+        };
+        let moving_script = SpriteScript {
+            action_id: OrderType::RunningUpright as u16,
+            action_done: 1,
+            average_speed: 1.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 2,
+            frame_ids: vec![1, 2],
+            delays: vec![0; 2],
+            distances: vec![1; 2],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+        };
+        let mut scripts = Vec::with_capacity(48);
+        scripts.extend(vec![script(stop_transition); 16]);
+        scripts.extend(vec![script(start_transition); 16]);
+        scripts.extend(vec![moving_script; 16]);
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[stop_transition as usize] = 0;
+        conversion[start_transition as usize] = 16;
+        conversion[OrderType::RunningUpright as usize] = 32;
+
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(scripts),
+            std::sync::Arc::new(conversion),
+        );
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(MapPoint::new(300.0, 794.0));
+        let mut npc = NpcData::default();
+        npc.ai_brain = AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData {
+                action_state: ActionState::MovingFast,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            npc,
+            soldier: SoldierData::default(),
+        }));
+
+        let mut outgoing = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        outgoing.priority = SequencePriority::Normal;
+        outgoing.orders.push_back(Order::new(
+            OrderType::RunningUpright,
+            old_goal.x,
+            old_goal.y,
+            engine.orders.allocate_order_id(),
+        ));
+        let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(outgoing_sequence, 0);
+        {
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity.actor_data_mut().unwrap().active_movement =
+                ActiveMovement::new(outgoing_sequence, 0);
+            entity.position_iface_mut().set_map_goal(old_goal);
+            entity.ai_controller_mut().unwrap().outbox.actor.halt = true;
+        }
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .map_goal(),
+            old_goal,
+            "StopAll retains the selected movement goal while its stop transition is live"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(outgoing_sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            stop_transition
+        );
+        // Exercise the source-relevant postponed-successor boundary explicitly:
+        // once StopAll has built its live StopMovement transition, keep that
+        // transition authoritative while the ordinary point GoTo is instructed.
+        // The terminal DoNextOrder below must therefore release the GoTo
+        // synchronously, rather than letting the fixture interrupt the stop
+        // transition before there is an exhaustion boundary to test.
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(outgoing_sequence, 0)
+            .unwrap()
+            .priority = SequencePriority::Script;
+
+        {
+            let ai = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .ai_controller_mut()
+                .unwrap();
+            let mut goto = AiOrderIntent::new(OrderType::RunningUpright, new_goal.x, new_goal.y);
+            goto.move_flags = MoveFlags::STRAIGHT.bits() as u16;
+            ai.outbox.actor.orders.push(goto);
+        }
+        engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        // `engine_postpone` intentionally drops the ordinary handoff cache;
+        // model the later queue-time replacement snapshot that exposed the
+        // replay bug only after the real GoTo has passed through Instruct and
+        // become the outgoing transition's postponed successor.
+        let outgoing_element_id = engine
+            .orders
+            .sequence_manager
+            .get_element(outgoing_sequence, 0)
+            .unwrap()
+            .id;
+        let replacement_handle = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(owner)
+                    && element.id != outgoing_element_id
+                    && element.data.is_movement()
+            })
+            .map(|element| element.id)
+            .expect("queued point GoTo must register a replacement movement");
+        let (replacement_sequence, replacement_index) = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, element)| (sequence.id, index, element.id))
+            })
+            .find_map(|(sequence, index, id)| {
+                (id == replacement_handle).then_some((sequence, index))
+            })
+            .expect("replacement movement handle must remain registered");
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(replacement_sequence, replacement_index)
+            .unwrap()
+            .retained_movement_goal = Some(old_goal);
+
+        let replacement = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(owner)
+                    && element.id
+                        != engine
+                            .orders
+                            .sequence_manager
+                            .get_element(outgoing_sequence, 0)
+                            .unwrap()
+                            .id
+                    && element.data.is_movement()
+            })
+            .expect("queued point GoTo must register a replacement movement");
+        assert_eq!(
+            replacement.retained_movement_goal,
+            Some(old_goal),
+            "the regression must carry the stale snapshot that could resurrect the exhausted goal"
+        );
+        assert_eq!(
+            replacement.state,
+            crate::sequence::SequenceState::Postponed,
+            "the queued point GoTo must wait behind the live StopAll transition"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner),
+            Some((outgoing_sequence, 0)),
+            "the stop transition must still own the actor before its terminal tick"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .map_goal(),
+            old_goal,
+            "queuing the point GoTo does not end the live stop transition"
+        );
+
+        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_entity_movement(&sim, &assets);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(outgoing_sequence, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Terminated
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .map_goal(),
+            MapPoint::ZERO,
+            "the selected outgoing Move condolence must remain observable on the replacement-promotion frame"
+        );
+
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        // Consume the replacement's authored start transition. Stop at the
+        // exact boundary where its point-movement order is selected but has
+        // not yet executed; the following tick is its first Execute.
+        for _ in 0..4 {
+            let point_move_selected = engine
+                .orders
+                .sequence_manager
+                .get_element(replacement_sequence, replacement_index)
+                .and_then(|element| element.current_order())
+                .is_some_and(|order| {
+                    order.order_type == OrderType::RunningUpright
+                        && (order.target_x - new_goal.x).abs() <= 0.02
+                        && (order.target_y - new_goal.y).abs() <= 0.02
+                });
+            if point_move_selected {
+                break;
+            }
+            engine.tick_entity_movement(&sim, &assets);
+        }
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(replacement_sequence, replacement_index)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            OrderType::RunningUpright,
+            "fixture must reach the selected point-movement order before its first Execute"
+        );
+        let selected_point_order = engine
+            .orders
+            .sequence_manager
+            .get_element(replacement_sequence, replacement_index)
+            .unwrap()
+            .current_order()
+            .unwrap();
+        assert!(
+            (selected_point_order.target_x - new_goal.x).abs() <= 0.02
+                && (selected_point_order.target_y - new_goal.y).abs() <= 0.02,
+            "fixture must select the authored destination endpoint, not the source-side transition-distance continuation"
+        );
+        engine.tick_entity_movement(&sim, &assets);
+        let installed_goal = engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal();
+        assert!(
+            (installed_goal.x - new_goal.x).abs() <= 0.02
+                && (installed_goal.y - new_goal.y).abs() <= 0.02,
+            "the promoted point GoTo installs its destination on first Execute"
+        );
+    }
+
+    #[test]
+    fn stale_nonselected_final_pop_does_not_clear_live_replacement_goal() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+        let stale_goal = MapPoint::new(263.0, 794.0);
+        let replacement_goal = MapPoint::new(363.0, 794.0);
+
+        let mut stale = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        stale.orders.push_back(Order::test_new(
+            OrderType::RunningUpright,
+            stale_goal.x,
+            stale_goal.y,
+        ));
+        let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(stale_sequence, 0);
+
+        let mut replacement = SequenceElement::new_movement(
+            1,
+            Command::MoveWaiting,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        replacement.retained_movement_goal = Some(replacement_goal);
+        replacement.orders.push_back(Order::test_new(
+            OrderType::Freezing,
+            replacement_goal.x,
+            replacement_goal.y,
+        ));
+        let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
+        engine
+            .orders
+            .sequence_manager
+            .set_translating_element(Some((
+                owner,
+                crate::sequence::SequenceElementRef::new(replacement_sequence, 0),
+            )));
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner),
+            Some((replacement_sequence, 0)),
+            "control requires the replacement to be authoritative before the stale pop drains"
+        );
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .position_iface_mut()
+            .set_map_goal(replacement_goal);
+        let stale_orders_before_pop = engine
+            .orders
+            .sequence_manager
+            .get_element(stale_sequence, 0)
+            .unwrap()
+            .orders
+            .len();
+        assert_eq!(
+            stale_orders_before_pop, 1,
+            "control requires a live final stale order for the queued pop"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(stale_sequence, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "control requires a stale InProgress owner, not prior terminal teardown"
+        );
+
+        engine.pop_selected_movement_order(stale_sequence, 0);
+        engine.orders.sequence_manager.set_translating_element(None);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(stale_sequence, 0)
+                .unwrap()
+                .orders
+                .len(),
+            stale_orders_before_pop,
+            "the stale queued pop must not perform any further order teardown after replacement selection"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(replacement_sequence, 0)
+                .unwrap()
+                .retained_movement_goal,
+            Some(replacement_goal),
+            "a stale pop must not erase the authoritative replacement's retained goal"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .map_goal(),
+            replacement_goal,
+            "a stale pop must leave the authoritative replacement goal untouched"
         );
     }
 
