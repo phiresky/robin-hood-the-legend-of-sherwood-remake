@@ -4655,17 +4655,23 @@ impl EnemyAi {
                     // is effectively dead code in this dispatch.  We
                     // used to call `react(AI_MAX_ENEMY_REACTIONTIME)`
                     // unconditionally, which over-delayed engagement.
-                    let target_view = ctx.entity_view(self.base.primary_target);
-                    let target_anim = target_view.map(|v| v.current_animation);
-                    let distance = target_view
-                        .map(|v| {
-                            let dx = (v.position.x - ctx.position.x).abs();
-                            let dy = (v.position.y - ctx.position.y).abs();
-                            dx.max(dy)
-                        })
-                        .unwrap_or(f32::INFINITY);
+                    let target_view =
+                        ctx.entity_view(self.base.primary_target)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "primary target {} missing from entity views while reacting",
+                                    self.base.primary_target
+                                )
+                            });
+                    let target_world = target_view.detection_position_world;
+                    let owner_world = ctx.self_body_position_world;
+                    let dx = target_world.x - owner_world.x;
+                    let dy = (target_world.y - owner_world.y)
+                        * crate::position_interface::INVERSE_ASPECT_RATIO;
+                    let dz = target_world.z - owner_world.z;
+                    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
 
-                    if target_anim == Some(crate::order::OrderType::RunningUpright) {
+                    if target_view.current_animation == crate::order::OrderType::RunningUpright {
                         // Enemy running — react fast to intercept.
                         self.base.launch_timer(
                             parameters_ai::AI_RUNNING_ENEMY_REACTIONTIME as u32,
@@ -7376,6 +7382,131 @@ mod tests {
             None,
             crate::order::OrderType::NonanimationEnd,
         )
+    }
+
+    fn run_reactiontime_turning(
+        frame: u32,
+        owner_forecast: Position,
+        owner_live: Position,
+        target_forecast: Position,
+        target_live: Position,
+    ) -> EnemyAi {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(155);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontimeTurning;
+        ai.base.primary_target = 345;
+
+        let mut target = pc_view(crate::element::Posture::Upright);
+        target.position = target_forecast;
+        target.detection_position =
+            crate::coordinates::MapPoint::new(target_forecast.x, target_forecast.y);
+        target.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(target_live.x, target_live.y + 480.0, 480.0);
+        target.current_animation = crate::order::OrderType::WaitingUpright;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(345, target);
+        let ctx = AiContext {
+            frame,
+            position: owner_forecast,
+            self_body_position_world: crate::coordinates::WorldPoint3D::new(
+                owner_live.x,
+                owner_live.y + 480.0,
+                480.0,
+            ),
+            elevation: 480.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_attacking_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+        ai
+    }
+
+    #[test]
+    fn reactiontime_turning_uses_live_distance_during_door_pass() {
+        let owner_forecast = Position {
+            x: 367.0,
+            y: 757.0,
+            ..Position::default()
+        };
+        let target_forecast = Position {
+            x: 360.0,
+            y: 750.0,
+            ..Position::default()
+        };
+        let owner_live = owner_forecast;
+        let target_live = Position {
+            x: 354.0,
+            y: 731.0,
+            ..Position::default()
+        };
+
+        let forecast_max_norm = (target_forecast.x - owner_forecast.x)
+            .abs()
+            .max((target_forecast.y - owner_forecast.y).abs());
+        let live_distance = ai_square_distance(&target_live, 480.0, &owner_live, 480.0).sqrt();
+        assert!(forecast_max_norm < 30.0);
+        assert!((47.0..48.0).contains(&live_distance));
+
+        let ai = run_reactiontime_turning(
+            36_150,
+            owner_forecast,
+            owner_live,
+            target_forecast,
+            target_live,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::AttackingReactiontime);
+        assert_eq!(
+            ai.base.when_does_timer_ring,
+            36_150 + parameters_ai::AI_QUICK_ENEMY_REACTIONTIME as u32
+        );
+    }
+
+    #[test]
+    fn reactiontime_turning_uses_one_tick_timer_when_live_target_is_close() {
+        let owner_live = Position {
+            x: 367.0,
+            y: 757.0,
+            ..Position::default()
+        };
+        let target_live = Position {
+            x: 380.0,
+            y: 757.0,
+            ..Position::default()
+        };
+        let owner_forecast = owner_live;
+        let target_forecast = Position {
+            x: 500.0,
+            y: 900.0,
+            ..Position::default()
+        };
+
+        let forecast_max_norm = (target_forecast.x - owner_forecast.x)
+            .abs()
+            .max((target_forecast.y - owner_forecast.y).abs());
+        let live_distance = ai_square_distance(&target_live, 480.0, &owner_live, 480.0).sqrt();
+        assert!(forecast_max_norm > 30.0);
+        assert_eq!(live_distance, 13.0);
+
+        let ai = run_reactiontime_turning(
+            36_151,
+            owner_forecast,
+            owner_live,
+            target_forecast,
+            target_live,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::AttackingReactiontime);
+        assert_eq!(ai.base.when_does_timer_ring, 36_152);
     }
 
     #[test]
