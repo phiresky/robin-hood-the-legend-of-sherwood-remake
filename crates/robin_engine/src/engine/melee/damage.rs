@@ -265,7 +265,15 @@ impl EngineInner {
         // synchronous arbitration. The manager-tail InstructOwner action owns
         // arbitration, transition generation, and damage dispatch.
         self.resolve_element_priority(&mut elem);
-        self.orders.sequence_manager.launch_element(elem);
+        let sequence_id = self.orders.sequence_manager.launch_element(elem);
+        self.trace_sword_damage_lifecycle(
+            "queued",
+            victim_id,
+            Some(attacker_id),
+            Some(sword_strike),
+            Some((sequence_id, 0)),
+            None,
+        );
     }
 
     /// Apply sword damage to a victim.
@@ -381,6 +389,14 @@ impl EngineInner {
             .actor_data()
             .map(|a| a.action_state)
             .unwrap_or(ActionState::Waiting);
+        self.trace_sword_damage_lifecycle(
+            "apply-before",
+            victim_id,
+            attacker_id,
+            Some(strike),
+            Some(damage_element),
+            None,
+        );
         let life_points_before = get_life_points(victim);
 
         // Look up defender's weapon profile
@@ -560,6 +576,14 @@ impl EngineInner {
                 // its fall/flight and SayOuch) when parried. Only an ordinary
                 // parried strike returns here with the transition above.
                 if !combat::strike_has_push_effect(&attacker_profile, strike) {
+                    self.trace_sword_damage_lifecycle(
+                        "apply-after-parry",
+                        victim_id,
+                        attacker_id,
+                        Some(strike),
+                        Some(damage_element),
+                        Some(result),
+                    );
                     return;
                 }
             } else {
@@ -936,6 +960,14 @@ impl EngineInner {
                 dying_anim_override,
             );
         }
+        self.trace_sword_damage_lifecycle(
+            "apply-after",
+            victim_id,
+            attacker_id,
+            Some(strike),
+            Some(damage_element),
+            Some(result),
+        );
     }
 
     /// Forced instantaneous corpse drop.  Used when a PC carrying a

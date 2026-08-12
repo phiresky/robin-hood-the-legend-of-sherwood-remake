@@ -51,6 +51,114 @@ use crate::weapons::SwordStrike;
 #[cfg(test)]
 use crate::{element::Command, sequence::SequenceElementData};
 
+fn sword_damage_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for sword-damage lifecycle diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE_FRAME")
+        .is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE_CREATION_ORDER")
+            .is_none_or(|expected| expected == creation_order)
+}
+
+impl EngineInner {
+    fn trace_sword_damage_lifecycle(
+        &self,
+        stage: &'static str,
+        victim: EntityId,
+        attacker: Option<EntityId>,
+        strike: Option<SwordStrike>,
+        damage_element: Option<(crate::sequence::SequenceId, usize)>,
+        result: Option<combat::SwordDamageResult>,
+    ) {
+        let frame = self.control.frame_counter;
+        if self.get_entity(victim).is_none() {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(victim);
+        if !sword_damage_lifecycle_debug_matches(frame, creation_order) {
+            return;
+        }
+
+        let selected = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(victim);
+        let selected_graph = selected.and_then(|(sequence_id, _)| {
+            self.orders
+                .sequence_manager
+                .get_sequence(sequence_id)
+                .map(|sequence| {
+                    sequence
+                        .elements
+                        .iter()
+                        .enumerate()
+                        .map(|(element_index, element)| {
+                            (
+                                element_index,
+                                element.command,
+                                element.state,
+                                element.priority,
+                                element
+                                    .orders
+                                    .iter()
+                                    .map(|order| (order.order_type, order.order_id, order.done))
+                                    .collect::<Vec<_>>(),
+                                element.cross_postponed,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+        });
+        let damage_orders = damage_element.and_then(|(sequence_id, element_index)| {
+            self.orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .map(|element| {
+                    element
+                        .orders
+                        .iter()
+                        .map(|order| (order.order_type, order.order_id, order.done))
+                        .collect::<Vec<_>>()
+                })
+        });
+        let actor_state = self.get_entity(victim).and_then(|entity| {
+            entity.actor_data().map(|actor| {
+                (
+                    actor.action_state,
+                    actor
+                        .installed_order
+                        .as_ref()
+                        .map(|order| (order.order_type, order.order_id)),
+                )
+            })
+        });
+        tracing::trace!(
+            target: "parity_sword_damage_lifecycle",
+            frame,
+            stage,
+            ?victim,
+            creation_order,
+            ?attacker,
+            ?strike,
+            ?damage_element,
+            ?result,
+            ?selected,
+            ?selected_graph,
+            ?damage_orders,
+            ?actor_state,
+            "sword-damage lifecycle"
+        );
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static CAPTURED_STRIKE_WARNINGS: std::cell::RefCell<Option<Vec<(EntityId, EntityId)>>> =

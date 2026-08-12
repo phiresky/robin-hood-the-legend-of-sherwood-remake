@@ -937,6 +937,14 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
+        self.trace_sword_damage_lifecycle(
+            "accepted-empty-before-terminate",
+            victim_id,
+            None,
+            None,
+            Some((seq_id, elem_idx)),
+            None,
+        );
         // A deferred Hades kill can outlive an already removed entity slot.
         // There is no Actor::Instruct receiver (and therefore no motion field)
         // in that case, but its synthetic damage element still has to close.
@@ -951,6 +959,14 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .element_terminated(seq_id, elem_idx);
+        self.trace_sword_damage_lifecycle(
+            "accepted-empty-after-terminate",
+            victim_id,
+            None,
+            None,
+            Some((seq_id, elem_idx)),
+            None,
+        );
         OwnerActionBarrier::Reach
     }
 
