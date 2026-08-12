@@ -302,6 +302,12 @@ impl EngineInner {
                         .get_mut(owner)
                         .and_then(|entity| entity.actor_data_mut())
                     {
+                        // `RHElementActor::Translate(SEEK)` selects entity
+                        // mode before calling RefreshSeek
+                        // (`RHelementactor.cpp:3152-3164`). It deliberately
+                        // leaves the serialized point sector and layer alone;
+                        // `mbSeekToPoint` alone selects which metadata is live.
+                        actor.continuation.seek_to_point = false;
                         actor.seek_distance = seek_distance;
                         actor.wait_time = 25;
                         actor.seek_refresh_wait = 25;
@@ -407,6 +413,13 @@ impl EngineInner {
                         .get_mut(owner)
                         .and_then(|entity| entity.actor_data_mut())
                     {
+                        // Point-mode PerformSeek reads these actor-owned
+                        // fields, not the transient movement wrapper
+                        // (`RHelementactor.cpp:3166-3173,7285-7302`).
+                        actor.continuation.seek_to_point = true;
+                        actor.continuation.seek_layer = goal_layer;
+                        actor.continuation.seek_sector =
+                            goal_sector.map(crate::actor_state::ActorSeekSector::Position);
                         actor.seek_target = None;
                         actor.last_seek_target_position = stored_destination;
                         actor.seek_distance = tolerance;

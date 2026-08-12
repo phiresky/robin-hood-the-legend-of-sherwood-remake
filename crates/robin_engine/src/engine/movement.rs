@@ -6665,7 +6665,7 @@ impl EngineInner {
                     tolerance: _,
                     element: target_elem,
                     destination,
-                    sector,
+                    sector: _,
                     ..
                 } = &elem.data
                 {
@@ -6690,26 +6690,41 @@ impl EngineInner {
                             flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE);
                         let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);
                         let seek_shield = flags.contains(crate::sequence::MoveFlags::SEEK_SHIELD);
-                        let (resolved_target_id, target_is_actor) =
-                            match target_elem.and_then(|id| self.get_entity(id)) {
-                                Some(t) => (*target_elem, t.actor_data().is_some()),
-                                // SEEK without antagonist = seek-to-point
-                                // mode.  Skip the dist-vs-tolerance
-                                // check; arrival is detected by motion
-                                // termination + same-sector match.
-                                // Falls through to the standard
-                                // `dist <= speed` final-waypoint
-                                // arrival when there is no post-seek
-                                // sequence. Leaving target_id None
-                                // signals the consumer to skip the
-                                // entity-target seek-distance check.
-                                None => {
-                                    if actor.post_seek_sequence.is_some() {
-                                        point_seek_post_sector = *sector;
-                                    }
-                                    (None, false)
+                        let (resolved_target_id, target_is_actor) = match target_elem
+                            .and_then(|id| self.get_entity(id))
+                        {
+                            Some(t) => (*target_elem, t.actor_data().is_some()),
+                            // SEEK without antagonist = seek-to-point
+                            // mode.  Skip the dist-vs-tolerance
+                            // check; arrival is detected by motion
+                            // termination + same-sector match.
+                            // Falls through to the standard
+                            // `dist <= speed` final-waypoint
+                            // arrival when there is no post-seek
+                            // sequence. Leaving target_id None
+                            // signals the consumer to skip the
+                            // entity-target seek-distance check.
+                            None => {
+                                if actor.post_seek_sequence.is_some()
+                                    && actor.continuation.seek_to_point
+                                {
+                                    point_seek_post_sector = match actor.continuation.seek_sector {
+                                        Some(crate::actor_state::ActorSeekSector::Position(
+                                            sector,
+                                        )) => Some(sector),
+                                        // Runtime point Seek stores a
+                                        // Position sector. A legacy Door
+                                        // pointer cannot equal the
+                                        // actor's ordinary sector here,
+                                        // matching Original's pointer
+                                        // comparison in PerformSeek.
+                                        Some(crate::actor_state::ActorSeekSector::Door(_))
+                                        | None => None,
+                                    };
                                 }
-                            };
+                                (None, false)
+                            }
+                        };
                         // Skip the FinalTol snapshot entirely for
                         // seek-to-point + non-shield (target_id is
                         // None and there's no shield destination), so
@@ -13978,7 +13993,7 @@ mod movement_transition_state_tests {
     };
     use crate::order::{AiOrderIntent, Order};
     use crate::sequence::{
-        MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority,
+        MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
@@ -15161,6 +15176,10 @@ mod movement_transition_state_tests {
                 .actor_data_mut()
                 .unwrap();
             actor.seek_target = None;
+            actor.continuation.seek_to_point = true;
+            actor.continuation.seek_layer = 0;
+            actor.continuation.seek_sector =
+                Some(crate::actor_state::ActorSeekSector::Position(seek_sector));
             let mut post_seek = Sequence::new();
             post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
             actor.post_seek_sequence = Some(Box::new(post_seek));
@@ -15208,6 +15227,122 @@ mod movement_transition_state_tests {
             "a stop transition ending outside the point seek's sector must not launch its stale post-seek"
         );
         assert_ne!(engine.actor_order_type(owner), Some(OrderType::DroppingAle));
+    }
+
+    #[test]
+    fn translated_point_seek_terminal_in_matching_sector_launches_drop_ale() {
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
+        let (old_sequence, old_index) = {
+            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            (
+                actor.active_movement.sequence_id.unwrap(),
+                actor.active_movement.element_index,
+            )
+        };
+        engine.orders.sequence_manager.element_interrupted(
+            old_sequence,
+            old_index,
+            crate::sequence::CascadeFlags::FOLLOWING,
+        );
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.active_movement.clear();
+            actor.post_seek_sequence = None;
+        }
+        engine.dispatch_condolations(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+        let seek_sector = crate::position_interface::SectorHandle::new(1).unwrap();
+        let seek_layer = 3;
+        let destination = MapPoint::new(100.0, 100.0);
+        let mut post_seek = Sequence::new();
+        post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
+        let mut seek =
+            SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+        seek.priority = SequencePriority::Normal;
+        let SequenceElementData::Movement {
+            destination: stored_destination,
+            sector,
+            layer,
+            post_seek_sequence,
+            ..
+        } = &mut seek.data
+        else {
+            unreachable!("Seek must have movement data")
+        };
+        *stored_destination = destination;
+        *sector = Some(seek_sector);
+        *layer = seek_layer;
+        *post_seek_sequence = Some(Box::new(post_seek));
+
+        let transient = engine.orders.sequence_manager.launch_element(seek);
+        engine.hourglass_phase_sequences(
+            &crate::sim_rng::test_context(),
+            &mut crate::engine::HostDisplayState::default(),
+            &LevelAssets::new(),
+        );
+
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert!(actor.continuation.seek_to_point);
+        assert_eq!(actor.continuation.seek_layer, seek_layer);
+        assert_eq!(
+            actor.continuation.seek_sector,
+            Some(crate::actor_state::ActorSeekSector::Position(seek_sector))
+        );
+        assert!(actor.post_seek_sequence.is_some());
+
+        let (movement_sequence, movement_index) = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .filter(|sequence| sequence.id != transient)
+            .find_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, element)| {
+                        (element.owner == Some(owner)
+                            && element.data.is_movement()
+                            && element.state == SequenceState::InProgress)
+                            .then_some((sequence.id, index))
+                    })
+            })
+            .expect("Translate(SEEK) must launch a concrete MOVE|SEEK replacement");
+        let transition = OrderType::TransitionWalkingUprightWaitingUpright;
+        let order_id = engine.orders.allocate_order_id();
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(movement_sequence, movement_index)
+            .unwrap();
+        movement.command = Command::MoveOk;
+        let SequenceElementData::Movement { sector, .. } = &mut movement.data else {
+            panic!("translated point Seek replacement lost movement data")
+        };
+        *sector = crate::position_interface::SectorHandle::new(2);
+        movement.orders.clear();
+        movement.orders.push_back(Order::new(
+            transition,
+            destination.x,
+            destination.y,
+            order_id,
+        ));
+        {
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity.actor_data_mut().unwrap().active_movement =
+                ActiveMovement::new(movement_sequence, movement_index);
+            entity.position_iface_mut().set_map_goal(destination);
+        }
+
+        finish_terminal_seek_tick(&mut engine, owner);
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert!(actor.post_seek_sequence.is_none());
+        assert!(actor.active_movement.sequence_id.is_none());
+        assert_eq!(engine.actor_order_type(owner), Some(OrderType::DroppingAle));
     }
 }
 
@@ -16629,7 +16764,15 @@ mod line_jump_tests {
         command: Command,
         obstruct_owner: bool,
         self_seek: bool,
-    ) -> (MapPoint, MapPoint, SequenceState, bool) {
+    ) -> (
+        MapPoint,
+        MapPoint,
+        SequenceState,
+        bool,
+        bool,
+        Option<crate::actor_state::ActorSeekSector>,
+        u16,
+    ) {
         use crate::fast_find_grid::GridLine;
         use crate::position_interface::SectorHandle;
 
@@ -16657,6 +16800,18 @@ mod line_jump_tests {
             ));
         owner_entity.position_iface_mut().set_map_position(start);
         let owner = engine.add_entity(owner_entity);
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.continuation.seek_to_point = true;
+            actor.continuation.seek_layer = 7;
+            actor.continuation.seek_sector = Some(crate::actor_state::ActorSeekSector::Position(
+                SectorHandle::new(1).unwrap(),
+            ));
+        }
 
         let mut target_entity = Entity::Soldier(ActorSoldier {
             element: ElementData {
@@ -16746,31 +16901,57 @@ mod line_jump_tests {
                         element.owner == Some(owner) && element.command == Command::Wait
                     })
             });
-        (before, after, state, post_seek_launched)
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        (
+            before,
+            after,
+            state,
+            post_seek_launched,
+            actor.continuation.seek_to_point,
+            actor.continuation.seek_sector,
+            actor.continuation.seek_layer,
+        )
     }
 
     #[test]
     fn cross_sector_seek_extracts_owner_before_refresh_route_failure() {
-        let (before, after, state, _) =
+        let (before, after, state, _, seek_to_point, seek_sector, seek_layer) =
             dispatch_instruction_extraction_fixture(Command::Seek, true, false);
         assert_ne!(
             after, before,
             "the old late-only extraction leaves a cross-sector Seek owner embedded"
         );
         assert_eq!(state, SequenceState::Impossible);
+        assert!(!seek_to_point, "entity Seek must replace stale point mode");
+        assert_eq!(
+            seek_sector,
+            Some(crate::actor_state::ActorSeekSector::Position(
+                crate::position_interface::SectorHandle::new(1).unwrap()
+            )),
+            "entity Seek preserves dormant point-sector metadata"
+        );
+        assert_eq!(seek_layer, 7, "entity Seek preserves dormant point layer");
     }
 
     #[test]
     fn authorized_cross_sector_seek_does_not_move_owner() {
-        let (before, after, state, _) =
+        let (before, after, state, _, seek_to_point, seek_sector, seek_layer) =
             dispatch_instruction_extraction_fixture(Command::Seek, false, false);
         assert_eq!(after, before);
         assert_eq!(state, SequenceState::Impossible);
+        assert!(!seek_to_point);
+        assert_eq!(
+            seek_sector,
+            Some(crate::actor_state::ActorSeekSector::Position(
+                crate::position_interface::SectorHandle::new(1).unwrap()
+            ))
+        );
+        assert_eq!(seek_layer, 7);
     }
 
     #[test]
     fn direct_move_keeps_instruction_boundary_extraction() {
-        let (before, after, state, _) =
+        let (before, after, state, _, _, _, _) =
             dispatch_instruction_extraction_fixture(Command::Move, true, false);
         assert_ne!(after, before);
         assert_eq!(state, SequenceState::InProgress);
@@ -16778,7 +16959,7 @@ mod line_jump_tests {
 
     #[test]
     fn unauthorized_self_seek_skips_extraction_and_launches_post_seek() {
-        let (before, after, state, post_seek_launched) =
+        let (before, after, state, post_seek_launched, _, _, _) =
             dispatch_instruction_extraction_fixture(Command::Seek, true, true);
         assert_eq!(after, before, "self-Seek returns before MOVE extraction");
         assert_eq!(state, SequenceState::Terminated);
