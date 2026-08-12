@@ -1478,7 +1478,7 @@ impl EngineInner {
                                     .and_then(crate::element::Entity::pc_data)
                                     .and_then(|pc| self.pc_description_for_pc_data(pc))
                                     .is_some_and(|description| description.status.in_coma);
-                                let (damage, raw_life_points_after) = {
+                                let (damage, raw_life_points_after, died) = {
                                     let Some(victim) = self.world.entities.get_mut(owner) else {
                                         self.orders
                                             .sequence_manager
@@ -1517,23 +1517,25 @@ impl EngineInner {
                                     // GET_KILLED_AT_BOTTOM still says ouch and
                                     // terminates its element, but cannot subtract the
                                     // protected five-point coma floor.
-                                    if !already_in_coma {
+                                    let died = if !already_in_coma {
                                         crate::combat::get_wounded(
                                             lp,
                                             damage,
                                             false,
                                             max_life_points,
                                             false,
-                                        );
-                                    }
-                                    (damage, *lp)
+                                        )
+                                    } else {
+                                        false
+                                    };
+                                    (damage, *lp, died)
                                 };
 
                                 // Original calls virtual GetWounded here. A
                                 // VIP PC therefore establishes its amulet coma
                                 // inside this command before the posture/death
                                 // translation continues.
-                                self.close_pc_wounded_coma_boundary(
+                                let coma_saved = self.close_pc_wounded_coma_boundary(
                                     sim,
                                     assets,
                                     owner,
@@ -1541,6 +1543,27 @@ impl EngineInner {
                                     damage as i16,
                                     raw_life_points_after,
                                 );
+                                if died
+                                    && !coma_saved
+                                    && self
+                                        .get_entity(owner)
+                                        .is_some_and(crate::element::Entity::is_dead)
+                                {
+                                    // Original GetWounded routes through virtual
+                                    // Human::SetLifePoints, which invokes the complete
+                                    // PC/NPC/Soldier/Human Kill chain before returning.
+                                    self.apply_scripted_virtual_kill(sim, assets, owner, killer);
+                                    if self.get_entity(owner).is_some_and(|victim| {
+                                        victim.is_soldier()
+                                            && victim.camp() == crate::element::Camp::Lacklandists
+                                    }) {
+                                        const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
+                                        self.mission_domain.campaign.add_value(
+                                            crate::campaign::CampaignValue::Score,
+                                            SCORE_SOLDIER_KILLED_DURING_FIGHT,
+                                        );
+                                    }
+                                }
                                 self.say_ouch(sim, assets, owner, Some(damage));
 
                                 let victim = self

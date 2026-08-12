@@ -3857,22 +3857,36 @@ fn npc_translate_enter_leisure_books_special_transition() {
 
 #[test]
 fn get_killed_at_bottom_kills_lying_victim_immediately() {
-    use crate::element::{Command, Posture};
+    use crate::ai::{AiState, Substate};
+    use crate::campaign::CampaignValue;
+    use crate::combat::CONCUSSION_MAX;
+    use crate::element::{Camp, Command, Posture};
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let killer = engine.add_entity(make_test_soldier(Posture::Upright));
+    let killer = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(Posture::Lying));
     if let Some(crate::element::Entity::Soldier(soldier)) = engine.world.entities.get_mut(victim) {
         soldier.npc.life_points = 30;
         soldier.soldier.cached_max_life_points = 30;
+        soldier.human.camp = Camp::Lacklandists;
         soldier.human.unconscious = true;
+        soldier.human.concussion_of_the_brain = CONCUSSION_MAX;
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let ai = soldier
+            .npc
+            .ai_brain
+            .base_mut()
+            .expect("test soldier has enemy AI");
+        ai.current_state = AiState::Sleeping;
+        ai.current_substate = Substate::SleepingUnconscious;
     }
 
     let elem =
         SequenceElement::new_interaction(1, Command::GetKilledAtBottom, Some(victim), Some(killer));
     engine.launch_element(elem);
     engine.ensure_wait_element(victim);
+    let score_before = engine.mission_domain.campaign.values[CampaignValue::Score];
 
     let mut display = HostDisplayState::default();
     let mut assets = LevelAssets::new();
@@ -3883,6 +3897,20 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     let entity = engine.get_entity(victim).expect("victim still present");
     assert!(entity.is_dead());
     assert_eq!(entity.element_data().posture, Posture::DeadBack);
+    assert!(!entity.human_data().unwrap().unconscious);
+    assert_eq!(entity.human_data().unwrap().concussion_of_the_brain, 0);
+    let ai = entity.ai_controller().expect("dead soldier retains its AI");
+    assert_eq!(ai.current_state, AiState::Sleeping);
+    assert_eq!(ai.current_substate, Substate::SleepingForever);
+    assert!(
+        entity.npc_data().unwrap().inform_my_friends,
+        "a PC execution must preserve NPC::Kill's killer notification"
+    );
+    assert_eq!(
+        engine.mission_domain.campaign.values[CampaignValue::Score],
+        score_before + 50,
+        "Soldier::GetWounded awards the fight score after a Lacklandist dies"
+    );
 }
 
 #[test]
@@ -3926,6 +3954,10 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     assert!(!entity.is_dead());
     assert_eq!(entity.human_life_points(), 5);
     assert_eq!(entity.element_data().posture, Posture::Lying);
+    assert!(
+        entity.human_data().unwrap().unconscious,
+        "the amulet coma save must skip the virtual Kill cascade"
+    );
     assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
     assert_eq!(
         engine.mission_domain.campaign.values[CampaignValue::Amulets],

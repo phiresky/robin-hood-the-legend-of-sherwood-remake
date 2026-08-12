@@ -708,7 +708,7 @@ impl EngineInner {
             self.say_ouch(sim, assets, entity_id, Some(damage));
         }
         if died {
-            self.apply_scripted_virtual_kill(sim, assets, entity_id);
+            self.apply_scripted_virtual_kill(sim, assets, entity_id, None);
         }
     }
 
@@ -716,13 +716,14 @@ impl EngineInner {
     /// `RHElementActorHuman::SetLifePoints`, without synthesizing a damage
     /// element. Damage-only animation, roll, attacker attribution, and fight
     /// score belong to `ReceiveDamage`, not to a script setter.
-    fn apply_scripted_virtual_kill(
+    pub(in crate::engine) fn apply_scripted_virtual_kill(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
+        killer: Option<EntityId>,
     ) {
-        let (is_pc, is_npc, allied_soldier) = {
+        let (is_pc, is_npc, allied_soldier, killer_is_pc) = {
             let entity = self
                 .get_entity(entity_id)
                 .expect("script-killed actor vanished before virtual Kill");
@@ -730,6 +731,9 @@ impl EngineInner {
                 entity.is_pc(),
                 entity.is_npc(),
                 entity.is_soldier() && entity.camp() == crate::element::Camp::Royalists,
+                killer
+                    .and_then(|killer_id| self.get_entity(killer_id))
+                    .is_some_and(|killer| killer.is_pc()),
             )
         };
 
@@ -772,7 +776,7 @@ impl EngineInner {
             if npc.eye_status != EyeStatus::Closed {
                 crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
             }
-            npc.inform_my_friends = false;
+            npc.inform_my_friends = killer_is_pc;
             if let Some(ai) = npc.ai_brain.base_mut() {
                 ai.knocked_out_in_money_fight = false;
             }
