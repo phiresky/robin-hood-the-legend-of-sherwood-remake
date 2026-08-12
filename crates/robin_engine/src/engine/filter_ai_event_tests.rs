@@ -5862,20 +5862,42 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
     engine.ai.global.seek_points[0].locked = false;
     run_ai_state_native_probe(&mut engine, &assets, seeking_filter_zero);
     let zero_values = npc_custom_values(&engine, seeking_filter_zero);
-    // An orderless actor reports the no-animation sentinel, so GoTo's
-    // already-at-point gate fires the recursive Think(EVENT_REACHPOINT).
-    // The zero filter refuses that Think, stopping the seek recursion:
-    // the last recorded callback is the REACHPOINT filter itself and no
-    // causal Move is queued.
+    // This actor is 90 map units from the shared seek point, but the
+    // deterministic acceptance draw rejects that point. Original SeekArea
+    // appends personal point 2222 at its center when the list is empty, so
+    // GoTo receives the actor's current position and EndThink synchronously
+    // reaches FilterAIEvent(EVENT_REACHPOINT). The zero return refuses that
+    // recursive Think after the earlier Seeking SetState callback.
     assert_eq!(
         &zero_values[0..3],
         &[3, 3, 3],
-        "the refused REACHPOINT filter is the last callback; the typed Seeking state still commits"
+        "the refused REACHPOINT filter follows the synchronous Seeking state callback"
     );
     assert_eq!(
         zero_values[3],
         crate::order::OrderType::NonanimationEnd as i32,
-        "the filter-zero actor stays orderless at the adjacent instruction"
+        "the center fallback reaches its destination without launching a Move"
+    );
+    let zero_ai = engine
+        .world
+        .entities
+        .get(seeking_filter_zero)
+        .and_then(Entity::enemy_ai)
+        .expect("filter-zero soldier retains Enemy AI");
+    assert_eq!(zero_ai.actual_seek_point, Some(2222));
+    assert_eq!(
+        zero_ai
+            .personal_seek_point_2
+            .as_ref()
+            .expect("empty-list fallback creates personal seek point 2222")
+            .position,
+        crate::ai::Position {
+            x: 110.0,
+            y: 100.0,
+            sector: Some(seek_sector),
+            level: 0,
+        },
+        "personal point 2222 is exactly the actor-centered SeekArea fallback"
     );
     assert!(
         !engine
@@ -5887,7 +5909,7 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
                 element.owner == Some(seeking_filter_zero)
                     && element.command == crate::element::Command::Move
             }),
-        "the refused REACHPOINT recursion must not queue a causal Move"
+        "the already-reached personal point must not queue a causal Move"
     );
 
     engine.ai.global.seek_points[0].locked = false;

@@ -4549,6 +4549,36 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         element.set_direction_instantly(6);
         victim_entity.npc_data_mut().unwrap().eye_status = crate::element::EyeStatus::LookToTheLeft;
     }
+    // EventGotHit synchronously enters the enemy retaliation path, which
+    // resolves the attacker's real sector while checking for a lift approach.
+    // Production actors cannot carry a non-null sector that is absent from
+    // the level grid; install the ordinary sector used by this synthetic
+    // attacker rather than weakening that runtime invariant.
+    {
+        let sector_number = crate::sector::SectorNumber::new(2);
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+        level
+            .sector_number_map
+            .insert(sector_number, level.sectors.len());
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::empty(),
+            layer: 3,
+            sector_number,
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+    }
     let expected_action_point = {
         let attacker = engine.get_entity(attacker).unwrap();
         let sprite_pos = attacker.cxx_position_sprite();

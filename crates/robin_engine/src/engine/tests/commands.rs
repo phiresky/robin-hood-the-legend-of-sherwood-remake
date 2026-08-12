@@ -1037,6 +1037,34 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
     ) {
         let mut engine = EngineInner::new();
         let assets = swordfight_test_assets();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        engine.world.fast_grid_mut().add_sector(
+            crate::fast_find_grid::GridSector {
+                points: vec![
+                    crate::coordinates::MapPoint::new(0.0, 0.0),
+                    crate::coordinates::MapPoint::new(256.0, 0.0),
+                    crate::coordinates::MapPoint::new(256.0, 256.0),
+                    crate::coordinates::MapPoint::new(0.0, 256.0),
+                ],
+                bounding_box: crate::coordinates::MapBBox::from_coords(0.0, 0.0, 256.0, 256.0),
+                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+                layer: 0,
+                sector_number: crate::sector::SectorNumber::new(1),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            0,
+        );
         let make_fighter = |x| {
             let mut element = ElementData {
                 kind: ElementKind::ActorSoldier,
@@ -1048,7 +1076,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
                 y: 100.0,
                 z: 0.0,
             });
-            element.set_sector(crate::position_interface::SectorHandle::new(0));
+            element.set_sector(crate::position_interface::SectorHandle::new(1));
             Entity::Soldier(ActorSoldier {
                 element,
                 actor: Default::default(),
@@ -1103,6 +1131,13 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
+        let attacker_element = engine
+            .get_entity_mut(attacker)
+            .expect("attacker exists after installing its sprite")
+            .element_data_mut();
+        attacker_element.set_position(WorldPoint3D::new(100.0, 100.0, 0.0));
+        attacker_element.set_layer(0);
+        attacker_element.set_sector(crate::position_interface::SectorHandle::new(1));
 
         let order_id = engine.orders.allocate_order_id();
         let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(attacker));

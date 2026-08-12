@@ -4065,10 +4065,41 @@ impl EngineInner {
                 .as_mut()
                 .and_then(|effects| effects.set_attentive_mode.take());
 
+            let mut caller_tail_completion_flags = None;
+
             // Effects issued before SetState are already inside the Original
             // call stack. Settle that prefix while keeping the pure-Rust
             // caller tail detached from the synchronous script callback.
             if later_actor_effects.is_some() {
+                // EndThink completion flags belong to the caller tail too.
+                // In Original, SetState's FilterAIEvent runs before the
+                // surrounding SeekArea/GoTo returns to EndThink, so a GoTo
+                // issued after SetState cannot surface EVENT_REACHPOINT while
+                // we settle StopAll/FaceTo effects issued before SetState.
+                // Keep both existing and prefix-produced flags pending for
+                // the enclosing EndThink boundary.
+                caller_tail_completion_flags = Some({
+                    let ai = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "AI SetState owner {} lost its AI before prefix effects",
+                                owner.index()
+                            )
+                        });
+                    let flags = (
+                        ai.couldnt_reachpoint,
+                        ai.already_on_point,
+                        ai.already_turned,
+                    );
+                    ai.couldnt_reachpoint = false;
+                    ai.already_on_point = false;
+                    ai.already_turned = false;
+                    flags
+                });
                 // These effects precede the virtual SetState call in the
                 // Original call stack. FaceTo registers its Turn before
                 // SetState registers the attentive transition, but neither
@@ -4082,6 +4113,26 @@ impl EngineInner {
                     owner_local_no_forecast,
                     true,
                 );
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "AI SetState owner {} lost its AI after prefix effects",
+                            owner.index()
+                        )
+                    });
+                let flags = caller_tail_completion_flags
+                    .as_mut()
+                    .expect("SetState prefix completion flags were captured");
+                flags.0 |= ai.couldnt_reachpoint;
+                flags.1 |= ai.already_on_point;
+                flags.2 |= ai.already_turned;
+                ai.couldnt_reachpoint = false;
+                ai.already_on_point = false;
+                ai.already_turned = false;
             }
 
             let source = match notification.source {
@@ -4124,6 +4175,11 @@ impl EngineInner {
                             work_index
                         )
                     });
+                if let Some(flags) = caller_tail_completion_flags {
+                    ai.couldnt_reachpoint |= flags.0;
+                    ai.already_on_point |= flags.1;
+                    ai.already_turned |= flags.2;
+                }
                 ai.outbox.reentrant.owner_work.extend(later_work);
                 if let Some(later_actor_effects) = later_actor_effects {
                     ai.outbox
@@ -4295,6 +4351,11 @@ impl EngineInner {
                         work_index
                     )
                 });
+            if let Some(flags) = caller_tail_completion_flags {
+                ai.couldnt_reachpoint |= flags.0;
+                ai.already_on_point |= flags.1;
+                ai.already_turned |= flags.2;
+            }
             ai.outbox.reentrant.owner_work.extend(later_work);
             if let Some(later_actor_effects) = later_actor_effects {
                 ai.outbox

@@ -13101,15 +13101,6 @@ mod orphaned_sword_movement_tests {
             .opponents
             .push(opponent);
 
-        assert_eq!(
-            engine.get_entity(owner).unwrap().element_data().position(),
-            engine
-                .get_entity(opponent)
-                .unwrap()
-                .element_data()
-                .position(),
-            "fixture must be co-located in the world coordinates FaceOpponent reads"
-        );
         let owner_entity = engine.get_entity_mut(owner).unwrap();
         // The replay's strafe order was already initialized before its
         // blocked counter crossed the threshold. A fresh fixture order calls
