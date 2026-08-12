@@ -2781,6 +2781,61 @@ impl EngineInner {
             "engine_postpone enter"
         );
 
+        if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
+            let sequence_graph = |seq_id| {
+                self.orders
+                    .sequence_manager
+                    .get_sequence(seq_id)
+                    .map(|sequence| {
+                        sequence
+                            .elements
+                            .iter()
+                            .enumerate()
+                            .map(|(index, element)| {
+                                (
+                                    index,
+                                    element.owner,
+                                    element.command,
+                                    element.command_level,
+                                    element.state,
+                                    element.priority,
+                                    element
+                                        .orders
+                                        .iter()
+                                        .map(|order| (order.order_type, order.order_id, order.done))
+                                        .collect::<Vec<_>>(),
+                                    element.postponed_element_index,
+                                    element.cross_postponed,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+            };
+            let waiter_last_order = self
+                .orders
+                .sequence_manager
+                .get_element(waiter_seq, waiter_idx)
+                .and_then(|element| {
+                    element
+                        .orders
+                        .back()
+                        .map(|order| (order.order_type, order.order_id, order.done))
+                });
+            let blocker_graph = sequence_graph(blocker_seq);
+            let waiter_graph = sequence_graph(waiter_seq);
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                frame = self.control.frame_counter,
+                depth,
+                blocker = ?(blocker_seq, blocker_idx),
+                waiter = ?(waiter_seq, waiter_idx),
+                ?waiter_last_order,
+                ?blocker_graph,
+                ?waiter_graph,
+                "engine_postpone before topology arbitration"
+            );
+        }
+
         // If blocker already has a postponed successor, arbitrate
         // between that existing successor and the new waiter.
         let existing_postponed = self
@@ -2810,6 +2865,18 @@ impl EngineInner {
                 .unwrap_or(crate::sequence::SequencePriority::None);
 
             let decision = crate::sequence::decide_priorities(existing_priority, waiter_priority);
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                frame = self.control.frame_counter,
+                depth,
+                blocker = ?(blocker_seq, blocker_idx),
+                existing = ?(existing_seq, existing_idx),
+                waiter = ?(waiter_seq, waiter_idx),
+                ?existing_priority,
+                ?waiter_priority,
+                ?decision,
+                "engine_postpone existing-successor branch"
+            );
             match decision {
                 PriorityDecision::Abandon => {
                     // existing wins — take over waiter's postponed
@@ -2896,6 +2963,21 @@ impl EngineInner {
                     && e.orders.back().is_some_and(|o| o.done)
             })
             .unwrap_or(false);
+
+        tracing::trace!(
+            target: "parity_owner_handoff",
+            frame = self.control.frame_counter,
+            depth,
+            blocker = ?(blocker_seq, blocker_idx),
+            waiter = ?(waiter_seq, waiter_idx),
+            should_terminate_instead,
+            branch = if should_terminate_instead {
+                "terminate_done_waiter"
+            } else {
+                "install_postponed_waiter"
+            },
+            "engine_postpone final branch"
+        );
 
         if should_terminate_instead {
             if let Some(e) = self
