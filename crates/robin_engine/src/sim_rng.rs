@@ -146,6 +146,12 @@ impl OriginalRngReplay {
         self.cursor
     }
 
+    fn last_draw(&self) -> Option<u32> {
+        self.cursor
+            .checked_sub(1)
+            .and_then(|index| self.draws.get(index).copied())
+    }
+
     pub fn sites(&self, range: std::ops::Range<usize>) -> Vec<RngSite> {
         self.sites
             .get(range.clone())
@@ -428,6 +434,18 @@ fn original_draw(context: &SimulationContext, site: RngSite) -> Option<u32> {
         }
 
         value
+    })
+}
+
+/// Return the raw value of the most recent Original replay draw without
+/// advancing either RNG stream. This is intended only for opt-in diagnostics
+/// that call it immediately after their own draw.
+pub(crate) fn last_original_raw_draw(context: &SimulationContext) -> Option<u32> {
+    context.original_replay.as_ref().and_then(|replay| {
+        replay
+            .lock()
+            .expect("original RNG replay mutex poisoned")
+            .last_draw()
     })
 }
 

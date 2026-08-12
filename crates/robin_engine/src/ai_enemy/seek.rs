@@ -358,16 +358,25 @@ impl EnemyAi {
             let mut count_f: f32 = 0.0;
             let mut phase4_attempts = 0usize;
             let mut phase4_accepts = 0usize;
+            let debug_selection =
+                seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order);
 
             for &idx in &near_sorted {
                 if count_f >= expected_points as f32 {
                     break;
                 }
+                let accumulator_before_bits = count_f.to_bits();
                 let interest = global.seek_points[idx].calculate_interest(current_frame);
                 phase4_attempts += 1;
-                if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointSelection, 0..100)
-                    < interest
-                {
+                let attempt =
+                    crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointSelection, 0..100);
+                let attempt_raw = debug_selection
+                    .then(|| crate::sim_rng::last_original_raw_draw(sim))
+                    .flatten();
+                let accepted = attempt < interest;
+                let mut insertion_raw = None;
+                let mut insertion_index = None;
+                if accepted {
                     phase4_accepts += 1;
                     // Unconditionally call rand on every accepted
                     // point, including the first (where the count == 1
@@ -379,12 +388,45 @@ impl EnemyAi {
                         crate::sim_rng::RngSite::SeekPointSelection,
                         0..=selected_random.len(),
                     );
+                    insertion_raw = debug_selection
+                        .then(|| crate::sim_rng::last_original_raw_draw(sim))
+                        .flatten();
+                    insertion_index = Some(insert_pos);
                     selected_random.insert(insert_pos, idx);
                     count_f += interest as f32 * 0.01;
                 }
+
+                if debug_selection {
+                    let optional_u32 = |value: Option<u32>| {
+                        value.map_or_else(|| "null".to_owned(), |value| value.to_string())
+                    };
+                    let optional_usize = |value: Option<usize>| {
+                        value.map_or_else(|| "null".to_owned(), |value| value.to_string())
+                    };
+                    eprintln!(
+                        "SEEKAREA {{\"event\":\"phase4_candidate\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"candidate_ordinal\":{},\"point_id\":{},\"point_index\":{},\"norm\":{},\"norm_bits\":{},\"frame_when_full_interest\":{},\"interest\":{},\"attempt_raw\":{},\"attempt_mod\":{},\"attempt_result\":{},\"insertion_raw\":{},\"insertion_index\":{},\"accumulator_before_bits\":{},\"accumulator_after_bits\":{}}}",
+                        ctx.frame,
+                        self.base.me,
+                        optional_u32(ctx.original_creation_order),
+                        phase4_attempts,
+                        global.seek_points[idx].id,
+                        idx,
+                        square_norms[idx],
+                        square_norms[idx].to_bits(),
+                        global.seek_points[idx].frame_when_full_interest,
+                        interest,
+                        optional_u32(attempt_raw),
+                        attempt,
+                        accepted,
+                        optional_u32(insertion_raw),
+                        optional_usize(insertion_index),
+                        accumulator_before_bits,
+                        count_f.to_bits(),
+                    );
+                }
             }
 
-            if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
+            if debug_selection {
                 eprintln!(
                     "SEEKAREA {{\"event\":\"selection_summary\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"standard_radius\":{},\"near_points\":{},\"expected_for_one\":{},\"visible_friends\":{},\"clears_help\":{},\"expected_before_help_random\":{},\"expected_points\":{},\"phase4_attempts\":{},\"phase4_accepts\":{},\"preselection_rng_draws\":{},\"phase4_rng_draws\":{},\"selection_rng_draws\":{},\"accepted_interest_sum\":{}}}",
                     ctx.frame,
