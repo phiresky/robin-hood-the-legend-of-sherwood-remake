@@ -2963,6 +2963,37 @@ impl EngineInner {
         if !self.filter_stimulus(sim, assets, handle, stimulus) {
             return false;
         }
+        // Original `FilterAIEvent` returns synchronously before the virtual
+        // Think body begins. BattleDecisions then reads these volatile fields
+        // directly from every already-admitted camp soldier. Rust captures
+        // camp membership and owner-boundary geometry before filtering, so
+        // refresh only the live fields that the Original dereferences after
+        // the callback; preserve registry order and all position/LOS data.
+        let mut live_enemy_tick = enemy_tick_data.cloned();
+        if let Some(tick) = live_enemy_tick.as_mut() {
+            for friend in &mut tick.camp_soldiers {
+                let friend_id = self.expect_entity_id_for_index(
+                    friend.handle,
+                    "filtered Enemy AI camp-soldier refresh",
+                );
+                let live = self.world.entities.get(friend_id).unwrap_or_else(|| {
+                    panic!("camp soldier {friend_id:?} disappeared during FilterAIEvent")
+                });
+                let Entity::Soldier(soldier) = live else {
+                    panic!(
+                        "camp soldier handle {} resolved to non-soldier {friend_id:?}",
+                        friend.handle
+                    )
+                };
+                let enemy = soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                    panic!("camp soldier {friend_id:?} lost Enemy AI during FilterAIEvent")
+                });
+                friend.is_able_to_fight = crate::element::Human::is_able_to_fight(soldier);
+                friend.ai_state = soldier.npc.ai_state();
+                friend.ai_substate = soldier.npc.ai_substate();
+                friend.primary_target = enemy.base.primary_target;
+            }
+        }
         // Every Think, however it was reached, must see the surface radii this
         // viewer already computed earlier in the frame. Cross-NPC calls and
         // the panic/report dispatch sites enter here without passing through
@@ -3018,7 +3049,7 @@ impl EngineInner {
                     stimulus,
                     ai_global,
                     &live_ctx,
-                    enemy_tick_data.unwrap_or_else(|| {
+                    live_enemy_tick.as_ref().unwrap_or_else(|| {
                         panic!(
                             "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
                             entity_id.index()

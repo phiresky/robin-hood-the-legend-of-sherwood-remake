@@ -3027,6 +3027,128 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
 }
 
 #[test]
+fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::coordinates::MapPoint;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let old_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let new_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    for (id, position) in [
+        (owner_id, MapPoint::new(100.0, 100.0)),
+        (friend_id, MapPoint::new(110.0, 100.0)),
+        (old_target_id, MapPoint::new(120.0, 100.0)),
+        (new_target_id, MapPoint::new(130.0, 100.0)),
+    ] {
+        let entity = engine.get_entity_mut(id).expect("test combatant exists");
+        entity.element_data_mut().active = true;
+        entity.element_data_mut().set_position_map(position);
+        if let Some(npc) = entity.npc_data_mut() {
+            npc.life_points = 100;
+        }
+    }
+    for (id, substate) in [
+        (owner_id, Substate::AttackingReactiontime),
+        (friend_id, Substate::AttackingSwordfight),
+    ] {
+        let enemy = engine
+            .get_entity_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test soldier has Enemy AI");
+        enemy.base.me = id.index();
+        enemy.set_state(AiState::Attacking, substate);
+        enemy.base.primary_target = old_target_id.index();
+    }
+    engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("owner has Enemy AI")
+        .list_them = vec![old_target_id.index()];
+    let frame = engine.control.frame_counter;
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("owner has Enemy AI");
+    owner.base.launch_timer(0, frame);
+    owner.base.timer_is_running = false;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let ctx = crate::engine::ai::build_ai_context_from_entity(
+        engine.get_entity(owner_id).expect("owner exists"),
+        engine.control.frame_counter,
+        None,
+        engine.world.weather.is_forest_level,
+        engine.world.weather.ambiance,
+        engine.ai.standard_view_polygon_radius,
+        &scratch.ai_entity_views,
+        &scratch.ai_sight_obstacles,
+        &engine.world.fast_grid,
+        &assets.hiking_paths,
+        &engine.ai.global.all_soldier_handles,
+        engine.control.sim_config.difficulty,
+    );
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let stale_friend = tick
+        .camp_soldiers
+        .iter()
+        .find(|friend| friend.handle == friend_id.index())
+        .expect("stale tick includes the admitted friend");
+    assert_eq!(stale_friend.primary_target, old_target_id.index());
+    let captured_position = stale_friend.position;
+
+    let friend = engine
+        .get_entity_mut(friend_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("friend has Enemy AI");
+    friend.base.primary_target = new_target_id.index();
+    // Geometry remains owner-boundary data even when the live entity moves
+    // after the tick snapshot was constructed.
+    engine
+        .get_entity_mut(friend_id)
+        .expect("friend exists")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(900.0, 900.0));
+
+    engine.dispatch_think_with_drain(
+        &sim,
+        owner_id,
+        &Stimulus::new(StimulusType::EventTimer),
+        &ctx,
+        &tick,
+        &assets,
+    );
+
+    let owner = engine
+        .get_entity(owner_id)
+        .and_then(Entity::enemy_ai)
+        .expect("owner retains Enemy AI");
+    assert!(owner.list_them.contains(&new_target_id.index()));
+    assert_eq!(
+        tick.camp_soldiers
+            .iter()
+            .find(|friend| friend.handle == friend_id.index())
+            .expect("original tick remains intact")
+            .position,
+        captured_position,
+        "live claim refresh must not replace captured geometry"
+    );
+}
+
+#[test]
 fn optical_ai_position_uses_carrier_boundary_but_keeps_target_world_bits() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
 
