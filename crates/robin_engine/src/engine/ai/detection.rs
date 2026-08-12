@@ -1923,6 +1923,11 @@ impl EngineInner {
             let mut sum_sharpness_new: u16 = 0;
             let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
             let mut max_sharpness: u32 = 0;
+            // Original calls HandlePredetection only from inside the same
+            // outer detection-box arm that calls ComputeVisibility. Keep the
+            // membership transient: entries rejected by that arm still have
+            // seen/visibility cleared, but their shadow latch is untouched.
+            let mut entered_outer_scan = Vec::with_capacity(detectables.len());
             let viewer_in_building = viewer_building_sector.is_some();
             // Original reads the persisted view-parameter flag here. It can
             // remain true for one or more frames after posture has changed
@@ -1965,6 +1970,7 @@ impl EngineInner {
                     original_creation_order,
                     target_id,
                 );
+                entered_outer_scan.push(scan_decision);
                 if debug_visibility_stage {
                     eprintln!(
                         "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"outer_gate\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision}}}",
@@ -3090,7 +3096,18 @@ impl EngineInner {
             // to the suspect accumulator. It also returns without touching
             // the latch for non-PC and guarded-PC targets.
             let suspects_before_scan = npc.detection_suspects[enemy_idx];
-            for det in npc.detectable_lists[enemy_idx].iter_mut() {
+            assert_eq!(
+                entered_outer_scan.len(),
+                npc.detectable_lists[enemy_idx].len(),
+                "Enemy outer-scan membership lost detectable-list alignment"
+            );
+            for (det, entered_outer_scan) in npc.detectable_lists[enemy_idx]
+                .iter_mut()
+                .zip(entered_outer_scan)
+            {
+                if !entered_outer_scan {
+                    continue;
+                }
                 if let Some(target_id) = det.element {
                     let target = enemy_targets
                         .iter()

@@ -5579,6 +5579,70 @@ fn mixed_enemy_fifo_fixture(
 }
 
 #[test]
+fn enemy_outer_box_rejection_preserves_shadow_latch_but_entered_invisible_clears_it() {
+    use crate::element::{DetectableType, Entity};
+
+    fn shadow_latch_after_scan(target_x: f32) -> (bool, bool, f32) {
+        let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
+        let Entity::Pc(pc) = engine
+            .get_entity_mut(pc_id)
+            .expect("outer-box target exists")
+        else {
+            panic!("outer-box target changed kind")
+        };
+        pc.element
+            .set_position(crate::coordinates::WorldPoint3D::new(target_x, 0.0, 0.0));
+        pc.element.set_position_map(MapPoint::new(target_x, 0.0));
+
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("outer-box observer exists")
+        else {
+            panic!("outer-box observer changed kind")
+        };
+        let enemies = &mut observer.npc.detectable_lists[DetectableType::Enemy as usize];
+        enemies.retain(|detectable| detectable.element == Some(pc_id));
+        let detectable = enemies
+            .first_mut()
+            .expect("outer-box fixture retains its PC detectable");
+        detectable.shadow_seen_last_frame = true;
+        detectable.seen_now = true;
+        detectable.last_visibility = 0.0;
+        observer.npc.detection_suspects[DetectableType::Enemy as usize] =
+            crate::ai_vision::SHADOW_DETECTION_THRESHOLD as u16;
+
+        crate::sim_rng::with_seed(0xA013_0B0E, |sim| engine.tick_enemy_ai(sim, &assets));
+
+        let detectable = engine
+            .get_entity(observer_id)
+            .and_then(Entity::npc_data)
+            .expect("outer-box observer retains NPC state")
+            .detectable_lists[DetectableType::Enemy as usize]
+            .first()
+            .expect("outer-box observer retains PC detectable");
+        (
+            detectable.shadow_seen_last_frame,
+            detectable.seen_now,
+            detectable.last_visibility,
+        )
+    }
+
+    let outside = shadow_latch_after_scan(400.0);
+    assert_eq!(
+        outside,
+        (true, false, 0.0),
+        "Original's outer else clears current visibility without calling HandlePredetection"
+    );
+
+    let entered_but_behind = shadow_latch_after_scan(-80.0);
+    assert_eq!(
+        entered_but_behind,
+        (false, false, 0.0),
+        "an entered target with zero sharpness must call HandlePredetection and clear the old latch"
+    );
+}
+
+#[test]
 fn lacklandist_mixed_pc_soldier_enemy_fifo_follows_detectable_order() {
     use crate::ai::{StimulusInfo, StimulusType};
     use crate::element::Entity;
