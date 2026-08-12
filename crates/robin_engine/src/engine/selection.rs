@@ -681,22 +681,6 @@ impl EngineInner {
             self.select_pc(assets, seat, pc_id, false, false);
         }
 
-||||||| 257ab366e
-        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity action: set_pc_action enter pc={pc_id:?} action={action:?} seat={seat}"
-            );
-        }
-=======
-        tracing::trace!(
-            target: "parity_action",
-            ?pc_id,
-            ?action,
-            seat,
-            "set_pc_action enter"
-        );
->>>>>>> worktree-agent-aa3836e714d213054
         if !self.players.seats[seat].selection.contains(&pc_id) {
             // "Not-selected" branch — only set the current action on the
             // single PC, no cleanup of the outgoing action. Don't call
