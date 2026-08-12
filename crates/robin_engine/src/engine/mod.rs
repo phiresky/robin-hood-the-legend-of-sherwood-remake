@@ -1569,18 +1569,17 @@ impl EngineInner {
         assets: &LevelAssets,
         mut elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
-        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         debug_assert!(
             elem.owner.is_some(),
             "launch_element_for_owner requires elem.owner"
         );
         let mut owner = elem.owner.expect("owner present");
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity launch: launch_element_for_owner enter owner={owner:?} command={:?}",
-                elem.command
-            );
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            command = ?elem.command,
+            "launch_element_for_owner enter"
+        );
 
         // PC on a carrier's shoulders, receiving a Move-to-jump command,
         // delegates the move to the carrier (with the TO_JUMP + SEEK
@@ -1618,83 +1617,88 @@ impl EngineInner {
             return seq_id;
         }
 
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity launch: before resolve priority owner={owner:?} command={:?}",
-                elem.command
-            );
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            command = ?elem.command,
+            "before resolve priority"
+        );
         self.resolve_element_priority(&mut elem);
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity launch: after resolve priority owner={owner:?} command={:?} priority={:?}",
-                elem.command, elem.priority
-            );
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            command = ?elem.command,
+            priority = ?elem.priority,
+            "after resolve priority"
+        );
         let seq_id = self.orders.sequence_manager.launch_element(elem);
         let elem_idx = 0;
-        if parity_debug_stage_timing {
-            eprintln!("parity launch: registered owner={owner:?} seq={seq_id:?} idx={elem_idx}");
-        }
+        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, elem_idx, "registered");
 
         // Stamp posture / action-state as the after-transition defaults
         // before any priority or transition logic runs.  See
         // `stamp_element_transition_state` for the rationale.
-        if parity_debug_stage_timing {
-            eprintln!("parity launch: before stamp owner={owner:?} seq={seq_id:?}");
-        }
+        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "before stamp");
         self.stamp_element_transition_state(owner, seq_id, elem_idx);
-        if parity_debug_stage_timing {
-            eprintln!("parity launch: after stamp owner={owner:?} seq={seq_id:?}");
-        }
+        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "after stamp");
 
         // NonInterruptable current short-circuit: postpone new (or mark
         // IMPOSSIBLE for PASS_DOOR+MOVE) without running
         // GenerateTransition.
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity launch: before non_interruptable_guard owner={owner:?} seq={seq_id:?}"
-            );
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            ?seq_id,
+            "before non_interruptable_guard"
+        );
         if self.non_interruptable_guard(owner, seq_id, elem_idx) {
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity launch: non_interruptable_guard accepted owner={owner:?} seq={seq_id:?}"
-                );
-            }
+            tracing::trace!(
+                target: "parity_launch",
+                ?owner,
+                ?seq_id,
+                "non_interruptable_guard accepted"
+            );
             return seq_id;
         }
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity launch: after non_interruptable_guard owner={owner:?} seq={seq_id:?}"
-            );
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            ?seq_id,
+            "after non_interruptable_guard"
+        );
 
         // Auto-insert the exit / posture / enter transition sub-orders
         // before the command's own Translate runs.  Returning false
         // means no valid transition exists — set the element Impossible
         // and skip arbitration.
-        if parity_debug_stage_timing {
-            eprintln!("parity launch: before generate_transition owner={owner:?} seq={seq_id:?}");
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            ?seq_id,
+            "before generate_transition"
+        );
         if !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
             return seq_id;
         }
-        if parity_debug_stage_timing {
-            eprintln!("parity launch: after generate_transition owner={owner:?} seq={seq_id:?}");
-            eprintln!("parity launch: before arbitrate owner={owner:?} seq={seq_id:?}");
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            ?seq_id,
+            "after generate_transition"
+        );
+        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "before arbitrate");
 
         self.arbitrate_instruct(seq_id, elem_idx);
-        if parity_debug_stage_timing {
-            eprintln!("parity launch: after arbitrate owner={owner:?} seq={seq_id:?}");
-            eprintln!(
-                "parity launch: launch_element_for_owner exit owner={owner:?} seq={seq_id:?}"
-            );
-        }
+        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "after arbitrate");
+        tracing::trace!(
+            target: "parity_launch",
+            ?owner,
+            ?seq_id,
+            "launch_element_for_owner exit"
+        );
         seq_id
     }
 
@@ -2769,13 +2773,13 @@ impl EngineInner {
             "engine_postpone cannot postpone a sequence element behind itself"
         );
 
-        let parity_debug_stage_timing =
-            std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() && depth <= 64;
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity launch: engine_postpone enter depth={depth} blocker=({blocker_seq:?},{blocker_idx}) waiter=({waiter_seq:?},{waiter_idx})"
-            );
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            depth,
+            blocker = ?(blocker_seq, blocker_idx),
+            waiter = ?(waiter_seq, waiter_idx),
+            "engine_postpone enter"
+        );
 
         // If blocker already has a postponed successor, arbitrate
         // between that existing successor and the new waiter.
@@ -2785,11 +2789,13 @@ impl EngineInner {
             .get_element(blocker_seq, blocker_idx)
             .and_then(|e| e.cross_postponed);
         if let Some((existing_seq, existing_idx)) = existing_postponed {
-            if parity_debug_stage_timing {
-                eprintln!(
-                    "parity launch: engine_postpone existing depth={depth} blocker=({blocker_seq:?},{blocker_idx}) existing=({existing_seq:?},{existing_idx})"
-                );
-            }
+            tracing::trace!(
+                target: "parity_launch",
+                depth,
+                blocker = ?(blocker_seq, blocker_idx),
+                existing = ?(existing_seq, existing_idx),
+                "engine_postpone existing"
+            );
             let existing_priority = self
                 .orders
                 .sequence_manager
@@ -2973,11 +2979,13 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .postpone_element(waiter_seq, waiter_idx);
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity launch: engine_postpone exit depth={depth} blocker=({blocker_seq:?},{blocker_idx}) waiter=({waiter_seq:?},{waiter_idx})"
-            );
-        }
+        tracing::trace!(
+            target: "parity_launch",
+            depth,
+            blocker = ?(blocker_seq, blocker_idx),
+            waiter = ?(waiter_seq, waiter_idx),
+            "engine_postpone exit"
+        );
     }
 
     /// Cancel any active pathfinder request / active-movement / active-
@@ -3106,12 +3114,12 @@ impl EngineInner {
         stop_priority: crate::sequence::SequencePriority,
         include_pending: bool,
     ) {
-        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
-        if parity_debug_stage_timing {
-            eprintln!(
-                "parity stop: engine stop_owner enter owner={owner:?} priority={stop_priority:?}"
-            );
-        }
+        tracing::trace!(
+            target: "parity_stop",
+            ?owner,
+            ?stop_priority,
+            "engine stop_owner enter"
+        );
         let owner_pos = self
             .get_entity(owner)
             .map(|e| e.element_data().position_map())
@@ -3169,9 +3177,7 @@ impl EngineInner {
             .sequence_manager
             .current_order_for_actor(owner)
             .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
-        if parity_debug_stage_timing {
-            eprintln!("parity stop: before stop_movement_for_owner owner={owner:?}");
-        }
+        tracing::trace!(target: "parity_stop", ?owner, "before stop_movement_for_owner");
         self.orders.sequence_manager.stop_movement_for_owner(
             owner,
             owner_pos,
@@ -3201,9 +3207,7 @@ impl EngineInner {
         } else {
             None
         };
-        if parity_debug_stage_timing {
-            eprintln!("parity stop: after stop_movement_for_owner owner={owner:?}");
-        }
+        tracing::trace!(target: "parity_stop", ?owner, "after stop_movement_for_owner");
         // `MaybeCancelPathRequest` pairs path-request cancellation with
         // failed-path-retry removal whenever a movement element
         // transitions out of MOVE_WAITING.  Mirror that here so a
@@ -3215,9 +3219,7 @@ impl EngineInner {
             .failed_path_requests
             .retain(|r| r.owner != owner);
         self.orders.pending_path_requests.cancel_for_owner(owner);
-        if parity_debug_stage_timing {
-            eprintln!("parity stop: before sequence stop_owner owner={owner:?}");
-        }
+        tracing::trace!(target: "parity_stop", ?owner, "before sequence stop_owner");
         if include_pending {
             self.orders
                 .sequence_manager
@@ -3243,12 +3245,13 @@ impl EngineInner {
                 .expect("rewritten StopMovement owner lost actor data")
                 .installed_order = Some(installed_order);
         }
-        if parity_debug_stage_timing {
-            eprintln!("parity stop: after sequence stop_owner owner={owner:?}");
-            eprintln!(
-                "parity stop: engine stop_owner exit owner={owner:?} priority={stop_priority:?}"
-            );
-        }
+        tracing::trace!(target: "parity_stop", ?owner, "after sequence stop_owner");
+        tracing::trace!(
+            target: "parity_stop",
+            ?owner,
+            ?stop_priority,
+            "engine stop_owner exit"
+        );
     }
 
     /// Returns `true` when the actor's posture is one of

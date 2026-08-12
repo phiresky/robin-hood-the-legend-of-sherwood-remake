@@ -22,11 +22,17 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 pub(super) fn observe_projectile_derived_tail(
     id: EntityId,
     object_type: crate::element::ObjectType,
 ) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::projectile_tail",
+        ?id,
+        ?object_type,
+        "projectile derived tail"
+    );
+    #[cfg(test)]
     PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push((id, object_type));
@@ -52,7 +58,6 @@ pub(super) fn capture_projectile_derived_tails<T>(
     (result, tails)
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NpcHourglassPhase {
     SoldierPrelude,
@@ -679,17 +684,19 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::npc_phases",
+        ?phase,
+        "npc hourglass phase"
+    );
+    #[cfg(test)]
     NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push(phase);
         }
     });
 }
-
-#[cfg(not(test))]
-fn observe_npc_hourglass_phase(_phase: ()) {}
 
 #[cfg(test)]
 pub(super) fn capture_npc_hourglass_phases<T>(
@@ -709,7 +716,6 @@ pub(super) fn capture_npc_hourglass_phases<T>(
     (result, phases)
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActorAnimationBoundaryPhase {
     WaitReady(EntityId),
@@ -725,8 +731,13 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 fn observe_actor_animation_boundary(phase: ActorAnimationBoundaryPhase) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::actor_animation_boundary",
+        ?phase,
+        "actor animation boundary"
+    );
+    #[cfg(test)]
     ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push(phase);
@@ -754,7 +765,6 @@ pub(super) fn capture_actor_animation_boundary<T>(
     (result, phases)
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActorOwnerEnvelopePhase {
     SoldierPrelude(EntityId),
@@ -774,8 +784,13 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 fn observe_actor_owner_envelope(phase: ActorOwnerEnvelopePhase) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::actor_owner_envelope",
+        ?phase,
+        "actor owner envelope"
+    );
+    #[cfg(test)]
     ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push(phase);
@@ -1655,6 +1670,20 @@ pub(super) fn end_hourglass_phase_capture() -> Vec<HourglassPhase> {
 thread_local! {
     static CAPTURED_ORDERED_GAMEPLAY_ENTITIES: std::cell::RefCell<Option<Vec<EntityId>>> =
         const { std::cell::RefCell::new(None) };
+}
+
+fn observe_ordered_gameplay_entity(entity_id: EntityId) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::ordered_gameplay",
+        ?entity_id,
+        "ordered gameplay slot"
+    );
+    #[cfg(test)]
+    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
+        if let Some(entities) = captured.borrow_mut().as_mut() {
+            entities.push(entity_id);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -3056,26 +3085,17 @@ impl EngineInner {
         // primary-target tracking, and the reaction-time EnemyNear test.
         // In particular, keep the target snap introduced by 24c43efde ahead
         // of RefreshView without moving it into the base NPC phases.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::SoldierPrelude);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Work runs at each soldier's live owner slot below.
 
         // First base-NPC phase in RHElementActorNPC::Hourglass. Patrol
         // history observes the actor before RHElementActorHuman::Hourglass
         // executes its movement/order work.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Patrol);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Work runs before the Human/Actor slices of each NPC owner below.
 
         // ── Element hourglass (per-element update) ───────────────
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::BaseHuman);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Human concussion healing runs synchronously in each owner's
         // pre-Actor hook below.
         // Concrete entity Hourglasses and their virtual retain/remove results
@@ -3751,12 +3771,7 @@ impl EngineInner {
         while slot < original_slots.len() {
             let entity_id = original_slots[slot];
             if self.world.entities.get(entity_id).is_some() {
-                #[cfg(test)]
-                CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-                    if let Some(entities) = captured.borrow_mut().as_mut() {
-                        entities.push(entity_id);
-                    }
-                });
+                observe_ordered_gameplay_entity(entity_id);
                 let entity = self
                     .world
                     .entities
@@ -3784,7 +3799,6 @@ impl EngineInner {
                         // sequence/order.
                         self.apply_delayed_actor_position(sim, assets, entity_id);
                         before_actor(self, entity_id);
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
 
                         let frozen_without_order = self
@@ -3848,7 +3862,6 @@ impl EngineInner {
                                 "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
                             )
                         });
-                        #[cfg(test)]
                         observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(
                             entity_id,
                         ));
@@ -4050,7 +4063,6 @@ impl EngineInner {
                                         .then_some(order_id)
                                 })
                         });
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                             entity_id,
                         ));
@@ -4125,7 +4137,6 @@ impl EngineInner {
                             );
                         }
 
-                        #[cfg(test)]
                         observe_actor_animation_boundary(
                             ActorAnimationBoundaryPhase::GenericExecute(entity_id),
                         );
@@ -4207,7 +4218,6 @@ impl EngineInner {
                                 "actor {entity_id:?} combat-injury Think at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
                             )
                         });
-                        #[cfg(test)]
                         for injured_id in combat_injury_terminated {
                             observe_actor_animation_boundary(
                                 ActorAnimationBoundaryPhase::CombatInjuryThink(injured_id),
@@ -4438,7 +4448,6 @@ impl EngineInner {
                         // only by the null-order guard at the start of the next
                         // actor frame, so ActionChange observes NONANIMATION_END
                         // on this completion frame.
-                        #[cfg(test)]
                         observe_actor_animation_boundary(
                             ActorAnimationBoundaryPhase::CompletionEffects(entity_id),
                         );
@@ -4446,7 +4455,6 @@ impl EngineInner {
                         // Release every animation/completion borrow before the VM:
                         // ActionChange can synchronously replace this or a later
                         // actor's order and the next slot must sample that live.
-                        #[cfg(test)]
                         observe_actor_animation_boundary(
                             ActorAnimationBoundaryPhase::ActionChange(entity_id),
                         );
@@ -4635,7 +4643,6 @@ impl EngineInner {
                 // to every later creation slot and to none of the earlier ones.
                 engine.tick_active_jump_for(assets, owner);
                 if matches!(owner, EntityId::Soldier(_)) {
-                    #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
                     engine.tick_apple_smell_for(owner);
                     engine.tick_soldier_track_primary_target_for(owner);
@@ -4645,7 +4652,6 @@ impl EngineInner {
                 if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_))
                     && !engine.actors_frozen()
                 {
-                    #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::Patrol(owner));
                     engine.tick_patrol_coordination_for_npc(
                         sim,
@@ -4660,7 +4666,6 @@ impl EngineInner {
                     .get(owner)
                     .is_some_and(|entity| entity.human_data().is_some())
                 {
-                    #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanPrelude(owner));
                     engine.tick_concussion_healing_for(sim, owner, assets);
                     engine.process_shoot_list_for(sim, assets, owner);
@@ -4757,27 +4762,21 @@ impl EngineInner {
                             owner,
                             derived_tail_order_type,
                         );
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
                         engine.tick_tiredness_for(owner, assets);
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
                             owner,
                         ));
                         engine.tick_pc_auto_heal_for(sim, owner);
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
                     }
                     EntityId::Soldier(_) | EntityId::Civilian(_) => {
                         engine.tick_tiredness_for(owner, assets);
-                        #[cfg(test)]
-                        {
-                            // NPC humans have no produced-noise refresh, so
-                            // their Human tail begins at tiredness.
-                            observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
-                                owner,
-                            ));
-                        }
+                        // NPC humans have no produced-noise refresh, so
+                        // their Human tail begins at tiredness.
+                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
+                            owner,
+                        ));
                         engine.tick_npc_owner_pass(
                             sim,
                             assets,
@@ -4785,7 +4784,6 @@ impl EngineInner {
                             prepared,
                             owner,
                         );
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
                     }
                     _ => panic!(
@@ -4911,7 +4909,6 @@ impl EngineInner {
                         && !projectile.projectile.flying
                         && !frozen
                     {
-                        #[cfg(test)]
                         observe_projectile_derived_tail(id, object_type);
                         let motion = projectile.element.sprite.perform_virgin_increment(
                             sim,
@@ -5177,20 +5174,11 @@ impl EngineInner {
         // order. The coordinator below interleaves the actual operations per
         // NPC: own synchronous FITAGAIN + resurrection/eye apply, own body
         // broadcast, own view refresh, then that same NPC's RefreshDetection.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Broadcasts);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::View);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Production work already ran inside the live actor-owner walk in the
         // preceding EntitySystems phase. Keep these coarse observations for
         // the PA-016 tick-spine contract only.
@@ -5199,29 +5187,20 @@ impl EngineInner {
         // contract. Production work no longer runs here: PA-013 executes the
         // complete post-detection tail inside each NPC's creation slot before
         // the next NPC enters RefreshDetection.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Per-tick AILOCK_BUSY edge detector ─────────────────
         // Lock or unlock AILOCK_BUSY based on the live
         // `is_very_very_busy` predicate (posture or active PassDoor /
         // Fall element).  Runs after the view refresh.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Busy);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Stuck-on-ladder emergency counter ──────────────────
         // Bump per frame for non-script-locked NPCs on outdoor
         // ladders idling in CMD_WAIT/CMD_MOVE_WAITING; after 25
         // frames force a ReturnToDuty so the actor can self-recover.
         // Runs after the BUSY edge detector.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Ladder);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Locked-frame timer bumps ───────────────────────────
         // When any lock is held the entire Hourglass tail
@@ -5232,23 +5211,14 @@ impl EngineInner {
         // window and acts as the "skip the fire" gate for the
         // downstream macro-timer / EVENT_TIMER fire checks (which
         // compare against the live `frame_counter`).
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::LockGate);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // The unlocked tail is ordered exactly like the original callee:
         // The16thFrame, normal EVENT_TIMER, macro timer, then stimuli held
         // by a prior AI/script lock.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::SixteenthFrame);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::NormalTimer);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Macro-timer hourglass ──────────────────────────────
         // Poll the macro-specific timer each frame and, when it
@@ -5256,15 +5226,9 @@ impl EngineInner {
         // bypassing the stimulus queue so CMD_WAIT / CMD_BEND
         // resume cleanly. Any resulting movement-order / substate change
         // is visible to the queued-stimulus drain in the same frame.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::MacroTimer);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // Every engine-entered AI call closes its ordered owner-local
         // SetState/Say boundary before returning to effects/orders. Nothing
@@ -6062,20 +6026,99 @@ impl EngineInner {
         outcomes: super::animation::AnimCompletionOutcomes,
         assets: &LevelAssets,
     ) {
-        use super::movement::DoorPassAdvance;
+        let super::animation::AnimCompletionOutcomes {
+            non_interruptable_lifts,
+            seq_advance,
+            seq_terminate,
+            seq_impossible,
+            wasp_next_cycle,
+            unlock_door_done,
+            resume_door_pass,
+            select_hulk,
+            next_jump_step,
+            play_anim_frozen,
+            corpse_drop_done,
+            execute_sides,
+        } = outcomes;
+        let super::animation::ExecuteSideOutcomes {
+            drop_ale_done,
+            deactivate_entities,
+            pickups,
+            drink_done,
+            wasp_sting_remark,
+            special_remark,
+            weak_stunned_start,
+            pickpockets,
+            pc_target_activations,
+            cry_for_help_under_net,
+            smalltalk_strikes,
+            killed_at_bottom,
+            waking_up_done,
+            hidden_titbit_removals,
+            beggar_coin_flags,
+            beggar_wait_handoffs,
+            stature_change_end,
+            pc_bow_equip_action,
+            pc_helping_climb_action,
+        } = execute_sides;
 
-        for (seq_id, elem_idx) in outcomes.non_interruptable_lifts.iter().copied() {
+        // The drain order below reproduces the completion-callback order the
+        // engine has always used; it is part of the parity contract. Do not
+        // reorder these calls.
+        self.drain_non_interruptable_lifts(non_interruptable_lifts);
+        self.drain_corpse_drop_done(assets, corpse_drop_done);
+        self.drain_seq_advance(seq_advance);
+        self.drain_wasp_next_cycle(wasp_next_cycle);
+        self.drain_seq_terminate(seq_terminate);
+        self.drain_play_anim_frozen(play_anim_frozen);
+        self.drain_seq_impossible(seq_impossible);
+        self.drain_unlock_door_done(unlock_door_done);
+        self.drain_next_jump_step(assets, next_jump_step);
+        self.drain_select_hulk(select_hulk);
+        self.drain_resume_door_pass(sim, assets, resume_door_pass);
+        // Soldier `Execute` cross-entity side effects, collected by the
+        // animation tick as it walks each `active_ai_anim` booking. Each
+        // drain fires a cross-entity effect (bottle hide, coin pickup,
+        // remarks, blood-alcohol bump).
+        self.drain_drop_ale_done(assets, drop_ale_done);
+        self.drain_pc_bow_equip_action(assets, pc_bow_equip_action);
+        self.drain_pc_helping_climb_action(assets, pc_helping_climb_action);
+        self.drain_stature_change_end(stature_change_end);
+        self.drain_weak_stunned_start(sim, assets, weak_stunned_start);
+        self.drain_hidden_titbit_removals(hidden_titbit_removals);
+        self.drain_beggar_wait_handoffs(sim, assets, beggar_wait_handoffs);
+        self.drain_beggar_coin_flags(beggar_coin_flags);
+        self.drain_smalltalk_strikes(sim, assets, smalltalk_strikes);
+        self.drain_killed_at_bottom(killed_at_bottom);
+        self.drain_deactivate_entities(deactivate_entities);
+        self.drain_pc_target_activations(pc_target_activations);
+        self.drain_waking_up_done(sim, assets, waking_up_done);
+        self.drain_pickups(sim, assets, pickups);
+        self.drain_drink_done(assets, drink_done);
+        self.drain_pickpockets(pickpockets);
+        self.drain_wasp_sting_remark(sim, assets, wasp_sting_remark);
+        self.drain_special_remark(sim, assets, special_remark);
+        self.drain_cry_for_help_under_net(sim, assets, cry_for_help_under_net);
+    }
+
+    fn drain_non_interruptable_lifts(
+        &mut self,
+        non_interruptable_lifts: Vec<(crate::sequence::SequenceId, usize)>,
+    ) {
+        for (seq_id, elem_idx) in non_interruptable_lifts {
             self.orders.sequence_manager.set_element_priority(
                 seq_id,
                 elem_idx,
                 crate::sequence::SequencePriority::NonInterruptable,
             );
         }
+    }
 
+    fn drain_corpse_drop_done(&mut self, assets: &LevelAssets, corpse_drop_done: Vec<EntityId>) {
         // RHElementActorPC::Execute calls DropCorpse from inside the terminal
         // transition arm, before returning TERMINATED to Actor::Hourglass and
         // therefore before DoNextOrder exposes a following command.
-        for carrier_id in outcomes.corpse_drop_done {
+        for carrier_id in corpse_drop_done {
             let selected_order = self
                 .orders
                 .sequence_manager
@@ -6125,18 +6168,25 @@ impl EngineInner {
                 carrier_direction,
             );
         }
+    }
 
-        for (seq_id, elem_idx) in outcomes.seq_advance {
+    fn drain_seq_advance(&mut self, seq_advance: Vec<(crate::sequence::SequenceId, usize)>) {
+        for (seq_id, elem_idx) in seq_advance {
             // `do_next_order` semantics: pop the just-completed
             // order; advance to the next if one exists, otherwise
             // terminate the element.
             self.do_next_order(seq_id, elem_idx);
         }
+    }
 
+    fn drain_wasp_next_cycle(
+        &mut self,
+        wasp_next_cycle: Vec<(crate::sequence::SequenceId, usize, u16)>,
+    ) {
         // Wasp struggle-cycle refill: push a fresh `GettingFreeFromWasp`
         // order with the decremented counter, then pop the current one
         // via `do_next_order` so the new order takes over cleanly.
-        for (seq_id, elem_idx, cycles_remaining) in outcomes.wasp_next_cycle {
+        for (seq_id, elem_idx, cycles_remaining) in wasp_next_cycle {
             let order = crate::order::Order::new(
                 crate::order::OrderType::GettingFreeFromWasp,
                 0.0,
@@ -6149,14 +6199,21 @@ impl EngineInner {
                 .push_order_on(seq_id, elem_idx, order);
             self.do_next_order(seq_id, elem_idx);
         }
+    }
 
-        for (seq_id, elem_idx) in outcomes.seq_terminate {
+    fn drain_seq_terminate(&mut self, seq_terminate: Vec<(crate::sequence::SequenceId, usize)>) {
+        for (seq_id, elem_idx) in seq_terminate {
             self.orders
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
         }
+    }
 
-        for (actor, command_level, anim) in outcomes.play_anim_frozen {
+    fn drain_play_anim_frozen(
+        &mut self,
+        play_anim_frozen: Vec<(EntityId, u16, crate::order::OrderType)>,
+    ) {
+        for (actor, command_level, anim) in play_anim_frozen {
             let mut elem = crate::sequence::SequenceElement::new_generic(
                 command_level,
                 crate::element::Command::PlayAnimFrozen,
@@ -6168,16 +6225,20 @@ impl EngineInner {
             );
             self.orders.sequence_manager.launch_element(elem);
         }
+    }
 
+    fn drain_seq_impossible(&mut self, seq_impossible: Vec<(crate::sequence::SequenceId, usize)>) {
         // ABORTED motion result: set the sequence element to
         // IMPOSSIBLE.
-        for (seq_id, elem_idx) in outcomes.seq_impossible {
+        for (seq_id, elem_idx) in seq_impossible {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
         }
+    }
 
-        for door_id in outcomes.unlock_door_done {
+    fn drain_unlock_door_done(&mut self, unlock_door_done: Vec<crate::gate::DoorIndex>) {
+        for door_id in unlock_door_done {
             let door = required_canonical_door_mut(
                 &mut self.script_domains.interactables.doors,
                 door_id,
@@ -6192,8 +6253,10 @@ impl EngineInner {
                 "UnlockDoor: action point cleared all live door locks"
             );
         }
+    }
 
-        for entity_id in outcomes.next_jump_step {
+    fn drain_next_jump_step(&mut self, assets: &LevelAssets, next_jump_step: Vec<EntityId>) {
+        for entity_id in next_jump_step {
             if let Some((new_layer, new_sector, projection_point)) =
                 self.advance_jump_step(entity_id)
             {
@@ -6206,12 +6269,23 @@ impl EngineInner {
                 );
             }
         }
+    }
 
-        for (entity_id, speed) in outcomes.select_hulk {
+    fn drain_select_hulk(&mut self, select_hulk: Vec<(EntityId, f32)>) {
+        for (entity_id, speed) in select_hulk {
             self.apply_select_hulk(entity_id, speed);
         }
+    }
 
-        for entity_id in outcomes.resume_door_pass {
+    fn drain_resume_door_pass(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        resume_door_pass: Vec<EntityId>,
+    ) {
+        use super::movement::DoorPassAdvance;
+
+        for entity_id in resume_door_pass {
             self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
             // Advance through Transition / PassingDoor / Walk steps.
             // PassingDoor triggers fired here need to run through
@@ -6359,15 +6433,10 @@ impl EngineInner {
 
             let _ = advance;
         }
+    }
 
-        // ── Soldier `Execute` cross-entity side effects ──────────
-        // Collected by `apply_soldier_execute_side_effects` as the
-        // animation tick walks each `active_ai_anim` booking.  Each
-        // block below fires a cross-entity effect (bottle hide,
-        // coin pickup, remarks, blood-alcohol bump).
-        let sides = outcomes.execute_sides;
-
-        for pc_id in sides.drop_ale_done {
+    fn drain_drop_ale_done(&mut self, assets: &LevelAssets, drop_ale_done: Vec<EntityId>) {
+        for pc_id in drop_ale_done {
             let action = crate::profiles::Action::Ale;
             let (position, layer, sector, obstacle, direction, material, status_idx) = {
                 let pc = self
@@ -6458,16 +6527,28 @@ impl EngineInner {
                 "DropAle DONE: decremented ale ammo and spawned bottle"
             );
         }
+    }
 
-        for pc_id in sides.pc_bow_equip_action {
+    fn drain_pc_bow_equip_action(
+        &mut self,
+        assets: &LevelAssets,
+        pc_bow_equip_action: Vec<EntityId>,
+    ) {
+        for pc_id in pc_bow_equip_action {
             // RHElementActorHuman::Execute forwards this synchronously from
             // the TransitionEquipBow START arm after setting AimingWithBow.
             // An unselected PC only restores its remembered action; a
             // selected PC also restores the messenger-global action.
             self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
         }
+    }
 
-        for pc_id in sides.pc_helping_climb_action {
+    fn drain_pc_helping_climb_action(
+        &mut self,
+        assets: &LevelAssets,
+        pc_helping_climb_action: Vec<EntityId>,
+    ) {
+        for pc_id in pc_helping_climb_action {
             // RHElementActorPC::Execute forwards MSG_SELECT_ACTION(HELP_TO_CLIMB)
             // straight after SetStates on the DONE edge of the helping-climb
             // entry transition. HelpToClimb is already the current action, but
@@ -6477,16 +6558,25 @@ impl EngineInner {
             // PC was kneeling down never resumes.
             self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::HelpToClimb);
         }
+    }
 
-        for _pc_id in sides.stature_change_end {
+    fn drain_stature_change_end(&mut self, stature_change_end: Vec<EntityId>) {
+        for _pc_id in stature_change_end {
             self.orders.messenger.send(crate::messenger::Message::new(
                 crate::messenger::MessageType::Simple(
                     crate::messenger::SimpleMessage::StatureChangeEnd,
                 ),
             ));
         }
+    }
 
-        for (entity_id, anim_type) in sides.weak_stunned_start {
+    fn drain_weak_stunned_start(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        weak_stunned_start: Vec<(EntityId, crate::order::OrderType)>,
+    ) {
+        for (entity_id, anim_type) in weak_stunned_start {
             self.add_weak_stunned_combat(
                 sim,
                 assets,
@@ -6494,15 +6584,24 @@ impl EngineInner {
                 anim_type == crate::order::OrderType::BeingWeakSword,
             );
         }
+    }
 
-        for entity_id in sides.hidden_titbit_removals {
+    fn drain_hidden_titbit_removals(&mut self, hidden_titbit_removals: Vec<EntityId>) {
+        for entity_id in hidden_titbit_removals {
             self.feedback.titbit_manager.remove_titbit(
                 crate::titbit::TitbitKind::Hidden,
                 crate::titbit::ElementHandle(entity_id.index()),
             );
         }
+    }
 
-        for (pc_id, entering) in sides.beggar_wait_handoffs {
+    fn drain_beggar_wait_handoffs(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        beggar_wait_handoffs: Vec<(EntityId, bool)>,
+    ) {
+        for (pc_id, entering) in beggar_wait_handoffs {
             // RHElementActorPC::Execute calls Wait() inside both beggar
             // transition DONE arms. This occurs in the actor's live legacy
             // slot, before base Actor completion and the later
@@ -6541,8 +6640,10 @@ impl EngineInner {
                 pc.current_action = crate::profiles::Action::NoAction;
             }
         }
+    }
 
-        for (pc_id, enabled) in sides.beggar_coin_flags {
+    fn drain_beggar_coin_flags(&mut self, beggar_coin_flags: Vec<(EntityId, bool)>) {
+        for (pc_id, enabled) in beggar_coin_flags {
             super::beggar::set_flags_of_near_coins_on_ground(
                 &mut self.world.entities,
                 pc_id,
@@ -6556,8 +6657,15 @@ impl EngineInner {
                 );
             }
         }
+    }
 
-        for (actor_id, target_id, strike) in sides.smalltalk_strikes {
+    fn drain_smalltalk_strikes(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        smalltalk_strikes: Vec<(EntityId, EntityId, crate::weapons::SwordStrike)>,
+    ) {
+        for (actor_id, target_id, strike) in smalltalk_strikes {
             let wound_target = {
                 let attacker = self
                     .get_entity(actor_id)
@@ -6632,8 +6740,10 @@ impl EngineInner {
                     position,
                 });
         }
+    }
 
-        for (victim_id, killer_id) in sides.killed_at_bottom {
+    fn drain_killed_at_bottom(&mut self, killed_at_bottom: Vec<(EntityId, EntityId)>) {
+        for (victim_id, killer_id) in killed_at_bottom {
             let mut elem = crate::sequence::SequenceElement::new_interaction(
                 1,
                 crate::element::Command::GetKilledAtBottom,
@@ -6643,16 +6753,23 @@ impl EngineInner {
             elem.priority = crate::sequence::SequencePriority::Lethal;
             self.launch_element(elem);
         }
+    }
 
+    fn drain_deactivate_entities(&mut self, deactivate_entities: Vec<EntityId>) {
         // DRINKING_ALE DONE — deactivate the antagonist to hide
         // the ale bottle.
-        for antag in sides.deactivate_entities {
+        for antag in deactivate_entities {
             if let Some(entity) = self.world.entities.get_mut(antag) {
                 entity.element_data_mut().active = false;
             }
         }
+    }
 
-        for (pc, target, activation_cmd) in sides.pc_target_activations {
+    fn drain_pc_target_activations(
+        &mut self,
+        pc_target_activations: Vec<(EntityId, EntityId, Command)>,
+    ) {
+        for (pc, target, activation_cmd) in pc_target_activations {
             let target_is_fx = self
                 .get_entity(target)
                 .is_some_and(|e| e.kind().is_fx_target());
@@ -6672,8 +6789,15 @@ impl EngineInner {
             };
             self.launch_element(activation);
         }
+    }
 
-        for (rescuer, target) in sides.waking_up_done {
+    fn drain_waking_up_done(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        waking_up_done: Vec<(EntityId, EntityId)>,
+    ) {
+        for (rescuer, target) in waking_up_done {
             let target_entity = self.get_entity(target).unwrap_or_else(|| {
                 panic!(
                     "WakingUp DONE from rescuer {rescuer:?} references missing required target {target:?}"
@@ -6721,7 +6845,14 @@ impl EngineInner {
                 self.hero_speaking(assets, target, crate::engine::melee::HERO_RECOVER);
             }
         }
+    }
 
+    fn drain_pickups(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        pickups: Vec<(EntityId, EntityId)>,
+    ) {
         // TAKING DONE — dispatches by taker + object_type.
         //
         // * PC takers route through `apply_pc_take_object` which
@@ -6735,7 +6866,7 @@ impl EngineInner {
         //
         // * Scrolls route through `take_scroll` which fires
         //   `IScrollScript::IsTaken`.
-        for (taker, object) in sides.pickups {
+        for (taker, object) in pickups {
             // Scrolls are not ObjectData carriers — they have their
             // own Entity::Scroll variant and a script-driven
             // `IsTaken` dispatch.
@@ -6837,13 +6968,15 @@ impl EngineInner {
                 _ => {}
             }
         }
+    }
 
+    fn drain_drink_done(&mut self, assets: &LevelAssets, drink_done: Vec<EntityId>) {
         // DRINKING_ALE TERMINATED — add the profile's beer value
         // to the soldier's blood alcohol (clamped to 100).
         // `blood_alcohol` lives on the `AiController` attached to
         // the soldier's NPC data via `ai_brain`; `profile.beer` is
         // the per-profile increment (see profiles.rs).
-        for soldier in sides.drink_done {
+        for soldier in drink_done {
             let profile_idx = self
                 .world
                 .entities
@@ -6865,10 +6998,12 @@ impl EngineInner {
                 base.blood_alcohol = new_val as u8;
             }
         }
+    }
 
+    fn drain_pickpockets(&mut self, pickpockets: Vec<(EntityId, EntityId)>) {
         // SEARCHING DONE — NPC-on-NPC pickpocket money transfer:
         // thief.money += victim.money; victim.money = 0.
-        for (thief, victim) in sides.pickpockets {
+        for (thief, victim) in pickpockets {
             let stolen = self
                 .world
                 .entities
@@ -6890,10 +7025,17 @@ impl EngineInner {
                 npc.money = npc.money.saturating_add(stolen);
             }
         }
+    }
 
+    fn drain_wasp_sting_remark(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        wasp_sting_remark: Vec<EntityId>,
+    ) {
         // GETTING_FREE_FROM_WASP START — `Say(REMARK_WASP_STING)`.
         // Plain `say` on the AI base.
-        for speaker in sides.wasp_sting_remark {
+        for speaker in wasp_sting_remark {
             if let Some(entity) = self.world.entities.get_mut(speaker)
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(base) = npc.ai_brain.base_mut()
@@ -6902,7 +7044,14 @@ impl EngineInner {
             }
             self.drain_ai_owner_work_for(sim, assets, speaker);
         }
+    }
 
+    fn drain_special_remark(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        special_remark: Vec<EntityId>,
+    ) {
         // SPECIAL START — `make_special_action_remark`.  Branches
         // on `IsShieldBearer`: shield-bearers always speak,
         // everyone else only speaks at 1-in-3 odds and only when
@@ -6910,7 +7059,7 @@ impl EngineInner {
         // weapon AND the sprite has the `WaitingShield` animation —
         // the same two-gate check used by the per-tick
         // FighterSnapshot build (engine/ai/snapshots.rs:619-632).
-        for speaker in sides.special_remark {
+        for speaker in special_remark {
             // Two-step: read weapon/sprite info immutably, then
             // dispatch the remark mutably.  Splitting avoids holding
             // an immutable borrow on `self.world.entities` across the
@@ -6945,12 +7094,19 @@ impl EngineInner {
             }
             self.drain_ai_owner_work_for(sim, assets, speaker);
         }
+    }
 
+    fn drain_cry_for_help_under_net(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        cry_for_help_under_net: Vec<EntityId>,
+    ) {
         // LYING_STUCK_UNDER_NET 1/31 cycle — NPCs say
         // `UnderNet` (soldier) or `CivUnderNet` (civilian) plus a
         // HEEELP noise at the entity's 2D position (volume
         // `NOISE_VOLUME_HEEELP`, = 200).
-        for speaker in sides.cry_for_help_under_net {
+        for speaker in cry_for_help_under_net {
             let (remark, origin, layer, elevation) = {
                 let Some(entity) = self.world.entities.get(speaker) else {
                     continue;
