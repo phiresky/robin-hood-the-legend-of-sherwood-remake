@@ -103,3 +103,10 @@ parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_034-
 parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_038-session-0001.jsonl.zst
 parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_040-session-0001.jsonl.zst
 parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_042-session-0001.jsonl.zst
+# Corpus integrity audit: valid zstd containers ended without a clean rng_suffix terminator.
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-007-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-008-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-009-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-010-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-011-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-012-session-0001.jsonl.zst
