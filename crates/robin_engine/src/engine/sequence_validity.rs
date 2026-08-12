@@ -186,30 +186,15 @@ impl EngineInner {
 
             // ── SwordstrikeDown ─────────────────────────────────
             Command::SwordstrikeDown => {
-                // CanExecuteCommands(allow_in_buildings=true,
-                // check_position) — first arg is unconditionally true.
-                if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
                 let Some(victim) = interaction_victim(self, element) else {
                     return false;
                 };
-                if actor.is_pc() {
-                    let vip = self.is_entity_vip(assets, victim);
-                    let is_dead = victim.is_dead();
-                    let unconscious = victim.human_data().map(|h| h.unconscious).unwrap_or(false);
-                    let lying = victim.element_data().posture == Posture::Lying;
-                    let tied = victim.element_data().posture == Posture::Tied;
-                    if !victim.is_active()
-                        || victim.element_data().blipped
-                        || is_dead
-                        || !unconscious
-                        || (!lying && !tied)
-                        || !victim.is_soldier()
-                        || vip
-                    {
-                        return false;
-                    }
+                if !striking_down_sword_valid_without_position(
+                    actor,
+                    victim,
+                    self.is_entity_vip(assets, victim),
+                ) {
+                    return false;
                 }
                 if !check_position {
                     return true;
@@ -1302,6 +1287,46 @@ impl EngineInner {
             .resolve_projectile_landing(landing.position.to_map(), self.sight_obstacles(assets));
         resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle
     }
+}
+
+/// The non-geometric half of Original
+/// `RHElementActorHuman::CheckSequenceElementValidity(SWORDSTRIKE_DOWN)`.
+///
+/// `Execute(STRIKING_DOWN_SWORD)` repeats this check with
+/// `bCheckPosition=false` immediately after `PerformAction`, so keep it usable
+/// from both the general validity switch and that post-sprite Execute seam.
+pub(super) fn striking_down_sword_valid_without_position(
+    actor: &Entity,
+    victim: &Entity,
+    victim_is_vip: bool,
+) -> bool {
+    if !actor.is_pc() {
+        return true;
+    }
+
+    let actor_human = actor
+        .human_data()
+        .expect("SwordstrikeDown PC must retain human data");
+    if actor.is_dead()
+        || actor_human.unconscious
+        || actor_human.stuck_under_nets_counter > 0
+        || actor.element_data().posture == Posture::Tied
+    {
+        return false;
+    }
+
+    let unconscious = victim
+        .human_data()
+        .map(|human| human.unconscious)
+        .unwrap_or(false);
+    let posture = victim.element_data().posture;
+    victim.is_active()
+        && !victim.element_data().blipped
+        && !victim.is_dead()
+        && unconscious
+        && matches!(posture, Posture::Lying | Posture::Tied)
+        && victim.is_soldier()
+        && !victim_is_vip
 }
 
 /// Failure terminal for an init-phase PC validity arm.

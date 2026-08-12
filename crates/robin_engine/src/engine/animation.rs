@@ -1361,6 +1361,201 @@ mod tests {
         );
     }
 
+    fn striking_down_execute_fixture() -> (
+        EngineInner,
+        crate::engine::types::LevelAssets,
+        EntityId,
+        EntityId,
+        crate::sequence::SequenceId,
+    ) {
+        use crate::order::Order;
+        use crate::sequence::SequenceElement;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut engine = EngineInner::new();
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        pc.pc_data_mut().expect("PC data").life_points = 100;
+        pc.actor_data_mut().expect("actor data").action_state = ActionState::WaitingSword;
+
+        let action = OrderType::StrikingDownSword;
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 1],
+            distances: vec![0; 3],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        pc.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+
+        let owner = engine.add_entity(pc);
+        let mut soldier = weak_soldier_at_action_done(0);
+        soldier.element_data_mut().kind = ElementKind::ActorSoldier;
+        soldier.element_data_mut().posture = Posture::Lying;
+        soldier.human_data_mut().expect("human data").unconscious = true;
+        soldier.npc_data_mut().expect("NPC data").life_points = 100;
+        let victim = engine.add_entity(soldier);
+
+        let mut selected = SequenceElement::new_interaction(
+            1,
+            Command::SwordstrikeDown,
+            Some(owner),
+            Some(victim),
+        );
+        let order = Order::test_new(action, 0.0, 0.0).with_antagonist(victim);
+        selected.orders.push_back(order);
+        let sequence = engine.orders.sequence_manager.launch_element(selected);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        let order_id = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .expect("selected strike order")
+            .2
+            .order_id;
+
+        let sprite = &mut engine
+            .get_entity_mut(owner)
+            .expect("owner")
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = order_id.get();
+        sprite.last_action = action;
+        sprite.current_row = 0;
+        sprite.current_frame = 0;
+        sprite.frame_count = 0;
+        sprite.action_done_frame = 1;
+        sprite.action_done_counter = 0;
+
+        assert!(
+            super::super::sequence_validity::striking_down_sword_valid_without_position(
+                engine.get_entity(owner).expect("owner"),
+                engine.get_entity(victim).expect("victim"),
+                false,
+            ),
+            "fixture must begin with a valid unconscious live soldier target"
+        );
+
+        (
+            engine,
+            crate::engine::types::LevelAssets::new(),
+            owner,
+            victim,
+            sequence,
+        )
+    }
+
+    #[test]
+    fn striking_down_revalidates_after_done_before_repeating_kill() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, owner, victim, sequence) = striking_down_execute_fixture();
+
+        let (_, first_outcomes, first_result) =
+            engine.tick_actor_animation_for(&sim, &assets, owner);
+        assert_eq!(
+            first_result.map(|result| result.motion),
+            Some(MotionState::Done)
+        );
+        assert_eq!(
+            first_outcomes.execute_sides.killed_at_bottom,
+            vec![(victim, owner)],
+            "the valid action point must still launch exactly one bottom kill"
+        );
+
+        engine
+            .get_entity_mut(victim)
+            .expect("victim")
+            .npc_data_mut()
+            .expect("NPC data")
+            .life_points = 0;
+        let (_, second_outcomes, second_result) =
+            engine.tick_actor_animation_for(&sim, &assets, owner);
+        assert_eq!(
+            second_result.map(|result| result.motion),
+            Some(MotionState::Terminated),
+            "the post-PerformAction validity check must retire the stale strike"
+        );
+        assert!(
+            second_outcomes.execute_sides.killed_at_bottom.is_empty(),
+            "an invalid selected strike must return before DONE side effects"
+        );
+
+        let mut completion = AnimCompletionOutcomes::default();
+        completion.seq_advance.push((sequence, 0));
+        engine.process_anim_completion_outcomes(&sim, completion, &assets);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner)
+                .is_none(),
+            "the exhausted strike leaves the Original actor order null for the rest of its slot"
+        );
+        engine.ensure_wait_element(owner);
+        engine
+            .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
+            .expect("fallback Wait launch");
+        let (next_sequence, next_index) = engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .expect("terminal strike must expose the fallback Wait");
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(next_sequence, next_index)
+                .expect("fallback Wait element")
+                .command,
+            Command::Wait,
+            "the terminal result must promote the fallback Wait owner"
+        );
+    }
+
+    #[test]
+    fn striking_down_keeps_running_while_unconscious_victim_is_alive() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, owner, _victim, _sequence) = striking_down_execute_fixture();
+
+        let _ = engine.tick_actor_animation_for(&sim, &assets, owner);
+        let (_, outcomes, result) = engine.tick_actor_animation_for(&sim, &assets, owner);
+
+        assert_eq!(
+            result.map(|result| result.motion),
+            Some(MotionState::InProgress)
+        );
+        assert!(outcomes.execute_sides.killed_at_bottom.is_empty());
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(owner)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::StrikingDownSword)
+        );
+    }
+
     #[test]
     fn striking_down_sword_start_facing_uses_stretched_ground_positions() {
         let mut owner = weak_soldier_at_action_done(0);
@@ -4669,6 +4864,45 @@ impl EngineInner {
             self.find_place_to_die(entity_id);
         }
 
+        // Original `RHElementActorHuman::Execute` advances the
+        // STRIKING_DOWN_SWORD sprite and then revalidates the selected
+        // SwordstrikeDown element without a distance check. Snapshot the
+        // non-sprite operands immediately before the exclusive actor borrow;
+        // `PerformAction`/`Turn` cannot mutate any of them. The result is
+        // applied below immediately after `perform_action` and before motion
+        // side effects, preserving the Original boundary.
+        let striking_down_sword_valid_after_perform = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity_id)
+            .and_then(|(seq_id, elem_idx, order)| {
+                (order.order_type == OrderType::StrikingDownSword).then_some((seq_id, elem_idx))
+            })
+            .map(|(seq_id, elem_idx)| {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .expect("selected StrikingDownSword element disappeared before Execute");
+                let antagonist = match element.data {
+                    crate::sequence::SequenceElementData::Interaction { antagonist } => {
+                        antagonist.expect("selected StrikingDownSword element lost its antagonist")
+                    }
+                    _ => panic!("selected StrikingDownSword element is not an interaction"),
+                };
+                let actor = self.world.entities.get(entity_id).unwrap_or_else(|| {
+                    panic!("StrikingDownSword owner {entity_id:?} disappeared before Execute")
+                });
+                let victim = self.world.entities.get(antagonist).unwrap_or_else(|| {
+                    panic!("StrikingDownSword victim {antagonist:?} disappeared before Execute")
+                });
+                super::sequence_validity::striking_down_sword_valid_without_position(
+                    actor,
+                    victim,
+                    self.is_entity_vip(assets, victim),
+                )
+            });
+
         'actor: loop {
             let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
                 panic!("actor {entity_id:?} vanished before generic animation dispatch")
@@ -5420,6 +5654,14 @@ impl EngineInner {
                         }
                     };
                     let motion = motion.map(|mut motion_state| {
+                        if anim_type == OrderType::StrikingDownSword
+                            && striking_down_sword_valid_after_perform == Some(false)
+                        {
+                            // RHelementactorhuman.cpp:4083-4092 performs this
+                            // check after sprite advancement and returns before
+                            // START/DONE side effects when it fails.
+                            motion_state = MotionState::Terminated;
+                        }
                         if anim_type == OrderType::StandingUpSword {
                             // RHElementActorHuman::Execute performs the
                             // stand-up sprite first, then re-aims at the live
