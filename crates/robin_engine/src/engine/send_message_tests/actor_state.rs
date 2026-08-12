@@ -108,7 +108,7 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
         gate_indices: Vec::new(),
         underlying_sector: None,
     });
-    engine.world.fast_grid.level = std::sync::Arc::new(level);
+    engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
     assert_eq!(
         engine
             .call_external_native(

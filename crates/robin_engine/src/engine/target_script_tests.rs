@@ -227,7 +227,7 @@ pub(crate) fn build_engine_with_target() -> (EngineInner, EntityId) {
         &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     if let Some(ref mut script) = engine.scripts.mission {
         assert!(

@@ -524,9 +524,11 @@ impl EngineInner {
 
         // Pathfinder obstacle states now that the graph is loaded.
         if !assets.pathfinder_graph.static_data.move_layers.is_empty() {
-            self.world
+            let world = &mut self.world;
+            let grid = std::sync::Arc::make_mut(&mut world.fast_grid);
+            world
                 .pathfinder
-                .initialize_from_graph(assets.pathfinder_graph.as_ref(), &mut self.world.fast_grid);
+                .initialize_from_graph(assets.pathfinder_graph.as_ref(), grid);
         }
 
         // Original RHEngine::Initialize runs IEngineScript::Initialize(0)

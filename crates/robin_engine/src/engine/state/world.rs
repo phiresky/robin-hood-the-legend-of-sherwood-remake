@@ -55,7 +55,11 @@ pub(crate) struct WorldState {
     /// priority-sorted portrait bar. Keep it as authoritative hashed state so
     /// first-match scans and synchronous callbacks survive rollback exactly.
     pub(crate) original_pc_registry_ids: Vec<EntityId>,
-    pub(crate) fast_grid: FastFindGrid,
+    /// Spatial grid, shared copy-on-write: `AiContext` (and rollback
+    /// snapshots) hold `Arc` clones frozen at their creation instant, and
+    /// every mutation goes through [`Self::fast_grid_mut`] so a shared grid
+    /// is copied exactly once before diverging.
+    pub(crate) fast_grid: std::sync::Arc<FastFindGrid>,
     pub(crate) pathfinder: PathFinder,
     pub(crate) weather: WeatherState,
     pub(crate) shield: ShieldState,
@@ -95,7 +99,7 @@ impl WorldState {
             entities: Entities::new(),
             pc_ids: Vec::new(),
             original_pc_registry_ids: Vec::new(),
-            fast_grid: FastFindGrid::default(),
+            fast_grid: std::sync::Arc::new(FastFindGrid::default()),
             pathfinder: PathFinder::default(),
             weather: WeatherState::new(),
             shield: ShieldState::default(),
@@ -106,6 +110,17 @@ impl WorldState {
             next_original_creation_order: Self::FIRST_MISSION_CREATION_ORDER,
             original_repulsive_point_counter: 0,
         }
+    }
+
+    /// Copy-on-write mutable access to the spatial grid.
+    ///
+    /// The grid is `Arc`-shared into per-NPC `AiContext`s and rollback
+    /// snapshots; mutating through this accessor copies the runtime grid
+    /// state only when such a shared snapshot is still alive, which keeps
+    /// every snapshot frozen at the state it observed when it was taken.
+    #[inline]
+    pub(crate) fn fast_grid_mut(&mut self) -> &mut FastFindGrid {
+        std::sync::Arc::make_mut(&mut self.fast_grid)
     }
 
     pub(crate) fn assign_next_original_creation_order(&mut self, entity_id: EntityId) {
@@ -204,7 +219,8 @@ impl WorldState {
     /// The caller must first run `preflight_level_assets` across the
     /// complete candidate; this phase is then infallible and mutation-only.
     pub(crate) fn attach_preflighted_level_assets(&mut self, assets: &LevelAssets) {
-        self.fast_grid.attach_level_grid(assets.level_grid.clone());
+        self.fast_grid_mut()
+            .attach_level_grid(assets.level_grid.clone());
 
         for (_, entity) in self.entities.occupied_mut() {
             entity

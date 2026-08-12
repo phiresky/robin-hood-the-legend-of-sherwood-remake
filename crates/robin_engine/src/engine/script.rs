@@ -1256,7 +1256,7 @@ impl EngineInner {
                 sim,
                 &mut world.entities,
                 &mut ai.global,
-                &mut world.fast_grid,
+                std::sync::Arc::make_mut(&mut world.fast_grid),
             )
             .with_world_views(
                 assets.static_sight_obstacles.as_slice(),
@@ -4578,7 +4578,7 @@ impl EngineInner {
                                 if let Some(&grid_idx) =
                                     assets.scripts.zone_grid_indices.get(zone_idx)
                                 {
-                                    self.world.fast_grid.or_sector_type_overlay(
+                                    self.world.fast_grid_mut().or_sector_type_overlay(
                                         grid_idx,
                                         crate::sector::SectorType::APEX,
                                     );

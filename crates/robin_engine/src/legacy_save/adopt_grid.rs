@@ -460,7 +460,7 @@ impl LegacyFastFindGridAdoptionPlan {
             }
         }
 
-        let mut runtime_grid = engine.world.fast_grid.clone();
+        let mut runtime_grid = (*engine.world.fast_grid).clone();
         let mut pathfinder = crate::pathfinder::PathFinder::new();
         pathfinder.initialize_from_graph(assets.pathfinder_graph.as_ref(), &mut runtime_grid);
         let mut sight_obstacle_active = engine.world.static_sight_obstacle_active.clone();
@@ -588,9 +588,9 @@ impl LegacyFastFindGridAdoptionPlan {
     /// before the independently serialized door fields overwrite current
     /// authorization, matching Original load order.
     pub(crate) fn apply(self, engine: &mut EngineInner) -> LegacyGridHostState {
-        engine.world.fast_grid.line_active = self.line_active;
-        engine.world.fast_grid.sector_active = self.sector_active;
-        engine.world.fast_grid.mask_active = self.mask_active;
+        engine.world.fast_grid_mut().line_active = self.line_active;
+        engine.world.fast_grid_mut().sector_active = self.sector_active;
+        engine.world.fast_grid_mut().mask_active = self.mask_active;
         engine.world.static_sight_obstacle_active = self.sight_obstacle_active;
         engine.world.pathfinder = self.pathfinder;
         engine.ai.global.repulsive_points = self.static_repulsive_points;
@@ -677,7 +677,7 @@ impl LegacyFastFindGridAdoptionPlan {
             }
         }
         for (sector_index, active) in self.door_sectors {
-            engine.world.fast_grid.sector_active[sector_index] = active;
+            engine.world.fast_grid_mut().sector_active[sector_index] = active;
         }
         for planned in self.buildings {
             engine.script_domains.buildings.occupants[planned.building_index] = planned
@@ -708,9 +708,17 @@ impl LegacyFastFindGridAdoptionPlan {
                 && !lift.occupied_downwards
                 && lift.wait_time == 0
             {
-                engine.world.fast_grid.lift_state.remove(&sector_index);
+                engine
+                    .world
+                    .fast_grid_mut()
+                    .lift_state
+                    .remove(&sector_index);
             } else {
-                engine.world.fast_grid.lift_state.insert(sector_index, lift);
+                engine
+                    .world
+                    .fast_grid_mut()
+                    .lift_state
+                    .insert(sector_index, lift);
             }
         }
         LegacyGridHostState { display_doors }
@@ -1261,9 +1269,9 @@ mod tests {
     #[test]
     fn apply_installs_preflighted_patch_door_zone_building_lift_state() {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid.sector_active = vec![true, true, true];
-        engine.world.fast_grid.line_active = vec![true, true];
-        engine.world.fast_grid.mask_active = vec![true, true];
+        engine.world.fast_grid_mut().sector_active = vec![true, true, true];
+        engine.world.fast_grid_mut().line_active = vec![true, true];
+        engine.world.fast_grid_mut().mask_active = vec![true, true];
         engine.world.static_sight_obstacle_active = vec![true, true];
 
         let mut patch = Patch {

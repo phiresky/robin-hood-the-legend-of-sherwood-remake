@@ -5014,9 +5014,10 @@ impl EngineInner {
 
         if live_command == Some(crate::element::Command::WaitFreeLift) {
             if let Some((seq_id, elem_idx)) = live_element {
+                let world = &mut self.world;
                 let authorized = super::sequence_runtime::LiftWaitCommandContext {
-                    entities: &mut self.world.entities,
-                    fast_grid: &mut self.world.fast_grid,
+                    entities: &mut world.entities,
+                    fast_grid: std::sync::Arc::make_mut(&mut world.fast_grid),
                     doors: self.script_domains.interactables.doors.as_slice(),
                     sequence_manager: &mut self.orders.sequence_manager,
                 }
@@ -7257,7 +7258,7 @@ mod bow_command_body_parity_tests {
             .expect("test lift owner exists")
             .element_data_mut()
             .set_sector(crate::position_interface::SectorHandle::new(0));
-        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
         level.sector_number_map.insert(sector_number, 0);
         level.sectors.push(crate::fast_find_grid::GridSector {
             points: Vec::new(),
@@ -8251,7 +8252,7 @@ mod bow_command_body_parity_tests {
         let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
-        engine.world.fast_grid.lift_state_mut(0).wait_time = 2;
+        engine.world.fast_grid_mut().lift_state_mut(0).wait_time = 2;
         let door = crate::gate::Door {
             door_type: crate::gate::DoorType::LiftHigh,
             sector_in: sector_number,
@@ -8282,7 +8283,7 @@ mod bow_command_body_parity_tests {
 
         let authorized = LiftWaitCommandContext {
             entities: &mut engine.world.entities,
-            fast_grid: &mut engine.world.fast_grid,
+            fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
             doors: std::slice::from_ref(&door),
             sequence_manager: &mut engine.orders.sequence_manager,
         }
@@ -8298,7 +8299,7 @@ mod bow_command_body_parity_tests {
                 .state,
             SequenceState::InProgress
         );
-        assert_eq!(engine.world.fast_grid.lift_state_mut(0).wait_time, 1);
+        assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 1);
         assert!(
             engine
                 .world
@@ -8349,7 +8350,7 @@ mod bow_command_body_parity_tests {
 
         LiftWaitCommandContext {
             entities: &mut engine.world.entities,
-            fast_grid: &mut engine.world.fast_grid,
+            fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
             doors: std::slice::from_ref(&door),
             sequence_manager: &mut engine.orders.sequence_manager,
         }
@@ -8393,7 +8394,7 @@ mod bow_command_body_parity_tests {
 
         let authorized = LiftWaitCommandContext {
             entities: &mut engine.world.entities,
-            fast_grid: &mut engine.world.fast_grid,
+            fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
             doors: std::slice::from_ref(&door),
             sequence_manager: &mut engine.orders.sequence_manager,
         }
@@ -8410,7 +8411,7 @@ mod bow_command_body_parity_tests {
                 .state,
             SequenceState::Terminated
         );
-        let lift = engine.world.fast_grid.lift_state_mut(0);
+        let lift = engine.world.fast_grid_mut().lift_state_mut(0);
         assert_eq!(lift.occupants, 1);
         assert!(lift.occupied_downwards);
         assert_eq!(lift.wait_time, 100);
@@ -8435,7 +8436,7 @@ mod bow_command_body_parity_tests {
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         {
-            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
             let outside = crate::sector::SectorNumber::new(0);
             let outside_index = level.sectors.len();
             level.sector_number_map.insert(outside, outside_index);
@@ -8490,13 +8491,13 @@ mod bow_command_body_parity_tests {
         assert!(
             LiftWaitCommandContext {
                 entities: &mut engine.world.entities,
-                fast_grid: &mut engine.world.fast_grid,
+                fast_grid: std::sync::Arc::make_mut(&mut engine.world.fast_grid),
                 doors: std::slice::from_ref(&door),
                 sequence_manager: &mut engine.orders.sequence_manager,
             }
             .authorize_and_reserve(owner, seq_id, 0)
         );
-        assert_eq!(engine.world.fast_grid.lift_state_mut(0).occupants, 1);
+        assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
 
         engine.execute_pass_door(
             &crate::sim_rng::test_context(),
@@ -8506,7 +8507,7 @@ mod bow_command_body_parity_tests {
             true,
             0,
         );
-        assert_eq!(engine.world.fast_grid.lift_state_mut(0).occupants, 1);
+        assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
         engine.execute_pass_door(
             &crate::sim_rng::test_context(),
             &assets,
@@ -8516,7 +8517,7 @@ mod bow_command_body_parity_tests {
             0,
         );
 
-        let lift = engine.world.fast_grid.lift_state_mut(0);
+        let lift = engine.world.fast_grid_mut().lift_state_mut(0);
         assert_eq!(lift.occupants, 0);
         assert!(!lift.occupied_downwards);
         assert!(!lift.occupied_upwards);
@@ -8541,7 +8542,7 @@ mod bow_command_body_parity_tests {
         let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
-        engine.world.fast_grid.lift_state_mut(0).wait_time = 2;
+        engine.world.fast_grid_mut().lift_state_mut(0).wait_time = 2;
         engine
             .script_domains
             .interactables
@@ -8580,7 +8581,7 @@ mod bow_command_body_parity_tests {
         let sim = crate::sim_rng::test_context();
 
         engine.tick_actor_animation_action_change_slots(&sim, &assets);
-        assert_eq!(engine.world.fast_grid.lift_state_mut(0).wait_time, 1);
+        assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 1);
         assert_eq!(
             engine
                 .orders
@@ -8592,7 +8593,7 @@ mod bow_command_body_parity_tests {
         );
 
         engine.tick_actor_animation_action_change_slots(&sim, &assets);
-        assert_eq!(engine.world.fast_grid.lift_state_mut(0).wait_time, 0);
+        assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 0);
         assert_eq!(
             engine
                 .orders
@@ -8614,7 +8615,7 @@ mod bow_command_body_parity_tests {
                 .state,
             SequenceState::Terminated
         );
-        let lift = engine.world.fast_grid.lift_state_mut(0);
+        let lift = engine.world.fast_grid_mut().lift_state_mut(0);
         assert_eq!(lift.occupants, 1);
         assert!(lift.occupied_downwards);
         // The fallback idle Wait is no longer installed inside the

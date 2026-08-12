@@ -566,7 +566,7 @@ impl EngineInner {
                 );
             }
 
-            let grid_idx = self.world.fast_grid.add_sector(
+            let grid_idx = self.world.fast_grid_mut().add_sector(
                 crate::fast_find_grid::GridSector {
                     points: pts,
                     bounding_box: bbox,
@@ -594,7 +594,7 @@ impl EngineInner {
             let zone_idx_u16 = u16::try_from(zone_idx).unwrap_or_else(|_| {
                 panic!("script zone index {zone_idx} exceeds the u16 Original index domain")
             });
-            self.world.fast_grid.add_sector_lines_for_script(
+            self.world.fast_grid_mut().add_sector_lines_for_script(
                 grid_idx,
                 sec.layer,
                 zone_idx_u16,
@@ -846,7 +846,7 @@ impl EngineInner {
             && !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.pathfinder_graph)
                 .preload_half_diagonals_from_proto(
-                    &mut self.world.fast_grid,
+                    self.world.fast_grid_mut(),
                     &motion_data.graph_bytes,
                 )
         {
@@ -930,7 +930,7 @@ impl EngineInner {
             };
 
         for &raw_index in &loaded.proto.sight_material_indices {
-            register(&mut self.world.fast_grid, raw_index, 0);
+            register(self.world.fast_grid_mut(), raw_index, 0);
         }
 
         for (obstacle_index, obstacle) in loaded.proto.sight_obstacles.iter().enumerate() {
@@ -944,7 +944,7 @@ impl EngineInner {
                 continue;
             };
             for &raw_index in &obstacle.material_indices {
-                register(&mut self.world.fast_grid, raw_index, layer);
+                register(self.world.fast_grid_mut(), raw_index, layer);
             }
         }
 

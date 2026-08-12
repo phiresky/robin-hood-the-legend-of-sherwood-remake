@@ -189,26 +189,26 @@ impl EngineInner {
 
         // Toggle grid sectors
         for &idx in &ctx.old_sector_indices {
-            self.world.fast_grid.set_sector_active(idx, !applied);
+            self.world.fast_grid_mut().set_sector_active(idx, !applied);
         }
         for &idx in &ctx.new_sector_indices {
-            self.world.fast_grid.set_sector_active(idx, applied);
+            self.world.fast_grid_mut().set_sector_active(idx, applied);
         }
 
         // Toggle grid lines
         for &idx in &ctx.old_line_indices {
-            self.world.fast_grid.set_line_active(idx, !applied);
+            self.world.fast_grid_mut().set_line_active(idx, !applied);
         }
         for &idx in &ctx.new_line_indices {
-            self.world.fast_grid.set_line_active(idx, applied);
+            self.world.fast_grid_mut().set_line_active(idx, applied);
         }
 
         // Toggle sprite-occlusion masks.
         for &idx in &ctx.old_mask_indices {
-            self.world.fast_grid.set_mask_active(idx, !applied);
+            self.world.fast_grid_mut().set_mask_active(idx, !applied);
         }
         for &idx in &ctx.new_mask_indices {
-            self.world.fast_grid.set_mask_active(idx, applied);
+            self.world.fast_grid_mut().set_mask_active(idx, applied);
         }
 
         // Pathfinder obstacle state change.  The stream-deserialised
@@ -250,7 +250,7 @@ impl EngineInner {
             // Apply grid-line toggles from motion-obstacle activation
             // changes.
             for (line_idx, active) in line_toggles {
-                self.world.fast_grid.set_line_active(line_idx, active);
+                self.world.fast_grid_mut().set_line_active(line_idx, active);
             }
             for (sector_idx, active) in sector_toggles {
                 self.world

@@ -1351,7 +1351,7 @@ impl EngineInner {
                             panic!("PassDoor lift occupant {entity_id:?} vanished before release")
                         })
                         .is_pc();
-                    let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
+                    let st = self.world.fast_grid_mut().lift_state_mut(grid_idx as u32);
                     if is_lift_high {
                         st.set_occupied_upwards(false, is_pc);
                     } else {
@@ -2011,7 +2011,7 @@ mod tests {
             {
                 continue;
             }
-            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
             let index = level.sectors.len();
             level.sector_number_map.insert(sector_number, index);
             level.sectors.push(crate::fast_find_grid::GridSector {
@@ -2076,7 +2076,7 @@ mod tests {
 
     fn install_lift_sector(engine: &mut EngineInner, lift_type: LiftType) {
         let lift_sector = crate::sector::SectorNumber::new(42);
-        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
         let index = level.sectors.len();
         level.sector_number_map.insert(lift_sector, index);
         level.sectors.push(crate::fast_find_grid::GridSector {

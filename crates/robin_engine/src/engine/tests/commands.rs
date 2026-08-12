@@ -768,9 +768,9 @@ fn swordfight_los_ignores_crossing_motion_line() {
 
     let mut engine = EngineInner::new();
     let assets = swordfight_test_assets();
-    engine.world.fast_grid.size_map(4, 4);
-    engine.world.fast_grid.allocate_layers(1);
-    engine.world.fast_grid.add_line(
+    engine.world.fast_grid_mut().size_map(4, 4);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    engine.world.fast_grid_mut().add_line(
         GridLine::new(
             MapPoint::new(115.0, 50.0),
             MapPoint::new(115.0, 150.0),

@@ -3793,8 +3793,9 @@ mod tests {
             is_night_or_fog: true,
             ..AiContext::default()
         };
-        ctx.fast_grid.size_map(20, 20);
-        ctx.fast_grid.allocate_layers(1);
+        let fast_grid = std::sync::Arc::make_mut(&mut ctx.fast_grid);
+        fast_grid.size_map(20, 20);
+        fast_grid.allocate_layers(1);
         let barycentres = [(750.0, 500.0), (760.0, 510.0), (770.0, 490.0)];
         for (index, &(x, y)) in barycentres.iter().enumerate() {
             let points = vec![
@@ -3807,7 +3808,7 @@ mod tests {
             for &point in &points {
                 bounding_box.expand_point(point);
             }
-            ctx.fast_grid.add_sector(
+            fast_grid.add_sector(
                 crate::fast_find_grid::GridSector {
                     points,
                     bounding_box,
@@ -3828,7 +3829,7 @@ mod tests {
                 },
                 0,
             );
-            std::sync::Arc::make_mut(&mut ctx.fast_grid.level)
+            std::sync::Arc::make_mut(&mut fast_grid.level)
                 .shadow_data
                 .insert(
                     index as u32,

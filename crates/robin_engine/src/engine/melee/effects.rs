@@ -397,7 +397,7 @@ impl EngineInner {
                 .get(&crate::sector::SectorNumber::new(lift.sector_number as i16))
                 .copied()
             {
-                let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
+                let st = self.world.fast_grid_mut().lift_state_mut(grid_idx as u32);
                 st.occupants = st.occupants.saturating_sub(1);
                 if victim_is_pc {
                     st.occupants_pc = st.occupants_pc.saturating_sub(1);

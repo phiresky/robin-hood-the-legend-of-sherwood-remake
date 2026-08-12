@@ -1544,7 +1544,7 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
 pub(super) fn install_test_open_field_bbox(engine: &mut EngineInner) {
     let mut level = (*engine.world.fast_grid.level).clone();
     level.map_bbox = MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
-    engine.world.fast_grid.level = std::sync::Arc::new(level);
+    engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
 }
 
 pub(super) fn install_test_building_sector(engine: &mut EngineInner, raw_sector: u16) {
@@ -1572,7 +1572,7 @@ pub(super) fn install_test_building_sector(engine: &mut EngineInner, raw_sector:
         gate_indices: Vec::new(),
         underlying_sector: None,
     });
-    engine.world.fast_grid.level = std::sync::Arc::new(level);
+    engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
 }
 
 #[test]

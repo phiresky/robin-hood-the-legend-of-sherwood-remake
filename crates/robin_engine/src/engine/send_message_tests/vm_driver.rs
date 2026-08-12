@@ -766,7 +766,7 @@ fn shared_driver_preserves_a_b_a_activation_stack() {
         &simulation,
         &mut engine.world.entities,
         &mut engine.ai.global,
-        &mut engine.world.fast_grid,
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
     );
     assert!(
         engine
