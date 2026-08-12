@@ -439,8 +439,14 @@ fn draw_alpha_polygon_gpu(
     alpha: u32,
     _zoom: f32,
 ) {
-    let y_min = edges.iter().map(|e| e.y_min as i32).min().unwrap().max(0);
-    let y_max = edges.iter().map(|e| e.y_max.ceil() as i32).max().unwrap();
+    // Degenerate polygons (all edges horizontal / off-screen) yield no edges.
+    let Some(y_min) = edges.iter().map(|e| e.y_min as i32).min() else {
+        return;
+    };
+    let Some(y_max) = edges.iter().map(|e| e.y_max.ceil() as i32).max() else {
+        return;
+    };
+    let y_min = y_min.max(0);
     let sw = renderer.screen_width() as i32;
     let sh = renderer.screen_height() as i32;
     let y_max = y_max.min(sh);
@@ -457,7 +463,7 @@ fn draw_alpha_polygon_gpu(
                 crossings.push(x);
             }
         }
-        crossings.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        crossings.sort_unstable_by(f32::total_cmp);
 
         let mut i = 0;
         while i + 1 < crossings.len() {

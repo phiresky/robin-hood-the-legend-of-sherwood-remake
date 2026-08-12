@@ -4665,7 +4665,8 @@ impl EngineInner {
                 && let Some((sprite_file, profile_name, object_type)) =
                     bonus_type_to_sprite_asset(raw_bonus)
             {
-                let bonus_kind = crate::element::BonusItemType::from_u16(raw_bonus);
+                let bonus_kind = crate::element::BonusItemType::from_u16(raw_bonus)
+                    .unwrap_or_else(|| panic!("unknown BonusItemType ordinal {raw_bonus}"));
                 let associated_action = bonus_kind.to_action();
                 for &(point_idx, quantity) in &plan.bonus_spawns {
                     let Some(point) = plan.points.get(point_idx) else {
@@ -4734,7 +4735,8 @@ impl EngineInner {
                         );
                         continue;
                     };
-                    let bonus_kind = crate::element::BonusItemType::from_u16(relic_raw as u16);
+                    let bonus_kind = crate::element::BonusItemType::from_u16(relic_raw as u16)
+                        .unwrap_or_else(|| panic!("unknown BonusItemType ordinal {relic_raw}"));
                     let associated_action = bonus_kind.to_action();
                     let mut sprite = crate::sprite::Sprite::default();
                     if let Err(e) = sprite.load_frame_info(

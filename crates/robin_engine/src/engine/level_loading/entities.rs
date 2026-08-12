@@ -990,7 +990,8 @@ impl EngineInner {
                 };
 
             // Decode the bonus type to get the associated player action.
-            let bonus_kind = crate::element::BonusItemType::from_u16(raw.bonus_type);
+            let bonus_kind = crate::element::BonusItemType::from_u16(raw.bonus_type)
+                .unwrap_or_else(|| panic!("unknown BonusItemType ordinal {}", raw.bonus_type));
             let associated_action = bonus_kind.to_action();
 
             // SetQuantity:
