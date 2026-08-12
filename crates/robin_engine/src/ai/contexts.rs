@@ -1,5 +1,96 @@
 use super::*;
 
+/// Resolve the entry point used when `ReconsiderEnemyApproach`'s final target
+/// position belongs to a lift.
+///
+/// Original `RHSectorLift::InitializeFromProtoStream` identifies the high and
+/// low doors by minimum/maximum `PointOut.Y`, irrespective of their authored
+/// door-type tags (`RHsector.cpp:1492-1525`). `ReconsiderEnemyApproach` then
+/// uses the high entry only when its outside layer equals the attacker's
+/// current layer; every other layer uses the low entry
+/// (`RHartificialmalignity.cpp:6649-6678`).
+///
+/// The outer option distinguishes an ordinary sector from a lift. Stairs are
+/// lifts, but deliberately return `Some(None)` because they suppress charging
+/// without taking the ladder-entry detour.
+impl AiContext {
+    pub(crate) fn enemy_lift_approach_for_position(
+        fast_grid: &crate::fast_find_grid::FastFindGrid,
+        target: Position,
+        attacker_layer: Option<u16>,
+    ) -> Option<Option<Position>> {
+        let target_sector = target.sector?;
+        let sector_number = crate::sector::SectorNumber::new(target_sector.get() as i16);
+        let grid_index = *fast_grid
+            .level
+            .sector_number_map
+            .get(&sector_number)
+            .unwrap_or_else(|| {
+                panic!("primary target sector {sector_number} is absent from the grid")
+            });
+        let sector = fast_grid.level.sectors.get(grid_index).unwrap_or_else(|| {
+            panic!("primary target sector {sector_number} maps to missing grid index {grid_index}")
+        });
+        if !sector.sector_type.is_lift() && sector.lift_type.is_none() {
+            return None;
+        }
+        let lift_type = sector.lift_type.unwrap_or_else(|| {
+            panic!("lift sector {sector_number} has no lift type during enemy approach")
+        });
+        if lift_type == crate::sector::LiftType::Stairs {
+            return Some(None);
+        }
+
+        // A lift sector's own doors have the lift as `sector_in`, hence their
+        // outside endpoint differs from the lift sector. Gate indices can also
+        // include a door whose outside is this lift; exclude that reverse edge.
+        let mut endpoints = sector.gate_indices.iter().filter_map(|index| {
+            let door = fast_grid
+                .level
+                .door_projection_infos
+                .get(index.0 as usize)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lift sector {sector_number} references missing door projection {}",
+                        index.0
+                    )
+                });
+            (door.sector_out != sector_number).then_some((*index, door))
+        });
+        let first = endpoints.next().unwrap_or_else(|| {
+            panic!("non-stairs lift sector {sector_number} has no authored entry doors")
+        });
+        let (mut high, mut low) = (first, first);
+        for endpoint in endpoints {
+            if endpoint.1.point_out.y < high.1.point_out.y {
+                high = endpoint;
+            }
+            if endpoint.1.point_out.y > low.1.point_out.y {
+                low = endpoint;
+            }
+        }
+        assert!(
+            high.0 != low.0,
+            "non-stairs lift sector {sector_number} has fewer than two distinct authored entry doors"
+        );
+
+        let attacker_layer = attacker_layer.unwrap_or_else(|| {
+            panic!("enemy lift approach for sector {sector_number} has no live attacker layer")
+        });
+        let selected = if high.1.layer_out == attacker_layer {
+            high.1
+        } else {
+            low.1
+        };
+        Some(Some(Position {
+            x: selected.point_out.x,
+            y: selected.point_out.y,
+            sector: crate::position_interface::SectorHandle::new(u16::from(selected.sector_out)),
+            level: selected.layer_out,
+        }))
+    }
+}
+
 // AiContext — per-frame entity state passed into think()
 // ---------------------------------------------------------------------------
 
@@ -805,11 +896,6 @@ pub struct AiPerTickData {
     /// position / friend-swap / focus / `BeginSwordfight` reads target
     /// the carrier rather than the carried entity.
     pub primary_target_carrier_handle: Option<HumanHandle>,
-    /// True when `primary_target`'s sector is a non-stairs lift.
-    pub primary_target_in_lift: bool,
-    /// When `primary_target_in_lift` is true, the lift entry point on
-    /// the evaluating NPC's own layer (high or low entry based on layer).
-    pub primary_target_lift_entry: Option<Position>,
     /// Friend target-swap candidates: same-camp soldiers currently
     /// approaching their own primary target.
     pub friend_swap_candidates: Vec<FriendSwapCandidate>,
@@ -1021,8 +1107,6 @@ impl AiPerTickData {
             primary_target_animation: None,
             primary_target_carrier_position: None,
             primary_target_carrier_handle: None,
-            primary_target_in_lift: false,
-            primary_target_lift_entry: None,
             friend_swap_candidates: Vec::new(),
             avenger_on_roof_wait_positions: Vec::new(),
             seen_last_frame_enemies: Vec::new(),

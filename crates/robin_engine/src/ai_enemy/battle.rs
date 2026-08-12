@@ -2398,7 +2398,6 @@ impl EnemyAi {
         let my_line_jump = target_snapshot_is_current
             .then_some(tick.primary_target_jump_line)
             .flatten();
-        let target_in_lift = target_snapshot_is_current && tick.primary_target_in_lift;
         let target_animation = if target_snapshot_is_current {
             tick.primary_target_animation
         } else {
@@ -2464,9 +2463,20 @@ impl EnemyAi {
             }
         }
 
+        // Original tests the `posPrimTarget` that remains after every
+        // synchronous target substitution and friend swap. Resolve lift
+        // metadata lazily from that final AI `Position(...)`; tick lift data
+        // belongs only to the target snapshotted before this owner callback.
+        let final_target_lift = AiContext::enemy_lift_approach_for_position(
+            &ctx.fast_grid,
+            working_target_pos,
+            tick.owner_live_position.map(|position| position.level),
+        );
+        let target_in_lift = final_target_lift.is_some();
+
         // Primary target is in a non-stairs lift: run to the entry
         // point matching the evaluating NPC's layer.
-        if target_in_lift && let Some(entry) = tick.primary_target_lift_entry {
+        if let Some(Some(entry)) = final_target_lift {
             self.base.outbox.actor.set_focus(working_target);
             self.base.seek_position = entry;
             self.go_near(
@@ -3303,6 +3313,62 @@ mod tests {
         )
     }
 
+    fn reconsider_approach_lift_grid() -> crate::fast_find_grid::FastFindGrid {
+        let mut grid = crate::fast_find_grid::FastFindGrid::new();
+        let lift_number = crate::sector::SectorNumber::new(42);
+        let ordinary_number = crate::sector::SectorNumber::new(5);
+        let level = std::sync::Arc::make_mut(&mut grid.level);
+        level.sector_number_map.insert(lift_number, 0);
+        level.sector_number_map.insert(ordinary_number, 1);
+        level.door_projection_infos = vec![
+            crate::fast_find_grid::DoorProjectionInfo {
+                point_out: crate::coordinates::MapPoint::new(410.0, 120.0),
+                sector_out: crate::sector::SectorNumber::new(7),
+                layer_out: 3,
+                ..Default::default()
+            },
+            crate::fast_find_grid::DoorProjectionInfo {
+                point_out: crate::coordinates::MapPoint::new(430.0, 300.0),
+                sector_out: ordinary_number,
+                layer_out: 0,
+                ..Default::default()
+            },
+        ];
+        let sector = |sector_number, sector_type, lift_type, gate_indices| {
+            crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type,
+                layer: 0,
+                sector_number,
+                door_index: None,
+                lift_type,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices,
+                underlying_sector: None,
+            }
+        };
+        level.sectors.push(sector(
+            lift_number,
+            crate::sector::SectorType::LIFT,
+            Some(crate::sector::LiftType::Ladder),
+            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)],
+        ));
+        level.sectors.push(sector(
+            ordinary_number,
+            crate::sector::SectorType::AREA | crate::sector::SectorType::MOTION,
+            None,
+            Vec::new(),
+        ));
+        grid
+    }
+
     #[test]
     fn failed_look_for_help_route_is_consumed_before_event_fallback() {
         let sim = crate::sim_rng::test_context();
@@ -3621,6 +3687,155 @@ mod tests {
         });
         assert_eq!(engage, Some(EnterSwordfightRequest::Engage(91)));
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+    }
+
+    #[test]
+    fn reconsider_approach_uses_selected_door_lift_after_synchronous_retarget() {
+        let mut ai = EnemyAi::new(84);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingQuittingSwordfight;
+        ai.base.primary_target = 173;
+        ai.sword_range = 50;
+
+        let committed_lift_position = Position {
+            x: 500.0,
+            y: 500.0,
+            sector: crate::position_interface::SectorHandle::new(42),
+            level: 0,
+        };
+        let mut replacement_view = pc_view();
+        // A selected PassDoor makes AI Position(target) report the committed
+        // endpoint while literal GetPosition remains at the interpolated body.
+        // Poison the latter so this test cannot pass through raw geometry.
+        replacement_view.position = committed_lift_position;
+        replacement_view.detection_position = crate::coordinates::MapPoint::new(70.0, 80.0);
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(173, replacement_view);
+        let ctx = AiContext {
+            position: Position {
+                x: 0.0,
+                y: 0.0,
+                level: 3,
+                ..Position::default()
+            },
+            frame: 1058,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            fast_grid: reconsider_approach_lift_grid(),
+            ..AiContext::default()
+        };
+        assert_eq!(
+            ctx.entity_view(173).unwrap().detection_position,
+            crate::coordinates::MapPoint::new(70.0, 80.0)
+        );
+        assert_eq!(
+            ctx.entity_view(173).unwrap().position,
+            committed_lift_position
+        );
+
+        let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(ctx.position);
+        tick.primary_target_snapshot_handle = 47;
+        tick.primary_target_position = Some(Position {
+            x: 900.0,
+            y: 900.0,
+            sector: crate::position_interface::SectorHandle::new(5),
+            level: 0,
+        });
+
+        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+
+        let expected_entry = Position {
+            x: 410.0,
+            y: 120.0,
+            sector: crate::position_interface::SectorHandle::new(7),
+            level: 3,
+        };
+        assert_eq!(ai.base.primary_target, 173);
+        let focused = ai.base.outbox.actor.focus.or_else(|| {
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .find_map(|work| match work {
+                    crate::ai::AiOwnerWork::StateChange(notification) => notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .and_then(|effects| effects.focus),
+                    _ => None,
+                })
+        });
+        assert_eq!(focused, Some(173));
+        assert_eq!(ai.base.current_substate, Substate::AttackingRunningToLadder);
+        assert_eq!(ai.base.seek_position, expected_entry);
+        assert_eq!(ai.base.outbox.actor.orders.len(), 1);
+        let order = &ai.base.outbox.actor.orders[0];
+        assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
+        assert_eq!((order.target_x, order.target_y), (410.0, 120.0));
+        assert_eq!(order.target_sector, expected_entry.sector);
+        assert_eq!(order.target_layer, Some(3));
+        assert_eq!(order.tolerance, 30.0);
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 1088);
+    }
+
+    #[test]
+    fn reconsider_approach_does_not_reuse_old_lift_after_synchronous_retarget() {
+        let mut ai = EnemyAi::new(84);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingQuittingSwordfight;
+        ai.base.primary_target = 173;
+        ai.sword_range = 50;
+
+        let ordinary_replacement = Position {
+            x: 700.0,
+            y: 0.0,
+            sector: crate::position_interface::SectorHandle::new(5),
+            level: 0,
+        };
+        let mut replacement_view = pc_view();
+        replacement_view.position = ordinary_replacement;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(173, replacement_view);
+        let ctx = AiContext {
+            position: Position::default(),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            fast_grid: reconsider_approach_lift_grid(),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 47;
+        tick.primary_target_position = Some(Position {
+            x: 500.0,
+            y: 500.0,
+            sector: crate::position_interface::SectorHandle::new(42),
+            level: 0,
+        });
+
+        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+
+        assert_eq!(ai.base.primary_target, 173);
+        assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
+        assert_ne!(ai.base.current_substate, Substate::AttackingRunningToLadder);
+        assert_eq!(ai.base.seek_position, ordinary_replacement);
+        let order = ai.base.outbox.actor.orders.first().or_else(|| {
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .find_map(|work| match work {
+                    crate::ai::AiOwnerWork::StateChange(notification) => notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .and_then(|effects| effects.orders.first()),
+                    _ => None,
+                })
+        });
+        let order = order.expect("ordinary replacement must queue its running approach");
+        assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
+        assert_eq!((order.target_x, order.target_y), (700.0, 0.0));
+        assert_eq!(order.target_sector, ordinary_replacement.sector);
     }
 
     #[test]

@@ -531,73 +531,6 @@ pub(super) fn build_detectable_enemies_for(
     out
 }
 
-/// Snapshot the non-stairs lift entry used by original
-/// `ReconsiderEnemyApproach`. Lift doors are authored with the lift as their
-/// `sector_in`; `point_out`/`sector_out`/`layer_out` are therefore the
-/// approach point on the evaluating soldier's side.
-fn primary_target_lift_approach(
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    doors: &[crate::gate::Door],
-    target_sector: crate::position_interface::SectorHandle,
-    attacker_layer: u16,
-) -> Option<Option<crate::ai::Position>> {
-    let sector_number = crate::sector::SectorNumber::new(i16::from(target_sector));
-    let grid_index = *fast_grid
-        .level
-        .sector_number_map
-        .get(&sector_number)
-        .unwrap_or_else(|| panic!("primary target sector {sector_number} is absent from the grid"));
-    let sector = fast_grid.level.sectors.get(grid_index).unwrap_or_else(|| {
-        panic!("primary target sector {sector_number} maps to missing grid index {grid_index}")
-    });
-    if !sector.sector_type.is_lift() && sector.lift_type.is_none() {
-        return None;
-    }
-    let lift_type = sector.lift_type.unwrap_or_else(|| {
-        panic!("lift sector {sector_number} has no lift type during enemy approach")
-    });
-    if lift_type == crate::sector::LiftType::Stairs {
-        // Stairs do not need a ladder-entry detour, but they still suppress
-        // charge selection in the later ReconsiderEnemyApproach branches.
-        return Some(None);
-    }
-
-    // `RHSectorLift::InitializeFromProtoStream` does not trust the door-type
-    // tags here. It retains the doors with the smallest/largest PointOut.Y;
-    // the high-door type assertion is deliberately commented out in the
-    // Original. This matters for shipped sector 77, whose two endpoints are
-    // both tagged `DOOR_LIFT_LOW` even though their geometry is unambiguous.
-    let mut endpoints = doors.iter().filter(|door| door.sector_in == sector_number);
-    let first = endpoints.next().unwrap_or_else(|| {
-        panic!("non-stairs lift sector {sector_number} has no authored entry doors")
-    });
-    let (mut high, mut low) = (first, first);
-    for door in endpoints {
-        if door.point_out.y < high.point_out.y {
-            high = door;
-        }
-        if door.point_out.y > low.point_out.y {
-            low = door;
-        }
-    }
-    assert!(
-        !std::ptr::eq(high, low),
-        "non-stairs lift sector {sector_number} has only one authored entry door"
-    );
-    let selected = if high.layer_out == attacker_layer {
-        high
-    } else {
-        low
-    };
-
-    Some(Some(crate::ai::Position {
-        x: selected.point_out.x,
-        y: selected.point_out.y,
-        sector: crate::position_interface::SectorHandle::new(u16::from(selected.sector_out)),
-        level: selected.layer_out,
-    }))
-}
-
 /// Preserve `InitializePatrol`'s left-to-right C++ `&&` evaluation.
 ///
 /// The visibility operand precedes the member-state predicates, so an active
@@ -961,10 +894,22 @@ mod parity_tests {
         );
     }
 
-    fn lift_grid(lift_type: crate::sector::LiftType) -> crate::fast_find_grid::FastFindGrid {
+    fn lift_grid(
+        lift_type: crate::sector::LiftType,
+        doors: &[crate::gate::Door],
+    ) -> crate::fast_find_grid::FastFindGrid {
         let mut grid = crate::fast_find_grid::FastFindGrid::new();
         let sector_number = crate::sector::SectorNumber::new(42);
         let level = std::sync::Arc::make_mut(&mut grid.level);
+        level.door_projection_infos = doors
+            .iter()
+            .map(|door| crate::fast_find_grid::DoorProjectionInfo {
+                point_in: door.point_in,
+                point_out: door.point_out,
+                sector_out: door.sector_out,
+                layer_out: door.layer_out,
+            })
+            .collect();
         level.sector_number_map.insert(sector_number, 0);
         level.sectors.push(crate::fast_find_grid::GridSector {
             points: Vec::new(),
@@ -981,7 +926,14 @@ mod parity_tests {
             high_exit_point: None,
             lowest_door_index: None,
             jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
+            gate_indices: doors
+                .iter()
+                .enumerate()
+                .filter(|(_, door)| {
+                    door.sector_in == sector_number || door.sector_out == sector_number
+                })
+                .map(|(index, _)| crate::gate::DoorIndex(index as u32))
+                .collect(),
             underlying_sector: None,
         });
         grid
@@ -1010,15 +962,19 @@ mod parity_tests {
 
     #[test]
     fn lift_approach_uses_high_entry_only_from_the_high_layer() {
-        let grid = lift_grid(crate::sector::LiftType::Ladder);
-        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
         let doors = lift_doors();
+        let grid = lift_grid(crate::sector::LiftType::Ladder, &doors);
+        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
+        let target = crate::ai::Position {
+            sector: Some(sector),
+            ..crate::ai::Position::default()
+        };
 
         // High/low is decided by point_out screen-Y (smallest Y = high door),
         // never by the authored door-type tags. In this fixture the door at
         // (10, 20) / layer 1 is therefore the high door even though it is
         // tagged LiftLow.
-        let high = primary_target_lift_approach(&grid, &doors, sector, 1)
+        let high = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(1))
             .expect("target is in a lift")
             .expect("ladder has an approach entry");
         assert_eq!((high.x, high.y, high.level), (10.0, 20.0, 1));
@@ -1027,9 +983,13 @@ mod parity_tests {
         // Every layer other than the high door's layer falls back to the low
         // entry, including layers matching neither door.
         for attacker_layer in [2, 3] {
-            let low = primary_target_lift_approach(&grid, &doors, sector, attacker_layer)
-                .expect("target is in a lift")
-                .expect("ladder has an approach entry");
+            let low = crate::ai::AiContext::enemy_lift_approach_for_position(
+                &grid,
+                target,
+                Some(attacker_layer),
+            )
+            .expect("target is in a lift")
+            .expect("ladder has an approach entry");
             assert_eq!((low.x, low.y, low.level), (30.0, 40.0, 3));
             assert_eq!(low.sector.map(u16::from), Some(8));
         }
@@ -1037,17 +997,20 @@ mod parity_tests {
 
     #[test]
     fn lift_approach_uses_point_out_geometry_when_both_doors_are_tagged_low() {
-        let grid = lift_grid(crate::sector::LiftType::Ladder);
-        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
         let mut doors = lift_doors();
         doors[1].door_type = crate::gate::DoorType::LiftLow;
+        let grid = lift_grid(crate::sector::LiftType::Ladder, &doors);
+        let target = crate::ai::Position {
+            sector: crate::position_interface::SectorHandle::new(42),
+            ..crate::ai::Position::default()
+        };
 
-        let high = primary_target_lift_approach(&grid, &doors, sector, 3)
+        let high = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(3))
             .expect("target is in a lift")
             .expect("ladder has an approach entry");
         assert_eq!((high.x, high.y, high.level), (30.0, 40.0, 3));
 
-        let low = primary_target_lift_approach(&grid, &doors, sector, 1)
+        let low = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(1))
             .expect("target is in a lift")
             .expect("ladder has an approach entry");
         assert_eq!((low.x, low.y, low.level), (10.0, 20.0, 1));
@@ -1055,10 +1018,13 @@ mod parity_tests {
 
     #[test]
     fn stairs_are_still_lifts_but_have_no_entry_detour() {
-        let grid = lift_grid(crate::sector::LiftType::Stairs);
-        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
+        let grid = lift_grid(crate::sector::LiftType::Stairs, &[]);
+        let target = crate::ai::Position {
+            sector: crate::position_interface::SectorHandle::new(42),
+            ..crate::ai::Position::default()
+        };
         assert_eq!(
-            primary_target_lift_approach(&grid, &[], sector, 3),
+            crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(3)),
             Some(None)
         );
     }
@@ -1095,9 +1061,12 @@ mod parity_tests {
     #[test]
     #[should_panic(expected = "has no authored entry doors")]
     fn non_stairs_lift_does_not_fake_a_missing_entry() {
-        let grid = lift_grid(crate::sector::LiftType::Ladder);
-        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
-        let _ = primary_target_lift_approach(&grid, &[], sector, 3);
+        let grid = lift_grid(crate::sector::LiftType::Ladder, &[]);
+        let target = crate::ai::Position {
+            sector: crate::position_interface::SectorHandle::new(42),
+            ..crate::ai::Position::default()
+        };
+        let _ = crate::ai::AiContext::enemy_lift_approach_for_position(&grid, target, Some(3));
     }
 
     #[test]
@@ -2946,18 +2915,6 @@ impl EngineInner {
             npc_id,
             target_id,
         );
-        let primary_target_lift = tick.primary_target_position.and_then(|target| {
-            target.sector.and_then(|sector| {
-                primary_target_lift_approach(
-                    &self.world.fast_grid,
-                    self.script_domains.interactables.doors.as_slice(),
-                    sector,
-                    me_layer,
-                )
-            })
-        });
-        tick.primary_target_in_lift = primary_target_lift.is_some();
-        tick.primary_target_lift_entry = primary_target_lift.flatten();
         tick.primary_target_multiplicity = self
             .ai
             .global
