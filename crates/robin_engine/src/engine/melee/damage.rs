@@ -1563,6 +1563,20 @@ impl EngineInner {
             .expect_entity(victim_id, "apply_hit_damage victim")
             .element_data()
             .posture;
+
+        // Human::Translate(RECEIVE_HIT_DAMAGE) adds concussion and sends the
+        // NPC's synchronous EVENT_GOTHIT before testing for an already-lying
+        // posture. Only the visual hit translation is skipped in that case.
+        // This ordering matters when a postponed second hit resumes on the
+        // same frame that the first hit's flight lands: EVENT_GOTHIT must
+        // still restore EYES_DIE_OR_GET_UNCONSCIOUS before the element ends.
+        if victim_posture == Posture::Lying {
+            self.orders
+                .sequence_manager
+                .element_terminated(damage_element.0, damage_element.1);
+            return;
+        }
+
         if matches!(
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb

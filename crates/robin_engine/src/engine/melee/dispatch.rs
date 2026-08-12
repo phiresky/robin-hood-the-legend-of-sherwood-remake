@@ -1141,19 +1141,6 @@ impl EngineInner {
                 }
             }
             Command::ReceiveHitDamage => {
-                if self
-                    .get_entity(victim_id)
-                    .is_some_and(|victim| victim.element_data().posture == Posture::Lying)
-                {
-                    // Human::Translate(RECEIVE_HIT_DAMAGE) calls SetState
-                    // directly when the victim is already lying. That
-                    // changes mpSequenceElement and bypasses Instruct's
-                    // accepted motion/order epilogue.
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
-                }
                 self.apply_hit_damage(
                     sim,
                     assets,

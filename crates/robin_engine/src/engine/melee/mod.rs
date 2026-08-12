@@ -3073,6 +3073,67 @@ mod tests {
         );
     }
 
+    #[test]
+    fn conscious_lying_hit_applies_concussion_and_got_hit_before_terminating() {
+        let mut engine = make_engine();
+        let null_slot = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        engine
+            .get_entity_mut(null_slot)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.set_posture(Posture::Lying);
+            victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
+            victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+        }
+        let damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveHitDamage,
+            Some(victim),
+            Some(attacker),
+            0,
+            3,
+        );
+        let seq_id = engine.launch_element(damage);
+        let assets = assets_with_sword_profile(1, 50);
+
+        engine.dispatch_receive_damage(&crate::sim_rng::test_context(), &assets, victim, seq_id, 0);
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_entity.human_data().unwrap().concussion_of_the_brain,
+            6,
+            "AddConcussionOfTheBrain scales the incoming 3 by 100 / 50 life before the lying early exit"
+        );
+        assert_eq!(
+            victim_entity.npc_data().unwrap().eye_status,
+            EyeStatus::DieOrGetUnconscious,
+            "EVENT_GOTHIT runs before the lying early exit"
+        );
+        let damage = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(damage.state, crate::sequence::SequenceState::Terminated);
+        assert!(
+            damage.orders.is_empty(),
+            "an already-lying victim must not receive another fall order"
+        );
+    }
+
     fn assets_with_sword_profile(energy: u16, max_distance: u16) -> LevelAssets {
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();
