@@ -108,6 +108,114 @@ fn postponed_generic_order_carrier_resumes_in_progress() {
 }
 
 #[test]
+fn manager_instruct_rejects_transition_terminated_element_before_priority_and_arbitration() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let mut owner_entity = make_test_soldier(Posture::Crouched);
+    let crate::element::Entity::Soldier(owner_soldier) = &mut owner_entity else {
+        unreachable!();
+    };
+    let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
+    enemy_ai.hth_weapon_id = 1;
+    owner_soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
+    let owner = engine.add_entity(owner_entity);
+    {
+        let soldier = engine.get_entity_mut(owner).unwrap();
+        soldier.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+        soldier.enemy_ai_mut().unwrap().attentive = true;
+    }
+
+    let live_order_id = engine.orders.allocate_order_id();
+    let mut live = SequenceElement::new(1, Command::Wait, Some(owner));
+    live.priority = SequencePriority::Normal;
+    live.posture_after_transition = Posture::Crouched;
+    live.orders.push_back(Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        live_order_id,
+    ));
+    let live_sequence = engine.orders.sequence_manager.launch_element(live);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(live_sequence, 0);
+    engine.publish_selected_order_as_installed(owner);
+
+    // CrouchUp cannot retain the soldier's attentive action state. With a
+    // stamped Crouched posture, GenerateTransition follows Original's silent
+    // leave-attentive arm and terminates the incoming element inline while
+    // the posture transition remains valid. This is an ordinary manager
+    // registration, not the script-sync path.
+    let incoming = SequenceElement::new(1, Command::CrouchUp, Some(owner));
+    let incoming_sequence = engine.orders.sequence_manager.launch_element(incoming);
+
+    let mut assets = LevelAssets::default();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.soldiers.push(Default::default());
+    profiles.hth_weapons.push(Default::default());
+    assert!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .enemy_ai()
+            .unwrap()
+            .attentive
+    );
+    engine.stamp_element_transition_state(owner, incoming_sequence, 0);
+    assert!(engine.generate_transition(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        incoming_sequence,
+        0,
+    ));
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated,
+        "the transition synchronously terminates the queued manager element"
+    );
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+
+    let incoming = engine
+        .orders
+        .sequence_manager
+        .get_element(incoming_sequence, 0)
+        .expect("transition-terminated element remains inspectable");
+    assert_eq!(incoming.state, SequenceState::Terminated);
+    assert_eq!(
+        incoming.priority,
+        SequencePriority::NotYetSet,
+        "Actor::Instruct returns before DeterminePriority"
+    );
+    let (selected_sequence, selected_index, selected_order) = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(owner)
+        .expect("the pre-existing live owner element remains selected");
+    assert_eq!((selected_sequence, selected_index), (live_sequence, 0));
+    assert_eq!(selected_order.order_id, live_order_id);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(live_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+}
+
+#[test]
 fn retained_waiting_sword_handoff_preserves_running_sprite_identity() {
     use crate::element::{Command, InstalledActorOrder, Posture};
     use crate::order::{Order, OrderType};

@@ -645,34 +645,6 @@ impl EngineInner {
                             break 'action;
                         }
 
-                        // Every RHElementActor::Instruct call begins by asking
-                        // the owner to DeterminePriority when the serialized
-                        // element still carries NOT_YET_SET. Prebuilt and loaded
-                        // sequences can reach this manager boundary without
-                        // passing through the eager single-element launch
-                        // wrappers, so resolve them here too. In particular an
-                        // active PASS_DOOR must become NON_INTERRUPTABLE before a
-                        // same-frame AI Move is instructed.
-                        let resolved_priority = self
-                            .orders
-                            .sequence_manager
-                            .get_element(seq_id, elem_idx)
-                            .filter(|element| {
-                                element.priority == crate::sequence::SequencePriority::NotYetSet
-                            })
-                            .map(|element| {
-                                let resolver = Self::priority_resolver(&self.world.entities);
-                                resolver(element)
-                            });
-                        if let Some(priority) = resolved_priority
-                            && let Some(element) = self
-                                .orders
-                                .sequence_manager
-                                .get_element_mut(seq_id, elem_idx)
-                        {
-                            element.priority = priority;
-                        }
-
                         // Every RHElementActor::Instruct snapshots the actor's
                         // current posture and action state before the
                         // non-interruptable guard, transition generation, and
@@ -720,6 +692,46 @@ impl EngineInner {
                                 .element_impossible(seq_id, elem_idx);
                             self.dispatch_condolations(sim, assets);
                             break 'action;
+                        }
+                        if self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .is_some_and(|element| {
+                                matches!(
+                                    element.state,
+                                    crate::sequence::SequenceState::Terminated
+                                        | crate::sequence::SequenceState::Impossible
+                                        | crate::sequence::SequenceState::Interrupted
+                                )
+                            })
+                        {
+                            // Original Actor::Instruct returns immediately when
+                            // GenerateTransition made the incoming element
+                            // terminal. SetState's condolence callback is
+                            // synchronous there, so close that boundary before
+                            // leaving without priority resolution or arbitration.
+                            self.dispatch_condolations(sim, assets);
+                            break 'action;
+                        }
+                        let resolved_priority = self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .filter(|element| {
+                                element.priority == crate::sequence::SequencePriority::NotYetSet
+                            })
+                            .map(|element| {
+                                let resolver = Self::priority_resolver(&self.world.entities);
+                                resolver(element)
+                            });
+                        if let Some(priority) = resolved_priority
+                            && let Some(element) = self
+                                .orders
+                                .sequence_manager
+                                .get_element_mut(seq_id, elem_idx)
+                        {
+                            element.priority = priority;
                         }
                         // A redundant EnterSwordfight still replaces and
                         // terminates the selected Wait element, but Original's
