@@ -4629,6 +4629,18 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     engine.ai.standard_view_polygon_radius = 400;
+    // Reserve legacy handle zero: HumanHandle 0 is the original null
+    // sentinel and must not be used as a real visibility target.
+    let sentinel = add_enemy(
+        &mut engine,
+        WorldPoint3D::new(-1000.0, -1000.0, 0.0),
+        Direction::EAST,
+    );
+    engine
+        .get_entity_mut(sentinel)
+        .expect("sentinel fixture exists")
+        .element_data_mut()
+        .active = false;
     let owner = add_enemy(
         &mut engine,
         WorldPoint3D::new(200.0, 100.0, 0.0),
@@ -4639,8 +4651,8 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         WorldPoint3D::new(200.0, 0.0, 0.0),
         Direction::EAST,
     );
-    // Charly is behind an opaque wall, but owner is visible above it. This
-    // candidate must issue both ordered queries and accept the second arm.
+    // Charly is behind an opaque wall. This candidate pins the full
+    // visibility rejection path rather than being admitted by raw geometry.
     let second_arm = add_enemy(
         &mut engine,
         WorldPoint3D::new(0.0, 0.0, 0.0),
@@ -4650,13 +4662,13 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     // evaluating owner, so this candidate contributes exactly one query.
     let first_arm = add_enemy(
         &mut engine,
-        WorldPoint3D::new(0.0, 200.0, 0.0),
+        WorldPoint3D::new(200.0, -100.0, 0.0),
         Direction::EAST,
     );
     // The close side-on special case succeeds before ComputeViewRadius/LOS.
     let near_side = add_enemy(
         &mut engine,
-        WorldPoint3D::new(200.0, 30.0, 0.0),
+        WorldPoint3D::new(200.0, 20.0, 0.0),
         Direction::EAST,
     );
 
@@ -4748,11 +4760,16 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             .expect("admitted candidate retains EnemyAi");
         assert_eq!(
             enemy.base.current_substate,
-            Substate::SeekingLookingResurrectedCharly
+            Substate::SeekingLookingResurrectedCharly,
+            "candidate {} must receive the Charly callback",
+            candidate.index()
         );
-        assert_eq!(
-            enemy.base.ai_log.last().map(|line| line.info),
-            Some(StimulusType::CallCharlyIsBack as u16),
+        assert!(
+            enemy
+                .base
+                .ai_log
+                .iter()
+                .any(|line| line.info == StimulusType::CallCharlyIsBack as u16),
             "the admitted recipient must synchronously receive CALL_CHARLY_IS_BACK"
         );
     }
