@@ -8010,10 +8010,8 @@ impl EngineInner {
             None
         };
         if let Some(target_charly) = unalert {
-            let (my_camp, my_pos, my_rank, my_antagonist) = match self.get_entity(npc_id) {
+            let (my_rank, my_antagonist) = match self.get_entity(npc_id) {
                 Some(Entity::Soldier(s)) => (
-                    Some(s.soldier.cached_camp),
-                    Some(s.element.position_map()),
                     s.npc
                         .ai_brain
                         .enemy()
@@ -8021,39 +8019,19 @@ impl EngineInner {
                         .unwrap_or(crate::profiles::ProfileRank::None),
                     s.npc.ai_brain.base().map(|b| b.antagonist).unwrap_or(0),
                 ),
-                _ => (None, None, crate::profiles::ProfileRank::None, 0),
+                _ => (crate::profiles::ProfileRank::None, 0),
             };
             let charly_handle = match target_charly {
                 crate::ai::CharlySeekerTarget::SelfNpc => npc_id.index(),
                 crate::ai::CharlySeekerTarget::Npc(handle) => handle,
             };
-            let charly_pos = self
+            if self
                 .world
                 .entities
                 .id_at_legacy_slot(charly_handle)
                 .and_then(|charly_id| self.world.entities.get(charly_id))
-                .map(|e| {
-                    let pm = e.element_data().position_map();
-                    crate::ai::Position {
-                        x: pm.x,
-                        y: pm.y,
-                        sector: e.element_data().sector(),
-                        level: e.element_data().layer(),
-                    }
-                });
-            if let (Some(camp), Some(my_pos), Some(charly_pos)) = (my_camp, my_pos, charly_pos) {
-                let my_pos_pi = crate::ai::Position {
-                    x: my_pos.x,
-                    y: my_pos.y,
-                    sector: None,
-                    level: 0,
-                };
-                let vr = if self.ai.standard_view_polygon_radius > 0 {
-                    self.ai.standard_view_polygon_radius as f32
-                } else {
-                    ai_vision::DEFAULT_VIEW_RADIUS as f32
-                };
-                let sq_vr = vr * vr;
+                .is_some()
+            {
                 let charly_is_self = charly_handle == npc_id.index();
                 for other_id in self.world.entities.npc_ids().collect::<Vec<_>>() {
                     if other_id == npc_id {
@@ -8069,65 +8047,24 @@ impl EngineInner {
                     {
                         continue;
                     }
-                    let (eligible, other_pos, other_dir, other_able) = {
+                    let eligible = {
                         let Some(Entity::Soldier(os)) = self.world.entities.get(other_id) else {
                             continue;
                         };
-                        let pm = os.element.position_map();
-                        let pos = crate::ai::Position {
-                            x: pm.x,
-                            y: pm.y,
-                            sector: os.element.sector(),
-                            level: os.element.layer(),
-                        };
-                        let able =
-                            os.element.active && !os.human.unconscious && os.npc.life_points > 0;
-                        (
-                            os.soldier.cached_camp == camp
-                                && os.npc.life_points > 0
-                                && os.element.active,
-                            pos,
-                            os.element.direction() as u16,
-                            able,
-                        )
+                        // `IsDetecting180Degrees` checks only the raw active
+                        // flag for the viewer and target. Dead or unconscious
+                        // soldiers are not filtered by the outer Original
+                        // `UnalertAllNearCharlySeekers` walk.
+                        os.element.active
                     };
                     if !eligible {
                         continue;
                     }
-                    // Cheap cull: at least one of (charly, me) within
-                    // view-radius square distance.
-                    // `is_detecting_180_degrees` would handle this
-                    // internally; keep the gate for consistency with
-                    // the prior implementation.
-                    let dx_c = other_pos.x - charly_pos.x;
-                    let dy_c = other_pos.y - charly_pos.y;
-                    let dx_m = other_pos.x - my_pos.x;
-                    let dy_m = other_pos.y - my_pos.y;
-                    if dx_c * dx_c + dy_c * dy_c > sq_vr && dx_m * dx_m + dy_m * dy_m > sq_vr {
-                        continue;
-                    }
-                    // Facing cone:
-                    //   is_detecting_180_degrees(charly)
-                    //   || (charly != self && is_detecting_180_degrees(self))
-                    let detects_charly = other_able
-                        && crate::ai_enemy::detects_position_180_raw(
-                            other_pos, other_dir, charly_pos, sq_vr,
-                        );
-                    let detects_me_branch = !charly_is_self
-                        && other_able
-                        && crate::ai_enemy::detects_position_180_raw(
-                            other_pos, other_dir, my_pos_pi, sq_vr,
-                        );
-                    if !(detects_charly || detects_me_branch) {
-                        continue;
-                    }
-                    let stimulus = crate::ai::Stimulus::with_human(
-                        crate::ai::StimulusType::CallCharlyIsBack,
-                        charly_handle,
-                    );
-                    // The preceding drain work and earlier Charly recipients
-                    // may have synchronously changed entity state. Build the
-                    // recipient snapshot at this exact Think boundary.
+                    // Original evaluates the full visibility predicate in
+                    // this exact short-circuit order. Besides the cone gate,
+                    // each surviving arm samples ComputeViewRadius and runs
+                    // opaque LOS, both of which are observable and may affect
+                    // whether CALL_CHARLY_IS_BACK is delivered.
                     let scratch = self.build_sim_scratch(sim, assets);
                     let other_ctx = {
                         let Some(entity) = self.world.entities.get(other_id) else {
@@ -8150,6 +8087,45 @@ impl EngineInner {
                             self.control.sim_config.difficulty,
                         )
                     };
+                    other_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
+                    let detects_charly = self
+                        .world
+                        .entities
+                        .get(other_id)
+                        .and_then(Entity::enemy_ai)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "UnalertAllNearCharlySeekers candidate {} lost EnemyAi",
+                                other_id.index()
+                            )
+                        })
+                        .is_detecting_180_degrees(charly_handle, &other_ctx);
+                    let detects_me_branch = !detects_charly
+                        && !charly_is_self
+                        && self
+                            .world
+                            .entities
+                            .get(other_id)
+                            .and_then(Entity::enemy_ai)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "UnalertAllNearCharlySeekers candidate {} lost EnemyAi",
+                                    other_id.index()
+                                )
+                            })
+                            .is_detecting_180_degrees(npc_id.index(), &other_ctx);
+                    other_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+                    if !(detects_charly || detects_me_branch) {
+                        continue;
+                    }
+                    let stimulus = crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::CallCharlyIsBack,
+                        charly_handle,
+                    );
+                    // The preceding drain work and earlier Charly recipients
+                    // may have synchronously changed entity state. The
+                    // recipient context above was built at this exact Think
+                    // boundary and is also the one used for dispatch.
                     let tick_data = self.build_npc_tick_data(sim, other_id, &scratch, assets);
                     self.dispatch_filtered_stimulus(
                         sim, assets, other_id, &stimulus, &other_ctx, &tick_data,

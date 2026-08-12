@@ -2303,7 +2303,7 @@ impl EnemyAi {
     /// radius samples the surrounding shadow-light sectors, and the
     /// results land in the shared per-surface radius cache, so it has
     /// to run for exactly the targets that reach it.
-    fn is_detecting_180_degrees(&self, target: HumanHandle, ctx: &AiContext) -> bool {
+    pub(crate) fn is_detecting_180_degrees(&self, target: HumanHandle, ctx: &AiContext) -> bool {
         tracing::trace!(
             target,
             viewer_x = ctx.position.x,

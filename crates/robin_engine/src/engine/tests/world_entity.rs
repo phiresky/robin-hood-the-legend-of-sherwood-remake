@@ -4596,6 +4596,169 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
 }
 
 #[test]
+fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order() {
+    use crate::ai::{AiState, CharlySeekerTarget, StimulusType, Substate};
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{AiBrain, Posture};
+    use crate::position_interface::Direction;
+    use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+
+    fn add_enemy(
+        engine: &mut EngineInner,
+        position: WorldPoint3D,
+        direction: Direction,
+    ) -> EntityId {
+        let mut entity = make_test_soldier(Posture::Upright);
+        let Entity::Soldier(soldier) = &mut entity else {
+            unreachable!();
+        };
+        soldier.element.active = true;
+        soldier.element.set_position(position);
+        soldier
+            .element
+            .set_direction_instantly(direction.as_u8() as i16);
+        soldier.npc.life_points = 60;
+        soldier.npc.view_radius = 400;
+        soldier.npc.view_radius_base = 400;
+        soldier.npc.view_radius_goal = 400;
+        soldier.npc.view_direction = [1.0, 0.0];
+        soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+        engine.add_entity(entity)
+    }
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    engine.ai.standard_view_polygon_radius = 400;
+    let owner = add_enemy(
+        &mut engine,
+        WorldPoint3D::new(200.0, 100.0, 0.0),
+        Direction::EAST,
+    );
+    let charly = add_enemy(
+        &mut engine,
+        WorldPoint3D::new(200.0, 0.0, 0.0),
+        Direction::EAST,
+    );
+    // Charly is behind an opaque wall, but owner is visible above it. This
+    // candidate must issue both ordered queries and accept the second arm.
+    let second_arm = add_enemy(
+        &mut engine,
+        WorldPoint3D::new(0.0, 0.0, 0.0),
+        Direction::EAST,
+    );
+    // Charly is directly visible from here. Original short-circuits before
+    // evaluating owner, so this candidate contributes exactly one query.
+    let first_arm = add_enemy(
+        &mut engine,
+        WorldPoint3D::new(0.0, 200.0, 0.0),
+        Direction::EAST,
+    );
+    // The close side-on special case succeeds before ComputeViewRadius/LOS.
+    let near_side = add_enemy(
+        &mut engine,
+        WorldPoint3D::new(200.0, 30.0, 0.0),
+        Direction::EAST,
+    );
+
+    for candidate in [second_arm, first_arm, near_side] {
+        let enemy = engine
+            .get_entity_mut(candidate)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("Charly-seeker candidate has EnemyAi");
+        enemy.set_state(AiState::Seeking, Substate::SeekingBody);
+        enemy.base.my_reconnaissance_report.charly = charly.index();
+    }
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("Unalert owner has AI")
+        .outbox
+        .actor
+        .unalert_near_charly_seekers = Some(CharlySeekerTarget::Npc(charly.index()));
+
+    let mut wall = SightObstacle::new_default(1);
+    wall.obstacle_points = vec![
+        ObstaclePoint {
+            x: 95.0,
+            y: -10.0,
+            z_bottom: 0.0,
+            z_top: 100.0,
+        },
+        ObstaclePoint {
+            x: 105.0,
+            y: -10.0,
+            z_bottom: 0.0,
+            z_top: 100.0,
+        },
+        ObstaclePoint {
+            x: 105.0,
+            y: 10.0,
+            z_bottom: 0.0,
+            z_top: 100.0,
+        },
+        ObstaclePoint {
+            x: 95.0,
+            y: 10.0,
+            z_bottom: 0.0,
+            z_top: 100.0,
+        },
+    ];
+    wall.top_plane_points = [
+        [95.0, -10.0, 100.0],
+        [105.0, -10.0, 100.0],
+        [105.0, 10.0, 100.0],
+    ];
+    wall.bottom_plane_points = [[95.0, -10.0, 0.0], [105.0, -10.0, 0.0], [105.0, 10.0, 0.0]];
+    wall.rebuild_geometry();
+    let mut assets = LevelAssets::new();
+    assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+    engine.world.static_sight_obstacle_active = vec![true];
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    crate::sight_obstacle::begin_parity_visibility_capture();
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
+    let queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+    assert_eq!(
+        queries.iter().map(|query| query.result).collect::<Vec<_>>(),
+        [false, true, true],
+        "blocked Charly must fall through to owner; clear Charly must short-circuit owner; near-side must not query"
+    );
+    assert_eq!(queries[0].destination[0], 200.0);
+    assert_eq!(queries[0].destination[1], 0.0);
+    assert_eq!(queries[1].destination[0], 200.0);
+    assert_eq!(queries[1].destination[1], 100.0);
+    assert_eq!(queries[2].destination[0], 200.0);
+    assert_eq!(queries[2].destination[1], 0.0);
+    assert!(
+        engine
+            .get_entity(owner)
+            .and_then(Entity::ai_controller)
+            .expect("Unalert owner retains AI")
+            .outbox
+            .actor
+            .unalert_near_charly_seekers
+            .is_none(),
+        "the real pending action must be consumed"
+    );
+    for candidate in [second_arm, first_arm, near_side] {
+        let enemy = engine
+            .get_entity(candidate)
+            .and_then(Entity::enemy_ai)
+            .expect("admitted candidate retains EnemyAi");
+        assert_eq!(
+            enemy.base.current_substate,
+            Substate::SeekingLookingResurrectedCharly
+        );
+        assert_eq!(
+            enemy.base.ai_log.last().map(|line| line.info),
+            Some(StimulusType::CallCharlyIsBack as u16),
+            "the admitted recipient must synchronously receive CALL_CHARLY_IS_BACK"
+        );
+    }
+}
+
+#[test]
 fn final_review_alert_all_refused_resumes_caller_failure() {
     use crate::ai::{AiState, AlertSoldiersFailureContinuation, Position, Substate};
 
