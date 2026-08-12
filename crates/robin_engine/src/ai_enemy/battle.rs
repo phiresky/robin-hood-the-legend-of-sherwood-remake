@@ -3720,7 +3720,7 @@ mod tests {
             },
             frame: 1058,
             entity_views: crate::ai_entity_view::shared_entity_views(views),
-            fast_grid: reconsider_approach_lift_grid(),
+            fast_grid: std::sync::Arc::new(reconsider_approach_lift_grid()),
             ..AiContext::default()
         };
         assert_eq!(
@@ -3800,7 +3800,7 @@ mod tests {
         let ctx = AiContext {
             position: Position::default(),
             entity_views: crate::ai_entity_view::shared_entity_views(views),
-            fast_grid: reconsider_approach_lift_grid(),
+            fast_grid: std::sync::Arc::new(reconsider_approach_lift_grid()),
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();

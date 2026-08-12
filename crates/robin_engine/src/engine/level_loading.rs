@@ -2825,7 +2825,7 @@ impl EngineInner {
 
             self.world.pathfinder.synchronize_motion_obstacle_sectors(
                 assets.pathfinder_graph.as_ref(),
-                &mut self.world.fast_grid,
+                std::sync::Arc::make_mut(&mut self.world.fast_grid),
             );
 
             // ── Apply lift_type from RawLift data to grid sectors ──

@@ -1643,7 +1643,7 @@ mod tests {
         }];
         crate::gate::build_gate_links(&mut engine.script_domains.interactables.doors);
 
-        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
         for (sector_number, sector_type, layer) in [
             (building_sector, SectorType::BUILDING, 6),
             (outside_sector, SectorType::MOTION | SectorType::AREA, 0),

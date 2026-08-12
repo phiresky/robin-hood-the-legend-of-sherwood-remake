@@ -2931,7 +2931,7 @@ mod tests {
         engine.scripts.mission = Some(empty_mission_script());
 
         let lift_sector = crate::sector::SectorNumber::new(42);
-        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
         level.sector_number_map.insert(lift_sector, 0);
         level.sectors.push(crate::fast_find_grid::GridSector {
             points: Vec::new(),
@@ -3713,15 +3713,15 @@ mod tests {
                 unreachable!()
             };
             victim_soldier.soldier.rider = rider;
-            engine.world.fast_grid.size_map(4, 4);
-            engine.world.fast_grid.allocate_layers(1);
+            engine.world.fast_grid_mut().size_map(4, 4);
+            engine.world.fast_grid_mut().allocate_layers(1);
             let sector_points = vec![
                 crate::coordinates::MapPoint::new(0.0, 0.0),
                 crate::coordinates::MapPoint::new(256.0, 0.0),
                 crate::coordinates::MapPoint::new(256.0, 256.0),
                 crate::coordinates::MapPoint::new(0.0, 256.0),
             ];
-            engine.world.fast_grid.add_sector(
+            engine.world.fast_grid_mut().add_sector(
                 crate::fast_find_grid::GridSector {
                     points: sector_points,
                     bounding_box: crate::coordinates::MapBBox::from_coords(0.0, 0.0, 256.0, 256.0),

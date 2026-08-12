@@ -1550,8 +1550,8 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
     // Keep the first panic segment inside an open grid.  There are no door
     // seek records, so the first retained EVENT_PANIC must enter the
     // Original no-door branch and recursively Think(EVENT_REACHPOINT).
-    engine.world.fast_grid.size_map(64, 64);
-    engine.world.fast_grid.allocate_layers(1);
+    engine.world.fast_grid_mut().size_map(64, 64);
+    engine.world.fast_grid_mut().allocate_layers(1);
     let sector = crate::position_interface::SectorHandle::new(1).unwrap();
     let Entity::Civilian(civilian) = engine.get_entity_mut(npc_id).unwrap() else {
         panic!("retained panic owner changed kind")

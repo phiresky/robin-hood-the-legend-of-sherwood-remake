@@ -254,7 +254,7 @@ impl EngineInner {
             }
             for (sector_idx, active) in sector_toggles {
                 self.world
-                    .fast_grid
+                    .fast_grid_mut()
                     .set_sector_active(u32::from(sector_idx), active);
             }
 

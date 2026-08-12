@@ -12496,7 +12496,7 @@ mod orphaned_sword_movement_tests {
             element.set_sector(Some(
                 crate::position_interface::SectorHandle::new(1).unwrap(),
             ));
-            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
             level.sector_number_map.insert(sector_number, 0);
             level.sectors.push(GridSector {
                 points: Vec::new(),

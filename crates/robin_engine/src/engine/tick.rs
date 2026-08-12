@@ -556,13 +556,13 @@ mod generic_actor_line_crossing_tests {
         precompute_increment: bool,
     ) -> (MapVec, MapVec, MapPoint) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid.size_map(4, 4);
-        engine.world.fast_grid.allocate_layers(1);
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
 
         // The lying box centered at (130,130) straddles this solid edge.
         // FindPlaceToDie pushes it toward the click side (+Y), producing a
         // real generic-Execute movement segment.
-        engine.world.fast_grid.add_line(
+        engine.world.fast_grid_mut().add_line(
             GridLine::new(
                 MapPoint::new(100.0, 128.0),
                 MapPoint::new(160.0, 128.0),
@@ -571,7 +571,7 @@ mod generic_actor_line_crossing_tests {
             0,
         );
         for offset in 0..patch_line_count {
-            engine.world.fast_grid.add_line(
+            engine.world.fast_grid_mut().add_line(
                 GridLine::new_patch(
                     MapPoint::new(100.0, 131.0 + offset as f32),
                     MapPoint::new(160.0, 131.0 + offset as f32),

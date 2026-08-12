@@ -3165,7 +3165,16 @@ mod tests {
         // fresh pathfinder that starts from the same states).
         let mut appeared = Vec::new();
         let mut line_toggles = Vec::new();
-        memoized.toggle_obstacle_state(&graph, 0, 0, 0, &mut appeared, &mut line_toggles);
+        let mut sector_toggles = Vec::new();
+        memoized.toggle_obstacle_state(
+            &graph,
+            0,
+            0,
+            0,
+            &mut appeared,
+            &mut line_toggles,
+            &mut sector_toggles,
+        );
         let mut fresh = PathFinder::new();
         fresh.states = memoized.states.clone();
         assert_eq!(run(&mut memoized), run(&mut fresh));
