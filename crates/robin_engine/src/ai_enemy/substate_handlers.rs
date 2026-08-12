@@ -7425,9 +7425,34 @@ impl EnemyAi {
                     // PC already menaced by another guard — go home.
                     self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 } else if let Some(p) = target_pos {
-                    let dx = (p.x - ctx.position.x).abs();
-                    let dy = (p.y - ctx.position.y).abs();
-                    if dx.max(dy) > 40.0 {
+                    if tick.primary_target_snapshot_handle != self.base.primary_target {
+                        panic!(
+                            "ApproachingSleepingEnemy primary target {} does not match tick snapshot handle {}",
+                            self.base.primary_target, tick.primary_target_snapshot_handle
+                        );
+                    }
+                    let target_live_position =
+                        tick.primary_target_live_position.unwrap_or_else(|| {
+                            panic!(
+                                "ApproachingSleepingEnemy primary target {} is missing its literal position",
+                                self.base.primary_target
+                            )
+                        });
+                    let owner_live_position = tick.owner_live_position.unwrap_or_else(|| {
+                        panic!(
+                            "ApproachingSleepingEnemy owner {} is missing its literal position",
+                            self.base.me
+                        )
+                    });
+                    if ai_square_distance(
+                        &target_live_position,
+                        view.elevation,
+                        &owner_live_position,
+                        ctx.elevation,
+                    )
+                    .sqrt()
+                        > 40.0
+                    {
                         // GoNear(target, 20, GOTO_RUN).
                         // The kill-sleeping substate itself re-fires
                         // on REACHPOINT/DONE, so route through
@@ -9375,6 +9400,85 @@ mod tests {
             None,
             crate::order::OrderType::NonanimationEnd,
         )
+    }
+
+    fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(94);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingApproachingSleepingEnemy;
+        ai.base.primary_target = 41;
+
+        let mut target = pc_view(crate::element::Posture::Upright);
+        target.position = target_live;
+        target.detection_position_world.z = 0.0;
+        target.is_unconscious = true;
+        target.in_coma = false;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(41, target);
+        let ctx = AiContext {
+            position: Position::default(),
+            elevation: 0.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(Position::default());
+        tick.primary_target_snapshot_handle = 41;
+        tick.primary_target_live_position = Some(target_live);
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+        ai
+    }
+
+    #[test]
+    fn approaching_sleeping_enemy_uses_stretched_world_distance() {
+        let ai = run_approaching_sleeping_enemy(Position {
+            x: 15.0,
+            y: 34.0,
+            ..Position::default()
+        });
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingApproachingSleepingEnemy,
+            "raw map max-norm is only 34, but Original Distance stretches Y and exceeds 40"
+        );
+        let [movement] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("distant sleeping target should author exactly one GoNear movement")
+        };
+        assert_eq!((movement.target_x, movement.target_y), (15.0, 34.0));
+        assert_eq!(movement.tolerance, 20.0);
+        assert!(ai.base.outbox.actor.launch_sequences.is_empty());
+    }
+
+    #[test]
+    fn approaching_sleeping_enemy_close_target_launches_down_strike() {
+        let ai = run_approaching_sleeping_enemy(Position {
+            x: 10.0,
+            y: 10.0,
+            ..Position::default()
+        });
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingKillingSleepingEnemy
+        );
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        let [sequence] = ai.base.outbox.actor.launch_sequences.as_slice() else {
+            panic!("close sleeping target should launch exactly one strike sequence")
+        };
+        assert_eq!(
+            sequence.get(0).map(|element| element.command),
+            Some(crate::element::Command::SwordstrikeDown)
+        );
     }
 
     fn run_reactiontime_turning(
