@@ -916,7 +916,7 @@ impl EnemyAi {
             let mut idx = 0;
             while idx < self.list_them.len() {
                 let h = self.list_them[idx];
-                let drop_entry = match ctx.entity_view(h) {
+                let (drop_entry, decrement_visible_count) = match ctx.entity_view(h) {
                     Some(view) => {
                         let is_friend = view.camp == ctx.camp;
                         if !is_friend && !view.is_dead && view.is_unconscious && !view.is_carried {
@@ -960,7 +960,10 @@ impl EnemyAi {
                             decision_target_multiplicity.insert(h, 1);
                             global.primary_target_multiplicity_scratch.insert(h, 1);
                         }
-                        is_friend || !view.is_able_to_fight
+                        (
+                            is_friend || !view.is_able_to_fight,
+                            !is_friend && !view.is_able_to_fight,
+                        )
                     }
                     None => {
                         tracing::warn!(
@@ -968,11 +971,17 @@ impl EnemyAi {
                             target = h,
                             "battle_decisions: dropping them-list entry missing from entity view"
                         );
-                        true
+                        (true, true)
                     }
                 };
                 if drop_entry {
-                    if idx < num_enemies_i_can_see {
+                    // Original only decrements the captured visible count in
+                    // the non-friend `!IsAbleToFight()` arm. A stale friend
+                    // is deleted by the separate `IsFriend()` arm without
+                    // consuming that count (RHartificialmalignity.cpp,
+                    // BattleDecisions cleanup), which can intentionally
+                    // leave a positive visible count with an empty Them list.
+                    if decrement_visible_count && idx < num_enemies_i_can_see {
                         num_enemies_i_can_see -= 1;
                     }
                     self.list_them.remove(idx);
@@ -4304,6 +4313,76 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    fn battle_cleanup_context(
+        target: crate::ai_entity_view::AiEntityView,
+    ) -> (AiContext, AiPerTickData) {
+        let mut owner = pc_view();
+        owner.is_pc = false;
+        owner.kind = crate::ai_entity_view::EntityKind::Soldier;
+        owner.camp = crate::element::Camp::Lacklandists;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(91, owner);
+        views.insert(198, target);
+        (
+            AiContext {
+                camp: crate::element::Camp::Lacklandists,
+                frame: 700,
+                entity_views: crate::ai_entity_view::shared_entity_views(views),
+                ..AiContext::default()
+            },
+            AiPerTickData::stub(),
+        )
+    }
+
+    #[test]
+    fn stale_same_camp_them_entry_preserves_visible_count_for_reserve() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingOverviewLookRight;
+        ai.list_them = vec![198];
+        ai.forced_next_battle_decision = Decision::Reserve;
+
+        let mut stale_friend = pc_view();
+        stale_friend.camp = crate::element::Camp::Lacklandists;
+        let (ctx, tick) = battle_cleanup_context(stale_friend);
+
+        ai.battle_decisions(&sim, &mut AiGlobalState::default(), &ctx, &tick, None);
+
+        assert!(ai.list_them.is_empty(), "the stale friend must be removed");
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert_eq!(ai.base.current_substate, Substate::AttackingReserve);
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 750);
+    }
+
+    #[test]
+    fn unable_nonfriend_them_entry_consumes_visible_count_and_returns_to_duty() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingOverviewLookRight;
+        ai.list_them = vec![198];
+        ai.forced_next_battle_decision = Decision::Reserve;
+
+        let mut unable_enemy = pc_view();
+        unable_enemy.camp = crate::element::Camp::Royalists;
+        unable_enemy.is_able_to_fight = false;
+        let (ctx, tick) = battle_cleanup_context(unable_enemy);
+
+        ai.battle_decisions(&sim, &mut AiGlobalState::default(), &ctx, &tick, None);
+
+        assert!(ai.list_them.is_empty());
+        assert_ne!(ai.base.current_substate, Substate::AttackingReserve);
+        assert!(!ai.base.timer_is_running);
+        assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }
+            )
+        }));
     }
 
     #[test]
