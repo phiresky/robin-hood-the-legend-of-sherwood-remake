@@ -39,6 +39,27 @@ fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
             .is_none_or(|expected| owner == expected)
 }
 
+/// Opt-in trace for the event-driven swordfight reposition decision. Keep the
+/// gate process-local and evaluate it before touching any proposal data so the
+/// disabled path cannot add lookups, RNG draws, or simulation state.
+fn reconsider_position_debug_matches(frame: u32, creation_order: Option<u32>, owner: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_RECONSIDER_POSITION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for RECONSIDER_POSITION diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_FRAME").is_none_or(|expected| frame == expected)
+        && parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_CREATION_ORDER")
+            .is_none_or(|expected| creation_order == Some(expected))
+        && parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_OWNER_HANDLE")
+            .is_none_or(|expected| owner == expected)
+}
+
 fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
@@ -2744,12 +2765,33 @@ impl EnemyAi {
 
         // Re-evaluate combat position 1 in 3 ticks (skip in pure 1v1
         // fights and combat-trainer mode).
-        let do_reposition = !self.combat_trainer
-            && (number_of_friends != 1 || number_of_swordfighting_enemies != 1)
-            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatReposition, 0..3) == 0;
+        let reposition_debug =
+            reconsider_position_debug_matches(ctx.frame, ctx.original_creation_order, self.base.me);
+        let reposition_eligible = !self.combat_trainer
+            && (number_of_friends != 1 || number_of_swordfighting_enemies != 1);
+        // Preserve Original's short-circuit: pure 1v1 and trainer fights do
+        // not consume the one-in-three reposition draw.
+        let reposition_roll = reposition_eligible
+            .then(|| crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatReposition, 0..3));
+        let do_reposition = reposition_roll == Some(0);
+        if reposition_debug {
+            eprintln!(
+                "[RECONSIDER_POSITION] frame={} owner={} creation_order={:?} friends={} swordfighting_enemies={} combat_trainer={} eligible={} roll={:?} do_reposition={}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                number_of_friends,
+                number_of_swordfighting_enemies,
+                self.combat_trainer,
+                reposition_eligible,
+                reposition_roll,
+                do_reposition,
+            );
+        }
 
         if do_reposition {
-            let new_combat_position = self.propose_good_combat_position(global, ctx, tick, grid);
+            let new_combat_position =
+                self.propose_good_combat_position_inner(global, ctx, tick, grid, reposition_debug);
             self.base.seek_position = new_combat_position.attacker_position;
             self.my_line_jump = new_combat_position.line_jump;
 
@@ -3406,6 +3448,17 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> CombatPosition {
+        self.propose_good_combat_position_inner(global, ctx, tick, grid, false)
+    }
+
+    fn propose_good_combat_position_inner(
+        &mut self,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        debug_reposition: bool,
+    ) -> CombatPosition {
         debug_assert!(ctx.is_swordfighting);
 
         // Re-anchor primary target on the snapshot.
@@ -3532,6 +3585,22 @@ impl EnemyAi {
         let mut best_index: usize = 0;
         let mut best_score: i32 = i32::MIN;
         for (idx, cp) in possible.iter_mut().enumerate() {
+            let input = debug_reposition.then(|| {
+                (
+                    cp.attacker,
+                    cp.attacker_position,
+                    cp.target,
+                    cp.target_position,
+                    cp.target_direction,
+                    cp.change_adversary,
+                    cp.change_position,
+                    cp.line_position,
+                    cp.left_neighbour,
+                    cp.right_neighbour,
+                    cp.bonus,
+                    cp.line_jump,
+                )
+            });
             let score = evaluate_combat_position_full(
                 me_handle,
                 &me_pos,
@@ -3546,6 +3615,28 @@ impl EnemyAi {
                 tick.required_profile_manager(),
                 iq,
             );
+            if debug_reposition {
+                eprintln!(
+                    "[RECONSIDER_POSITION] frame={} owner={} candidate={} input={:?} evaluated=(attacker={} attacker_position={:?} target={} target_position={:?} target_direction={} change_adversary={} change_position={} line_position={} left={} right={} bonus={} line_jump={:?}) score={}",
+                    ctx.frame,
+                    self.base.me,
+                    idx,
+                    input.expect("enabled reposition diagnostic captured candidate input"),
+                    cp.attacker,
+                    cp.attacker_position,
+                    cp.target,
+                    cp.target_position,
+                    cp.target_direction,
+                    cp.change_adversary,
+                    cp.change_position,
+                    cp.line_position,
+                    cp.left_neighbour,
+                    cp.right_neighbour,
+                    cp.bonus,
+                    cp.line_jump,
+                    score,
+                );
+            }
             if score > best_score {
                 best_score = score;
                 best_index = idx;
@@ -3553,7 +3644,6 @@ impl EnemyAi {
         }
 
         let mut best = possible.swap_remove(best_index);
-
         // If the winning candidate doesn't already carry a line jump,
         // ask `IsTableSwordfightNeeded` whether crossing a table/jump
         // line is required to reach the target. Without this, the
@@ -3573,6 +3663,27 @@ impl EnemyAi {
                 primary.position.sector.map(i16::from).unwrap_or(-1),
                 crate::coordinates::MapPoint::new(primary.position.x, primary.position.y),
                 my_max_range as f32,
+            );
+        }
+        if debug_reposition {
+            eprintln!(
+                "[RECONSIDER_POSITION] frame={} owner={} chosen={} score={} result=(attacker={} attacker_position={:?} target={} target_position={:?} target_direction={} change_adversary={} change_position={} line_position={} left={} right={} bonus={} line_jump={:?})",
+                ctx.frame,
+                self.base.me,
+                best_index,
+                best_score,
+                best.attacker,
+                best.attacker_position,
+                best.target,
+                best.target_position,
+                best.target_direction,
+                best.change_adversary,
+                best.change_position,
+                best.line_position,
+                best.left_neighbour,
+                best.right_neighbour,
+                best.bonus,
+                best.line_jump,
             );
         }
 
