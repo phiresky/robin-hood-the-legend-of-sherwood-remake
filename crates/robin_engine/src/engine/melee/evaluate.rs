@@ -1616,6 +1616,21 @@ impl EngineInner {
                     ) as i16
                 });
 
+            let frame = self.control.frame_counter;
+            let debug = reactive_sword_debug_frame_matches(frame)
+                .then(|| {
+                    let victim_creation_order = self.world.original_creation_order(victim_id);
+                    reactive_sword_debug_creation_order_matches(victim_creation_order).then_some(
+                        crate::combat::SwordStrikeProposalDebug {
+                            frame,
+                            victim: victim_id.index(),
+                            victim_creation_order,
+                            attacker: attacker_id.index(),
+                        },
+                    )
+                })
+                .flatten();
+
             // RHElementActorHuman::ProposeGoodSwordStrike always limits a
             // reactive counter-strike by the principal opponent's remaining
             // strike time. Without this deadline a warned PC can choose a
@@ -1634,10 +1649,25 @@ impl EngineInner {
                     )
                 });
                 let sprite = &opponent.element_data().sprite;
-                Some(opponent_sword_strike_time_limit(
-                    self.live_actor_animation(target_id_for_nearby),
-                    || sprite.frames_from_now_till_action_done(),
-                ))
+                let principal_animation = self.live_actor_animation(target_id_for_nearby);
+                let raw_frames = debug.map(|_| sprite.frames_from_now_till_action_done());
+                let time_limit = opponent_sword_strike_time_limit(principal_animation, || {
+                    sprite.frames_from_now_till_action_done()
+                });
+                if let (Some(debug), Some(raw_frames)) = (debug, raw_frames) {
+                    eprintln!(
+                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=pc_principal principal={} animation={:?} raw_frames_from_now={} time_limit={}]",
+                        debug.frame,
+                        debug.victim_creation_order,
+                        debug.victim,
+                        debug.attacker,
+                        target_id_for_nearby.index(),
+                        principal_animation,
+                        raw_frames,
+                        time_limit,
+                    );
+                }
+                Some(time_limit)
             };
 
             // Build nearby victims so circle/push/round strike scoring can
@@ -1719,12 +1749,13 @@ impl EngineInner {
                 is_npc: false, // PC path — different skill gate
             };
 
-            let proposed = crate::combat::propose_good_sword_strike(
+            let proposed = crate::combat::propose_good_sword_strike_with_debug(
                 sim,
                 &strike_ctx,
                 &nearby,
                 &mut pc_boredom,
                 true, // also_parade
+                debug,
             );
 
             // Write back boredom
