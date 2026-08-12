@@ -112,3 +112,58 @@ parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_0
 parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-010-session-0001.jsonl.zst
 parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-011-session-0001.jsonl.zst
 parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-012-session-0001.jsonl.zst
+# Schema-12 refused-action captures: exclamation 14 has no recorded request.
+# Original emits HERO_UNABLE_TO_DO_SOMETHING for anonymous-archer bow refusals
+# (RHengine.cpp:14545; RHParity.cpp:1859-1874), while each matching schema-14
+# capture records anonymous_archer_contest immediately before sound resolution.
+# Only these failing seeds are retired; unlisted siblings remain authoritative.
+# SuN1Sh1nE/Profile_004/Savegame_026: 12 old-60s paths plus its short duplicate.
+parity-random-save-replays/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-001-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-001-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-004-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-005-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-006-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-008-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-009-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-010-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-011-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-012-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-013-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-014-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-015-session-0001.jsonl.zst
+# linux2/Profile_002/Restart: 10 old-60s paths with schema-14 replacements.
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-001-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-006-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-008-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-009-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-010-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-011-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-012-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-013-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-014-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-015-session-0001.jsonl.zst
+# linux3/Profile_003/Savegame_049: 10 old-60s paths with schema-14 replacements.
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-001-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-002-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-003-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-004-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-005-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-006-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-007-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-008-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-009-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-012-session-0001.jsonl.zst
+# nicouzouf/Profile_001/Savegame_061: 10 old-60s paths with schema-14 replacements.
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-001-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-002-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-003-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-004-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-005-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-006-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-007-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-008-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-009-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-012-session-0001.jsonl.zst
+# The same schema gap has one locked-patch member. RHengine.cpp:6389 emits
+# exclamation 14; its schema-14 replacement records locked_patch before it.
+parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_012/replay-007-session-0001.jsonl.zst

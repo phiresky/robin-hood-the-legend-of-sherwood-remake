@@ -4,13 +4,11 @@ Savegame_Nescafe/Profile_002/Savegame_001
 Savegame_Nescafe/Profile_003/Savegame_001
 Savegame_SuN1Sh1nE/Profile_004/ExQuickSave
 Savegame_SuN1Sh1nE/Profile_004/Savegame_001
-Savegame_SuN1Sh1nE/Profile_004/Savegame_026
 Savegame_SuN1Sh1nE/Profile_004/Savegame_028
 Savegame_linux/Profile_005/Continue
 Savegame_linux/Profile_011/Continue
 Savegame_linux/Profile_011/Savegame_000
 Savegame_linux2/Profile_002/QuickSave
-Savegame_linux2/Profile_002/Restart
 Savegame_linux2/Profile_002/Savegame_001
 Savegame_linux2/Profile_002/Savegame_002
 Savegame_linux2/Profile_002/Savegame_003
@@ -75,7 +73,6 @@ Savegame_linux3/Profile_003/Savegame_035
 Savegame_linux3/Profile_003/Savegame_037
 Savegame_linux3/Profile_003/Savegame_038
 Savegame_linux3/Profile_003/Savegame_046
-Savegame_linux3/Profile_003/Savegame_049
 Savegame_linux3/Profile_003/Savegame_051
 Savegame_linux3/Profile_003/Savegame_052
 Savegame_linux3/Profile_003/Savegame_054
@@ -86,5 +83,4 @@ Savegame_nicouzouf/Profile_001/Savegame_002
 Savegame_nicouzouf/Profile_001/Savegame_024
 Savegame_nicouzouf/Profile_001/Savegame_043
 Savegame_nicouzouf/Profile_001/Savegame_057
-Savegame_nicouzouf/Profile_001/Savegame_061
 Savegame_nicouzouf/Profile_001/Savegame_075
