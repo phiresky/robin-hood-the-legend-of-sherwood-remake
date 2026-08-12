@@ -2159,7 +2159,7 @@ fn rgb565_to_color_shadow_rgba(src: &[u16], color_key: u16) -> (Vec<u8>, Vec<u8>
 }
 
 /// Allocate a `Rgba8UnormSrgb` 2D texture and upload `rgba` into it.
-fn upload_rgba_texture(
+pub(crate) fn upload_rgba_texture(
     gpu: &GpuContext,
     rgba: &[u8],
     width: u32,

@@ -1,4 +1,5 @@
 use crate::loading_screen::HeightField;
+use crate::renderer::{rgb565_to_rgb8, upload_rgba_texture};
 use crate::window::GpuContext;
 
 pub struct LoadingDissolveTextures {
@@ -187,60 +188,16 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+/// RGB565 → opaque RGBA8 using the renderer's truncating channel
+/// expansion, so the dissolve screens match how every other 565
+/// surface (backgrounds, sprites, managed surfaces) is expanded.
+/// No colour-key or shadow-key handling: these are literal screen
+/// captures.
 fn rgb565_to_rgba_opaque(pixels: &[u16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(pixels.len() * 4);
     for &px in pixels {
-        let r5 = ((px >> 11) & 0x1F) as u8;
-        let g6 = ((px >> 5) & 0x3F) as u8;
-        let b5 = (px & 0x1F) as u8;
-        out.push((r5 << 3) | (r5 >> 2));
-        out.push((g6 << 2) | (g6 >> 4));
-        out.push((b5 << 3) | (b5 >> 2));
-        out.push(255);
+        let (r, g, b) = rgb565_to_rgb8(px);
+        out.extend_from_slice(&[r, g, b, 255]);
     }
     out
-}
-
-fn upload_rgba_texture(
-    gpu: &GpuContext,
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-    label: &str,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    gpu.queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        rgba,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(width * 4),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
 }
