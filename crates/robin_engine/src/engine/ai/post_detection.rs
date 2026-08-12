@@ -487,6 +487,7 @@ impl EngineInner {
             return;
         }
         for (queue_index, stimulus) in stimuli.into_iter().enumerate() {
+            self.debug_building_exit_wait_event_view(npc_id, queue_index, &stimulus);
             tracing::trace!(
                 npc = npc_id.index(),
                 queue_index,

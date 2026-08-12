@@ -74,6 +74,14 @@ fn refresh_view_lifecycle_debug_config() -> &'static RefreshViewLifecycleDebugCo
     })
 }
 
+/// Opt-in provenance for the two-draw building-exit wait used by parity
+/// audits. This is deliberately process-local diagnostic state: it must not
+/// enter snapshots, state hashes, or the simulation RNG stream.
+pub(super) fn building_exit_wait_owner_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BUILDING_EXIT_WAIT_OWNER").is_some())
+}
+
 #[cfg(test)]
 thread_local! {
     static GALOPP_DISPATCH_OBSERVER: std::cell::RefCell<
@@ -2158,6 +2166,52 @@ fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
 }
 
 impl EngineInner {
+    pub(super) fn debug_building_exit_wait_event_view(
+        &self,
+        owner: EntityId,
+        queue_index: usize,
+        stimulus: &crate::ai::Stimulus,
+    ) {
+        if !building_exit_wait_owner_debug_enabled()
+            || stimulus.stimulus_type != crate::ai::StimulusType::EventView
+        {
+            return;
+        }
+        let (target_handle, target_creation_order) = match stimulus.info {
+            crate::ai::StimulusInfo::Human(handle) => (
+                Some(handle),
+                self.entity_id_for_index(handle)
+                    .map(|target| self.world.original_creation_order(target)),
+            ),
+            _ => (None, None),
+        };
+        eprintln!(
+            "BEXITWAIT {{\"event\":\"queued_event_view\",\"frame\":{},\"owner\":{:?},\"owner_creation_order\":{},\"queue_index\":{queue_index},\"target_handle\":{target_handle:?},\"target_creation_order\":{target_creation_order:?}}}",
+            self.control.frame_counter,
+            owner,
+            self.world.original_creation_order(owner),
+        );
+    }
+
+    pub(super) fn debug_building_exit_wait_pc_route(
+        &self,
+        owner: EntityId,
+        source_sector: crate::position_interface::SectorHandle,
+        goal_sector: crate::position_interface::SectorHandle,
+    ) {
+        if !building_exit_wait_owner_debug_enabled() {
+            return;
+        }
+        eprintln!(
+            "BEXITWAIT {{\"event\":\"pc_door_fight_route\",\"frame\":{},\"owner\":{:?},\"owner_creation_order\":{},\"source_sector\":{},\"goal_sector\":{}}}",
+            self.control.frame_counter,
+            owner,
+            self.world.original_creation_order(owner),
+            source_sector.get(),
+            goal_sector.get(),
+        );
+    }
+
     pub(super) fn debug_refresh_view_lifecycle(
         &self,
         stage: &str,
@@ -8397,6 +8451,26 @@ impl EngineInner {
                 }
                 _ => {}
             }
+        }
+
+        if building_exit_wait_owner_debug_enabled() {
+            static INVOCATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let invocation = INVOCATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let describe = |ids: &[EntityId]| {
+                ids.iter()
+                    .map(|&id| (id, self.world.original_creation_order(id)))
+                    .collect::<Vec<_>>()
+            };
+            eprintln!(
+                "BEXITWAIT {{\"event\":\"enemy_in_house_alert\",\"invocation\":{invocation},\"frame\":{},\"source\":{:?},\"source_creation_order\":{},\"building_sector\":{building_sector_num},\"occupants\":{:?},\"royalists\":{:?},\"lacklandists\":{:?},\"civilians\":{:?}}}",
+                self.control.frame_counter,
+                source,
+                self.world.original_creation_order(source),
+                describe(&occupant_ids),
+                describe(&royalist_ids),
+                describe(&lacklandist_ids),
+                describe(&civilian_ids),
+            );
         }
 
         // No battle unless both camps present.
