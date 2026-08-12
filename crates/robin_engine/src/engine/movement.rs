@@ -7522,11 +7522,9 @@ impl EngineInner {
                         sector = crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
                         "combat facing target"
                     );
-                    if fdx * fdx + fdy * fdy > 0.01 {
-                        elem.set_direction_goal(
-                            crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
-                        );
-                    }
+                    elem.set_direction_goal(
+                        crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
+                    );
                 }
             }
             // Ordinary movement does not recompute facing from the remaining
@@ -12976,6 +12974,16 @@ mod orphaned_sword_movement_tests {
             .unwrap()
             .opponents
             .push(opponent);
+
+        assert_eq!(
+            engine.get_entity(owner).unwrap().element_data().position(),
+            engine
+                .get_entity(opponent)
+                .unwrap()
+                .element_data()
+                .position(),
+            "fixture must be co-located in the world coordinates FaceOpponent reads"
+        );
         let owner_entity = engine.get_entity_mut(owner).unwrap();
         // The replay's strafe order was already initialized before its
         // blocked counter crossed the threshold. A fresh fixture order calls
@@ -13320,8 +13328,22 @@ mod orphaned_sword_movement_tests {
 
     #[test]
     fn sword_movement_with_colocated_opponent_preserves_zero_facing_vector() {
-        let (mut engine, owner, _movement_sequence, _order_id, start) =
+        let (mut engine, owner, movement_sequence, _order_id, _start) =
             install_sword_movement(true);
+
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(movement_sequence, 0)
+            .and_then(|element| element.orders.front_mut())
+            .expect("test movement keeps its selected order")
+            .compute_direction = false;
+
+        {
+            let owner_element = engine.get_entity_mut(owner).unwrap().element_data_mut();
+            owner_element.set_direction_instantly(7);
+            owner_element.set_direction_goal(9);
+        }
 
         let mut opponent_element = ElementData {
             kind: ElementKind::ActorPc,
@@ -13329,7 +13351,13 @@ mod orphaned_sword_movement_tests {
             posture: Posture::Upright,
             ..ElementData::default()
         };
-        opponent_element.set_position_map(start);
+        opponent_element.set_position(
+            engine
+                .get_entity(owner)
+                .expect("test owner exists")
+                .element_data()
+                .position(),
+        );
         let opponent = engine.add_entity(Entity::Pc(ActorPc {
             element: opponent_element,
             actor: ActorData::default(),
@@ -13361,6 +13389,21 @@ mod orphaned_sword_movement_tests {
                 .last_action,
             OrderType::WalkingBackwardsSword,
             "FaceOpponent passes a co-located opponent's literal zero vector to Angle, which resolves to PI"
+        );
+        let owner_element = engine.get_entity(owner).unwrap().element_data();
+        assert_eq!(
+            owner_element
+                .sprite
+                .position_iface
+                .get_direction_goal()
+                .as_u8(),
+            0,
+            "FaceOpponent passes its literal zero vector through GetSector0to15 and SetDirection"
+        );
+        assert_eq!(
+            owner_element.direction(),
+            6,
+            "Turn must rotate one step from direction 7 toward the zero-vector goal 0"
         );
     }
 
