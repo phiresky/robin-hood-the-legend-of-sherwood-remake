@@ -9282,13 +9282,24 @@ impl EngineInner {
                 // The ordinary walking-arrival path below performs this
                 // same check, but transition animations return through
                 // this earlier branch and must close the handoff here.
+                // PerformMotion(TILL_LAST_FRAME) may have deleted every
+                // same-animation follower above after looping short of the
+                // current destination. Original PerformSeek asks
+                // GetNextOrder() only after that synchronous cleanup, so
+                // the just-truncated current order is now the final
+                // waypoint even when it was not final at Execute entry.
+                let is_final_waypoint_after_transition_cleanup = self
+                    .orders
+                    .sequence_manager
+                    .get_element(move_seq_id, move_elem_idx)
+                    .is_none_or(|element| element.orders.len() <= 1);
                 let movement_is_last_sequence_element = self
                     .orders
                     .sequence_manager
                     .get_sequence(move_seq_id)
                     .map(|sequence| move_elem_idx + 1 >= sequence.elements.len())
                     .unwrap_or(false);
-                let final_entity_seek_arrival = if is_final_waypoint
+                let final_entity_seek_arrival = if is_final_waypoint_after_transition_cleanup
                     && movement_is_last_sequence_element
                     && ft.target_id.is_some()
                 {
@@ -14945,6 +14956,61 @@ mod movement_transition_state_tests {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         finish_terminal_seek_tick(&mut engine, owner);
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::Hitting));
+    }
+
+    #[test]
+    fn looped_seek_stop_transition_rechecks_final_order_after_deleting_followers() {
+        let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
+        let (seq_id, elem_idx) = {
+            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            (
+                actor.active_movement.sequence_id.unwrap(),
+                actor.active_movement.element_index,
+            )
+        };
+        let transition = OrderType::TransitionWalkingUprightWaitingUpright;
+        let order_ids = [
+            engine.orders.allocate_order_id(),
+            engine.orders.allocate_order_id(),
+            engine.orders.allocate_order_id(),
+        ];
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .unwrap();
+        let SequenceElementData::Movement {
+            element: seek_target,
+            ..
+        } = &mut element.data
+        else {
+            panic!("seek regression lost movement data")
+        };
+        *seek_target = Some(target);
+        element.orders.clear();
+        for (destination_x, order_id) in [110.0, 120.0, 140.0].into_iter().zip(order_ids) {
+            element
+                .orders
+                .push_back(Order::new(transition, destination_x, 100.0, order_id));
+        }
+        assert_eq!(element.orders.len(), 3);
+        assert_ne!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            MapPoint::new(110.0, 100.0),
+            "the first transition must loop before reaching its destination"
+        );
+
+        finish_terminal_seek_tick(&mut engine, owner);
+
+        assert_eq!(
+            engine.actor_order_type(owner),
+            Some(OrderType::Hitting),
+            "PerformSeek must observe that TillLastFrame deleted all followers and launch the attached post-seek"
+        );
     }
 
     #[test]
