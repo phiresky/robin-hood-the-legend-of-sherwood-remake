@@ -102,6 +102,153 @@ fn seek_area_owner_position_debug_matches(frame: u32, creation_order: u32) -> bo
             .is_none_or(|expected| creation_order == expected)
 }
 
+#[derive(Debug)]
+struct PatrolTurnLifecycleDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    creation_order: Option<u32>,
+}
+
+fn patrol_turn_lifecycle_debug_config() -> &'static PatrolTurnLifecycleDebugConfig {
+    static CONFIG: std::sync::OnceLock<PatrolTurnLifecycleDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_PATROL_TURN_LIFECYCLE").is_some();
+        if !enabled {
+            return PatrolTurnLifecycleDebugConfig {
+                enabled: false,
+                frame: None,
+                creation_order: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for PATROLTURN diagnostic: {error}")
+                })
+            })
+        };
+        PatrolTurnLifecycleDebugConfig {
+            enabled,
+            frame: parse("PARITY_DEBUG_PATROL_TURN_FRAME"),
+            creation_order: parse("PARITY_DEBUG_PATROL_TURN_CREATION_ORDER"),
+        }
+    })
+}
+
+impl EngineInner {
+    fn patrol_turn_lifecycle_debug_matches(&self, owner: EntityId) -> bool {
+        let config = patrol_turn_lifecycle_debug_config();
+        if !config.enabled
+            || config
+                .frame
+                .is_some_and(|frame| frame != self.control.frame_counter)
+        {
+            return false;
+        }
+        let creation_order = self.world.original_creation_order(owner);
+        !config
+            .creation_order
+            .is_some_and(|expected| expected != creation_order)
+    }
+
+    /// Opt-in, process-local trace of patrol Turn registration and ownership.
+    /// It deliberately reads only live state and writes only stderr, so it
+    /// cannot affect serialization, state hashes, ordering, or RNG.
+    pub(super) fn debug_patrol_turn_lifecycle(&self, boundary: &'static str, owner: EntityId) {
+        if !self.patrol_turn_lifecycle_debug_matches(owner) {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(owner);
+        let current = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(sequence_id, element_index)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+                    .map(|element| {
+                        (
+                            sequence_id,
+                            element_index,
+                            element.command,
+                            element.state,
+                            element.current_order().map(|order| order.order_id),
+                        )
+                    })
+            });
+        let (installed, last_execute, sprite_order) = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::actor_data)
+            .map(|actor| {
+                let sprite_order = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .map(|entity| entity.sprite().last_processed_order_id);
+                (
+                    actor.installed_order,
+                    actor.last_execute_order_id,
+                    sprite_order,
+                )
+            })
+            .unwrap_or((None, None, None));
+        let deferred_turns = self
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .into_iter()
+            .filter_map(|(sequence_id, element_index)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+                    .filter(|element| {
+                        element.owner == Some(owner)
+                            && matches!(
+                                element.command,
+                                crate::element::Command::Turn | crate::element::Command::TurnFast
+                            )
+                    })
+                    .map(|element| (sequence_id, element_index, element.state))
+            })
+            .collect::<Vec<_>>();
+        eprintln!(
+            "PATROLTURN frame={} creation_order={} owner={owner:?} boundary={boundary} current={current:?} installed={installed:?} last_execute={last_execute:?} sprite_order={sprite_order:?} deferred_turns={deferred_turns:?}",
+            self.control.frame_counter, creation_order,
+        );
+    }
+
+    pub(super) fn debug_patrol_turn_instruct(
+        &self,
+        owner: EntityId,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+    ) {
+        if !self.patrol_turn_lifecycle_debug_matches(owner) {
+            return;
+        }
+        let is_turn = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .is_some_and(|element| {
+                matches!(
+                    element.command,
+                    crate::element::Command::Turn | crate::element::Command::TurnFast
+                )
+            });
+        if is_turn {
+            self.debug_patrol_turn_lifecycle("manager_instruct_turn", owner);
+            eprintln!(
+                "PATROLTURN frame={} owner={owner:?} boundary=manager_instruct_ref sequence={sequence_id:?} element={element_index}",
+                self.control.frame_counter,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static GALOPP_DISPATCH_OBSERVER: std::cell::RefCell<
@@ -10336,6 +10483,7 @@ impl EngineInner {
 
             // Dispatch CALL_PATROL_COORDINATE through the script filter.
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
+            self.debug_patrol_turn_lifecycle("before_coordinate_think", minion_id);
             self.dispatch_think_with_drain_mode(
                 sim, minion_id, &stimulus, &ctx, &tick_data, assets, true, true,
             );
@@ -10345,6 +10493,7 @@ impl EngineInner {
             // later this hourglass, so promote the request to an element but
             // deliberately leave its deferred InstructOwner action queued.
             self.drain_pending_move_requests_for_owner(sim, minion_id);
+            self.debug_patrol_turn_lifecycle("after_coordinate_think", minion_id);
 
             // Original applies the instructed direction only after the
             // member's synchronous CALL_PATROL_COORDINATE Think returns.
@@ -10386,6 +10535,7 @@ impl EngineInner {
                     )
                 })
                 .set_instructed_patrol_direction(cmd.direction, &live_ctx);
+            self.debug_patrol_turn_lifecycle("after_instructed_direction_emit", minion_id);
             // GetInstructedPatrolDirection may synchronously FaceTo when the
             // member is still waiting. Close its AI/callback work before the
             // chief advances, but leave owner instruction to the later
@@ -10393,6 +10543,7 @@ impl EngineInner {
             self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
                 sim, minion_id, assets,
             );
+            self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", minion_id);
         }
     }
 

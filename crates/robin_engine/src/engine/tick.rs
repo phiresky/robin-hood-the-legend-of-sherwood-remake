@@ -3798,7 +3798,9 @@ impl EngineInner {
                         // position update before it inspects the current
                         // sequence/order.
                         self.apply_delayed_actor_position(sim, assets, entity_id);
+                        self.debug_patrol_turn_lifecycle("actor_slot_before_prelude", entity_id);
                         before_actor(self, entity_id);
+                        self.debug_patrol_turn_lifecycle("actor_slot_after_prelude", entity_id);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
 
                         let frozen_without_order = self

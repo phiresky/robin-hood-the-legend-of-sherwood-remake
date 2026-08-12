@@ -582,6 +582,7 @@ impl EngineInner {
                         sequence_id: seq_id,
                         element_index: elem_idx,
                     } => {
+                        self.debug_patrol_turn_instruct(owner, seq_id, elem_idx);
                         // PC::Instruct redirects a TO_JUMP Move from a rider to
                         // the carrier before Human/Actor Instruct sees it. This
                         // must sample the live posture here, not when the element
