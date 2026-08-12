@@ -34,7 +34,7 @@ pub(super) fn reactive_sword_debug_creation_order_matches(creation_order: u32) -
         })
 }
 
-fn opponent_sword_strike_time_limit(
+pub(super) fn opponent_sword_strike_time_limit(
     animation: Option<crate::order::OrderType>,
     frames_from_now: impl FnOnce() -> i16,
 ) -> i16 {
@@ -2591,6 +2591,72 @@ mod tests {
         assert_eq!(
             reactive_pc_proposal(crate::order::OrderType::StrikingDownSword),
             ProposedCombatAction::Strike(SwordStrike::A)
+        );
+    }
+
+    #[test]
+    fn enemy_executing_sword_deadline_rejects_b_and_selects_a() {
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Straight,
+            cutting: 10,
+            maximal_distance: 100,
+            ..Default::default()
+        };
+        profile.thrusts[SwordStrike::B as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Straight,
+            cutting: 20,
+            maximal_distance: 100,
+            ..Default::default()
+        };
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: 0.0,
+            dy_stretched: -20.0,
+            distance: 20.0,
+            direction_sector: 0,
+            camp: Camp::Lacklandists,
+            facing_direction: 8,
+            elevation: 0.0,
+            life_points: 100,
+            defender_profile: None,
+            is_primary_target: true,
+            is_walking_with_sword: false,
+        };
+        let propose = |opponent_animation| {
+            let deadline = opponent_sword_strike_time_limit(Some(opponent_animation), || 10);
+            let ctx = StrikeSelectionContext {
+                attacker_profile: &profile,
+                fighting_ability: 100,
+                blood_alcohol: 0,
+                is_rank_soldier: false,
+                attacker_direction: 0,
+                attacker_elevation: 0.0,
+                attacker_camp: Camp::Royalists,
+                is_swordfighting: true,
+                opponent_time_limit: Some(deadline),
+                strike_startup_frames: Some([7, 12, 25, 7, 7, 8, 8, 8, 8]),
+                parry_startup_frames: None,
+                is_npc: true,
+            };
+            combat::propose_good_sword_strike(
+                &crate::sim_rng::test_context(),
+                &ctx,
+                std::slice::from_ref(&victim),
+                &mut vec![0; crate::weapons::NUM_NORMAL_SWORD_STRIKES],
+                false,
+            )
+        };
+
+        assert_eq!(
+            propose(crate::order::OrderType::ExecutingSword),
+            Some(ProposedCombatAction::Strike(SwordStrike::A)),
+            "ExecutingSword is strike C in Original, so raw deadline 10 admits A startup 7 but rejects B startup 12"
+        );
+        assert_eq!(
+            propose(crate::order::OrderType::StrikingDownSword),
+            Some(ProposedCombatAction::Strike(SwordStrike::B)),
+            "StrikingDownSword is not an Original A-I strike and keeps the unlimited control deadline"
         );
     }
 }

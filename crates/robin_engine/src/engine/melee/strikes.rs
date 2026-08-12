@@ -2607,30 +2607,12 @@ impl EngineInner {
             // unavailable).
             let opponent_time_limit: Option<i16> =
                 self.get_entity(attack.target_id).and_then(|e| {
+                    let animation = self.live_actor_animation(attack.target_id)?;
                     let sprite = &e.element_data().sprite;
-                    // Only active strike animations (A-I) yield a
-                    // strike-from-animation lookup; WaitingSword /
-                    // MovingSword yield None → time_limit = 1000
-                    // (permissive).  Check the actual animation
-                    // (`GetAnimation()`), not `action_state.is_sword()`.
-                    use crate::order::OrderType as OT;
-                    let in_active_strike = matches!(
-                        self.live_actor_animation(attack.target_id)?,
-                        OT::StrikingStraightSword
-                            | OT::StrikingStraightStrongSword
-                            | OT::StrikingRightSword
-                            | OT::StrikingLeftSword
-                            | OT::StrikingRoundRightSword
-                            | OT::StrikingRoundLeftSword
-                            | OT::StrikingSemiroundRightSword
-                            | OT::StrikingSemiroundLeftSword
-                            | OT::StrikingDownSword
-                    );
-                    if !in_active_strike {
-                        return Some(1000i16);
-                    }
-                    let ftad = sprite.frames_from_now_till_action_done();
-                    Some(if ftad == -1 { 1000 } else { ftad })
+                    Some(super::evaluate::opponent_sword_strike_time_limit(
+                        Some(animation),
+                        || sprite.frames_from_now_till_action_done(),
+                    ))
                 });
 
             // Compute per-strike startup frames from attacker's
