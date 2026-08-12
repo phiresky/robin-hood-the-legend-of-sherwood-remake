@@ -2907,6 +2907,126 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
 }
 
 #[test]
+fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
+    use crate::ai::{AlertLevel, Substate};
+    use crate::ai_enemy::SeekFlags;
+    use crate::coordinates::MapPoint;
+    use crate::gate::{Door, DoorIndex};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    // Preserve Original's null AI-handle slot.
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let owner_position = MapPoint::new(1155.7197, 1421.6211);
+    let friend_raw_position = MapPoint::new(727.0, 1168.0);
+
+    for (id, position) in [(owner_id, owner_position), (friend_id, friend_raw_position)] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test soldier exists")
+        else {
+            panic!("test soldier changed kind")
+        };
+        soldier.element.active = true;
+        soldier.element.set_position_map(position);
+        soldier.npc.life_points = 100;
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test soldier has enemy AI")
+            .base
+            .me = id.index();
+    }
+    let friend = engine
+        .get_entity_mut(friend_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("friend has enemy AI");
+    friend.base.view_alert_status = AlertLevel::Yellow;
+    friend.base.current_substate = Substate::SeekingSeekpoint;
+    friend.seek_flags.insert(SeekFlags::LOOK_FOR_HELP_AFTER);
+
+    engine.script_domains.interactables.doors = vec![Door {
+        point_out: MapPoint::new(718.0, 1179.0),
+        point_in: MapPoint::new(735.0, 1156.0),
+        ..Door::default()
+    }];
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "seek_area_selected_pass_door_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission exposes the installed test door"),
+    );
+    let mut pass = SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(friend_id),
+        OrderType::WalkingUpright,
+    );
+    let SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    else {
+        panic!("PassDoor test element changed kind")
+    };
+    *gate_id = Some(DoorIndex(0));
+    *direction = 0;
+    let sequence_id = engine.orders.sequence_manager.launch_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    assert!(
+        engine
+            .get_entity(friend_id)
+            .expect("friend exists")
+            .actor_data()
+            .expect("friend is actor")
+            .active_door_pass
+            .is_none(),
+        "fixture must model a selected legacy PassDoor without a runtime choreography latch"
+    );
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    assert_eq!(tick.visible_seeking_friends, 0);
+    assert!(!tick.friend_seek_clears_help_flag);
+    let tick_owner = tick
+        .owner_live_position
+        .expect("owner position is populated");
+    assert_eq!(tick_owner.x, owner_position.x);
+    assert_eq!(tick_owner.y, owner_position.y);
+
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(sequence_id, 0);
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    assert_eq!(tick.visible_seeking_friends, 1);
+    assert!(tick.friend_seek_clears_help_flag);
+}
+
+#[test]
 fn optical_ai_position_uses_carrier_boundary_but_keeps_target_world_bits() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
 

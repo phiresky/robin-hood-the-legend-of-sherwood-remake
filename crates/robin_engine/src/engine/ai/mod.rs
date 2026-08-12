@@ -1257,9 +1257,33 @@ fn seek_area_friend_position_map(
     }
 }
 
+/// Resolve one soldier's contribution to Original `SeekArea`'s nearby-NPC
+/// scan. The friend-side `Position(...)` call is owned by the currently
+/// selected PassDoor movement element, not the sprite's runtime door-pass
+/// choreography latch. The owner position is supplied explicitly because the
+/// caller observes it at the surrounding Think boundary.
+fn seek_area_friend_contribution(
+    sequence_manager: &crate::sequence::SequenceManager,
+    friend_id: EntityId,
+    owner_position: MapPoint,
+    friend_raw_position: MapPoint,
+    doors: &[crate::gate::Door],
+    friend_seeks_with_help: bool,
+) -> Option<bool> {
+    let selected_door_pass = selected_pass_door_movement(sequence_manager, friend_id)
+        .map(|(door_index, direction)| (door_index, direction != 0));
+    let friend_position =
+        seek_area_friend_position_map(friend_raw_position, selected_door_pass, doors);
+    let delta = friend_position - owner_position;
+    (delta.x * delta.x + delta.y * delta.y < 500.0 * 500.0).then_some(friend_seeks_with_help)
+}
+
 #[cfg(test)]
 mod seek_area_friend_position_tests {
     use super::*;
+    use crate::element::{Command, EntityIdKind};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceManager};
 
     #[test]
     fn door_passing_friend_uses_committed_side_for_radius_gate() {
@@ -1294,6 +1318,68 @@ mod seek_area_friend_position_tests {
             seek_area_friend_position_map(raw_friend, None, &doors),
             raw_friend
         );
+    }
+
+    #[test]
+    fn selected_pass_door_controls_seek_area_friend_count_and_help() {
+        let owner = MapPoint::new(1155.7197, 1421.6211);
+        let raw_friend = MapPoint::new(727.0, 1168.0);
+        let friend = EntityId::new(2, EntityIdKind::Soldier);
+        let doors = [crate::gate::Door {
+            point_out: MapPoint::new(718.0, 1179.0),
+            point_in: MapPoint::new(735.0, 1156.0),
+            ..Default::default()
+        }];
+
+        let mut sequences = SequenceManager::new();
+        let mut pass = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(friend),
+            OrderType::WalkingUpright,
+        );
+        let SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut pass.data
+        else {
+            panic!("PassDoor test element changed kind")
+        };
+        *gate_id = Some(crate::gate::DoorIndex(0));
+        *direction = 0;
+        let sequence_id = sequences.launch_element(pass);
+        sequences.element_in_progress(sequence_id, 0);
+
+        // Raw friend coordinates are inside the radius, but the selected
+        // indirect PassDoor destination is outside. Pre-fix production used
+        // the absent runtime ActiveDoorPass latch and returned `Some(true)`.
+        assert_eq!(
+            seek_area_friend_contribution(&sequences, friend, owner, raw_friend, &doors, true,),
+            None
+        );
+
+        let SequenceElementData::Movement { direction, .. } = &mut sequences
+            .get_element_mut(sequence_id, 0)
+            .expect("selected PassDoor exists")
+            .data
+        else {
+            panic!("PassDoor test element changed kind")
+        };
+        *direction = 1;
+        assert_eq!(
+            seek_area_friend_contribution(&sequences, friend, owner, raw_friend, &doors, true,),
+            Some(true)
+        );
+
+        // Without a selected PassDoor, stale/runtime door state is irrelevant
+        // and the raw nearby position contributes to both aggregate outputs.
+        sequences.element_terminated(sequence_id, 0);
+        let contributions = [seek_area_friend_contribution(
+            &sequences, friend, owner, raw_friend, &doors, true,
+        )];
+        let visible_seeking_friends = contributions.iter().flatten().count();
+        let friend_seek_clears_help_flag = contributions.into_iter().flatten().any(|help| help);
+        assert_eq!(visible_seeking_friends, 1);
+        assert!(friend_seek_clears_help_flag);
     }
 }
 
@@ -2481,23 +2567,22 @@ impl EngineInner {
             if other_ai.base.view_alert_status == crate::ai::AlertLevel::Green {
                 continue;
             }
-            let door_pass = other
-                .actor
-                .active_door_pass
-                .as_ref()
-                .map(|pass| (pass.door_index, pass.position_direct));
-            let friend_position =
-                seek_area_friend_position_map(other.element.position_map(), door_pass, doors);
-            let delta = friend_position - me_pos;
-            if delta.x * delta.x + delta.y * delta.y >= 500.0 * 500.0 {
-                continue;
-            }
-            tick.visible_seeking_friends += 1;
-            if other_ai.base.current_substate.is_seek_area()
+            let friend_seeks_with_help = other_ai.base.current_substate.is_seek_area()
                 && other_ai
                     .seek_flags
-                    .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER)
-            {
+                    .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER);
+            let Some(clears_help) = seek_area_friend_contribution(
+                &self.orders.sequence_manager,
+                EntityId::Soldier(other_id),
+                me_pos,
+                other.element.position_map(),
+                doors,
+                friend_seeks_with_help,
+            ) else {
+                continue;
+            };
+            tick.visible_seeking_friends += 1;
+            if clears_help {
                 tick.friend_seek_clears_help_flag = true;
             }
         }
