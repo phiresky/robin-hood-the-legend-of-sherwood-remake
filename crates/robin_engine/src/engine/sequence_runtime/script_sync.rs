@@ -165,6 +165,25 @@ impl EngineInner {
                         return Ok(());
                     }
                 }
+                if self
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+                    .is_some_and(|element| {
+                        matches!(
+                            element.state,
+                            crate::sequence::SequenceState::Terminated
+                                | crate::sequence::SequenceState::Impossible
+                                | crate::sequence::SequenceState::Interrupted
+                        )
+                    })
+                {
+                    // Original Instruct returns after GenerateTransition if
+                    // the transition cascade already made the element
+                    // terminal. It never assigns DeterminePriority to that
+                    // retained element.
+                    return Ok(());
+                }
                 let resolved_priority = {
                     let element = self
                         .orders
