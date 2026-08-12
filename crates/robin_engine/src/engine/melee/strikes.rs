@@ -1739,6 +1739,30 @@ impl EngineInner {
                 continue;
             }
 
+            let flight_capture_before =
+                crate::movement_diagnostics::parity_movement_capture_active().then(|| {
+                    let position = entity.position_iface().v48_serialized_state();
+                    (
+                        position.position,
+                        position.map,
+                        position.old_position,
+                        position.old_map,
+                        crate::coordinates::WorldPoint3D::new(
+                            flight.goal_x,
+                            flight.goal_y + flight.goal_z,
+                            flight.goal_z,
+                        ),
+                        crate::coordinates::WorldVec3D::new(
+                            flight.increment_x,
+                            flight.increment_y,
+                            flight.increment_z,
+                        ),
+                        entity.actor_data().and_then(|actor| actor.installed_order),
+                    )
+                });
+            let mut raw_post = None;
+            let mut snapped_to_goal = false;
+
             // Capture the domino-sweep request *before* clearing the
             // flight on the final frame.  An exact zero increment
             // skips frames where the sprite isn't actually moving.
@@ -1774,6 +1798,7 @@ impl EngineInner {
                     landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
                     refresh_script_sectors = true;
                     entity.actor_data_mut().unwrap().active_flight = None;
+                    snapped_to_goal = true;
                 }
             } else if flight.frames_remaining == 1 {
                 // PerformFlight still adds its stored increment on the DONE
@@ -1805,6 +1830,13 @@ impl EngineInner {
                         crate::coordinates::MapPoint::new(flight.goal_x, flight.goal_y),
                         flight.goal_z,
                     );
+                    snapped_to_goal = true;
+                }
+                if flight_capture_before.is_some() {
+                    raw_post = Some((
+                        entity.position_iface().get_position(),
+                        entity.element_data().position_map(),
+                    ));
                 }
                 if flight.antagonist.is_some() {
                     let active = entity
@@ -1869,6 +1901,68 @@ impl EngineInner {
                     // which lives in the actor's wait-time counter.
                     actor.wait_time = u32::from(remaining);
                 }
+                if flight_capture_before.is_some() {
+                    raw_post = Some((
+                        entity.position_iface().get_position(),
+                        entity.element_data().position_map(),
+                    ));
+                }
+            }
+
+            if let Some((
+                entry_position,
+                entry_position_map,
+                old_position,
+                old_position_map,
+                goal,
+                cached_increment,
+                installed_order,
+            )) = flight_capture_before
+            {
+                let (raw_post_position, raw_post_position_map) =
+                    raw_post.unwrap_or((entry_position, entry_position_map));
+                let post_position = entity.position_iface().get_position();
+                let post_position_map = entity.element_data().position_map();
+                let frames_remaining_after = entity
+                    .actor_data()
+                    .and_then(|actor| actor.active_flight)
+                    .map(|active| active.frames_remaining);
+                crate::movement_diagnostics::record_parity_flight_step(
+                    crate::movement_diagnostics::ParityFlightStep {
+                        entity: entity_id.into(),
+                        phase: if selected_owner.is_some() {
+                            "owner".to_owned()
+                        } else {
+                            "terminal_cleanup".to_owned()
+                        },
+                        geometry: format!("{:?}", flight.geometry),
+                        order_id: installed_order.map(|order| order.order_id.get()),
+                        order_type: installed_order.map(|order| format!("{:?}", order.order_type)),
+                        frames_remaining_before: flight.frames_remaining,
+                        frames_remaining_after,
+                        entry_position: entry_position.into(),
+                        entry_position_map: entry_position_map.into(),
+                        old_position: old_position.into(),
+                        old_position_map: old_position_map.into(),
+                        goal: goal.into(),
+                        cached_increment: cached_increment.into(),
+                        applied_increment: if flight.frames_remaining == 0 {
+                            crate::coordinates::WorldVec3D::ZERO.into()
+                        } else {
+                            cached_increment.into()
+                        },
+                        raw_post_position: raw_post_position.into(),
+                        raw_post_position_map: raw_post_position_map.into(),
+                        motion_state: if snapped_to_goal {
+                            "Terminated".to_owned()
+                        } else {
+                            "InProgress".to_owned()
+                        },
+                        post_position: post_position.into(),
+                        post_position_map: post_position_map.into(),
+                        snapped_to_goal,
+                    },
+                );
             }
         }
 
@@ -3167,8 +3261,10 @@ mod tests {
     #[test]
     fn completed_combat_flight_snaps_at_its_owner_boundary() {
         let sim = crate::sim_rng::test_context();
-        let near_goal = MapPoint::new(696.702_45, 2077.693_8);
-        let exact_goal = MapPoint::new(696.702_45, 2077.694_6);
+        let near_x = 696.702_45_f32;
+        let exact_x = f32::from_bits(near_x.to_bits() + 1);
+        let near_goal = MapPoint::new(near_x, 2077.693_8);
+        let exact_goal = MapPoint::new(exact_x, 2077.694_6);
         let mut entity = falling_pushed_soldier(false);
         entity.set_posture(Posture::Lying);
         entity.element_data_mut().set_position_map(near_goal);
@@ -3189,13 +3285,26 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim_id = engine.add_entity(entity);
 
+        crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_push_flight_for_owner(&sim, &LevelAssets::default(), victim_id);
+        let flights = crate::movement_diagnostics::take_parity_flight_capture();
+        let _ = crate::movement_diagnostics::take_parity_movement_capture();
 
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
         assert!(victim.actor_data().unwrap().active_flight.is_none());
+        assert_eq!(flights.len(), 1);
+        let flight = &flights[0];
+        assert_eq!(flight.entity, victim_id);
+        assert_eq!(flight.phase, "owner");
+        assert_eq!(flight.frames_remaining_before, 0);
+        assert_eq!(flight.frames_remaining_after, None);
+        assert_eq!(flight.raw_post_position_map.x.bits, near_x.to_bits());
+        assert_eq!(flight.post_position_map.x.bits, exact_x.to_bits());
+        assert_eq!(flight.goal.x.bits, exact_x.to_bits());
+        assert!(flight.snapped_to_goal);
     }
 
     #[test]
@@ -3208,6 +3317,7 @@ mod tests {
         install_falling_pushed_order(&mut engine, earlier);
         install_falling_pushed_order(&mut engine, later);
 
+        crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_push_flight_for_owner(&sim, &assets, earlier);
 
         assert_eq!(
@@ -3236,6 +3346,20 @@ mod tests {
                 .element_data()
                 .position_map(),
             MapPoint::new(15.0, 20.0)
+        );
+        let flights = crate::movement_diagnostics::take_parity_flight_capture();
+        let _ = crate::movement_diagnostics::take_parity_movement_capture();
+        assert_eq!(flights.len(), 2);
+        assert_eq!(flights[0].entity, earlier);
+        assert_eq!(flights[1].entity, later);
+        assert!(!flights[0].snapped_to_goal);
+        assert_eq!(
+            flights[0].raw_post_position_map.x.bits,
+            flights[0].post_position_map.x.bits
+        );
+        assert!(
+            crate::movement_diagnostics::take_parity_flight_capture().is_empty(),
+            "taking one frame's flight diagnostics must isolate the next frame"
         );
     }
 

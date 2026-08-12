@@ -8,11 +8,12 @@ use std::cell::RefCell;
 
 use serde::Serialize;
 
-use crate::coordinates::{MapBBox, MapPoint, MapVec};
+use crate::coordinates::{MapBBox, MapPoint, MapVec, WorldPoint3D, WorldVec3D};
 use crate::entity_id::EntityId;
 
 thread_local! {
     static CAPTURE: RefCell<Option<Vec<ParityMovementStep>>> = const { RefCell::new(None) };
+    static FLIGHT_CAPTURE: RefCell<Option<Vec<ParityFlightStep>>> = const { RefCell::new(None) };
     static MOVE_BOX_EXTRACTIONS: RefCell<Option<Vec<ParityMoveBoxExtraction>>> = const { RefCell::new(None) };
     static LATE_RETRANSLATIONS: RefCell<Option<Vec<EntityId>>> = const { RefCell::new(None) };
 }
@@ -54,6 +55,33 @@ impl From<MapVec> for ParityPoint {
         Self {
             x: value.x.into(),
             y: value.y.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ParityPoint3 {
+    pub x: ParityFloat,
+    pub y: ParityFloat,
+    pub z: ParityFloat,
+}
+
+impl From<WorldPoint3D> for ParityPoint3 {
+    fn from(value: WorldPoint3D) -> Self {
+        Self {
+            x: value.x.into(),
+            y: value.y.into(),
+            z: value.z.into(),
+        }
+    }
+}
+
+impl From<WorldVec3D> for ParityPoint3 {
+    fn from(value: WorldVec3D) -> Self {
+        Self {
+            x: value.x.into(),
+            y: value.y.into(),
+            z: value.z.into(),
         }
     }
 }
@@ -126,9 +154,35 @@ pub struct ParityMovementStep {
     pub goal_reached_after_commit: bool,
 }
 
+/// Exact state around one Rust analogue of `RHSprite::PerformFlight`.
+#[derive(Clone, Debug, Serialize)]
+pub struct ParityFlightStep {
+    pub entity: EntityId,
+    pub phase: String,
+    pub geometry: String,
+    pub order_id: Option<u32>,
+    pub order_type: Option<String>,
+    pub frames_remaining_before: u16,
+    pub frames_remaining_after: Option<u16>,
+    pub entry_position: ParityPoint3,
+    pub entry_position_map: ParityPoint,
+    pub old_position: ParityPoint3,
+    pub old_position_map: ParityPoint,
+    pub goal: ParityPoint3,
+    pub cached_increment: ParityPoint3,
+    pub applied_increment: ParityPoint3,
+    pub raw_post_position: ParityPoint3,
+    pub raw_post_position_map: ParityPoint,
+    pub motion_state: String,
+    pub post_position: ParityPoint3,
+    pub post_position_map: ParityPoint,
+    pub snapped_to_goal: bool,
+}
+
 /// Start capturing movement commits on the current thread.
 pub fn begin_parity_movement_capture() {
     CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    FLIGHT_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
     MOVE_BOX_EXTRACTIONS.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
     LATE_RETRANSLATIONS.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
 }
@@ -164,9 +218,21 @@ pub fn record_parity_movement_step(step: ParityMovementStep) {
     });
 }
 
+pub fn record_parity_flight_step(step: ParityFlightStep) {
+    FLIGHT_CAPTURE.with(|capture| {
+        if let Some(steps) = capture.borrow_mut().as_mut() {
+            steps.push(step);
+        }
+    });
+}
+
 /// Finish and return the current thread's movement capture.
 pub fn take_parity_movement_capture() -> Vec<ParityMovementStep> {
     CAPTURE.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+}
+
+pub fn take_parity_flight_capture() -> Vec<ParityFlightStep> {
+    FLIGHT_CAPTURE.with(|capture| capture.borrow_mut().take().unwrap_or_default())
 }
 
 pub fn take_parity_move_box_extractions() -> Vec<ParityMoveBoxExtraction> {

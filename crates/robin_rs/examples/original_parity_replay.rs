@@ -1507,6 +1507,29 @@ struct TraceMovementStep {
     snapped_to_goal: bool,
 }
 
+/// One exact, ordered Original `RHSprite::PerformFlight` execution.
+#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceFlightStep {
+    entity: TraceEntityId,
+    order_id: u32,
+    order_action: u32,
+    animation: u32,
+    flight_style: u32,
+    entry_position: TracePoint3,
+    entry_position_map: TracePoint,
+    old_position: TracePoint3,
+    old_position_map: TracePoint,
+    goal: TracePoint3,
+    cached_increment: TracePoint3,
+    applied_increment: TracePoint3,
+    raw_post_position: TracePoint3,
+    raw_post_position_map: TracePoint,
+    motion_state: u32,
+    post_position: TracePoint3,
+    post_position_map: TracePoint,
+    snapped_to_goal: bool,
+}
+
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceFrame {
@@ -1531,6 +1554,8 @@ struct TraceFrame {
     resolved_exclamations: Vec<TraceResolvedExclamation>,
     #[serde(default)]
     movement_steps: Vec<TraceMovementStep>,
+    #[serde(default)]
+    flight_steps: Vec<TraceFlightStep>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1642,8 +1667,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 56;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v56.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 57;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v57.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -1708,6 +1733,8 @@ struct RollingDumpFrame {
     rust_visibility_queries: Vec<robin_engine::sight_obstacle::ParityVisibilityQuery>,
     original_movement_steps: Vec<TraceMovementStep>,
     rust_movement_steps: Vec<robin_engine::movement_diagnostics::ParityMovementStep>,
+    original_flight_steps: Vec<TraceFlightStep>,
+    rust_flight_steps: Vec<robin_engine::movement_diagnostics::ParityFlightStep>,
     rust_move_box_extractions: Vec<robin_engine::movement_diagnostics::ParityMoveBoxExtraction>,
     rng_start: usize,
     expected_rng_end: usize,
@@ -2495,6 +2522,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         robin_engine::sight_obstacle::begin_parity_visibility_capture();
         let actual_movement_steps =
             robin_engine::movement_diagnostics::take_parity_movement_capture();
+        let actual_flight_steps = robin_engine::movement_diagnostics::take_parity_flight_capture();
         let actual_move_box_extractions =
             robin_engine::movement_diagnostics::take_parity_move_box_extractions();
         let late_movement_retranslations =
@@ -2658,6 +2686,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &actual_visibility_queries,
                 &frame.movement_steps,
                 &actual_movement_steps,
+                &frame.flight_steps,
+                &actual_flight_steps,
                 &actual_move_box_extractions,
                 &differences,
             );
@@ -2679,6 +2709,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     rust_visibility_queries: actual_visibility_queries.clone(),
                     original_movement_steps: frame.movement_steps.clone(),
                     rust_movement_steps: actual_movement_steps.clone(),
+                    original_flight_steps: frame.flight_steps.clone(),
+                    rust_flight_steps: actual_flight_steps.clone(),
                     rust_move_box_extractions: actual_move_box_extractions.clone(),
                     rng_start,
                     expected_rng_end: rng_end,
@@ -3169,6 +3201,8 @@ fn write_engine_dump_frame(
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
     original_movement_steps: &[TraceMovementStep],
     rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
+    original_flight_steps: &[TraceFlightStep],
+    rust_flight_steps: &[robin_engine::movement_diagnostics::ParityFlightStep],
     rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     differences: &[String],
 ) {
@@ -3204,6 +3238,8 @@ fn write_engine_dump_frame(
         rust_visibility_queries,
         original_movement_steps,
         rust_movement_steps,
+        original_flight_steps,
+        rust_flight_steps,
         rust_move_box_extractions,
         resolved_commands,
         rng_start,
@@ -3232,6 +3268,8 @@ fn write_engine_dump_snapshot_frame(
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
     original_movement_steps: &[TraceMovementStep],
     rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
+    original_flight_steps: &[TraceFlightStep],
+    rust_flight_steps: &[robin_engine::movement_diagnostics::ParityFlightStep],
     rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     resolved_commands: serde_json::Value,
     rng_start: usize,
@@ -3291,6 +3329,8 @@ fn write_engine_dump_snapshot_frame(
         },
         "original_movement_steps": original_movement_steps,
         "rust_movement_steps": rust_movement_steps,
+        "original_flight_steps": original_flight_steps,
+        "rust_flight_steps": rust_flight_steps,
         "rust_move_box_extractions": rust_move_box_extractions,
         "rng": {
             "cursor_before": rng_start,
@@ -3392,6 +3432,8 @@ fn write_automatic_rolling_dump(
             &frame.rust_visibility_queries,
             &frame.original_movement_steps,
             &frame.rust_movement_steps,
+            &frame.original_flight_steps,
+            &frame.rust_flight_steps,
             &frame.rust_move_box_extractions,
             frame.resolved_commands.clone(),
             frame.rng_start,
@@ -6744,9 +6786,10 @@ mod tests {
     }
 
     #[test]
-    fn movement_steps_default_old_frames_and_preserve_exact_operands() {
+    fn movement_and_flight_steps_default_old_frames_and_preserve_exact_operands() {
         let old: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
         assert!(old.movement_steps.is_empty());
+        assert!(old.flight_steps.is_empty());
 
         let mut instrumented = minimal_frame_json();
         instrumented["movement_steps"] = serde_json::json!([{
@@ -6795,6 +6838,26 @@ mod tests {
             "goal_reached": true,
             "snapped_to_goal": true
         }]);
+        instrumented["flight_steps"] = serde_json::json!([{
+            "entity": { "kind": "soldier", "index": 102 },
+            "order_id": 1056453,
+            "order_action": 303,
+            "animation": 17,
+            "flight_style": 0,
+            "entry_position": { "x": { "bits": 0x4448_4eb2_u32 }, "y": { "bits": 0x4505_7800_u32 }, "z": { "bits": 0_u32 } },
+            "entry_position_map": { "x": { "bits": 0x4448_4eb2_u32 }, "y": { "bits": 0x4505_7800_u32 } },
+            "old_position": { "x": { "bits": 0x4448_4eb2_u32 }, "y": { "bits": 0x4505_7800_u32 }, "z": { "bits": 0_u32 } },
+            "old_position_map": { "x": { "bits": 0x4448_4eb2_u32 }, "y": { "bits": 0x4505_7800_u32 } },
+            "goal": { "x": { "bits": 0x4448_4eb3_u32 }, "y": { "bits": 0x4505_7804_u32 }, "z": { "bits": 0_u32 } },
+            "cached_increment": { "x": { "bits": 0_u32 }, "y": { "bits": 0_u32 }, "z": { "bits": 0_u32 } },
+            "applied_increment": { "x": { "bits": 0_u32 }, "y": { "bits": 0_u32 }, "z": { "bits": 0_u32 } },
+            "raw_post_position": { "x": { "bits": 0x4448_4eb2_u32 }, "y": { "bits": 0x4505_7800_u32 }, "z": { "bits": 0_u32 } },
+            "raw_post_position_map": { "x": { "bits": 0x4448_4eb2_u32 }, "y": { "bits": 0x4505_7800_u32 } },
+            "motion_state": 3,
+            "post_position": { "x": { "bits": 0x4448_4eb3_u32 }, "y": { "bits": 0x4505_7804_u32 }, "z": { "bits": 0_u32 } },
+            "post_position_map": { "x": { "bits": 0x4448_4eb3_u32 }, "y": { "bits": 0x4505_7804_u32 } },
+            "snapped_to_goal": true
+        }]);
         let parsed: TraceFrame = serde_json::from_value(instrumented).unwrap();
         let step = parsed
             .movement_steps
@@ -6809,18 +6872,32 @@ mod tests {
         assert_eq!(step.committed_delta.y.bits, 0x3f00_000f);
         assert!(step.goal_reached);
         assert!(step.snapped_to_goal);
+        let flight = parsed
+            .flight_steps
+            .first()
+            .expect("instrumented frame retains its flight step");
+        assert_eq!(flight.entity.index, 102);
+        assert_eq!(flight.raw_post_position_map.x.bits, 0x4448_4eb2);
+        assert_eq!(flight.post_position_map.x.bits, 0x4448_4eb3);
+        assert!(flight.snapped_to_goal);
 
         let encoded = bincode::encode_to_vec(&parsed, bincode::config::standard())
-            .expect("encode instrumented frame with cache-v56 layout");
+            .expect("encode instrumented frame with cache-v57 layout");
         let (roundtrip, consumed): (TraceFrame, usize) =
             bincode::decode_from_slice(&encoded, bincode::config::standard())
-                .expect("decode instrumented frame with cache-v56 layout");
+                .expect("decode instrumented frame with cache-v57 layout");
         assert_eq!(consumed, encoded.len());
         assert_eq!(roundtrip.movement_steps.len(), 1);
         assert_eq!(roundtrip.movement_steps[0].entity.index, 344);
         assert_eq!(
             roundtrip.movement_steps[0].raw_committed_delta.x.bits,
             0x3f00_0010
+        );
+        assert_eq!(roundtrip.flight_steps.len(), 1);
+        assert_eq!(roundtrip.flight_steps[0].entity.index, 102);
+        assert_eq!(
+            roundtrip.flight_steps[0].post_position_map.x.bits,
+            0x4448_4eb3
         );
     }
 
