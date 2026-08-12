@@ -9617,12 +9617,27 @@ impl EngineInner {
         // humans with a live carrier; wall/ladder climbers and actors
         // carrying somebody else remain eligible.
         let old_pos = elem.position_map();
+        // Actor::Hourglass snapshots mpPosition before Execute and uses that
+        // outer position for CheckForLineCrossing after Execute returns.
+        // RunningStairs performs two literal motion commits inside Execute;
+        // by this point `old_pos` is already the post-first-commit position.
+        // Retain the outer snapshot so a bond crossed only by the first
+        // substep is not lost.
+        let crossing_old_pos = if first_fast_commit.is_some() {
+            fast_motion_outer_pre
+        } else {
+            old_pos
+        };
         let entity_layer = elem.layer();
         let entity_posture = elem.posture;
         let eligible_for_crossing = actor_line_crossing_eligible(
             entity_posture,
             human_is_carried,
-            self.world.fast_grid.level.map_bbox.contains_point(old_pos),
+            self.world
+                .fast_grid
+                .level
+                .map_bbox
+                .contains_point(crossing_old_pos),
         );
 
         // Seek-arrival predicate:
@@ -9820,10 +9835,12 @@ impl EngineInner {
                         if eligible_for_crossing {
                             deferred
                                 .line_cross_checks
-                                .push((eid, old_pos, entity_layer));
-                            deferred
-                                .non_elevation_cross_checks
-                                .push((eid, old_pos, entity_layer));
+                                .push((eid, crossing_old_pos, entity_layer));
+                            deferred.non_elevation_cross_checks.push((
+                                eid,
+                                crossing_old_pos,
+                                entity_layer,
+                            ));
                         }
                         deferred
                             .transition_seek_refreshes
@@ -10370,8 +10387,8 @@ impl EngineInner {
             posture = ?entity_posture,
             human_is_carried,
             layer = entity_layer,
-            old_x = old_pos.x,
-            old_y = old_pos.y,
+            old_x = crossing_old_pos.x,
+            old_y = crossing_old_pos.y,
             new_x = new_pos.x,
             new_y = new_pos.y,
             "considered queuing elevation crossing"
@@ -10379,10 +10396,10 @@ impl EngineInner {
         if eligible_for_crossing {
             deferred
                 .line_cross_checks
-                .push((entity_id, old_pos, entity_layer));
+                .push((entity_id, crossing_old_pos, entity_layer));
             deferred
                 .non_elevation_cross_checks
-                .push((entity_id, old_pos, entity_layer));
+                .push((entity_id, crossing_old_pos, entity_layer));
         }
         // Order pops are drained after all actors so the current order is
         // still physically at the front here. Treat an already-queued
@@ -15944,6 +15961,213 @@ mod line_jump_tests {
         );
         assert_eq!(snapshot.repulsive_lines[0].a, line_a + committed);
         assert_eq!(snapshot.repulsive_lines[0].b, line_b + committed);
+    }
+
+    fn run_running_stairs_outer_crossing_fixture(
+        crosses_first_substep: bool,
+    ) -> (
+        EngineInner,
+        EntityId,
+        crate::movement_diagnostics::ParityMovementStep,
+        crate::fast_find_grid::LineIndex,
+    ) {
+        use crate::element::{
+            ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
+        };
+        use crate::fast_find_grid::GridLine;
+        use crate::order::Order;
+        use crate::sequence::SequenceElement;
+        use crate::sight_obstacle::SightObstacle;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(30, 30);
+        engine.world.fast_grid_mut().allocate_layers(1);
+
+        let start = MapPoint::new(697.1148681640625, 1420.9931640625);
+        let goal = MapPoint::new(696.0, 1423.0);
+        let physical = OrderType::WalkingStairs;
+        let script = SpriteScript {
+            action_id: physical as u16,
+            action_done: 7,
+            average_speed: 5.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 40,
+            frame_ids: vec![1; 8],
+            delays: vec![0; 8],
+            distances: vec![5; 8],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
+            sound_ids: vec![0; 8],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[physical as usize] = 0;
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        pc.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        pc.element_data_mut().set_position_map(start);
+        pc.element_data_mut().set_direction_instantly(11);
+        pc.position_iface_mut().set_anti_collision_on(false);
+        let owner = engine.add_entity(pc);
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningStairs,
+        );
+        movement
+            .orders
+            .push_back(Order::test_new(OrderType::RunningStairs, goal.x, goal.y));
+        movement.orders.push_back(Order::test_new(
+            OrderType::RunningStairs,
+            goal.x - 20.0,
+            goal.y + 20.0,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        // A short perpendicular bond through the midpoint is crossed only
+        // by the first start->goal substep. The control translates that
+        // bond away from the complete outer movement segment.
+        let midpoint = MapPoint::new((start.x + goal.x) * 0.5, (start.y + goal.y) * 0.5);
+        let travel = goal - start;
+        let offset_x = if crosses_first_substep { 0.0 } else { 30.0 };
+        let line_center = MapPoint::new(midpoint.x + offset_x, midpoint.y);
+        let line_a = MapPoint::new(
+            line_center.x - travel.y * 2.0,
+            line_center.y + travel.x * 2.0,
+        );
+        let line_b = MapPoint::new(
+            line_center.x + travel.y * 2.0,
+            line_center.y - travel.x * 2.0,
+        );
+        let line_index = engine
+            .world
+            .fast_grid_mut()
+            .add_line(GridLine::new_elevation(line_a, line_b, None, Some(0)), 0);
+
+        let mut ramp = SightObstacle::new_default(1);
+        // z = 0.5*x - 340: a real sloped plane whose 3D movement vector
+        // changes the facing selected by ComputeIncrementAll.
+        ramp.top_plane_points = [
+            [690.0, 1400.0, 5.0],
+            [710.0, 1400.0, 15.0],
+            [690.0, 1450.0, 5.0],
+        ];
+        let mut assets = LevelAssets::new();
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![ramp]);
+        engine.world.static_sight_obstacle_active = vec![true];
+
+        crate::movement_diagnostics::begin_parity_movement_capture();
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+        let capture = crate::movement_diagnostics::take_parity_movement_capture()
+            .into_iter()
+            .find(|capture| capture.entity == owner)
+            .expect("running-stairs owner must emit a production movement capture");
+        (engine, owner, capture, line_index)
+    }
+
+    #[test]
+    fn running_stairs_crossing_uses_outer_pre_position() {
+        let (engine, owner, capture, line_index) = run_running_stairs_outer_crossing_fixture(true);
+        assert_eq!(capture.split_calls.len(), 2);
+        let outer_pre = MapPoint::new(
+            capture.split_calls[0].pre_position.x.value,
+            capture.split_calls[0].pre_position.y.value,
+        );
+        let first_post = MapPoint::new(
+            capture.split_calls[0].post_position.x.value,
+            capture.split_calls[0].post_position.y.value,
+        );
+        let second_post = MapPoint::new(
+            capture.split_calls[1].post_position.x.value,
+            capture.split_calls[1].post_position.y.value,
+        );
+        assert_eq!(
+            engine
+                .world
+                .fast_grid
+                .get_crossing_elevation_line_indices(0, outer_pre, first_post),
+            vec![line_index],
+            "the bond must be crossed by the first literal PerformMotion commit"
+        );
+        assert!(
+            engine
+                .world
+                .fast_grid
+                .get_crossing_elevation_line_indices(0, first_post, second_post)
+                .is_empty(),
+            "the post-first position used by the old Rust code must miss the bond"
+        );
+
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(
+            entity.element_data().obstacle_index().map(u16::from),
+            Some(0)
+        );
+        let pi = entity.position_iface();
+        assert!(
+            pi.get_position().z > 0.0,
+            "crossing must project onto the ramp"
+        );
+        assert_ne!(
+            pi.get_increment().z,
+            0.0,
+            "the ramp must rebuild the 3D increment"
+        );
+        assert_eq!(
+            pi.get_direction_goal(),
+            crate::position_interface::vector_to_direction(
+                pi.get_increment().x,
+                pi.get_increment().y,
+            ),
+            "the post-crossing ComputeIncrementAll must refresh direction_goal"
+        );
+    }
+
+    #[test]
+    fn running_stairs_without_outer_crossing_keeps_ground_plane() {
+        let (engine, owner, capture, line_index) = run_running_stairs_outer_crossing_fixture(false);
+        let outer_pre = MapPoint::new(
+            capture.split_calls[0].pre_position.x.value,
+            capture.split_calls[0].pre_position.y.value,
+        );
+        let second_post = MapPoint::new(
+            capture.split_calls[1].post_position.x.value,
+            capture.split_calls[1].post_position.y.value,
+        );
+        assert!(
+            engine
+                .world
+                .fast_grid
+                .get_crossing_elevation_line_indices(0, outer_pre, second_post)
+                .is_empty()
+        );
+        assert!(engine.world.fast_grid.level.lines[usize::from(line_index)].is_elevation);
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(entity.element_data().obstacle_index(), None);
+        assert_eq!(entity.position_iface().get_position().z, 0.0);
     }
 
     #[test]
