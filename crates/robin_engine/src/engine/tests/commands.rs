@@ -1020,6 +1020,185 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
 }
 
 #[test]
+fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execute() {
+    use crate::coordinates::{SpriteFrameOffset, WorldPoint3D};
+    use crate::element::{ActorSoldier, Command, ElementData, ElementKind, Entity, Posture};
+    use crate::element_kinds::ActionState;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    fn run_case(
+        current_priority: SequencePriority,
+    ) -> (
+        EngineInner,
+        crate::element::EntityId,
+        crate::sequence::SequenceId,
+    ) {
+        let mut engine = EngineInner::new();
+        let assets = swordfight_test_assets();
+        let make_fighter = |x| {
+            let mut element = ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            };
+            element.set_position(WorldPoint3D {
+                x,
+                y: 100.0,
+                z: 0.0,
+            });
+            element.set_sector(crate::position_interface::SectorHandle::new(0));
+            Entity::Soldier(ActorSoldier {
+                element,
+                actor: Default::default(),
+                human: Default::default(),
+                npc: Default::default(),
+                soldier: Default::default(),
+            })
+        };
+        let attacker = engine.add_entity(make_fighter(100.0));
+        let defender = engine.add_entity(make_fighter(130.0));
+        for (fighter, opponent) in [(attacker, defender), (defender, attacker)] {
+            let entity = engine.get_entity_mut(fighter).expect("fighter exists");
+            entity
+                .actor_data_mut()
+                .expect("fighter is an actor")
+                .action_state = ActionState::WaitingSword;
+            entity
+                .human_data_mut()
+                .expect("fighter is human")
+                .opponents
+                .push(opponent);
+        }
+        {
+            let human = engine
+                .get_entity_mut(attacker)
+                .and_then(Entity::human_data_mut)
+                .expect("attacker is human");
+            human.smalltalk_initiative = true;
+            human.received_smalltalk_initiative = true;
+        }
+
+        let waiting = OrderType::WaitingSword;
+        let script = SpriteScript {
+            action_id: waiting as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![4, 4],
+            distances: vec![0, 0],
+            offsets: vec![SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0, 0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[waiting as usize] = 0;
+        engine
+            .get_entity_mut(attacker)
+            .expect("attacker exists")
+            .element_data_mut()
+            .sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+
+        let order_id = engine.orders.allocate_order_id();
+        let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(attacker));
+        wait.priority = current_priority;
+        wait.posture_after_transition = Posture::Upright;
+        wait.action_state_after_transition = ActionState::WaitingSword;
+        wait.orders
+            .push_back(Order::new(waiting, 0.0, 0.0, order_id));
+        let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(wait_sequence, 0);
+        engine.publish_selected_order_as_installed(attacker);
+
+        let sim = crate::sim_rng::test_context();
+        let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, attacker);
+        let executed = executed.expect("the selected WaitingSword order must execute");
+        assert_eq!(executed.order_type, waiting);
+        engine.tick_waiting_sword_execute_for(&sim, &assets, attacker);
+
+        let strikes_before_manager: Vec<_> = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter(|element| {
+                matches!(
+                    element.command,
+                    Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
+                )
+            })
+            .map(|element| element.state)
+            .collect();
+        assert_eq!(
+            strikes_before_manager,
+            vec![SequenceState::Todo],
+            "EvaluateSwordfight must register, not eagerly instruct, its smalltalk strike"
+        );
+
+        engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+        (engine, attacker, wait_sequence)
+    }
+
+    let (engine, attacker, wait_sequence) = run_case(SequencePriority::Wait);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(wait_sequence, 0)
+            .expect("interrupted Wait remains inspectable")
+            .state,
+        SequenceState::Interrupted
+    );
+    let (strike_sequence, strike_index) = engine
+        .orders
+        .sequence_manager
+        .current_element_for_actor(attacker)
+        .expect("smalltalk strike must own the actor after the manager drain");
+    let strike = engine
+        .orders
+        .sequence_manager
+        .get_element(strike_sequence, strike_index)
+        .expect("current strike exists");
+    assert!(matches!(
+        strike.command,
+        Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
+    ));
+    assert_eq!(strike.state, SequenceState::InProgress);
+    assert!(matches!(
+        strike.current_order().map(|order| order.order_type),
+        Some(OrderType::StrikingLeftSmalltalk | OrderType::StrikingRightSmalltalk)
+    ));
+
+    let (engine, attacker, wait_sequence) = run_case(SequencePriority::Normal);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(attacker),
+        Some((wait_sequence, 0)),
+        "a Wait-priority smalltalk strike must not displace a Normal-priority owner"
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(attacker, |command| matches!(
+                command,
+                Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
+            )),
+        "the abandoned control strike must not remain live"
+    );
+}
+
+#[test]
 fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
     use crate::coordinates::WorldPoint3D;
     use crate::element::{ActorSoldier, Command, ElementData, ElementKind, Entity, Posture};
