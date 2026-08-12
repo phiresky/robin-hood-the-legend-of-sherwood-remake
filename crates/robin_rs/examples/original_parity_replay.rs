@@ -1480,6 +1480,33 @@ struct TraceResolvedExclamation {
     duration_frames: u32,
 }
 
+/// One exact, ordered Original `RHSprite::PerformMotion` position commit.
+/// This additive diagnostic is absent unless the Original recorder was run
+/// with `RH_PARITY_MOVEMENT_STEPS` enabled.
+#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceMovementStep {
+    entity: TraceEntityId,
+    order_id: u32,
+    order_action: u32,
+    animation: u32,
+    motion_method: u32,
+    pre_position: TracePoint,
+    old_position: TracePoint,
+    goal: TracePoint,
+    cached_increment: TracePoint,
+    frame_distance_raw: TraceFloat,
+    speed_factor: TraceFloat,
+    effective_distance: TraceFloat,
+    anti_collision: bool,
+    reverse: bool,
+    raw_post_position: TracePoint,
+    raw_committed_delta: TracePoint,
+    post_position: TracePoint,
+    committed_delta: TracePoint,
+    goal_reached: bool,
+    snapped_to_goal: bool,
+}
+
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceFrame {
@@ -1502,6 +1529,8 @@ struct TraceFrame {
     motion_line_changes: Vec<TraceMotionLineChange>,
     path_events: Vec<TracePathEvent>,
     resolved_exclamations: Vec<TraceResolvedExclamation>,
+    #[serde(default)]
+    movement_steps: Vec<TraceMovementStep>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1613,8 +1642,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 55;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v55.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 56;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v56.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -1677,6 +1706,7 @@ struct RollingDumpFrame {
     rust_path_events: Vec<robin_engine::pathfinder::ParityPathEvent>,
     original_visibility_queries: Vec<TraceVisibilityQuery>,
     rust_visibility_queries: Vec<robin_engine::sight_obstacle::ParityVisibilityQuery>,
+    original_movement_steps: Vec<TraceMovementStep>,
     rust_movement_steps: Vec<robin_engine::movement_diagnostics::ParityMovementStep>,
     rust_move_box_extractions: Vec<robin_engine::movement_diagnostics::ParityMoveBoxExtraction>,
     rng_start: usize,
@@ -2626,6 +2656,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &rust_rng_diagnostics,
                 &actual_path_events,
                 &actual_visibility_queries,
+                &frame.movement_steps,
                 &actual_movement_steps,
                 &actual_move_box_extractions,
                 &differences,
@@ -2646,6 +2677,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     rust_path_events: actual_path_events.clone(),
                     original_visibility_queries: frame.visibility_queries.clone(),
                     rust_visibility_queries: actual_visibility_queries.clone(),
+                    original_movement_steps: frame.movement_steps.clone(),
                     rust_movement_steps: actual_movement_steps.clone(),
                     rust_move_box_extractions: actual_move_box_extractions.clone(),
                     rng_start,
@@ -3135,6 +3167,7 @@ fn write_engine_dump_frame(
     rust_rng_diagnostics: &robin_engine::sim_rng::OriginalRngDiagnostics,
     rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
+    original_movement_steps: &[TraceMovementStep],
     rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
     rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     differences: &[String],
@@ -3169,6 +3202,7 @@ fn write_engine_dump_frame(
         rust_path_events,
         &frame.visibility_queries,
         rust_visibility_queries,
+        original_movement_steps,
         rust_movement_steps,
         rust_move_box_extractions,
         resolved_commands,
@@ -3196,6 +3230,7 @@ fn write_engine_dump_snapshot_frame(
     rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
     original_visibility_queries: &[TraceVisibilityQuery],
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
+    original_movement_steps: &[TraceMovementStep],
     rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
     rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     resolved_commands: serde_json::Value,
@@ -3254,6 +3289,7 @@ fn write_engine_dump_snapshot_frame(
             "original": original_visibility_queries,
             "rust": rust_visibility_queries,
         },
+        "original_movement_steps": original_movement_steps,
         "rust_movement_steps": rust_movement_steps,
         "rust_move_box_extractions": rust_move_box_extractions,
         "rng": {
@@ -3354,6 +3390,7 @@ fn write_automatic_rolling_dump(
             &frame.rust_path_events,
             &frame.original_visibility_queries,
             &frame.rust_visibility_queries,
+            &frame.original_movement_steps,
             &frame.rust_movement_steps,
             &frame.rust_move_box_extractions,
             frame.resolved_commands.clone(),
@@ -6703,6 +6740,87 @@ mod tests {
         assert!(
             TRACE_CACHE_SUFFIX.contains(&format!("-v{TRACE_CACHE_VERSION}.")),
             "native parity-cache suffix {TRACE_CACHE_SUFFIX:?} does not identify header version {TRACE_CACHE_VERSION}"
+        );
+    }
+
+    #[test]
+    fn movement_steps_default_old_frames_and_preserve_exact_operands() {
+        let old: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
+        assert!(old.movement_steps.is_empty());
+
+        let mut instrumented = minimal_frame_json();
+        instrumented["movement_steps"] = serde_json::json!([{
+            "entity": { "kind": "pc", "index": 344 },
+            "order_id": 91,
+            "order_action": 303,
+            "animation": 17,
+            "motion_method": 2,
+            "pre_position": {
+                "x": { "bits": 0x44a1_0001_u32 },
+                "y": { "bits": 0x4480_0002_u32 }
+            },
+            "old_position": {
+                "x": { "bits": 0x44a0_0003_u32 },
+                "y": { "bits": 0x447f_0004_u32 }
+            },
+            "goal": {
+                "x": { "bits": 0x44b0_0005_u32 },
+                "y": { "bits": 0x4490_0006_u32 }
+            },
+            "cached_increment": {
+                "x": { "bits": 0x3f00_0007_u32 },
+                "y": { "bits": 0x3f40_0008_u32 }
+            },
+            "frame_distance_raw": { "bits": 0x4000_0009_u32 },
+            "speed_factor": { "bits": 0x3f80_000a_u32 },
+            "effective_distance": { "bits": 0x4000_000b_u32 },
+            "anti_collision": true,
+            "reverse": false,
+            "raw_post_position": {
+                "x": { "bits": 0x44a1_800c_u32 },
+                "y": { "bits": 0x4480_800d_u32 }
+            },
+            "raw_committed_delta": {
+                "x": { "bits": 0x3f00_0010_u32 },
+                "y": { "bits": 0x3e80_0011_u32 }
+            },
+            "post_position": {
+                "x": { "bits": 0x44a2_000c_u32 },
+                "y": { "bits": 0x4481_000d_u32 }
+            },
+            "committed_delta": {
+                "x": { "bits": 0x3f80_000e_u32 },
+                "y": { "bits": 0x3f00_000f_u32 }
+            },
+            "goal_reached": true,
+            "snapped_to_goal": true
+        }]);
+        let parsed: TraceFrame = serde_json::from_value(instrumented).unwrap();
+        let step = parsed
+            .movement_steps
+            .first()
+            .expect("instrumented frame retains its movement step");
+        assert_eq!(step.entity.index, 344);
+        assert_eq!(step.order_id, 91);
+        assert_eq!(step.pre_position.x.bits, 0x44a1_0001);
+        assert_eq!(step.cached_increment.y.bits, 0x3f40_0008);
+        assert_eq!(step.effective_distance.bits, 0x4000_000b);
+        assert_eq!(step.raw_post_position.x.bits, 0x44a1_800c);
+        assert_eq!(step.committed_delta.y.bits, 0x3f00_000f);
+        assert!(step.goal_reached);
+        assert!(step.snapped_to_goal);
+
+        let encoded = bincode::encode_to_vec(&parsed, bincode::config::standard())
+            .expect("encode instrumented frame with cache-v56 layout");
+        let (roundtrip, consumed): (TraceFrame, usize) =
+            bincode::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("decode instrumented frame with cache-v56 layout");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(roundtrip.movement_steps.len(), 1);
+        assert_eq!(roundtrip.movement_steps[0].entity.index, 344);
+        assert_eq!(
+            roundtrip.movement_steps[0].raw_committed_delta.x.bits,
+            0x3f00_0010
         );
     }
 
