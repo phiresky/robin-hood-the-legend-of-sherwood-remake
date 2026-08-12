@@ -191,6 +191,49 @@ impl EngineInner {
             return OwnerActionBarrier::Skip;
         };
 
+        // The one SEEK exception to MOVE fallthrough is a self target.
+        // Original terminates it and launches its post-seek sequence before
+        // reaching the RHCOMMAND_MOVE source-extraction arm
+        // (`RHelementactor.cpp:3050-3075`).
+        if command == Command::Seek && target_element == Some(owner) {
+            let post_seek = self
+                .orders
+                .sequence_manager
+                .get_element_mut(sequence_id, element_index)
+                .and_then(|element| match &mut element.data {
+                    crate::sequence::SequenceElementData::Movement {
+                        post_seek_sequence, ..
+                    } => post_seek_sequence.take(),
+                    _ => None,
+                });
+            if let Some(post_seek) = post_seek
+                && let Some(actor) = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(|entity| entity.actor_data_mut())
+            {
+                actor.post_seek_sequence = Some(post_seek);
+            }
+            self.orders
+                .sequence_manager
+                .element_terminated(sequence_id, element_index);
+            self.start_post_seek_sequence(owner, None);
+            return OwnerActionBarrier::Skip;
+        }
+
+        // Original `RHElementActor::InstructOwner` lets SEEK fall through the
+        // RHCOMMAND_MOVE arm's source extraction before any Seek-specific
+        // handling (`RHelementactor.cpp:3078-3096`).  In particular this must
+        // precede RefreshSeek/cross-sector lowering: that lowering can consume
+        // the wrapper without ever reaching ordinary path dispatch.
+        if !self.extract_move_instruction_owner(owner) {
+            self.orders
+                .sequence_manager
+                .element_impossible(sequence_id, element_index);
+            return OwnerActionBarrier::Skip;
+        }
+
         let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
             entity.is_pc()
                 && entity.element_data().posture == crate::element_kinds::Posture::AnonymousArcher
@@ -246,13 +289,6 @@ impl EngineInner {
 
             match target_element {
                 Some(target) => {
-                    if target == owner {
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(sequence_id, element_index);
-                        self.start_post_seek_sequence(owner, None);
-                        return OwnerActionBarrier::Skip;
-                    }
                     // Translate(SEEK) initializes these actor fields before
                     // entering RefreshSeek. RefreshSeek can deliberately
                     // return without building orders while the target passes

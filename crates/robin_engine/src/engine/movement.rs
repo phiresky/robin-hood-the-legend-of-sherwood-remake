@@ -11149,6 +11149,113 @@ impl EngineInner {
         }
     }
 
+    /// Apply the source-position extraction performed at the start of
+    /// `RHElementActor::InstructOwner(RHCOMMAND_MOVE)`.
+    ///
+    /// `RHCOMMAND_SEEK` falls through that same arm in the Original, so this
+    /// must run before RefreshSeek resolves an entity target or constructs a
+    /// cross-sector route.  Keeping it at the later path-dispatch boundary
+    /// skips the correction whenever Seek is consumed while building its
+    /// replacement sequence.
+    pub(super) fn extract_move_instruction_owner(&mut self, owner: EntityId) -> bool {
+        let (entity_layer, pf_idx, move_box_map) = {
+            let Some(entity) = self.world.entities.get(owner) else {
+                return false;
+            };
+            let pi = entity.position_iface();
+            let pf_idx = {
+                let index = pi.get_pathfinder_index();
+                if index == u16::MAX { 0 } else { index }
+            };
+            (
+                entity.element_data().layer(),
+                pf_idx,
+                *pi.get_move_box_map(),
+            )
+        };
+
+        if self
+            .world
+            .fast_grid
+            .is_position_authorized(&move_box_map, entity_layer)
+        {
+            return true;
+        }
+
+        let capture_extraction = crate::movement_diagnostics::parity_movement_capture_active();
+        let original_box = move_box_map;
+        let mut box_element = Self::expand_move_box_for_command_extraction(move_box_map);
+        let expanded_box = box_element;
+        let expanded_motion_lines = capture_extraction
+            .then(|| {
+                self.world
+                    .fast_grid
+                    .get_active_motion_line_indices(entity_layer, &expanded_box)
+                    .into_iter()
+                    .map(|index| usize::from(index) as u32)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let authorized = self
+            .world
+            .fast_grid
+            .find_authorized_position(&mut box_element, entity_layer);
+        let authorized_box = box_element;
+        let authorized_motion_lines = capture_extraction
+            .then(|| {
+                self.world
+                    .fast_grid
+                    .get_active_motion_line_indices(entity_layer, &authorized_box)
+                    .into_iter()
+                    .map(|index| usize::from(index) as u32)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let center = authorized.then(|| authorized_box.center());
+        if let Some(center) = center {
+            let source = MapPoint::new(center.x, center.y);
+            let entity = self.get_entity_mut(owner).unwrap_or_else(|| {
+                panic!("RHCOMMAND_MOVE extraction owner {owner:?} disappeared after lookup")
+            });
+            entity.position_iface_mut().set_map_position(source);
+            let elem = entity.element_data_mut();
+            elem.set_position_map(source);
+            elem.update_grid_cell();
+        }
+        let corrected_position = authorized.then(|| {
+            self.get_entity(owner)
+                .unwrap_or_else(|| {
+                    panic!("RHCOMMAND_MOVE extraction owner {owner:?} disappeared after correction")
+                })
+                .element_data()
+                .position_map()
+        });
+        let sector = self
+            .get_entity(owner)
+            .and_then(|entity| entity.element_data().sector())
+            .map(u16::from);
+        if capture_extraction {
+            crate::movement_diagnostics::record_parity_move_box_extraction(
+                crate::movement_diagnostics::ParityMoveBoxExtraction {
+                    entity: owner,
+                    layer: entity_layer,
+                    sector,
+                    pathfinder_area: pf_idx,
+                    original_box: original_box.into(),
+                    expanded_box: expanded_box.into(),
+                    expanded_motion_lines,
+                    authorized,
+                    authorized_box: authorized_box.into(),
+                    authorized_motion_lines,
+                    authorized_center: center.map(Into::into),
+                    corrected_position: corrected_position.map(Into::into),
+                },
+            );
+        }
+
+        true
+    }
+
     /// Swap an actor's sight-obstacle pointer to the opposite side of
     /// an elevation line it just crossed and update the footstep
     /// material + 3D plane projection.
@@ -12055,7 +12162,7 @@ impl EngineInner {
         // Read entity position / layer / sector / pathfinder index +
         // current move box + half diagonal (half diagonal drives the
         // thick-reachability pre-check below).
-        let (mut source, entity_layer, entity_sector, pf_idx, mut move_box_map, half_diagonal) = {
+        let (mut source, entity_layer, entity_sector, pf_idx, move_box_map, half_diagonal) = {
             let entity = match self.world.entities.get(owner) {
                 Some(e) => e,
                 _ => return MovePathOutcome::ActorGone,
@@ -12075,91 +12182,6 @@ impl EngineInner {
                 pi.get_half_diagonal(),
             )
         };
-
-        // legacy implementation RHElementActor::InstructOwner(RHCOMMAND_MOVE) first tries
-        // to extract an unauthorized actor from motion obstacles by
-        // expanding GetMoveBoxMap() by 0.5 on every side, snapping the
-        // actor to the recovered box center, and recomputing position.
-        // The later RHPathFinder::AddPathRequest extraction still runs
-        // on the unexpanded move box when pathfinding is needed.
-        if !self
-            .world
-            .fast_grid
-            .is_position_authorized(&move_box_map, entity_layer)
-        {
-            let capture_extraction = crate::movement_diagnostics::parity_movement_capture_active();
-            let original_box = move_box_map;
-            let mut box_element = Self::expand_move_box_for_command_extraction(move_box_map);
-            let expanded_box = box_element;
-            let expanded_motion_lines = capture_extraction
-                .then(|| {
-                    self.world
-                        .fast_grid
-                        .get_active_motion_line_indices(entity_layer, &expanded_box)
-                        .into_iter()
-                        .map(|index| usize::from(index) as u32)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let authorized = self
-                .world
-                .fast_grid
-                .find_authorized_position(&mut box_element, entity_layer);
-            let authorized_box = box_element;
-            let authorized_motion_lines = capture_extraction
-                .then(|| {
-                    self.world
-                        .fast_grid
-                        .get_active_motion_line_indices(entity_layer, &authorized_box)
-                        .into_iter()
-                        .map(|index| usize::from(index) as u32)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let center = authorized.then(|| authorized_box.center());
-            if let Some(center) = center {
-                source = MapPoint::new(center.x, center.y);
-                if let Some(entity) = self.get_entity_mut(owner) {
-                    entity.position_iface_mut().set_map_position(source);
-                    let elem = entity.element_data_mut();
-                    elem.set_position_map(source);
-                    elem.update_grid_cell();
-                    move_box_map = *entity.position_iface().get_move_box_map();
-                }
-            }
-            let corrected_position = authorized.then(|| {
-                self.get_entity(owner)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "RHCOMMAND_MOVE extraction owner {owner:?} disappeared after correction"
-                        )
-                    })
-                    .element_data()
-                    .position_map()
-            });
-            let sector = self
-                .get_entity(owner)
-                .and_then(|entity| entity.element_data().sector())
-                .map(u16::from);
-            if capture_extraction {
-                crate::movement_diagnostics::record_parity_move_box_extraction(
-                    crate::movement_diagnostics::ParityMoveBoxExtraction {
-                        entity: owner,
-                        layer: entity_layer,
-                        sector,
-                        pathfinder_area: pf_idx,
-                        original_box: original_box.into(),
-                        expanded_box: expanded_box.into(),
-                        expanded_motion_lines,
-                        authorized,
-                        authorized_box: authorized_box.into(),
-                        authorized_motion_lines,
-                        authorized_center: center.map(Into::into),
-                        corrected_position: corrected_position.map(Into::into),
-                    },
-                );
-            }
-        }
 
         // A PC disguised as an anonymous archer is pinned to its shooting
         // spot for the duration of the contest: the move is refused outright
@@ -15445,8 +15467,38 @@ mod path_request_timing_tests {
 #[cfg(test)]
 mod line_jump_tests {
     use super::*;
-    use crate::element::Command;
-    use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElementData};
+    use crate::element::{
+        ActionState, ActorData, ActorPc, ActorSoldier, Command, ElementData, ElementKind, Entity,
+        HumanData, NpcData, PcData, Posture, SoldierData,
+    };
+    use crate::sequence::{
+        Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
+        SequencePriority, SequenceState,
+    };
+
+    fn extraction_test_pc(posture: Posture) -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })
+    }
+
+    fn extraction_test_assets() -> LevelAssets {
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .characters
+            .push(crate::profiles::CharacterProfile::default());
+        LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::new()
+        }
+    }
 
     #[test]
     fn line_jump_click_sequence_moves_to_line_then_jumps_then_moves_to_click() {
@@ -16557,6 +16609,166 @@ mod line_jump_tests {
         assert_eq!(expanded.y_min(), 19.5);
         assert_eq!(expanded.x_max(), 30.5);
         assert_eq!(expanded.y_max(), 40.5);
+    }
+
+    fn dispatch_instruction_extraction_fixture(
+        command: Command,
+        obstruct_owner: bool,
+        self_seek: bool,
+    ) -> (MapPoint, MapPoint, SequenceState, bool) {
+        use crate::fast_find_grid::GridLine;
+        use crate::position_interface::SectorHandle;
+
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        if obstruct_owner {
+            engine.world.fast_grid_mut().add_line(
+                GridLine::new(MapPoint::new(0.0, 128.0), MapPoint::new(256.0, 128.0), true),
+                0,
+            );
+        }
+
+        let start = MapPoint::new(130.0, 130.0);
+        let mut owner_entity = extraction_test_pc(Posture::Upright);
+        owner_entity.element_data_mut().set_position_map(start);
+        owner_entity.element_data_mut().set_layer(0);
+        owner_entity
+            .element_data_mut()
+            .set_sector(SectorHandle::new(1));
+        owner_entity
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -10.0, -5.0, 10.0, 5.0,
+            ));
+        owner_entity.position_iface_mut().set_map_position(start);
+        let owner = engine.add_entity(owner_entity);
+
+        let mut target_entity = Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        });
+        let target_position = MapPoint::new(200.0, 200.0);
+        target_entity
+            .element_data_mut()
+            .set_position_map(target_position);
+        target_entity.element_data_mut().set_layer(0);
+        target_entity
+            .element_data_mut()
+            .set_sector(SectorHandle::new(2));
+        target_entity
+            .position_iface_mut()
+            .set_map_position(target_position);
+        let target = engine.add_entity(target_entity);
+
+        let mut movement =
+            SequenceElement::new_movement(1, command, Some(owner), OrderType::WalkingUpright);
+        movement.priority = SequencePriority::Normal;
+        movement.posture_after_transition = Posture::Upright;
+        movement.action_state_after_transition = ActionState::Waiting;
+        let SequenceElementData::Movement {
+            destination,
+            element,
+            flags,
+            tolerance,
+            post_seek_sequence,
+            ..
+        } = &mut movement.data
+        else {
+            unreachable!("new_movement must create movement data")
+        };
+        *destination = target_position;
+        *tolerance = 20.0;
+        if command == Command::Seek {
+            *element = Some(if self_seek { owner } else { target });
+            *flags |= MoveFlags::SEEK;
+            if self_seek {
+                let mut post_seek = Sequence::new();
+                post_seek.append_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+                *post_seek_sequence = Some(Box::new(post_seek));
+            }
+        } else {
+            *flags |= MoveFlags::MAP;
+        }
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+
+        let before = engine
+            .get_entity(owner)
+            .expect("fixture owner exists before dispatch")
+            .element_data()
+            .position_map();
+        let _ = engine.dispatch_ordered_move_seek_instruct(
+            &crate::sim_rng::test_context(),
+            &extraction_test_assets(),
+            owner,
+            sequence,
+            0,
+        );
+        let after = engine
+            .get_entity(owner)
+            .expect("fixture owner exists after dispatch")
+            .element_data()
+            .position_map();
+        let state = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("fixture movement remains inspectable")
+            .state;
+        let post_seek_launched = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .any(|candidate| {
+                candidate.id != sequence
+                    && candidate.elements.iter().any(|element| {
+                        element.owner == Some(owner) && element.command == Command::Wait
+                    })
+            });
+        (before, after, state, post_seek_launched)
+    }
+
+    #[test]
+    fn cross_sector_seek_extracts_owner_before_refresh_route_failure() {
+        let (before, after, state, _) =
+            dispatch_instruction_extraction_fixture(Command::Seek, true, false);
+        assert_ne!(
+            after, before,
+            "the old late-only extraction leaves a cross-sector Seek owner embedded"
+        );
+        assert_eq!(state, SequenceState::Impossible);
+    }
+
+    #[test]
+    fn authorized_cross_sector_seek_does_not_move_owner() {
+        let (before, after, state, _) =
+            dispatch_instruction_extraction_fixture(Command::Seek, false, false);
+        assert_eq!(after, before);
+        assert_eq!(state, SequenceState::Impossible);
+    }
+
+    #[test]
+    fn direct_move_keeps_instruction_boundary_extraction() {
+        let (before, after, state, _) =
+            dispatch_instruction_extraction_fixture(Command::Move, true, false);
+        assert_ne!(after, before);
+        assert_eq!(state, SequenceState::InProgress);
+    }
+
+    #[test]
+    fn unauthorized_self_seek_skips_extraction_and_launches_post_seek() {
+        let (before, after, state, post_seek_launched) =
+            dispatch_instruction_extraction_fixture(Command::Seek, true, true);
+        assert_eq!(after, before, "self-Seek returns before MOVE extraction");
+        assert_eq!(state, SequenceState::Terminated);
+        assert!(post_seek_launched, "self-Seek still launches its successor");
     }
 
     #[test]
