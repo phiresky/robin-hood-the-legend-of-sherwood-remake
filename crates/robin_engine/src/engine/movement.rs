@@ -7281,7 +7281,14 @@ impl EngineInner {
                         | OrderType::TransitionWalkingCrouchedWaitingCrouched
                 )
                 && order_compute_direction
-            {
+                // A new movement order owns the goal unconditionally:
+                // Original PerformMotion initializes it with
+                // ComputeIncrementAll before any terminal cleanup can
+                // observe an external orientation.  Only an already-running
+                // order can have been reoriented between Execute calls.
+                && order_id.is_some_and(|order_id| {
+                    entity.element_data().sprite.last_processed_order_id == order_id.get()
+                }) {
                 let pi = entity.position_iface();
                 if !pi.is_increment_all_computed() {
                     None
@@ -14334,6 +14341,106 @@ mod movement_transition_state_tests {
             "terminal Move cleanup must not resurrect the outgoing movement facing"
         );
         assert_eq!(entity.position_iface().map_goal(), MapPoint::ZERO);
+    }
+
+    #[test]
+    fn new_terminal_pc_stop_transition_replaces_stale_direction_goal() {
+        let mut engine = EngineInner::new();
+        let transition = OrderType::TransitionWalkingUprightWaitingUpright;
+        let destination = MapPoint::new(101.0, 104.0);
+        assert_eq!(
+            vector_to_sector_0_to_15(destination.x - 100.0, destination.y - 100.0),
+            7,
+            "fixture movement vector must reproduce QuickSave r011's direction goal"
+        );
+        let script = SpriteScript {
+            action_id: transition as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[transition as usize] = 0;
+
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(MapPoint::new(100.0, 100.0));
+        element.sprite.position_iface.set_map_goal(destination);
+        element.sprite.position_iface.compute_increment_all(true);
+        element.set_direction_goal(0);
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                action_state: ActionState::Waiting,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.priority = SequencePriority::Normal;
+        movement.orders.clear();
+        let order_id = engine.orders.allocate_order_id();
+        movement.orders.push_back(Order::new(
+            transition,
+            destination.x,
+            destination.y,
+            order_id,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let registered = engine.orders.sequence_manager.hourglass();
+        assert_eq!(registered.len(), 1);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(
+            entity.element_data().sprite.last_processed_order_id,
+            order_id.get(),
+            "regression must execute the newly initialized transition"
+        );
+        assert_eq!(
+            i16::from(entity.position_iface().get_direction_goal()),
+            7,
+            "new-order ComputeIncrementAll must replace rather than restore the stale goal"
+        );
     }
 
     fn install_terminal_interaction_seek(
