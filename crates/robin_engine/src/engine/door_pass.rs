@@ -869,6 +869,11 @@ impl PassDoorLaunchContext<'_> {
             // authored action. A crouched PassDoor therefore remains
             // WalkingCrouched, including across a stairs lift.
             OrderType::WalkingCrouched
+        } else if posture_after_transition == Posture::CarryingCorpse {
+            // Carrying a corpse is another unconditional base-actor posture
+            // rewrite.  In particular, an authored fast run remains
+            // WalkingWithCorpse through every translated door rail.
+            OrderType::WalkingWithCorpse
         } else if is_carrying {
             OrderType::WalkingCarryingOnShoulders
         } else if action_state_after_transition.is_sword() {
@@ -2271,6 +2276,77 @@ mod tests {
                 _ => None,
             });
             assert_eq!(translated_exit, Some(expected_exit));
+        }
+    }
+
+    #[test]
+    fn corpse_carrying_pass_rewrites_authored_fast_run_without_affecting_upright_control() {
+        for (posture, expected_action) in [
+            (Posture::CarryingCorpse, OrderType::WalkingWithCorpse),
+            (Posture::Upright, OrderType::RunningUpright),
+        ] {
+            let mut engine = EngineInner::new();
+            let owner = engine.add_entity(make_pc(7));
+            engine
+                .world
+                .entities
+                .get_mut(owner)
+                .expect("door-pass test PC")
+                .set_posture(posture);
+
+            let (barrier, seq_id) = dispatch_pass_with_transition_state(
+                &mut engine,
+                &[default_door()],
+                owner,
+                OrderType::RunningUpright,
+                crate::sequence::MoveFlags::FAST,
+                posture,
+                crate::element::ActionState::MovingFast,
+            );
+
+            assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .expect("PassDoor element remains installed");
+            let SequenceElementData::Movement { action, flags, .. } = &element.data else {
+                unreachable!()
+            };
+            assert!(flags.contains(crate::sequence::MoveFlags::FAST));
+            assert_eq!(*action, expected_action, "translated root action");
+            assert_eq!(
+                element.current_order().map(|order| order.order_type),
+                Some(expected_action),
+                "the selected first door rail must use the posture-adapted action"
+            );
+
+            let pass = engine
+                .world
+                .entities
+                .get(owner)
+                .expect("door-pass test PC remains live")
+                .actor_data()
+                .expect("door-pass test PC has actor data")
+                .active_door_pass
+                .as_ref()
+                .expect("translated door pass remains active");
+            assert_eq!(pass.current_action, expected_action);
+            let remaining_walk_actions = pass
+                .steps
+                .iter()
+                .filter_map(|step| match step {
+                    DoorPassStep::Walk { action, .. } => Some(*action),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(!remaining_walk_actions.is_empty());
+            assert!(
+                remaining_walk_actions
+                    .iter()
+                    .all(|action| *action == expected_action),
+                "every remaining translated door rail must retain {expected_action:?}: {remaining_walk_actions:?}"
+            );
         }
     }
 
