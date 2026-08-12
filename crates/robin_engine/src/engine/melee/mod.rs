@@ -7506,6 +7506,207 @@ mod tests {
         );
     }
 
+    #[test]
+    fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .life_points = 1;
+
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
+        obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
+        let mut assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+        {
+            let victim = engine.get_entity_mut(victim).unwrap();
+            victim.element_data_mut().set_obstacle_index(
+                crate::position_interface::ObstacleHandle::new(0),
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: 1.0,
+                    bz: 0.0,
+                    dz: 0.0,
+                }),
+            );
+            victim
+                .position_iface_mut()
+                .set_move_box(crate::coordinates::MoveBox::from_corners(
+                    crate::coordinates::MapVec::new(-5.0, -5.0),
+                    crate::coordinates::MapVec::new(5.0, 5.0),
+                ));
+        }
+
+        let mut launched = Vec::new();
+        for _ in 0..2 {
+            let mut damage = crate::sequence::SequenceElement::new_damage(
+                1,
+                Command::ReceiveArrowDamage,
+                Some(victim),
+                Some(attacker),
+                1,
+                0,
+            );
+            engine.resolve_element_priority(&mut damage);
+            launched.push(engine.orders.sequence_manager.launch_element(damage));
+        }
+
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(victim),
+            Some((launched[1], 0)),
+            "the second injury must replace the first dying element"
+        );
+        let second = engine
+            .orders
+            .sequence_manager
+            .get_element(launched[1], 0)
+            .expect("second arrow damage remains registered");
+        assert_eq!(second.state, crate::sequence::SequenceState::InProgress);
+        assert_eq!(
+            second
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![OrderType::DyingUpright, OrderType::Rolling],
+            "TranslateArrowDamage must author DyingUpright before TranslateRoll"
+        );
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .installed_order
+                .as_ref()
+                .map(|order| order.order_type),
+            Some(OrderType::DyingUpright)
+        );
+    }
+
+    #[test]
+    fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders() {
+        for (initial_posture, use_pc) in [
+            (Posture::Lying, true),
+            (Posture::StuckUnderNet, true),
+            (Posture::Flying, true),
+            (Posture::Carried, true),
+            // PC virtual dispatch intercepts OnShoulders.  A Soldier reaches
+            // RHElementActorHuman's literal OnShoulders fallthrough.
+            (Posture::OnShoulders, false),
+            (Posture::Tied, true),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+            let victim = engine.add_entity(if use_pc {
+                make_pc(WorldPoint3D::ZERO, None)
+            } else {
+                make_soldier(WorldPoint3D::ZERO, None)
+            });
+            {
+                let victim = engine.get_entity_mut(victim).unwrap();
+                let (_, life_points) = victim
+                    .human_and_life_points_mut()
+                    .expect("grounded test victim must be human");
+                *life_points = 0;
+                victim.element_data_mut().posture = initial_posture;
+            }
+            let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
+            let mut damage = crate::sequence::SequenceElement::new_damage(
+                1,
+                Command::ReceiveArrowDamage,
+                Some(victim),
+                Some(attacker),
+                1,
+                0,
+            );
+            engine.resolve_element_priority(&mut damage);
+            let sequence = engine.orders.sequence_manager.launch_element(damage);
+
+            let mut display = crate::engine::HostDisplayState::default();
+            engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("dead-body arrow damage remains registered");
+            assert_eq!(
+                element.state,
+                crate::sequence::SequenceState::Terminated,
+                "{initial_posture:?} must enter the terminating fallthrough"
+            );
+            assert!(element.orders.is_empty());
+            assert_eq!(
+                engine.get_entity(victim).unwrap().element_data().posture,
+                Posture::Dead,
+                "TranslateArrowDamage changes dead {initial_posture:?} non-riders to Dead"
+            );
+        }
+    }
+
+    #[test]
+    fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let carrier = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        engine
+            .get_entity_mut(carrier)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .carried = Some(victim);
+        {
+            let victim = engine.get_entity_mut(victim).unwrap();
+            victim.element_data_mut().posture = Posture::OnShoulders;
+            victim.human_data_mut().unwrap().carrier = Some(carrier);
+        }
+
+        let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
+        let mut damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveArrowDamage,
+            Some(victim),
+            Some(attacker),
+            1,
+            0,
+        );
+        engine.resolve_element_priority(&mut damage);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("shoulder arrow damage remains registered");
+        assert_ne!(element.state, crate::sequence::SequenceState::Terminated);
+        assert_eq!(
+            element.orders.front().map(|order| order.order_type),
+            Some(OrderType::FallingShoulders),
+            "PC virtual TranslateArrowDamage must dispatch TranslateShoulderDamage"
+        );
+        assert_ne!(
+            engine.get_entity(victim).unwrap().element_data().posture,
+            Posture::Dead,
+            "PC OnShoulders must not enter Human's dead-grounded fallthrough"
+        );
+    }
+
     /// `SwordstrikeThrustA` promotes both principal opponents before
     /// the strike, so clicking a secondary opponent during a
     /// swordfight switches the primary target.

@@ -1295,38 +1295,16 @@ impl EngineInner {
             return;
         }
 
-        // Lying arm: `Lying/UnderNet/Flying/Carried/
-        // OnShoulders/Tied` falls through to `Dead/DeadBack`, which
-        // terminates the element when not a dying rider — i.e. for
-        // everything except a sleeping rider dying.  This stops arrow
-        // / stone damage once the victim is on the ground (including
-        // a posture change made by ReceivePiercingDamage) from pushing
-        // a fresh dying order onto the damage element.
-        if translation_posture.is_lying() {
-            let post_dead = self
-                .get_entity(victim_id)
-                .map(|e| get_life_points(e) <= 0)
-                .unwrap_or(false);
-            let is_rider = matches!(
-                self.get_entity(victim_id),
-                Some(Entity::Soldier(s)) if s.soldier.rider
+        // RHElementActorPC overrides TranslateArrowDamage/TranslateDamage:
+        // these three PC postures never enter the Human posture switch below,
+        // but instead dispatch TranslateShoulderDamage.  Keep this virtual
+        // branch ahead of Human's OnShoulders -> Dead fallthrough.
+        let pc_shoulder_override = matches!(self.get_entity(victim_id), Some(Entity::Pc(_)))
+            && matches!(
+                translation_posture,
+                Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
             );
-            if !is_rider || !post_dead {
-                let (dseq, didx) = damage_element;
-                self.orders.sequence_manager.element_terminated(dseq, didx);
-                return;
-            }
-            // TODO: match the Original sleeping-rider special case,
-            // which selects an upright dying animation even from a
-            // lying posture.
-        }
-
-        // Shoulder-posture victims route through
-        // `translate_shoulder_damage`.
-        if matches!(
-            translation_posture,
-            Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
-        ) {
+        if pc_shoulder_override {
             self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
             self.handle_post_damage(
                 sim,
@@ -1341,6 +1319,58 @@ impl EngineInner {
             return;
         }
 
+        // Lying/UnderNet/Flying/Carried/OnShoulders/Tied falls through to
+        // the Dead/DeadBack arm.  An already-dead non-rider is first changed
+        // to Dead, then the element terminates without orders.  Do not use
+        // Posture::is_lying here: Original's switch also includes Flying,
+        // Carried, and OnShoulders, which that semantic helper deliberately
+        // does not classify as ground corpses.
+        if matches!(
+            translation_posture,
+            Posture::Lying
+                | Posture::StuckUnderNet
+                | Posture::Flying
+                | Posture::Carried
+                | Posture::OnShoulders
+                | Posture::Tied
+                | Posture::Dead
+                | Posture::DeadBack
+        ) {
+            let post_dead = self
+                .get_entity(victim_id)
+                .map(|e| get_life_points(e) <= 0)
+                .unwrap_or(false);
+            let is_rider = matches!(
+                self.get_entity(victim_id),
+                Some(Entity::Soldier(s)) if s.soldier.rider
+            );
+            if post_dead
+                && !is_rider
+                && matches!(
+                    translation_posture,
+                    Posture::Lying
+                        | Posture::StuckUnderNet
+                        | Posture::Flying
+                        | Posture::Carried
+                        | Posture::OnShoulders
+                        | Posture::Tied
+                )
+            {
+                self.get_entity_mut(victim_id)
+                    .expect("piercing-damage victim disappeared during translation")
+                    .element_data_mut()
+                    .posture = Posture::Dead;
+            }
+            if !is_rider || !post_dead {
+                let (dseq, didx) = damage_element;
+                self.orders.sequence_manager.element_terminated(dseq, didx);
+                return;
+            }
+            // TODO: match the Original sleeping-rider special case,
+            // which selects an upright dying animation even from a
+            // lying posture.
+        }
+
         // CarryingCorpse arm — forces an instant corpse drop and
         // falls through to the default damage path.
         if translation_posture == Posture::CarryingCorpse {
@@ -1349,13 +1379,18 @@ impl EngineInner {
 
         self.say_ouch(sim, assets, victim_id, Some(damage));
 
-        // Alive-conscious branch: queue the posture-dependent
-        // extract-arrow animation onto the damage element, then fire
-        // the roll helper.  For stones we push the `simple_hit`
-        // variant from the same selector.  The death / knockout
-        // outcomes are handled downstream in `handle_post_damage` →
-        // `handle_death_with_damage_element` / `handle_knockout`,
-        // which push their own animations.
+        // TranslateArrowDamage / TranslateDamage always select an authored
+        // reaction for an upright actor.  In particular, an arrow element
+        // admitted after an earlier same-frame arrow already killed its
+        // owner still receives Dying*; Human::SetLifePoints no-ops for the
+        // already-dead actor, but translation continues.  This matters for
+        // volleys: the later injury element interrupts the first dying
+        // element and must replace it with another dying order rather than
+        // becoming an accepted empty element.
+        //
+        // A newly lethal element gets its dying order from the virtual Kill
+        // path below.  An already-dead element cannot re-enter Kill, so it
+        // authors that order here, followed by TranslateRoll.
         let (life_points_after, still_conscious, still_on_ground) = {
             let victim = self.get_entity(victim_id);
             (
@@ -1369,26 +1404,32 @@ impl EngineInner {
                     .unwrap_or(false),
             )
         };
-        if life_points_after > 0 && still_conscious && still_on_ground {
-            let hit_anim = self
-                .get_entity(victim_id)
-                .and_then(|e| {
-                    let posture = e.element_data().posture;
-                    let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
-                    select_combat_animations(posture, action)
-                })
-                .map(|a| {
+        let animations = self.get_entity(victim_id).and_then(|e| {
+            let posture = e.element_data().posture;
+            let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+            select_combat_animations(posture, action)
+        });
+        if still_on_ground {
+            let translated_anim = if life_points_before <= 0 && life_points_after <= 0 {
+                animations.map(|a| a.dying_forward)
+            } else if life_points_after > 0 && still_conscious {
+                animations.map(|a| {
                     if is_arrow_damage {
                         a.arrow_extract
                     } else {
                         a.simple_hit
                     }
-                });
-            if let Some(anim) = hit_anim {
+                })
+            } else {
+                None
+            };
+            if let Some(anim) = translated_anim {
                 self.push_translated_damage_order(damage_element, anim);
             }
-            // Unconditional roll attempt.
-            self.try_queue_roll(assets, victim_id, damage_element);
+
+            if life_points_after > 0 || life_points_before <= 0 {
+                self.try_queue_roll(assets, victim_id, damage_element);
+            }
         }
 
         self.handle_post_damage(
