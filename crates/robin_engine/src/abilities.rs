@@ -340,11 +340,6 @@ pub enum AbilityTickResult {
 ///
 /// ## Known gaps
 ///
-/// - **Per-frame anim sync**: the carried entity's pickup animation
-///   (`BeingLiftedLittleJohn` / `BeingLiftedPeasantC`) is not
-///   synchronized to the carrier's sprite every frame during the
-///   transition.  We only sync position/direction in
-///   [`sync_carried_positions`].
 /// - **Building hulk**: the re-select + hulk start step when picking
 ///   up in a building sector is applied in the `Command::TakeCorpse`
 ///   handler in `engine/tick.rs` after `begin_carry` succeeds.
@@ -2091,6 +2086,24 @@ pub fn tick_ability(
         }
     }
 
+    if kind == AbilityKind::Carry && !sprite_frozen {
+        let order_id = ability.order_id.expect("active Carry ability order");
+        let carrier = entities
+            .get(requested_actor)
+            .expect("validated Carry owner vanished before initialization");
+        if carrier.element_data().sprite.last_processed_order_id != order_id.get() {
+            let target_id = ability.target.expect("active Carry ability target");
+            let carrier_position = carrier.element_data().position_map();
+            let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
+            let target = entities
+                .get_mut(target_id)
+                .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"));
+            let element = target.element_data_mut();
+            element.set_position_map(carrier_position);
+            element.set_direction_instantly(carried_direction);
+        }
+    }
+
     let entity = entities
         .get_mut(requested_actor)
         .unwrap_or_else(|| panic!("ability owner {requested_actor:?} disappeared after setup"));
@@ -2798,6 +2811,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
     // Apply to each carried entity.
     for snap in snapshots {
         let on_shoulders = snap.carried_posture == Posture::OnShoulders;
+        let walking_with_corpse = matches!(snap.carrier_last_action, OrderType::WalkingWithCorpse);
 
         let Some(target) = entities.get_mut(snap.target_id) else {
             continue;
@@ -2814,10 +2828,12 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         };
         let carried_dir_u16 = carried_dir_i16 as u16;
 
-        // Position + layer + direction + sector + material: copy from
-        // the carrier, then reproject through the carried body's own
-        // plane below.
-        {
+        // Shoulder riders follow the carrier continuously. Corpse carry only
+        // rewrites the body's transform during WALKING_WITH_CORPSE; lift
+        // initialization performs the one-shot initial alignment above, and
+        // wait/drop/unrelated carrier actions only synchronize animation and
+        // display order in the Original.
+        if on_shoulders {
             let elem = target.element_data_mut();
             elem.set_position_map(snap.pos);
             elem.set_layer(snap.layer);
@@ -2829,6 +2845,16 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             // sprites stay stacked correctly when other entities cross
             // the draw list.
             let sprite = &mut elem.sprite;
+            sprite.display_order_ref = Some(snap.carrier_id);
+            sprite.behind_display_order_ref = false;
+        } else if walking_with_corpse {
+            let elem = target.element_data_mut();
+            elem.set_position_map(snap.pos);
+            elem.set_direction_instantly(carried_dir_i16);
+            elem.sprite.display_order_ref = Some(snap.carrier_id);
+            elem.sprite.behind_display_order_ref = false;
+        } else {
+            let sprite = &mut target.element_data_mut().sprite;
             sprite.display_order_ref = Some(snap.carrier_id);
             sprite.behind_display_order_ref = false;
         }
@@ -2847,7 +2873,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         // Copying it here instead flattened a body held above ground
         // to elevation 0 whenever the carrier itself stood on plain
         // ground.
-        {
+        if on_shoulders {
             let pi = target.position_iface_mut();
             pi.set_material(snap.material);
             pi.set_map_position(snap.pos);
@@ -2960,15 +2986,17 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         };
 
         if let Some(anim) = carried_anim {
-            let sprite = &mut target.element_data_mut().sprite;
             // For WalkingWithCorpse use `force_animation` which resets
             // frame/frame_count to 0.  Everything else forces the
             // sprite row and then syncs the frame with the carrier.
-            let is_walking = matches!(snap.carrier_last_action, OrderType::WalkingWithCorpse);
-            if is_walking {
+            if walking_with_corpse {
+                let sprite = &mut target.element_data_mut().sprite;
                 sprite.force_animation(anim, carried_dir_u16);
             } else {
-                sprite.force_sprite_row(anim, carried_dir_u16);
+                let existing_direction = u16::try_from(target.element_data().direction())
+                    .unwrap_or_else(|_| panic!("carried corpse has negative direction"));
+                let sprite = &mut target.element_data_mut().sprite;
+                sprite.force_sprite_row(anim, existing_direction);
                 sprite.synchronize_anim(snap.carrier_frame, snap.carrier_frame_count);
             }
         }
@@ -3046,6 +3074,113 @@ mod tests {
         let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
         manager.element_in_progress(seq_id, 0);
         seq_id
+    }
+
+    fn corpse_carry_fixture(carrier_action: OrderType) -> (Entities, EntityId, EntityId) {
+        let mut entities = Entities::new();
+        let mut carrier = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        carrier.element.set_position_map(MapPoint::new(80.0, 90.0));
+        carrier.element.set_direction_instantly(9);
+        carrier.element.set_layer(9);
+        carrier.element.set_sector(Some(
+            crate::position_interface::SectorHandle::new(8).unwrap(),
+        ));
+        carrier
+            .element
+            .set_material(crate::element::GameMaterial::Stone);
+        carrier.element.sprite.last_action = carrier_action;
+        let mut body = ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                posture: Posture::Carried,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: CivilianData::default(),
+        };
+        body.element.set_position_map(MapPoint::new(10.0, 20.0));
+        body.element.set_direction_instantly(4);
+        body.element.set_layer(3);
+        body.element.set_sector(Some(
+            crate::position_interface::SectorHandle::new(7).unwrap(),
+        ));
+        body.element
+            .set_material(crate::element::GameMaterial::Wood);
+        let mut conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        conversion[OrderType::BeingCarriedPeasantC as usize] = 100;
+        body.element.sprite.conversion = std::sync::Arc::new(conversion);
+        body.element.sprite.scripts =
+            std::sync::Arc::new(vec![crate::sprite_script::SpriteScript::default(); 116]);
+        body.element.sprite.force_sprite_row_raw(104);
+        body.element.sprite.last_action = OrderType::BeingCarriedPeasantC;
+        entities.push(Some(Entity::Pc(carrier)));
+        entities.push(Some(Entity::Civilian(body)));
+        let carrier_id = entities.id_at_legacy_slot(0).unwrap();
+        let body_id = entities.id_at_legacy_slot(1).unwrap();
+        entities
+            .get_mut(carrier_id)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .carried = Some(body_id);
+        entities
+            .get_mut(body_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+        (entities, carrier_id, body_id)
+    }
+
+    #[test]
+    fn unrelated_carrier_action_preserves_corpse_transform_and_facing_row() {
+        let (mut entities, _carrier, body) =
+            corpse_carry_fixture(OrderType::TransitionWaitingUprightHelpingClimbing);
+        let before = entities.get(body).unwrap();
+        let position = before.element_data().position_map();
+        let direction = before.element_data().direction();
+        let sprite_row = before.element_data().sprite.current_row;
+
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+
+        let body = entities.get(body).unwrap();
+        assert_eq!(body.element_data().position_map(), position);
+        assert_eq!(body.element_data().direction(), direction);
+        assert_eq!(body.element_data().sprite.current_row, sprite_row);
+    }
+
+    #[test]
+    fn walking_with_corpse_updates_transform_and_carrier_relative_direction() {
+        let (mut entities, carrier, body) = corpse_carry_fixture(OrderType::WalkingWithCorpse);
+        let carrier_position = entities.get(carrier).unwrap().element_data().position_map();
+        let before = entities.get(body).unwrap().element_data();
+        let layer = before.layer();
+        let sector = before.sector();
+        let material = before.material();
+
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+
+        let body = entities.get(body).unwrap();
+        assert_eq!(body.element_data().position_map(), carrier_position);
+        assert_eq!(body.element_data().direction(), 5);
+        assert_eq!(body.element_data().layer(), layer);
+        assert_eq!(body.element_data().sector(), sector);
+        assert_eq!(body.element_data().material(), material);
+        assert_eq!(
+            body.element_data().sprite.last_action,
+            OrderType::BeingCarriedPeasantC
+        );
     }
 
     #[test]
@@ -3626,7 +3761,7 @@ mod tests {
     #[test]
     fn carry_creates_only_its_canonical_sequence_order() {
         let mut entities = Entities::new();
-        entities.push(Some(Entity::Pc(ActorPc {
+        let mut carrier_entity = ActorPc {
             element: ElementData {
                 kind: ElementKind::ActorPc,
                 posture: Posture::Upright,
@@ -3638,8 +3773,23 @@ mod tests {
                 life_points: 100,
                 ..Default::default()
             },
-        })));
-        entities.push(Some(Entity::Pc(ActorPc {
+        };
+        carrier_entity
+            .element
+            .set_position_map(MapPoint::new(80.0, 90.0));
+        carrier_entity.element.set_direction_instantly(9);
+        let mut carrier_conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        carrier_conversion[OrderType::TransitionWaitingUprightCarryingCorpse as usize] = 0;
+        carrier_entity.element.sprite.conversion = std::sync::Arc::new(carrier_conversion);
+        let mut carrier_scripts = vec![crate::sprite_script::SpriteScript::default(); 16];
+        carrier_scripts[0].frame_ids = vec![0];
+        carrier_scripts[0].delays = vec![1];
+        carrier_scripts[0].distances = vec![0];
+        carrier_scripts[0].offsets = vec![crate::coordinates::SpriteFrameOffset::ZERO];
+        carrier_scripts[0].sound_ids = vec![0];
+        carrier_entity.element.sprite.scripts = std::sync::Arc::new(carrier_scripts);
+        let mut target_entity = ActorPc {
             element: ElementData {
                 kind: ElementKind::ActorPc,
                 posture: Posture::Dead,
@@ -3651,7 +3801,19 @@ mod tests {
                 life_points: 0,
                 ..Default::default()
             },
-        })));
+        };
+        target_entity
+            .element
+            .set_position_map(MapPoint::new(10.0, 20.0));
+        target_entity.element.set_direction_instantly(4);
+        let mut conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        conversion[OrderType::BeingLiftedPeasantC as usize] = 100;
+        target_entity.element.sprite.conversion = std::sync::Arc::new(conversion);
+        target_entity.element.sprite.scripts =
+            std::sync::Arc::new(vec![crate::sprite_script::SpriteScript::default(); 116]);
+        entities.push(Some(Entity::Pc(carrier_entity)));
+        entities.push(Some(Entity::Pc(target_entity)));
         let carrier = entities.id_at_legacy_slot(0).unwrap();
         let target = entities.id_at_legacy_slot(1).unwrap();
         let mut manager = SequenceManager::new();
@@ -3671,6 +3833,29 @@ mod tests {
             ),
             BeginResult::Started
         );
+        assert_eq!(next_id, 301);
+        let target_entity = entities.get(target).unwrap();
+        assert_eq!(
+            target_entity.element_data().position_map(),
+            MapPoint::new(10.0, 20.0)
+        );
+        assert_eq!(target_entity.element_data().direction(), 4);
+
+        let _ = tick_ability(
+            &crate::sim_rng::SimulationContext::with_seed(1),
+            &mut entities,
+            &manager,
+            carrier,
+            false,
+        );
+
+        let target_entity = entities.get(target).unwrap();
+        assert_eq!(
+            target_entity.element_data().position_map(),
+            MapPoint::new(80.0, 90.0)
+        );
+        assert_eq!(target_entity.element_data().direction(), 5);
+
         let element = manager.get_element_mut(seq_id, 0).unwrap();
         let order = element.pop_current_order().expect("canonical Carry order");
         assert_eq!(
@@ -3678,7 +3863,22 @@ mod tests {
             (OrderType::TransitionWaitingUprightCarryingCorpse, 300)
         );
         assert!(element.pop_current_order().is_none());
-        assert_eq!(next_id, 301);
+
+        let carrier_entity = entities.get_mut(carrier).unwrap();
+        carrier_entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(120.0, 140.0));
+        carrier_entity
+            .element_data_mut()
+            .set_direction_instantly(12);
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        let target_entity = entities.get(target).unwrap();
+        assert_eq!(
+            target_entity.element_data().position_map(),
+            MapPoint::new(80.0, 90.0),
+            "the live lift animation must not continuously restamp the corpse"
+        );
+        assert_eq!(target_entity.element_data().direction(), 5);
     }
 
     #[test]
