@@ -3224,13 +3224,27 @@ impl EnemyAi {
 
     fn seeking_got_stop_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         ctx: &AiContext,
-        tick: &AiPerTickData,
+        _tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            // Original adopts the authored alert path before leaving the
+            // stopped-seeking state. This explicit gate is required because
+            // the generic SetState alert-path switch only covers departures
+            // from STATE_DEFAULT, while this transition starts in SEEKING.
+            if let Some(alert_path_id) = self.base.alert_path_id
+                && !self.changed_to_alert_path
+            {
+                self.changed_to_alert_path = true;
+                self.base.patrol_path =
+                    crate::ai::PatrolPath::new(alert_path_id, &ctx.hiking_paths);
+                self.base.has_patrol_path = self.base.patrol_path.is_some();
+            }
+            self.base.set_emoticon(EmoticonType::QuestionMark);
+            self.set_state(AiState::Wondering, Substate::WonderingLooking1);
+            self.base.launch_timer(30, ctx.frame);
         }
         false
     }
@@ -8440,6 +8454,90 @@ mod tests {
         view.ai_state = AiState::Seeking;
         view.ai_substate = substate;
         view
+    }
+
+    #[test]
+    fn seeking_got_stop_timer_wonders_without_alert_path() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(59);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGotStopEvent;
+        ai.base.current_music_alert_status = AlertLevel::Yellow;
+        ai.base.view_alert_status = AlertLevel::Yellow;
+        let ctx = AiContext {
+            frame: 23_905,
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Wondering);
+        assert_eq!(ai.base.current_substate, Substate::WonderingLooking1);
+        assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
+        assert_eq!(ai.base.view_alert_status, AlertLevel::Yellow);
+        assert_eq!(ai.base.current_emoticon_type, EmoticonType::QuestionMark);
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 23_935);
+        assert!(!ai.changed_to_alert_path);
+        assert!(ai.base.patrol_path.is_none());
+        assert!(ai.base.outbox.reentrant.owner_work.iter().all(|work| {
+            !matches!(work, AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. })
+        }));
+    }
+
+    #[test]
+    fn seeking_got_stop_timer_adopts_alert_path_before_wondering() {
+        use crate::ai::{PathId, PatrolPath};
+        use crate::level_data::RawHikingPath;
+
+        let sim = crate::sim_rng::test_context();
+        let paths = vec![
+            RawHikingPath { waypoints: vec![] },
+            RawHikingPath { waypoints: vec![] },
+        ];
+        let ordinary_path = PathId::new(0).unwrap();
+        let alert_path = PathId::new(1).unwrap();
+        let mut ai = EnemyAi::new(59);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGotStopEvent;
+        ai.base.alert_path_id = Some(alert_path);
+        ai.base.has_patrol_path = true;
+        ai.base.patrol_path = PatrolPath::new(ordinary_path, &paths);
+        let ctx = AiContext {
+            frame: 900,
+            hiking_paths: std::sync::Arc::new(paths),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(ai.changed_to_alert_path);
+        let adopted = ai
+            .base
+            .patrol_path
+            .as_ref()
+            .expect("configured alert path must be installed");
+        assert_eq!(adopted.hiking_path_index, alert_path);
+        assert_eq!(adopted.current_waypoint_index, 0);
+        assert!(adopted.forward);
+        assert!(ai.base.has_patrol_path);
+        assert_eq!(ai.base.current_state, AiState::Wondering);
+        assert_eq!(ai.base.current_substate, Substate::WonderingLooking1);
+        assert_eq!(ai.base.when_does_timer_ring, 930);
     }
 
     #[test]
