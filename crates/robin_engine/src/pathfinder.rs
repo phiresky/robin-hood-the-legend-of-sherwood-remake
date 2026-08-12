@@ -1315,7 +1315,12 @@ impl PathFinderRuntime {
                     self.shortest_distance_found = current_score;
                     self.graph.nodes[current_idx.0 as usize].leave_place = end_place;
                     best_node = Some(current_idx);
-                    attempts_left -= 1;
+                    // Decrement-before-check, with unsigned wraparound:
+                    // parity with the original engine, where an attempt
+                    // budget of 0 wraps to 65535 on the first hit and
+                    // therefore behaves as effectively unlimited attempts
+                    // rather than stopping immediately.
+                    attempts_left = attempts_left.wrapping_sub(1);
                 }
 
                 if attempts_left == 0 {
@@ -2284,6 +2289,60 @@ impl PathFinderRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn goal_reachable_test_node(position: MapPoint, score: f32) -> PathGraphNode {
+        PathGraphNode {
+            position,
+            vector_to_node: MapVec::new(0.0, 0.0),
+            vector_from_node: MapVec::new(0.0, 0.0),
+            required_state: 0,
+            configurations: vec![0xF],
+            link_indices: Vec::new(),
+            alternative_link_indices: Vec::new(),
+            visited: false,
+            distance_from_source: 0.0,
+            distance_to_goal: 0.0,
+            score,
+            previous_link_on_path: None,
+            leave_place: 0,
+            enter_place: 0,
+        }
+    }
+
+    #[test]
+    fn zero_attempt_budget_searches_the_whole_open_list_without_underflow() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+
+        let build_runtime = |attempts: u16| {
+            let mut runtime = PathFinderRuntime::new();
+            runtime.graph.static_mut().move_layers = vec![vec![MotionArea {
+                polygon: Vec::new(),
+                skeleton: Vec::new(),
+                motion_obstacles: Vec::new(),
+            }]];
+            runtime.graph.nodes = vec![
+                goal_reachable_test_node(MapPoint::new(100.0, 100.0), 42.0),
+                goal_reachable_test_node(MapPoint::new(120.0, 100.0), 10.0),
+            ];
+            runtime.open_nodes = vec![NodeIdx(0), NodeIdx(1)];
+            runtime.number_of_attempts = attempts;
+            runtime
+        };
+        let goal = MapPoint::new(200.0, 150.0);
+
+        // A budget of 1 stops at the first node that can dock the goal.
+        let mut runtime = build_runtime(1);
+        assert_eq!(runtime.find_path_nodes(&grid, goal), Some(NodeIdx(0)));
+
+        // A budget of 0 wraps on the first hit (matching the original
+        // engine's unsigned counter) and behaves as effectively
+        // unlimited: the search keeps going, exhausts the open list,
+        // and returns the better-scored node.
+        let mut runtime = build_runtime(0);
+        assert_eq!(runtime.find_path_nodes(&grid, goal), Some(NodeIdx(1)));
+    }
 
     #[test]
     fn initialize_syncs_default_motion_obstacle_lines_to_fast_grid() {
