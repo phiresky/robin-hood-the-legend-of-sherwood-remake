@@ -127,6 +127,40 @@ fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle:
 }
 
 #[derive(Debug)]
+struct CivilianRandomSpeechDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    creation_order: Option<u32>,
+}
+
+fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugConfig {
+    static CONFIG: std::sync::OnceLock<CivilianRandomSpeechDebugConfig> =
+        std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH").is_some();
+        if !enabled {
+            return CivilianRandomSpeechDebugConfig {
+                enabled: false,
+                frame: None,
+                creation_order: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for CIVRANDSPEECH diagnostic: {error}")
+                })
+            })
+        };
+        CivilianRandomSpeechDebugConfig {
+            enabled,
+            frame: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_FRAME"),
+            creation_order: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_CREATION_ORDER"),
+        }
+    })
+}
+
+#[derive(Debug)]
 struct PatrolTurnLifecycleDebugConfig {
     enabled: bool,
     frame: Option<u32>,
@@ -14902,7 +14936,52 @@ impl EngineInner {
         let Entity::Civilian(civilian) = entity else {
             return;
         };
-        if npc_hourglass_frame_phase(current_frame, u32::from(civilian.npc.register_number)) != 0 {
+        let register_number = civilian.npc.register_number;
+        let frame_phase = npc_hourglass_frame_phase(current_frame, u32::from(register_number));
+        let debug_creation_order = {
+            let config = civilian_random_speech_debug_config();
+            if !config.enabled
+                || config
+                    .frame
+                    .is_some_and(|expected| expected != current_frame)
+            {
+                None
+            } else {
+                let creation_order = self.world.original_creation_order(npc_id);
+                config
+                    .creation_order
+                    .is_none_or(|expected| expected == creation_order)
+                    .then_some(creation_order)
+            }
+        };
+        if let Some(creation_order) = debug_creation_order {
+            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+                panic!(
+                    "random-speech civilian {} has non-friendly AI",
+                    npc_id.index()
+                )
+            };
+            eprintln!(
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=eligibility register={register_number} frame_phase={frame_phase} human_hourglass_continued=true active={} profile={} civilian_type={:?} is_beggar={} dont_talk={} current_remark={:?} remark_flags={} ai_locks={:?} script_locked={} will_call={} will_draw_gate={}]",
+                npc_id.index(),
+                civilian.element.active,
+                civilian.civilian.civilian_profile_index.0,
+                civilian.civilian.cached_civilian_type,
+                civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar,
+                ai.beggar_dont_talk_counter,
+                ai.base.current_remark,
+                ai.base.current_remark_flags,
+                ai.base.locks_flag_field,
+                ai.base.script_locked,
+                frame_phase == 0,
+                frame_phase == 0
+                    && civilian.civilian.cached_civilian_type
+                        == crate::profiles::CivilianType::Beggar
+                    && ai.beggar_dont_talk_counter == 0
+                    && ai.base.current_remark == crate::ai::Remark::TheSoundOfSilence,
+            );
+        }
+        if frame_phase != 0 {
             return;
         }
 
@@ -14928,10 +15007,35 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
-        entity
-            .friendly_ai_mut()
-            .unwrap_or_else(|| panic!("civilian {} has no friendly AI", npc_id.index()))
-            .random_speech(sim, 0, &ctx);
+        {
+            entity
+                .friendly_ai_mut()
+                .unwrap_or_else(|| panic!("civilian {} has no friendly AI", npc_id.index()))
+                .random_speech(sim, 0, &ctx);
+        }
+        if let Some(creation_order) = debug_creation_order {
+            let Entity::Civilian(civilian) =
+                self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!("random-speech civilian {} disappeared", npc_id.index())
+                })
+            else {
+                panic!(
+                    "random-speech civilian {} changed entity kind",
+                    npc_id.index()
+                )
+            };
+            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+                panic!("random-speech civilian {} changed AI kind", npc_id.index())
+            };
+            eprintln!(
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after dont_talk={} current_remark={:?} remark_flags={} queued_owner_work={}]",
+                npc_id.index(),
+                ai.beggar_dont_talk_counter,
+                ai.base.current_remark,
+                ai.base.current_remark_flags,
+                ai.base.outbox.reentrant.owner_work.len(),
+            );
+        }
         // Original RandomSpeech calls Say synchronously before the following
         // NPC lock gate. Rust's AI borrow records Say in owner_work, so close
         // that same owner-local boundary here even when the lock gate will
