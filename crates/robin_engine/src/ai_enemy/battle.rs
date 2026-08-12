@@ -578,6 +578,7 @@ impl EnemyAi {
         battle_tick.us_battle_points = 100 + self.soldier_profile_pride as u32;
         battle_tick.has_officer_nearby = false;
         battle_tick.simple_soldiers_near = false;
+        let debug_them = super::them_lifecycle_debug_matches(ctx);
 
         self.base.list_us.clear();
         self.base.list_us.push(self.base.me);
@@ -619,6 +620,18 @@ impl EnemyAi {
                 target,
             ) {
                 continue;
+            }
+            if debug_them {
+                eprintln!(
+                    "[THEM frame={} co={:?} me={} phase=battle_friend_after_360 friend={} state={:?} substate={:?} primary_target={}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    friend.handle,
+                    friend.ai_state,
+                    friend.ai_substate,
+                    friend.primary_target,
+                );
             }
             self.base.list_us.push(friend.handle);
             if self.company_number > friend.company_number
@@ -692,7 +705,6 @@ impl EnemyAi {
         // enemies than the last view event.
         self.list_them.retain(|&h| h != 0); // basic cleanup
 
-        let debug_them = super::them_lifecycle_debug_matches(ctx);
         if debug_them {
             eprintln!(
                 "[THEM frame={} co={:?} me={} phase=battle_entry list={:?}]",
