@@ -174,8 +174,11 @@ impl LobbyClient {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_lobby_server(addr: &str) -> Result<(), String> {
+    // Non-poisoning mutex, matching the game-session transport in
+    // `super::native`: a panicking client thread must not wedge the lobby.
+    use parking_lot::Mutex;
     use std::net::{TcpListener, TcpStream};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::thread;
     use tungstenite::Message as WsMessage;
     use tungstenite::accept as ws_accept;
@@ -387,7 +390,7 @@ pub fn run_lobby_server(addr: &str) -> Result<(), String> {
         let peer_addr = stream.peer_addr().ok();
         let mut ws = ws_accept(stream).map_err(|e| format!("websocket accept: {e}"))?;
         let (tx, rx) = channel::<LobbyResponse>();
-        let client_id = state.lock().unwrap().add_client(tx);
+        let client_id = state.lock().add_client(tx);
         tracing::info!(client_id, peer = ?peer_addr, "lobby client connected");
         let _ = ws
             .get_ref()
@@ -408,7 +411,7 @@ pub fn run_lobby_server(addr: &str) -> Result<(), String> {
                             continue;
                         }
                     };
-                    let response = state.lock().unwrap().handle(req, peer_addr, client_id);
+                    let response = state.lock().handle(req, peer_addr, client_id);
                     if let Err(err) = send_response(&mut ws, &response) {
                         break 'session Err(err);
                     }
@@ -426,7 +429,7 @@ pub fn run_lobby_server(addr: &str) -> Result<(), String> {
                             continue;
                         }
                     };
-                    let response = state.lock().unwrap().handle(req, peer_addr, client_id);
+                    let response = state.lock().handle(req, peer_addr, client_id);
                     if let Err(err) = send_response(&mut ws, &response) {
                         break 'session Err(err);
                     }
@@ -444,7 +447,7 @@ pub fn run_lobby_server(addr: &str) -> Result<(), String> {
                 }
             }
         };
-        state.lock().unwrap().remove_client(client_id);
+        state.lock().remove_client(client_id);
         tracing::info!(client_id, peer = ?peer_addr, "lobby client disconnected");
         let _ = ws.close(None);
         result

@@ -110,20 +110,11 @@ impl AssetVfs {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 Mount::Directory(root) => {
-                    let candidate = root.join(&relative);
-                    let resolved = match std::fs::canonicalize(&candidate) {
-                        Ok(resolved) => resolved,
-                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
-                        Err(source) => {
-                            return Err(AssetError::Io {
-                                path: candidate,
-                                source,
-                            });
-                        }
+                    let Some(resolved) = resolve_in_mount(root, &relative, requested)? else {
+                        continue;
                     };
-                    if !resolved.starts_with(root) {
-                        return Err(AssetError::InvalidPath(requested.display().to_string()));
-                    }
+                    // Reading requires a file; a directory falls through to
+                    // the next mount.
                     if !resolved.is_file() {
                         continue;
                     }
@@ -149,21 +140,11 @@ impl AssetVfs {
                 Mount::Memory(_) => {}
                 #[cfg(not(target_arch = "wasm32"))]
                 Mount::Directory(root) => {
-                    let candidate = root.join(&relative);
-                    let resolved = match std::fs::canonicalize(&candidate) {
-                        Ok(resolved) => resolved,
-                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
-                        Err(source) => {
-                            return Err(AssetError::Io {
-                                path: candidate,
-                                source,
-                            });
-                        }
-                    };
-                    if !resolved.starts_with(root) {
-                        return Err(AssetError::InvalidPath(requested.display().to_string()));
+                    // Existence deliberately accepts directories too (callers
+                    // probe paths like `.`), unlike `read` / `resolve`.
+                    if resolve_in_mount(root, &relative, requested)?.is_some() {
+                        return Ok(true);
                     }
-                    return Ok(true);
                 }
             }
         }
@@ -182,26 +163,47 @@ impl AssetVfs {
             let Mount::Directory(root) = mount else {
                 continue;
             };
-            let candidate = root.join(&relative);
-            let resolved = match std::fs::canonicalize(&candidate) {
-                Ok(resolved) => resolved,
-                Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(source) => {
-                    return Err(AssetError::Io {
-                        path: candidate,
-                        source,
-                    });
-                }
+            let Some(resolved) = resolve_in_mount(root, &relative, requested)? else {
+                continue;
             };
-            if !resolved.starts_with(root) {
-                return Err(AssetError::InvalidPath(requested.display().to_string()));
-            }
+            // Only files can be handed out as native paths; a directory
+            // falls through to the next mount.
             if resolved.is_file() {
                 return Ok(Some(resolved));
             }
         }
         Ok(None)
     }
+}
+
+/// Resolve `relative` inside a canonicalized directory mount `root`.
+///
+/// Returns `Ok(None)` when the entry does not exist (caller moves on to the
+/// next mount), the canonicalized path when it does, an I/O error for any
+/// other filesystem failure, and `InvalidPath` when the resolved path (e.g.
+/// via a symlink) escapes the mount.  Whether directories are acceptable is
+/// each caller's decision.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_in_mount(
+    root: &Path,
+    relative: &Path,
+    requested: &Path,
+) -> Result<Option<PathBuf>, AssetError> {
+    let candidate = root.join(relative);
+    let resolved = match std::fs::canonicalize(&candidate) {
+        Ok(resolved) => resolved,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(AssetError::Io {
+                path: candidate,
+                source,
+            });
+        }
+    };
+    if !resolved.starts_with(root) {
+        return Err(AssetError::InvalidPath(requested.display().to_string()));
+    }
+    Ok(Some(resolved))
 }
 
 fn validate_bundle(bundle: &Bundle) -> Result<(), AssetError> {

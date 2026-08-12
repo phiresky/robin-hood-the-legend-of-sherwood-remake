@@ -92,12 +92,9 @@ fn run() -> Result<i32, String> {
             .unwrap_or_else(|| PathBuf::from(format!("{}-start.png", args.mission))),
     );
 
-    if let Some(data_dir) = args.data_dir {
-        let data_dir = absolute_path(&invocation_dir, data_dir);
-        // SAFETY: this is the single-threaded start of the example, before
-        // `rust_init` or the winit game thread reads the environment.
-        unsafe { std::env::set_var("ROBINHOOD_DATA_DIR", &data_dir) };
-    }
+    let data_dir = args
+        .data_dir
+        .map(|data_dir| absolute_path(&invocation_dir, data_dir));
 
     // Reuse the launcher's parser so GlobalOptions and ApplicationContext
     // receive exactly the same settings as a direct `robin --mission` run.
@@ -120,7 +117,8 @@ fn run() -> Result<i32, String> {
     game_args.mission_start_reveal_all = args.reveal_all;
     game_args.fast_forward = true;
 
-    let (campaign, profiles, application_context) = robin_rs::main_entry::rust_init()?;
+    let (campaign, profiles, application_context) =
+        robin_rs::main_entry::rust_init_with_data_dir(data_dir.as_deref())?;
     if let Some(enabled) = fog_tint_all_sprites {
         let mut profile_manager = robin_engine::player_profile::PlayerProfileManager::global();
         let active = profile_manager

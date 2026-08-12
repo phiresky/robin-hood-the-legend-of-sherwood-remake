@@ -1680,85 +1680,83 @@ fn jxl_quality_label(quality: Option<u8>) -> String {
         .unwrap_or_else(|| "lossless".to_string())
 }
 
+/// RGBA with the sprite transparency key mapped to alpha; effort 9 because
+/// interface art is small and encoded once.
 fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
 
     let rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
-
-    let mut png_bytes: Vec<u8> = Vec::new();
-    {
-        let mut enc = png::Encoder::new(&mut png_bytes, pic.width as u32, pic.height as u32);
-        enc.set_color(png::ColorType::Rgba);
-        enc.set_depth(png::BitDepth::Eight);
-        let mut w = enc.write_header().context("png header")?;
-        w.write_image_data(&rgba).context("png data")?;
-    }
-
-    let mut cmd = Command::new("cjxl");
-    if let Some(q) = quality {
-        cmd.args(["-q", &q.to_string(), "-e", "9", "-", "-"]);
-    } else {
-        cmd.args(["-d", "0", "--modular=1", "-e", "9", "-", "-"]);
-    }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("spawn cjxl (is it installed?)")?;
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(&png_bytes)
-        .context("write PNG to cjxl")?;
-    let out = child.wait_with_output().context("cjxl wait")?;
-    if !out.status.success() {
-        bail!("cjxl failed: exit {}", out.status);
-    }
-    Ok(out.stdout)
+    transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)
 }
 
+/// Opaque RGB (maps); effort 7 — effort 9 did not produce a meaningful size
+/// win for this content and is much slower.
 fn transcode_picture_to_jxl(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
+    let rgb = picture_to_rgb888(pic)?;
+    transcode_pixels_to_jxl(pic, rgb, png::ColorType::Rgb, quality, 7)
+}
+
+/// Encode raw pixel data to JXL by piping a minimal PNG through the `cjxl`
+/// CLI (PNG on stdin → JXL on stdout). `quality = None` → lossless modular
+/// (`-d 0 --modular=1`); `Some(q)` → VarDCT at quality `q`.
+///
+/// stdin is fed from a scoped thread while the parent drains stdout/stderr,
+/// so a picture larger than the pipe buffer cannot deadlock the exchange.
+fn transcode_pixels_to_jxl(
+    pic: &Picture,
+    pixels: Vec<u8>,
+    color: png::ColorType,
+    quality: Option<u8>,
+    effort: u8,
+) -> Result<Vec<u8>> {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
 
-    let rgb = picture_to_rgb888(pic)?;
-
-    // Cjxl takes PNG on stdin → JXL on stdout. Feed a minimal RGB PNG.
     let mut png_bytes: Vec<u8> = Vec::new();
     {
         let mut enc = png::Encoder::new(&mut png_bytes, pic.width as u32, pic.height as u32);
-        enc.set_color(png::ColorType::Rgb);
+        enc.set_color(color);
         enc.set_depth(png::BitDepth::Eight);
         let mut w = enc.write_header().context("png header")?;
-        w.write_image_data(&rgb).context("png data")?;
+        w.write_image_data(&pixels).context("png data")?;
     }
 
     let mut cmd = Command::new("cjxl");
+    let effort = effort.to_string();
     if let Some(q) = quality {
-        cmd.args(["-q", &q.to_string(), "-e", "7", "-", "-"]);
+        cmd.args(["-q", &q.to_string(), "-e", &effort, "-", "-"]);
     } else {
-        cmd.args(["-d", "0", "--modular=1", "-e", "7", "-", "-"]);
+        cmd.args(["-d", "0", "--modular=1", "-e", &effort, "-", "-"]);
     }
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .context("spawn cjxl (is it installed?)")?;
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(&png_bytes)
-        .context("write PNG to cjxl")?;
-    let out = child.wait_with_output().context("cjxl wait")?;
+    let mut stdin = child.stdin.take().expect("cjxl stdin was requested piped");
+    let (out, write_result) = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || {
+            let result = stdin.write_all(&png_bytes);
+            // Explicit drop closes the pipe so cjxl sees EOF.
+            drop(stdin);
+            result
+        });
+        // `wait_with_output` drains stdout and stderr concurrently while
+        // the writer thread feeds stdin.
+        let out = child.wait_with_output().context("cjxl wait");
+        let write_result = writer.join().expect("cjxl stdin writer thread panicked");
+        (out, write_result)
+    });
+    let out = out?;
     if !out.status.success() {
-        bail!("cjxl failed: exit {}", out.status);
+        bail!(
+            "cjxl failed: exit {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
+    write_result.context("write PNG to cjxl")?;
     Ok(out.stdout)
 }
 

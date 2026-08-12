@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 
 use mlua::Lua;
 use robin_engine::natives::{NativeSessionCapabilities, ScriptEffects, ScriptState};
@@ -288,7 +288,13 @@ fn install_require(lua: &Lua, mission_dir: &Path) -> Result<(), mlua::Error> {
     let root = mission_dir.to_path_buf();
 
     let require = lua.create_function(move |lua: &Lua, name: String| {
-        if let Some(v) = cache.lock().unwrap().get(&name) {
+        // The cache only holds fully-constructed module values, so a panic
+        // while another holder had the lock leaves it healthy — recover it.
+        if let Some(v) = cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&name)
+        {
             return Ok(v.clone());
         }
         let rel = name.replace('.', "/") + ".lua";
@@ -303,7 +309,10 @@ fn install_require(lua: &Lua, mission_dir: &Path) -> Result<(), mlua::Error> {
         let value: mlua::Value = chunk
             .eval()
             .map_err(|e| mlua::Error::RuntimeError(format!("require('{name}'): {e}")))?;
-        cache.lock().unwrap().insert(name, value.clone());
+        cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name, value.clone());
         Ok(value)
     })?;
     lua.globals().set("require", require)?;
