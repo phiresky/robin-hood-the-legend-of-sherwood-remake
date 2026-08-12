@@ -890,6 +890,7 @@ impl EngineInner {
             )
         });
         if !pushed
+            && !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
             && informer_reachable
         {
@@ -983,19 +984,31 @@ impl EngineInner {
 
         // Handle state transitions after damage — skip for push strikes,
         // since apply_push_effect already handled death/KO transitions.
-        if !pushed && victim_went_unconscious {
-            self.queue_knockout_orders(assets, victim_id, damage_element);
-        } else if !pushed {
-            self.handle_post_damage(
-                sim,
-                assets,
-                victim_id,
-                life_points_before,
-                attacker_id,
-                result.is_empty(),
-                damage_element,
-                dying_anim_override,
-            );
+        if !pushed && !result.is_empty() {
+            if victim_went_unconscious {
+                self.queue_knockout_orders(assets, victim_id, damage_element);
+            } else if victim_was_unconscious && !victim_died {
+                // SetConcussionOfTheBrain only runs its knockout cascade on the
+                // conscious-to-unconscious edge. A later ordinary sword hit still
+                // reaches TranslateSwordDamage: upright victims leave their
+                // swordfight and receive FallingBack/Roll, while an already-down
+                // posture has synchronously terminated above. Do not route either
+                // case back through handle_post_damage's full KO side effects.
+                if !grounded_translation_terminates {
+                    self.queue_knockout_orders(assets, victim_id, damage_element);
+                }
+            } else {
+                self.handle_post_damage(
+                    sim,
+                    assets,
+                    victim_id,
+                    life_points_before,
+                    attacker_id,
+                    false,
+                    damage_element,
+                    dying_anim_override,
+                );
+            }
         }
         self.trace_sword_damage_lifecycle(
             "apply-after",

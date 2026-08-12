@@ -7016,6 +7016,319 @@ mod tests {
     }
 
     #[test]
+    fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() {
+        use crate::ai::{LogLineType, StimulusType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.element_data_mut().posture = Posture::Upright;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
+            victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+            victim_entity
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+        }
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(victim);
+
+        let assets = assets_with_sword_profile(1, 50);
+
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data = crate::sequence::SequenceElementData::new_sword_damage(
+            attacker,
+            SwordStrike::SmalltalkRight,
+            1,
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(victim_entity.human_data().unwrap().unconscious);
+        assert_eq!(
+            victim_entity.npc_data().unwrap().eye_status,
+            EyeStatus::Closed
+        );
+        assert!(victim_entity.human_data().unwrap().opponents.is_empty());
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents
+                .is_empty(),
+            "TranslateSwordDamage's plain quit removes the reciprocal opponent"
+        );
+        assert_eq!(
+            victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .filter(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventQuitSwordfight as u16
+                })
+                .count(),
+            1,
+            "the pre-existing-unconscious translation owns exactly one plain quit"
+        );
+        assert_eq!(
+            victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .filter(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventLoseConsciousness as u16
+                })
+                .count(),
+            0,
+            "the hit must not replay SetConcussion's KO callback"
+        );
+        assert_eq!(
+            engine
+                .feedback
+                .titbit_manager
+                .titbits()
+                .iter()
+                .filter(|titbit| {
+                    titbit.kind == crate::titbit::TitbitKind::UnconsciousStar
+                        && titbit.element_supplier.0 == victim.index()
+                })
+                .count(),
+            0,
+            "the hit must not recreate the existing unconscious star"
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .any(|order| order.order_type == OrderType::FallingBackSword),
+            "upright WaitingSword translation still queues FallingBackSword"
+        );
+    }
+
+    #[test]
+    fn protected_preexisting_unconscious_smalltalk_hit_has_no_translation() {
+        use crate::ai::{LogLineType, StimulusType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.element_data_mut().posture = Posture::Upright;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
+            victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+            victim_entity
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+        }
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(victim);
+
+        let mut assets = assets_with_sword_profile(1, 50);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .protection_by_localization = [99; 5];
+
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data = crate::sequence::SequenceElementData::new_sword_damage(
+            attacker,
+            SwordStrike::SmalltalkRight,
+            1,
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_entity.human_data().unwrap().opponents,
+            vec![attacker],
+            "NO_DAMAGE must not enter TranslateSwordDamage's plain-quit path"
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![victim]
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .orders
+                .is_empty(),
+            "NO_DAMAGE must not translate a FallingBack/Roll order"
+        );
+        assert!(
+            !victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .any(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && matches!(
+                            entry.info,
+                            value if value == StimulusType::EventQuitSwordfight as u16
+                                || value == StimulusType::EventLoseConsciousness as u16
+                        )
+                }),
+            "NO_DAMAGE must neither quit nor replay the knockout callback"
+        );
+    }
+
+    #[test]
+    fn grounded_preexisting_unconscious_smalltalk_hit_terminates_without_quit() {
+        use crate::ai::{LogLineType, StimulusType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.element_data_mut().posture = Posture::Lying;
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
+            victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+            victim_entity
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+        }
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(victim);
+
+        let assets = assets_with_sword_profile(1, 50);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data = crate::sequence::SequenceElementData::new_sword_damage(
+            attacker,
+            SwordStrike::SmalltalkRight,
+            1,
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_entity.npc_data().unwrap().eye_status,
+            EyeStatus::Closed
+        );
+        assert_eq!(
+            victim_entity.human_data().unwrap().opponents,
+            vec![attacker]
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![victim]
+        );
+        let damage = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(damage.state, crate::sequence::SequenceState::Terminated);
+        assert!(damage.orders.is_empty());
+        assert!(
+            !victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .any(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && matches!(
+                            entry.info,
+                            value if value == StimulusType::EventQuitSwordfight as u16
+                                || value == StimulusType::EventLoseConsciousness as u16
+                        )
+                })
+        );
+    }
+
+    #[test]
     fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
         use crate::ai::{LogLineType, StimulusType};
 
