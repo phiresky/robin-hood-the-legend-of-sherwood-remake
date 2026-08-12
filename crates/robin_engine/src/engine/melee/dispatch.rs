@@ -439,20 +439,11 @@ impl EngineInner {
             return OwnerActionBarrier::Skip;
         };
 
-        if !matches!(
-            actor.action_state,
-            ActionState::WaitingSword
-                | ActionState::MovingSword
-                | ActionState::MovingFastSword
-                | ActionState::ParryingSword
-                | ActionState::ParryingSwordLow
-        ) {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
-        }
-
+        // Original CheckSequenceElementValidity accepts ParrySword without an
+        // action-state precondition, and Translate appends the transition and
+        // hold orders from every state except an already-active parade.
+        // See RHelementactorhuman.cpp's RHCOMMAND_PARRY_SWORD arms in
+        // CheckSequenceElementValidity and Translate.
         if matches!(
             actor.action_state,
             ActionState::ParryingSword | ActionState::ParryingSwordLow

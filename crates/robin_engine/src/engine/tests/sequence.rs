@@ -1846,6 +1846,115 @@ fn parry_sword_queues_transition_and_hold_orders() {
 }
 
 #[test]
+fn waiting_parry_survives_normal_movement_successor_replacement() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::Waiting;
+
+    let mut existing =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    existing.priority = SequencePriority::Normal;
+    let existing_sequence = engine.orders.sequence_manager.launch_element(existing);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .postpone_element(existing_sequence, 0);
+
+    let mut parry = SequenceElement::new(1, Command::ParrySword, Some(owner));
+    parry.priority = SequencePriority::Preference;
+    parry.posture_after_transition = Posture::Upright;
+    let parry_sequence = engine.orders.sequence_manager.launch_element(parry);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(parry_sequence, 0)
+        .unwrap()
+        .cross_postponed = Some((existing_sequence, 0));
+
+    let mut incoming =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
+    incoming.priority = SequencePriority::Normal;
+    for order_type in [
+        OrderType::TransitionWaitingUprightWalkingUpright,
+        OrderType::WalkingUpright,
+        OrderType::TransitionWalkingUprightWaitingUpright,
+    ] {
+        incoming
+            .orders
+            .push_back(Order::test_new(order_type, 0.0, 0.0));
+    }
+    let incoming_sequence = engine.orders.sequence_manager.launch_element(incoming);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(incoming_sequence, 0);
+
+    assert!(
+        engine.arbitrate_instruct(parry_sequence, 0),
+        "Preference ParrySword should displace the current Normal movement"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(existing_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted,
+        "the incoming Normal movement replaces the existing Normal successor"
+    );
+    let incoming = engine
+        .orders
+        .sequence_manager
+        .get_element(incoming_sequence, 0)
+        .unwrap();
+    assert_eq!(incoming.state, SequenceState::Postponed);
+    assert_eq!(incoming.command, Command::Move);
+    assert!(incoming.orders.is_empty());
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(parry_sequence, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((incoming_sequence, 0))
+    );
+
+    engine.dispatch_parry_sword(owner, false, parry_sequence, 0);
+
+    let parry = engine
+        .orders
+        .sequence_manager
+        .get_element(parry_sequence, 0)
+        .expect("ParrySword remains live after translation from Waiting");
+    assert_eq!(parry.state, SequenceState::InProgress);
+    assert_eq!(
+        parry
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect::<Vec<_>>(),
+        vec![
+            OrderType::TransitionWaitingSwordParryingSword,
+            OrderType::ParryingSword,
+        ]
+    );
+}
+
+#[test]
 fn parry_sword_terminates_when_either_parry_is_already_active() {
     use crate::element::{ActionState, Command, Posture};
 
