@@ -88,12 +88,23 @@ fn fs_colorize(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb, 1.0);
 }
 
+// Exact piecewise sRGB transfer curve (12.92 linear toe, 2.4 exponent),
+// matching the CPU-side conversions so alphas/colours computed on the
+// CPU round-trip through the same curve on the GPU.
 fn linear_to_srgb_channel(c: f32) -> f32 {
-    return pow(clamp(c, 0.0, 1.0), 1.0 / 2.2);
+    let x = clamp(c, 0.0, 1.0);
+    if (x <= 0.0031308) {
+        return x * 12.92;
+    }
+    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
 }
 
 fn srgb_to_linear_channel(c: f32) -> f32 {
-    return pow(clamp(c, 0.0, 1.0), 2.2);
+    let x = clamp(c, 0.0, 1.0);
+    if (x <= 0.04045) {
+        return x / 12.92;
+    }
+    return pow((x + 0.055) / 1.055, 2.4);
 }
 
 // Background-sampled alpha polygon fill used by door/patch hover
