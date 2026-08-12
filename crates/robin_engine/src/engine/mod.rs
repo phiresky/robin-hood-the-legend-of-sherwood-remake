@@ -352,23 +352,45 @@ impl EngineInner {
         self.feedback.sound_sim.resolved_exclamations = resolutions;
     }
 
-    /// Cancel every logical callback for an actor when Original's
-    /// `StopExclamation` removes its pending sound without calling
-    /// `SoundIsFinished`.
+    /// Cancel the first logical exclamation for an actor without calling
+    /// `SoundIsFinished`, matching Original's `StopExclamation` scan.
+    ///
+    /// Original stops the first matching active channel, then erases the
+    /// first matching node from `mlPendingSounds`.  A playing Rust entry is
+    /// the split-state equivalent of both of those Original records, while
+    /// an unresolved entry exists only in `pending_exclamations`.  Later
+    /// requests for the same actor must retain their list order.
     pub(super) fn cancel_exclamation_callbacks(&mut self, actor_id: u32) {
         let sound = &mut self.feedback.sound_sim;
-        sound
-            .pending_exclamations
-            .retain(|pending| pending.actor_id != actor_id);
-        sound
-            .resolved_exclamations
-            .retain(|resolved| resolved.actor_id != actor_id);
-        sound
+        if let Some(index) = sound
             .playing_exclamations
-            .retain(|playing| playing.actor_id != actor_id);
-        sound
-            .finished_exclamations
-            .retain(|(finished_actor, _)| *finished_actor != actor_id);
+            .iter()
+            .position(|playing| playing.actor_id == actor_id)
+        {
+            sound.playing_exclamations.remove(index);
+            return;
+        }
+
+        let Some(index) = sound
+            .pending_exclamations
+            .iter()
+            .position(|pending| pending.actor_id == actor_id)
+        else {
+            return;
+        };
+        let pending = sound.pending_exclamations.remove(index);
+
+        // During parity replay the host's resolution is staged separately
+        // from its still-pending logical request.  Remove only the staged
+        // resolution belonging to the node erased above.
+        if let Some(index) = sound.resolved_exclamations.iter().position(|resolved| {
+            resolved.actor_id == pending.actor_id
+                && resolved.exclamation_id == pending.exclamation_id
+                && resolved.identifier
+                    == (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id)
+        }) {
+            sound.resolved_exclamations.remove(index);
+        }
     }
 
     pub(crate) fn engine_locked(&self) -> bool {

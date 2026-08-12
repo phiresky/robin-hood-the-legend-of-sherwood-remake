@@ -416,6 +416,112 @@ fn stop_exclamation_cancels_unresolved_request_before_fifo_resolution() {
     assert_eq!(mytalk_ai(&engine, soldier_id).current_remark, Remark::Arrow);
 }
 
+#[test]
+fn stop_exclamation_removes_only_first_same_actor_request_in_each_sound_phase() {
+    use crate::sound::{
+        ExclamationGroup, PendingExclamation, PlayingExclamation, ResolvedExclamation,
+    };
+
+    let pending = |actor_id, profile_id, exclamation_id| PendingExclamation {
+        actor_id,
+        group: ExclamationGroup::Civilian,
+        profile_id,
+        exclamation_id,
+        variant: -1,
+    };
+    let resolved = |actor_id, profile_id: u32, exclamation_id| ResolvedExclamation {
+        actor_id,
+        identifier: (profile_id & 0xFFFF_0000) | u32::from(exclamation_id),
+        exclamation_id,
+        duration_frames: 10,
+    };
+
+    let mut unresolved = EngineInner::new();
+    unresolved.feedback.sound_sim.pending_exclamations = vec![
+        pending(7, 0x1111_0000, 1),
+        pending(8, 0x2222_0000, 2),
+        pending(7, 0x3333_0000, 3),
+    ];
+    unresolved.feedback.sound_sim.resolved_exclamations = vec![
+        resolved(7, 0x1111_0000, 1),
+        resolved(8, 0x2222_0000, 2),
+        resolved(7, 0x3333_0000, 3),
+    ];
+
+    unresolved.cancel_exclamation_callbacks(7);
+
+    assert_eq!(
+        unresolved
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .iter()
+            .map(|request| (request.actor_id, request.exclamation_id))
+            .collect::<Vec<_>>(),
+        vec![(8, 2), (7, 3)]
+    );
+    assert_eq!(
+        unresolved
+            .feedback
+            .sound_sim
+            .resolved_exclamations
+            .iter()
+            .map(|request| (request.actor_id, request.exclamation_id))
+            .collect::<Vec<_>>(),
+        vec![(8, 2), (7, 3)]
+    );
+
+    let mut playing = EngineInner::new();
+    playing.feedback.sound_sim.playing_exclamations = vec![
+        PlayingExclamation {
+            actor_id: 7,
+            exclamation_id: 1,
+            finish_frame: 10,
+        },
+        PlayingExclamation {
+            actor_id: 8,
+            exclamation_id: 2,
+            finish_frame: 11,
+        },
+        PlayingExclamation {
+            actor_id: 7,
+            exclamation_id: 3,
+            finish_frame: 12,
+        },
+    ];
+    playing.feedback.sound_sim.pending_exclamations = vec![pending(7, 0x4444_0000, 4)];
+    playing.feedback.sound_sim.finished_exclamations = vec![(7, 0), (8, 5)];
+
+    playing.cancel_exclamation_callbacks(7);
+
+    assert_eq!(
+        playing
+            .feedback
+            .sound_sim
+            .playing_exclamations
+            .iter()
+            .map(|request| (request.actor_id, request.exclamation_id))
+            .collect::<Vec<_>>(),
+        vec![(8, 2), (7, 3)]
+    );
+    assert_eq!(
+        playing
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .iter()
+            .map(|request| (request.actor_id, request.exclamation_id))
+            .collect::<Vec<_>>(),
+        vec![(7, 4)],
+        "the later unresolved request is a distinct Original pending node"
+    );
+    assert_eq!(
+        playing.feedback.sound_sim.finished_exclamations,
+        vec![(7, 0), (8, 5)],
+        "StopExclamation cannot retract an already-delivered completion"
+    );
+}
+
 #[derive(Clone, Copy)]
 enum SpeechNpcKind {
     Soldier { vip: bool },
