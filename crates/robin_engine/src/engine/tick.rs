@@ -22,11 +22,17 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 pub(super) fn observe_projectile_derived_tail(
     id: EntityId,
     object_type: crate::element::ObjectType,
 ) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::projectile_tail",
+        ?id,
+        ?object_type,
+        "projectile derived tail"
+    );
+    #[cfg(test)]
     PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push((id, object_type));
@@ -52,7 +58,6 @@ pub(super) fn capture_projectile_derived_tails<T>(
     (result, tails)
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NpcHourglassPhase {
     SoldierPrelude,
@@ -522,17 +527,19 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::npc_phases",
+        ?phase,
+        "npc hourglass phase"
+    );
+    #[cfg(test)]
     NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push(phase);
         }
     });
 }
-
-#[cfg(not(test))]
-fn observe_npc_hourglass_phase(_phase: ()) {}
 
 #[cfg(test)]
 pub(super) fn capture_npc_hourglass_phases<T>(
@@ -552,7 +559,6 @@ pub(super) fn capture_npc_hourglass_phases<T>(
     (result, phases)
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActorAnimationBoundaryPhase {
     WaitReady(EntityId),
@@ -568,8 +574,13 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 fn observe_actor_animation_boundary(phase: ActorAnimationBoundaryPhase) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::actor_animation_boundary",
+        ?phase,
+        "actor animation boundary"
+    );
+    #[cfg(test)]
     ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push(phase);
@@ -597,7 +608,6 @@ pub(super) fn capture_actor_animation_boundary<T>(
     (result, phases)
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActorOwnerEnvelopePhase {
     SoldierPrelude(EntityId),
@@ -617,8 +627,13 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
 fn observe_actor_owner_envelope(phase: ActorOwnerEnvelopePhase) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::actor_owner_envelope",
+        ?phase,
+        "actor owner envelope"
+    );
+    #[cfg(test)]
     ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push(phase);
@@ -1466,6 +1481,20 @@ pub(super) fn end_hourglass_phase_capture() -> Vec<HourglassPhase> {
 thread_local! {
     static CAPTURED_ORDERED_GAMEPLAY_ENTITIES: std::cell::RefCell<Option<Vec<EntityId>>> =
         const { std::cell::RefCell::new(None) };
+}
+
+fn observe_ordered_gameplay_entity(entity_id: EntityId) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::ordered_gameplay",
+        ?entity_id,
+        "ordered gameplay slot"
+    );
+    #[cfg(test)]
+    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
+        if let Some(entities) = captured.borrow_mut().as_mut() {
+            entities.push(entity_id);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -2875,26 +2904,17 @@ impl EngineInner {
         // primary-target tracking, and the reaction-time EnemyNear test.
         // In particular, keep the target snap introduced by 24c43efde ahead
         // of RefreshView without moving it into the base NPC phases.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::SoldierPrelude);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Work runs at each soldier's live owner slot below.
 
         // First base-NPC phase in RHElementActorNPC::Hourglass. Patrol
         // history observes the actor before RHElementActorHuman::Hourglass
         // executes its movement/order work.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Patrol);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Work runs before the Human/Actor slices of each NPC owner below.
 
         // ── Element hourglass (per-element update) ───────────────
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::BaseHuman);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Human concussion healing runs synchronously in each owner's
         // pre-Actor hook below.
         // Concrete entity Hourglasses and their virtual retain/remove results
@@ -3561,12 +3581,7 @@ impl EngineInner {
         while slot < original_slots.len() {
             let entity_id = original_slots[slot];
             if self.world.entities.get(entity_id).is_some() {
-                #[cfg(test)]
-                CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-                    if let Some(entities) = captured.borrow_mut().as_mut() {
-                        entities.push(entity_id);
-                    }
-                });
+                observe_ordered_gameplay_entity(entity_id);
                 let entity = self
                     .world
                     .entities
@@ -3594,7 +3609,6 @@ impl EngineInner {
                         // sequence/order.
                         self.apply_delayed_actor_position(sim, assets, entity_id);
                         before_actor(self, entity_id);
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
 
                         let frozen_without_order = self
@@ -3653,7 +3667,6 @@ impl EngineInner {
                                 "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
                             )
                         });
-                        #[cfg(test)]
                         observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(
                             entity_id,
                         ));
@@ -3842,7 +3855,6 @@ impl EngineInner {
                                         .then_some(order_id)
                                 })
                         });
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                             entity_id,
                         ));
@@ -3902,7 +3914,6 @@ impl EngineInner {
                             );
                         }
 
-                        #[cfg(test)]
                         observe_actor_animation_boundary(
                             ActorAnimationBoundaryPhase::GenericExecute(entity_id),
                         );
@@ -3975,7 +3986,6 @@ impl EngineInner {
                                 "actor {entity_id:?} combat-injury Think at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
                             )
                         });
-                        #[cfg(test)]
                         for injured_id in combat_injury_terminated {
                             observe_actor_animation_boundary(
                                 ActorAnimationBoundaryPhase::CombatInjuryThink(injured_id),
@@ -4188,7 +4198,6 @@ impl EngineInner {
                         // only by the null-order guard at the start of the next
                         // actor frame, so ActionChange observes NONANIMATION_END
                         // on this completion frame.
-                        #[cfg(test)]
                         observe_actor_animation_boundary(
                             ActorAnimationBoundaryPhase::CompletionEffects(entity_id),
                         );
@@ -4196,7 +4205,6 @@ impl EngineInner {
                         // Release every animation/completion borrow before the VM:
                         // ActionChange can synchronously replace this or a later
                         // actor's order and the next slot must sample that live.
-                        #[cfg(test)]
                         observe_actor_animation_boundary(
                             ActorAnimationBoundaryPhase::ActionChange(entity_id),
                         );
@@ -4374,7 +4382,6 @@ impl EngineInner {
                 // to every later creation slot and to none of the earlier ones.
                 engine.tick_active_jump_for(assets, owner);
                 if matches!(owner, EntityId::Soldier(_)) {
-                    #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
                     engine.tick_apple_smell_for(owner);
                     engine.tick_soldier_track_primary_target_for(owner);
@@ -4384,7 +4391,6 @@ impl EngineInner {
                 if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_))
                     && !engine.actors_frozen()
                 {
-                    #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::Patrol(owner));
                     engine.tick_patrol_coordination_for_npc(
                         sim,
@@ -4399,7 +4405,6 @@ impl EngineInner {
                     .get(owner)
                     .is_some_and(|entity| entity.human_data().is_some())
                 {
-                    #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanPrelude(owner));
                     engine.tick_concussion_healing_for(sim, owner, assets);
                     engine.process_shoot_list_for(sim, assets, owner);
@@ -4492,27 +4497,21 @@ impl EngineInner {
                             owner,
                             derived_tail_order_type,
                         );
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
                         engine.tick_tiredness_for(owner, assets);
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
                             owner,
                         ));
                         engine.tick_pc_auto_heal_for(sim, owner);
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
                     }
                     EntityId::Soldier(_) | EntityId::Civilian(_) => {
                         engine.tick_tiredness_for(owner, assets);
-                        #[cfg(test)]
-                        {
-                            // NPC humans have no produced-noise refresh, so
-                            // their Human tail begins at tiredness.
-                            observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
-                                owner,
-                            ));
-                        }
+                        // NPC humans have no produced-noise refresh, so
+                        // their Human tail begins at tiredness.
+                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
+                            owner,
+                        ));
                         engine.tick_npc_owner_pass(
                             sim,
                             assets,
@@ -4520,7 +4519,6 @@ impl EngineInner {
                             prepared,
                             owner,
                         );
-                        #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
                     }
                     _ => panic!(
@@ -4646,7 +4644,6 @@ impl EngineInner {
                         && !projectile.projectile.flying
                         && !frozen
                     {
-                        #[cfg(test)]
                         observe_projectile_derived_tail(id, object_type);
                         let motion = projectile.element.sprite.perform_virgin_increment(
                             sim,
@@ -4911,20 +4908,11 @@ impl EngineInner {
         // order. The coordinator below interleaves the actual operations per
         // NPC: own synchronous FITAGAIN + resurrection/eye apply, own body
         // broadcast, own view refresh, then that same NPC's RefreshDetection.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Broadcasts);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::View);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
         // Production work already ran inside the live actor-owner walk in the
         // preceding EntitySystems phase. Keep these coarse observations for
         // the PA-016 tick-spine contract only.
@@ -4933,29 +4921,20 @@ impl EngineInner {
         // contract. Production work no longer runs here: PA-013 executes the
         // complete post-detection tail inside each NPC's creation slot before
         // the next NPC enters RefreshDetection.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Per-tick AILOCK_BUSY edge detector ─────────────────
         // Lock or unlock AILOCK_BUSY based on the live
         // `is_very_very_busy` predicate (posture or active PassDoor /
         // Fall element).  Runs after the view refresh.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Busy);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Stuck-on-ladder emergency counter ──────────────────
         // Bump per frame for non-script-locked NPCs on outdoor
         // ladders idling in CMD_WAIT/CMD_MOVE_WAITING; after 25
         // frames force a ReturnToDuty so the actor can self-recover.
         // Runs after the BUSY edge detector.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Ladder);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Locked-frame timer bumps ───────────────────────────
         // When any lock is held the entire Hourglass tail
@@ -4966,23 +4945,14 @@ impl EngineInner {
         // window and acts as the "skip the fire" gate for the
         // downstream macro-timer / EVENT_TIMER fire checks (which
         // compare against the live `frame_counter`).
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::LockGate);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // The unlocked tail is ordered exactly like the original callee:
         // The16thFrame, normal EVENT_TIMER, macro timer, then stimuli held
         // by a prior AI/script lock.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::SixteenthFrame);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::NormalTimer);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // ── Macro-timer hourglass ──────────────────────────────
         // Poll the macro-specific timer each frame and, when it
@@ -4990,15 +4960,9 @@ impl EngineInner {
         // bypassing the stimulus queue so CMD_WAIT / CMD_BEND
         // resume cleanly. Any resulting movement-order / substate change
         // is visible to the queued-stimulus drain in the same frame.
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::MacroTimer);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
-        #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
-        #[cfg(not(test))]
-        observe_npc_hourglass_phase(());
 
         // Every engine-entered AI call closes its ordered owner-local
         // SetState/Say boundary before returning to effects/orders. Nothing

@@ -202,7 +202,6 @@ impl EngineInner {
         if let Some(Entity::Projectile(projectile)) = self.get_entity_mut(id)
             && !frozen
         {
-            #[cfg(test)]
             super::tick::observe_projectile_derived_tail(id, object_type);
             let progression = if was_flying {
                 crate::sprite::FrameProgression::SkipShadow
