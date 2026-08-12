@@ -137,6 +137,51 @@ pub(crate) fn debug_view_radius_cache_event(
     );
 }
 
+/// Trace the exact per-target decisions around a non-Enemy view-radius call.
+/// This deliberately shares VRCACHE's master/frame gate so a disabled build
+/// neither inspects additional world state nor allocates diagnostic values.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn debug_view_radius_target_event(
+    stage: &str,
+    frame: u32,
+    viewer: EntityId,
+    detectable_kind: usize,
+    list_index: usize,
+    target: EntityId,
+    last_visibility: f32,
+    viewer_inside_building: bool,
+    viewer_ground: GroundPoint,
+    target_ground: GroundPoint,
+    view_radius: u16,
+    scan_decision: bool,
+    gate_open: bool,
+    target_pre_filter_passed: Option<bool>,
+    visibility_blocked: Option<bool>,
+    target_obstacle: Option<ObstacleHandle>,
+    target_obstacle_data: Option<&SightObstacle>,
+) {
+    let config = view_radius_cache_debug_config();
+    if !config.enabled || frame < config.from_frame || frame > config.through_frame {
+        return;
+    }
+
+    let optional_bool = |value: Option<bool>| value.map_or(-1, |value| if value { 1 } else { 0 });
+    let target_obstacle = target_obstacle.map_or(-1, |handle| i32::from(u16::from(handle)));
+    let obstacle_layer = target_obstacle_data.map_or(-1, |obstacle| i32::from(obstacle.layer));
+    eprintln!(
+        "VRTARGET {{\"engine\":\"rust\",\"stage\":\"{stage}\",\"frame\":{frame},\"viewer_slot\":{},\"kind\":{detectable_kind},\"list_index\":{list_index},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision},\"gate_open\":{gate_open},\"target_pre_filter_passed\":{},\"visibility_blocked\":{},\"target_obstacle\":{target_obstacle},\"obstacle_layer\":{obstacle_layer}}}",
+        viewer.index(),
+        target.index(),
+        last_visibility.to_bits(),
+        viewer_ground.x.to_bits(),
+        viewer_ground.y.to_bits(),
+        target_ground.x.to_bits(),
+        target_ground.y.to_bits(),
+        optional_bool(target_pre_filter_passed),
+        optional_bool(visibility_blocked),
+    );
+}
+
 /// One surface-owned `ComputeViewRadius` result, corresponding to Original's
 /// last-viewer, last-radius, and universal-frame fields.
 #[derive(

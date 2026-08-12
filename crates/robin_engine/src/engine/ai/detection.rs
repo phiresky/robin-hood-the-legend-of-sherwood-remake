@@ -4029,7 +4029,7 @@ impl EngineInner {
         let mut max_sharpness: u32 = 0;
 
         // (1) Per-detectable visibility pass.
-        for det in npc.detectable_lists[kind_idx].iter_mut() {
+        for (list_index, det) in npc.detectable_lists[kind_idx].iter_mut().enumerate() {
             let Some(target_id) = det.element else {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
@@ -4040,13 +4040,33 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             };
-            if !refresh_detection_scans_target(
+            let scan_decision = refresh_detection_scans_target(
                 det.last_visibility,
                 ctx.viewer_inside_building,
                 ctx.ground_position,
                 ctx.view_radius,
                 target.ground_position,
-            ) {
+            );
+            ai_vision::debug_view_radius_target_event(
+                "scan",
+                ctx.universal_frame,
+                npc_id,
+                kind_idx,
+                list_index,
+                target_id,
+                det.last_visibility,
+                ctx.viewer_inside_building,
+                ctx.ground_position,
+                target.ground_position,
+                ctx.view_radius,
+                scan_decision,
+                gate_open,
+                None,
+                None,
+                None,
+                None,
+            );
+            if !scan_decision {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
                 continue;
@@ -4062,13 +4082,41 @@ impl EngineInner {
                 viewer_y = ctx.ground_position.y,
                 "non-Enemy detectable inside RefreshDetection box"
             );
-            let visibility: f32 = if non_enemy_visibility_blocked_before_cadence(
+            // Preserve the original short circuit: the target-type predicate
+            // is not evaluated when either preceding building gate is true.
+            let target_pre_filter_passed = if extra_gate_blocks_visibility || ctx.viewer_in_building
+            {
+                None
+            } else {
+                Some(target_pre_filter(target))
+            };
+            let visibility_blocked = non_enemy_visibility_blocked_before_cadence(
                 ctx.eye_status,
                 ctx.camp,
                 extra_gate_blocks_visibility
                     || ctx.viewer_in_building
-                    || !target_pre_filter(target),
-            ) {
+                    || target_pre_filter_passed == Some(false),
+            );
+            ai_vision::debug_view_radius_target_event(
+                "visibility_gate",
+                ctx.universal_frame,
+                npc_id,
+                kind_idx,
+                list_index,
+                target_id,
+                det.last_visibility,
+                ctx.viewer_inside_building,
+                ctx.ground_position,
+                target.ground_position,
+                ctx.view_radius,
+                scan_decision,
+                gate_open,
+                target_pre_filter_passed,
+                Some(visibility_blocked),
+                None,
+                None,
+            );
+            let visibility: f32 = if visibility_blocked {
                 0.0
             } else if gate_open {
                 let target_in_same_building = ctx.viewer_in_building
@@ -4087,6 +4135,25 @@ impl EngineInner {
                             )
                         })
                 });
+                ai_vision::debug_view_radius_target_event(
+                    "compute_entry",
+                    ctx.universal_frame,
+                    npc_id,
+                    kind_idx,
+                    list_index,
+                    target_id,
+                    det.last_visibility,
+                    ctx.viewer_inside_building,
+                    ctx.ground_position,
+                    target.ground_position,
+                    ctx.view_radius,
+                    scan_decision,
+                    gate_open,
+                    target_pre_filter_passed,
+                    Some(visibility_blocked),
+                    target_obstacle_handle,
+                    target_obstacle,
+                );
                 let q = ai_vision::VisibilityQuery {
                     viewer_los: ctx.eye,
                     viewer_world: ctx.eye_world,
