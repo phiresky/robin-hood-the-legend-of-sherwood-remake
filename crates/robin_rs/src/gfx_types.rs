@@ -179,6 +179,77 @@ impl BlendMode {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rect_contains_point_is_inclusive_top_left_exclusive_bottom_right() {
+        let r = Rect::new(10, 20, 5, 6);
+        // Corners on the top-left edge are inside.
+        assert!(r.contains_point((10, 20)));
+        assert!(r.contains_point((14, 25)));
+        // Bottom-right edge is exclusive.
+        assert!(!r.contains_point((15, 20)));
+        assert!(!r.contains_point((10, 26)));
+        assert!(!r.contains_point((15, 26)));
+        // Clearly outside.
+        assert!(!r.contains_point((9, 20)));
+        assert!(!r.contains_point((10, 19)));
+    }
+
+    #[test]
+    fn rect_accessors() {
+        let r = Rect::new(-3, 4, 10, 20);
+        assert_eq!(r.left(), -3);
+        assert_eq!(r.top(), 4);
+        assert_eq!(r.right(), 7);
+        assert_eq!(r.bottom(), 24);
+        assert_eq!(r.width(), 10);
+        assert_eq!(r.height(), 20);
+        // Negative sizes clamp to zero in the unsigned accessors.
+        let neg = Rect {
+            x: 0,
+            y: 0,
+            w: -5,
+            h: -1,
+        };
+        assert_eq!(neg.width(), 0);
+        assert_eq!(neg.height(), 0);
+    }
+
+    #[test]
+    fn color_to_f32_srgb_normalizes_channels() {
+        assert_eq!(Color::BLACK.to_f32_srgb(), [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(Color::WHITE.to_f32_srgb(), [1.0, 1.0, 1.0, 1.0]);
+        let c = Color::rgba(51, 102, 153, 204).to_f32_srgb();
+        assert_eq!(c, [0.2, 0.4, 0.6, 0.8]);
+    }
+
+    #[test]
+    fn blend_mode_to_wgpu_mapping() {
+        assert_eq!(BlendMode::None.to_wgpu(), None);
+        assert_eq!(
+            BlendMode::Blend.to_wgpu(),
+            Some(wgpu::BlendState::ALPHA_BLENDING)
+        );
+
+        // Add: src*srcA + dst, alpha channel untouched.
+        let add = BlendMode::Add.to_wgpu().expect("Add must blend");
+        assert_eq!(add.color.src_factor, wgpu::BlendFactor::SrcAlpha);
+        assert_eq!(add.color.dst_factor, wgpu::BlendFactor::One);
+        assert_eq!(add.alpha.src_factor, wgpu::BlendFactor::Zero);
+        assert_eq!(add.alpha.dst_factor, wgpu::BlendFactor::One);
+
+        // Mod: src*dst, alpha channel untouched.
+        let modulate = BlendMode::Mod.to_wgpu().expect("Mod must blend");
+        assert_eq!(modulate.color.src_factor, wgpu::BlendFactor::Dst);
+        assert_eq!(modulate.color.dst_factor, wgpu::BlendFactor::Zero);
+        assert_eq!(modulate.alpha.src_factor, wgpu::BlendFactor::Zero);
+        assert_eq!(modulate.alpha.dst_factor, wgpu::BlendFactor::One);
+    }
+}
+
 // ---------------------------------------------------------------------
 // Keycodes
 // ---------------------------------------------------------------------

@@ -856,14 +856,7 @@ impl Renderer {
         if image.width == 0 || image.height == 0 {
             return;
         }
-        let (dst, uv) = src_dst_uv(
-            src_rect,
-            dst_rect,
-            image.width as f32,
-            image.height as f32,
-            self.frame.width as i32,
-            self.frame.height as i32,
-        );
+        let (dst, uv) = src_dst_uv(src_rect, dst_rect, image.width as f32, image.height as f32);
         let tex_idx = self.queue_cached_bg(image.bind_group.clone());
         self.frame.queued.push(QueuedDraw {
             dst,
@@ -1078,14 +1071,7 @@ impl Renderer {
             return false;
         };
         let (sw, sh) = (surface.width as f32, surface.height as f32);
-        let (sub_dst, sub_uv) = src_dst_uv(
-            src_rect,
-            dst_rect,
-            sw,
-            sh,
-            self.frame.width as i32,
-            self.frame.height as i32,
-        );
+        let (sub_dst, sub_uv) = src_dst_uv(src_rect, dst_rect, sw, sh);
         if transparent {
             self.queue_transparent_managed_bgs(
                 surface.color_bg.clone(),
@@ -1125,14 +1111,7 @@ impl Renderer {
             return false;
         };
         let (sw, sh) = (surface.width as f32, surface.height as f32);
-        let (sub_dst, sub_uv) = src_dst_uv(
-            src_rect,
-            dst_rect,
-            sw,
-            sh,
-            self.frame.width as i32,
-            self.frame.height as i32,
-        );
+        let (sub_dst, sub_uv) = src_dst_uv(src_rect, dst_rect, sw, sh);
         // alpha_level: 0 = fully opaque, 100 = fully transparent.
         // Convert to a 0..1 multiplier.
         let alpha = ((100u16.saturating_sub(alpha_level)) as f32 / 100.0).clamp(0.0, 1.0);
@@ -1711,14 +1690,7 @@ impl Renderer {
             return false;
         };
         let bg_bind_group = bg.bind_group.clone();
-        let (dst, uv) = src_dst_uv(
-            src_rect,
-            dst_rect,
-            bg.width as f32,
-            bg.height as f32,
-            self.frame.width as i32,
-            self.frame.height as i32,
-        );
+        let (dst, uv) = src_dst_uv(src_rect, dst_rect, bg.width as f32, bg.height as f32);
         let tex_idx = self.queue_cached_bg(bg_bind_group);
         self.frame.queued.push(QueuedDraw {
             dst,
@@ -2143,8 +2115,9 @@ fn sprite_outline_rgba(
 }
 
 /// RGB565 → RGBA8 with no green-key handling — every pixel opaque
-/// except `SHADOW_KEY`. Used by `capture_frame_rgba` where the
-/// caller wants the literal screen contents and green pixels (if
+/// except `SHADOW_KEY`. Used by `build_managed_surface`,
+/// `create_rgb565_gpu_image` and `upload_background_texture`, where
+/// the caller wants the literal source contents and green pixels (if
 /// any) should appear as green, not as transparent gaps.
 fn rgb565_to_rgba_opaque(src: &[u16], w: usize, h: usize) -> Vec<u8> {
     let n = w * h;
@@ -2239,8 +2212,6 @@ fn src_dst_uv(
     dst_rect: Option<&BBox>,
     src_w: f32,
     src_h: f32,
-    screen_w: i32,
-    screen_h: i32,
 ) -> (Rect, [f32; 4]) {
     let (sx, sy, sw, sh) = match src_rect {
         Some(r) => (
@@ -2265,7 +2236,6 @@ fn src_dst_uv(
             h: sh as i32,
         },
     };
-    let _ = (screen_w, screen_h);
     let uv = [sx / src_w, sy / src_h, (sx + sw) / src_w, (sy + sh) / src_h];
     (dst, uv)
 }
@@ -2418,6 +2388,90 @@ mod tests {
             tex: TextureRef::Frame(index),
             blend: BlendMode::Blend,
         }
+    }
+
+    #[test]
+    fn src_dst_uv_full_source_defaults() {
+        // No src rect, no dst rect: full texture positioned at (0,0),
+        // uv spanning the whole texture.
+        let (dst, uv) = src_dst_uv(None, None, 64.0, 32.0);
+        assert_eq!(dst, Rect::new(0, 0, 64, 32));
+        assert_eq!(uv, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn src_dst_uv_sub_rect_source() {
+        // A 16x8 sub-rect at (16,8) of a 64x32 source, no dst rect:
+        // positioned at (0,0) with the sub-rect's size, uv covering
+        // only the sub-rect.
+        let src = BBox::from_coords(16.0, 8.0, 32.0, 16.0);
+        let (dst, uv) = src_dst_uv(Some(&src), None, 64.0, 32.0);
+        assert_eq!(dst, Rect::new(0, 0, 16, 8));
+        assert_eq!(uv, [0.25, 0.25, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn src_dst_uv_explicit_dst_rect() {
+        // dst rect places (and stretches) the quad; uv still comes
+        // from the src rect alone.
+        let src = BBox::from_coords(0.0, 0.0, 32.0, 32.0);
+        let dst_rect = BBox::from_coords(10.0, 20.0, 74.0, 52.0);
+        let (dst, uv) = src_dst_uv(Some(&src), Some(&dst_rect), 64.0, 32.0);
+        assert_eq!(dst, Rect::new(10, 20, 64, 32));
+        assert_eq!(uv, [0.0, 0.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn src_dst_uv_inverted_src_rect_clamps_to_zero_size() {
+        // A degenerate (max < min) src rect must not produce negative
+        // sizes.
+        let src = BBox::from_coords(16.0, 16.0, 8.0, 8.0);
+        let (dst, uv) = src_dst_uv(Some(&src), None, 64.0, 32.0);
+        assert_eq!(dst, Rect::new(0, 0, 0, 0));
+        assert_eq!(uv, [0.25, 0.5, 0.25, 0.5]);
+    }
+
+    #[test]
+    fn clip_dst_to_uv_no_clip_is_identity() {
+        let dst = Rect::new(10, 10, 20, 20);
+        let clip = Rect::new(0, 0, 100, 100);
+        let (clipped, uv) = clip_dst_to_uv(dst, clip).expect("unclipped rect must survive");
+        assert_eq!(clipped, dst);
+        assert_eq!(uv, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn clip_dst_to_uv_partial_clip_scales_uv() {
+        // dst is 100..200 in x, clip cuts it to 150..200: right half
+        // survives, uv.x starts at 0.5.
+        let dst = Rect::new(100, 0, 100, 50);
+        let clip = Rect::new(150, 0, 200, 50);
+        let (clipped, uv) = clip_dst_to_uv(dst, clip).expect("half the rect survives");
+        assert_eq!(clipped, Rect::new(150, 0, 50, 50));
+        assert_eq!(uv, [0.5, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn clip_dst_to_uv_fully_clipped_away_is_none() {
+        let dst = Rect::new(0, 0, 10, 10);
+        let clip = Rect::new(50, 50, 10, 10);
+        assert!(clip_dst_to_uv(dst, clip).is_none());
+    }
+
+    #[test]
+    fn clip_dst_to_uv_zero_size_dst_does_not_divide_by_zero() {
+        // A zero-sized dst is always fully clipped away (x1 <= x0), so
+        // the `.max(1)` guard never produces NaN/inf uv values.
+        let dst = Rect::new(5, 5, 0, 0);
+        let clip = Rect::new(0, 0, 100, 100);
+        assert!(clip_dst_to_uv(dst, clip).is_none());
+
+        // 1x1 dst inside the clip exercises the divide with the
+        // smallest legal size.
+        let dst = Rect::new(5, 5, 1, 1);
+        let (clipped, uv) = clip_dst_to_uv(dst, clip).expect("1x1 rect inside clip survives");
+        assert_eq!(clipped, dst);
+        assert_eq!(uv, [0.0, 0.0, 1.0, 1.0]);
     }
 
     #[test]

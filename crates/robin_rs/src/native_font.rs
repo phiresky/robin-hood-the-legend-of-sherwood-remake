@@ -585,6 +585,69 @@ mod tests {
     }
 
     #[test]
+    fn build_rgba_atlas_decodes_rgb565_and_blue_channel_alpha() {
+        let mut font = make_test_font();
+        // 3x1 atlas: full-white glyph pixel with alpha 0x1F, pure red
+        // with alpha 0x10, pure blue with alpha 0.
+        font.height = 1;
+        font.glyph_width = 3;
+        font.glyph_pixels = vec![0xFFFF, 0xF800, 0x001F];
+        font.alpha_width = 3;
+        font.alpha_pixels = vec![0x001F, 0x0010, 0x0000];
+
+        let (rgba, w, h) = font.build_rgba_atlas();
+        assert_eq!((w, h), (3, 1));
+        assert_eq!(rgba.len(), 12);
+        // 0xFFFF → truncated 8-bit channels (248, 252, 248), A = 0x1F<<3.
+        assert_eq!(&rgba[0..4], &[248, 252, 248, 248]);
+        // 0xF800 → pure red, A = 0x10<<3 = 128.
+        assert_eq!(&rgba[4..8], &[248, 0, 0, 128]);
+        // 0x001F → pure blue, alpha mask 0 → fully transparent.
+        assert_eq!(&rgba[8..12], &[0, 0, 248, 0]);
+    }
+
+    #[test]
+    fn build_rgba_atlas_color_key_pixels_stay_fully_transparent() {
+        let mut font = make_test_font();
+        font.height = 1;
+        font.glyph_width = 2;
+        // First pixel is the green colour key: must come out all-zero
+        // even though the alpha mask says fully opaque.
+        font.glyph_pixels = vec![0x07C0, 0xFFFF];
+        font.alpha_width = 2;
+        font.alpha_pixels = vec![0x001F, 0x001F];
+
+        let (rgba, w, h) = font.build_rgba_atlas();
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(&rgba[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&rgba[4..8], &[248, 252, 248, 248]);
+    }
+
+    #[test]
+    fn build_rgba_atlas_alpha_narrower_than_glyph_defaults_to_transparent() {
+        let mut font = make_test_font();
+        // Glyph atlas is 3px wide but the alpha picture only 2px:
+        // out-of-range alpha lookups must read as 0 (transparent),
+        // not panic.
+        font.height = 2;
+        font.glyph_width = 3;
+        font.glyph_pixels = vec![0xFFFF; 6];
+        font.alpha_width = 2;
+        font.alpha_pixels = vec![0x001F; 4];
+
+        let (rgba, w, h) = font.build_rgba_atlas();
+        assert_eq!((w, h), (3, 2));
+        // Row 0: x=0,1 read alpha row 0 (opaque); x=2 reads alpha row 1
+        // index 2*2+... — indices 2,3 exist (row-major into the 2-wide
+        // alpha picture), so alphas stay opaque until the flat index
+        // runs past the alpha buffer.
+        // Row 1: glyph indices 3,4,5 → alpha indices y*aw+x = 2+x =
+        // 2,3,4 → index 4 is out of range → transparent.
+        let alphas: Vec<u8> = rgba.chunks(4).map(|px| px[3]).collect();
+        assert_eq!(alphas, vec![248, 248, 248, 248, 248, 0]);
+    }
+
+    #[test]
     fn text_width_basic() {
         let f = make_test_font();
         assert_eq!(f.text_width(""), 0);
