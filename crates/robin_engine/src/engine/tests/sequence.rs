@@ -3869,6 +3869,7 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     if let Some(crate::element::Entity::Soldier(soldier)) = engine.world.entities.get_mut(victim) {
         soldier.npc.life_points = 30;
         soldier.soldier.cached_max_life_points = 30;
+        soldier.soldier.cached_camp = Camp::Lacklandists;
         soldier.human.camp = Camp::Lacklandists;
         soldier.human.unconscious = true;
         soldier.human.concussion_of_the_brain = CONCUSSION_MAX;
