@@ -9905,6 +9905,7 @@ impl EngineInner {
                 let ny = cached_increment.y;
                 let anti_on = entity.position_iface().is_anti_collision_on();
                 let movement_diag_pre_position = entity.element_data().position_map();
+                let movement_diag_old_position = entity.position_iface().old_map_position();
                 let movement_diag_deviated_before = entity.position_iface().is_deviated();
                 let movement_diag_blocked_count_before = entity.position_iface().blocked_count;
                 // Preserve the two storage roundings of Original's
@@ -10128,6 +10129,50 @@ impl EngineInner {
                 } else {
                     movement_diag_raw_post
                 };
+                let movement_diag_split_calls =
+                    if crate::movement_diagnostics::parity_movement_capture_active() {
+                        split_motion_speeds
+                            .map(|(first_speed, second_speed)| {
+                                let first_pre = movement_diag_pre_position;
+                                let first_delta = crate::coordinates::MapVec::new(
+                                    nx * first_speed,
+                                    ny * first_speed,
+                                );
+                                let first_post = crate::coordinates::MapPoint::new(
+                                    first_pre.x + first_delta.x,
+                                    first_pre.y + first_delta.y,
+                                );
+                                let second_delta = crate::coordinates::MapVec::new(
+                                    nx * second_speed,
+                                    ny * second_speed,
+                                );
+                                let second_post = crate::coordinates::MapPoint::new(
+                                    first_post.x + second_delta.x,
+                                    first_post.y + second_delta.y,
+                                );
+                                vec![
+                                    crate::movement_diagnostics::ParityMovementCall {
+                                        frame_distance_raw: first_frame_dist_raw.into(),
+                                        effective_distance: first_speed.into(),
+                                        pre_position: first_pre.into(),
+                                        requested_delta: first_delta.into(),
+                                        post_position: first_post.into(),
+                                    },
+                                    crate::movement_diagnostics::ParityMovementCall {
+                                        frame_distance_raw: second_frame_dist_raw
+                                            .expect("split speeds require a second motion distance")
+                                            .into(),
+                                        effective_distance: second_speed.into(),
+                                        pre_position: first_post.into(),
+                                        requested_delta: second_delta.into(),
+                                        post_position: second_post.into(),
+                                    },
+                                ]
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
                 crate::movement_diagnostics::record_parity_movement_step(
                     crate::movement_diagnostics::ParityMovementStep {
                         entity: entity_id,
@@ -10135,6 +10180,7 @@ impl EngineInner {
                         animation: format!("{anim:?}"),
                         motion_method: format!("{motion_method:?}"),
                         pre_position: movement_diag_pre_position.into(),
+                        old_position: movement_diag_old_position.into(),
                         goal: goal.into(),
                         cached_increment: cached_increment.into(),
                         frame_distance_raw: frame_dist_raw.into(),
@@ -10154,6 +10200,7 @@ impl EngineInner {
                         deviated_after: entity.position_iface().is_deviated(),
                         blocked_count_after: entity.position_iface().blocked_count,
                         goal_reached_after_commit: movement_goal_reached,
+                        split_calls: movement_diag_split_calls,
                     },
                 );
                 point_seek_post_arrival = is_final_waypoint

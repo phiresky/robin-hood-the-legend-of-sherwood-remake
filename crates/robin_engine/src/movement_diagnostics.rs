@@ -135,6 +135,7 @@ pub struct ParityMovementStep {
     pub animation: String,
     pub motion_method: String,
     pub pre_position: ParityPoint,
+    pub old_position: ParityPoint,
     pub goal: ParityPoint,
     pub cached_increment: ParityPoint,
     pub frame_distance_raw: ParityFloat,
@@ -152,6 +153,20 @@ pub struct ParityMovementStep {
     pub deviated_after: bool,
     pub blocked_count_after: u16,
     pub goal_reached_after_commit: bool,
+    /// Per-`PerformMotion` operands for fast stairs/ladder/wall dispatch.
+    /// Those Original Execute arms invoke `PerformMotion` twice and therefore
+    /// round the stored map position after each call. Ordinary motion leaves
+    /// this empty.
+    pub split_calls: Vec<ParityMovementCall>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ParityMovementCall {
+    pub frame_distance_raw: ParityFloat,
+    pub effective_distance: ParityFloat,
+    pub pre_position: ParityPoint,
+    pub requested_delta: ParityPoint,
+    pub post_position: ParityPoint,
 }
 
 /// Exact state around one Rust analogue of `RHSprite::PerformFlight`.
