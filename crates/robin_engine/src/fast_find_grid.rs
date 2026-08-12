@@ -2341,6 +2341,7 @@ impl FastFindGrid {
                     if line.is_motion
                         && self.is_line_active(line_idx)
                         && visited.try_mark(usize::from(line_idx))
+                        && line.intersects_bbox(bbox)
                         && !visit(line_idx)
                     {
                         return;
@@ -3909,6 +3910,38 @@ mod tests {
         let bbox_miss = MapBBox::from_coords(0.0, 0.0, 256.0, 50.0);
         let lines_miss = grid.get_active_motion_line_indices(0, &bbox_miss);
         assert!(lines_miss.is_empty(), "should not find lines above");
+    }
+
+    #[test]
+    fn motion_line_box_query_filters_same_block_candidates_by_exact_intersection() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(2, 2);
+        grid.allocate_layers(1);
+
+        let overlapping = grid.add_line(
+            GridLine::new(MapPoint::new(5.0, 10.0), MapPoint::new(25.0, 10.0), true),
+            0,
+        );
+        let outside = grid.add_line(
+            GridLine::new(MapPoint::new(5.0, 50.0), MapPoint::new(25.0, 50.0), true),
+            0,
+        );
+
+        // Both lines occupy grid block (0, 0), but Original GetLines removes
+        // the candidate whose segment does not intersect the exact query box.
+        let narrow = MapBBox::from_coords(10.0, 5.0, 20.0, 15.0);
+        assert_eq!(
+            grid.get_active_motion_line_indices(0, &narrow),
+            vec![overlapping]
+        );
+
+        // Expanding the same query to intersect both lines retains their
+        // insertion order and proves the second candidate remains active.
+        let expanded = MapBBox::from_coords(10.0, 5.0, 20.0, 55.0);
+        assert_eq!(
+            grid.get_active_motion_line_indices(0, &expanded),
+            vec![overlapping, outside]
+        );
     }
 
     #[test]
