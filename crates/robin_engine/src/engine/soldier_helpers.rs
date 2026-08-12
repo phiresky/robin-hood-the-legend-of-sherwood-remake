@@ -4,7 +4,7 @@
 //! the larger modules — attentive-mode requests, drunken-step
 //! perturbation, etc.
 
-use super::movement::GoalShape;
+use super::movement::{GoalShape, adapt_source_to_current_door, current_door_for_route_source};
 use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::{MapPoint, MapVec};
@@ -1422,65 +1422,97 @@ impl EngineInner {
 
         let source = self.get_entity(pc_id).map(|e| {
             let elem = e.element_data();
+            let (door_handle, door_direction) = current_door_for_route_source(e);
             (
                 elem.position_map(),
                 elem.sector(),
                 elem.layer(),
                 e.actor_auth_info(),
+                door_handle,
+                door_direction,
             )
         });
 
-        if let Some((source_pos, Some(source_sector), _source_layer, auth)) = source
+        if let Some((
+            raw_source_pos,
+            Some(raw_source_sector),
+            raw_source_layer,
+            auth,
+            door_handle,
+            door_direction,
+        )) = source
             && let Some(goal_sector) = goal.sector
-            && source_sector != goal_sector
         {
-            let path = {
-                let level = self.world.fast_grid.level.clone();
-                self.scripts.mission.as_ref().and_then(|_| {
-                    crate::gate::find_path_gates(
-                        &self.script_domains.interactables.doors,
-                        (source_pos.x, source_pos.y),
-                        source_sector.get(),
-                        (goal.x, goal.y),
-                        goal_sector.get(),
-                        Some(&auth),
-                        false,
-                        &|sector| self.building_sector_is_authorized(sector),
-                        &|sector| {
-                            level
-                                .sectors
-                                .iter()
-                                .find(|candidate| candidate.sector_number == sector)
-                                .and_then(|candidate| candidate.lift_type)
+            // Original `RHSequence::AppendMoveToSequence` adapts an actor
+            // whose `GetDoor()` is non-null onto the committed far side
+            // before it compares source and goal sectors. In particular, a
+            // PC already leaving this building for the door-fight goal must
+            // not construct (and draw the random wait for) a second exit.
+            let (source_pos, source_sector, _source_layer) = adapt_source_to_current_door(
+                &self.script_domains.interactables.doors,
+                door_handle,
+                door_direction,
+            )
+            .map(|(point, sector, layer)| {
+                (
+                    point,
+                    crate::position_interface::SectorHandle::new(sector).unwrap_or_else(|| {
+                        panic!("door-fight route for {pc_id:?} adapted to invalid sector {sector}")
+                    }),
+                    layer,
+                )
+            })
+            .unwrap_or((raw_source_pos, raw_source_sector, raw_source_layer));
+
+            if source_sector != goal_sector {
+                let path = {
+                    let level = self.world.fast_grid.level.clone();
+                    self.scripts.mission.as_ref().and_then(|_| {
+                        crate::gate::find_path_gates(
+                            &self.script_domains.interactables.doors,
+                            (source_pos.x, source_pos.y),
+                            source_sector.get(),
+                            (goal.x, goal.y),
+                            goal_sector.get(),
+                            Some(&auth),
+                            false,
+                            &|sector| self.building_sector_is_authorized(sector),
+                            &|sector| {
+                                level
+                                    .sectors
+                                    .iter()
+                                    .find(|candidate| candidate.sector_number == sector)
+                                    .and_then(|candidate| candidate.lift_type)
+                            },
+                        )
+                    })
+                };
+                if let Some(path) = path
+                    && !path.is_empty()
+                {
+                    // Attribute only a route that is actually about to enter the
+                    // gate builder, where RuntimeBuildingExitWait can be drawn.
+                    self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
+                    let _ = self.build_gate_movement_sequence(
+                        sim,
+                        pc_id,
+                        path,
+                        GoalShape::Point {
+                            point: MapPoint::new(goal.x, goal.y),
+                            tolerance: 0.0,
                         },
-                    )
-                })
-            };
-            if let Some(path) = path
-                && !path.is_empty()
-            {
-                // Attribute only a route that is actually about to enter the
-                // gate builder, where RuntimeBuildingExitWait can be drawn.
-                self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
-                let _ = self.build_gate_movement_sequence(
-                    sim,
-                    pc_id,
-                    path,
-                    GoalShape::Point {
-                        point: MapPoint::new(goal.x, goal.y),
-                        tolerance: 0.0,
-                    },
-                    goal.level,
-                    crate::order::OrderType::RunningUpright,
-                    true,
-                    1.0,
-                    MoveFlags::empty(),
-                    vec![wait],
-                    tail_elements,
-                    false,
-                    false,
-                );
-                return;
+                        goal.level,
+                        crate::order::OrderType::RunningUpright,
+                        true,
+                        1.0,
+                        MoveFlags::empty(),
+                        vec![wait],
+                        tail_elements,
+                        false,
+                        false,
+                    );
+                    return;
+                }
             }
         }
 
@@ -1562,6 +1594,184 @@ pub fn turn_drunken_is_very_slow(direction: u16, goal: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequence::SequenceElementData;
+
+    fn door_fight_route_fixture(triggers_fired: u8) -> (EngineInner, EntityId, Position) {
+        use crate::element::{ActiveDoorPass, ActorData, ActorPc, ElementData, HumanData, PcData};
+        use crate::engine::MissionScript;
+        use crate::fast_find_grid::GridSector;
+        use crate::gate::{Door, DoorIndex, DoorType};
+        use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+        use crate::sector::{SectorNumber, SectorType};
+
+        let mission = MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![ClassEntry {
+                source_file: "door_fight_route_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission script");
+
+        let building_sector = SectorNumber::new(118);
+        let outside_sector = SectorNumber::new(0);
+        let point_in = MapPoint::new(1513.0, 777.0);
+        let point_out = MapPoint::new(1500.0, 1017.0);
+        let goal = Position {
+            x: 1490.0,
+            y: 1020.0,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        };
+
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(mission);
+        engine.script_domains.interactables.doors = vec![Door {
+            door_type: DoorType::Building,
+            point_in,
+            point_out,
+            point_mid: MapPoint::new(1506.0, 897.0),
+            layer_in: 6,
+            layer_out: 0,
+            sector_in: building_sector,
+            sector_out: outside_sector,
+            ..Door::default()
+        }];
+        crate::gate::build_gate_links(&mut engine.script_domains.interactables.doors);
+
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+        for (sector_number, sector_type, layer) in [
+            (building_sector, SectorType::BUILDING, 6),
+            (outside_sector, SectorType::MOTION | SectorType::AREA, 0),
+        ] {
+            let index = level.sectors.len();
+            level.sector_number_map.insert(sector_number, index);
+            level.sectors.push(GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type,
+                layer,
+                sector_number,
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
+
+        let mut element = ElementData {
+            kind: crate::element::ElementKind::ActorPc,
+            posture: crate::element::Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position_map(point_in);
+        element.set_sector(crate::position_interface::SectorHandle::new(118));
+        element.set_layer(6);
+        let pc = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                active_door_pass: Some(ActiveDoorPass {
+                    door_index: DoorIndex(0),
+                    direct: false,
+                    position_direct: false,
+                    steps: Default::default(),
+                    triggers_fired,
+                    current_action: OrderType::RunningUpright,
+                    current_reverse: false,
+                    saved_action_state: None,
+                }),
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 100,
+                ..PcData::default()
+            },
+        }));
+
+        (engine, pc, goal)
+    }
+
+    fn door_fight_sequence(engine: &EngineInner, pc: EntityId) -> &crate::sequence::Sequence {
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .find(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .any(|element| element.owner == Some(pc))
+            })
+            .expect("door-fight sequence")
+    }
+
+    #[test]
+    fn door_fight_route_adapts_selected_pass_door_before_building_exit_rng() {
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        let sim = crate::sim_rng::test_context();
+        let (mut crossing, pc, goal) = door_fight_route_fixture(0);
+        let (_, crossing_draws) = with_draw_trace(|| {
+            crossing.send_before_door_to_fight_pc(&sim, pc, goal, 4, 20, None);
+        });
+        assert_eq!(
+            crossing_draws,
+            Vec::<RngSite>::new(),
+            "selected PassDoor commits the route source to the outside goal sector"
+        );
+        let sequence = door_fight_sequence(&crossing, pc);
+        assert_eq!(
+            sequence
+                .elements
+                .iter()
+                .map(|element| element.command)
+                .collect::<Vec<_>>(),
+            [Command::WaitTimer, Command::Move, Command::Turn]
+        );
+        let SequenceElementData::Movement {
+            destination,
+            sector,
+            ..
+        } = &sequence.elements[1].data
+        else {
+            panic!("door-fight Move changed element kind")
+        };
+        assert_eq!(*destination, MapPoint::new(goal.x, goal.y));
+        assert_eq!(*sector, goal.sector);
+
+        let (mut callback_complete, pc, goal) = door_fight_route_fixture(1);
+        let (_, callback_complete_draws) = with_draw_trace(|| {
+            callback_complete.send_before_door_to_fight_pc(&sim, pc, goal, 4, 20, None);
+        });
+        assert_eq!(
+            callback_complete_draws,
+            [
+                RngSite::RuntimeBuildingExitWait,
+                RngSite::RuntimeBuildingExitWait
+            ],
+            "after PassDoor clears GetDoor, the same raw building source must build one exit"
+        );
+        let sequence = door_fight_sequence(&callback_complete, pc);
+        assert!(
+            sequence
+                .elements
+                .iter()
+                .any(|element| element.command == Command::ChangePosition),
+            "control must actually contain the building-exit route"
+        );
+    }
 
     #[test]
     fn map_movement_condolence_uses_unpadded_authored_bbox() {
