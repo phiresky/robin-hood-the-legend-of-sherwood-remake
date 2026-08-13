@@ -9398,6 +9398,16 @@ impl EngineInner {
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
     ) {
+        let think_debug = self.debug_think_stimulus_matches(npc_id);
+        if think_debug {
+            eprintln!(
+                "THINK_STIMULUS phase=before_panic_launch frame={} owner={} creation_order={} rng_cursor={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                self.world.original_creation_order(npc_id),
+                self.control.rng.original_replay_cursor(),
+            );
+        }
         // Peel the request off the AI base.
         let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
@@ -9642,6 +9652,15 @@ impl EngineInner {
         }
 
         self.begin_panic_no_door_branch(sim, assets, npc_id, &request, ctx, is_civilian);
+        if think_debug {
+            eprintln!(
+                "THINK_STIMULUS phase=after_panic_launch frame={} owner={} creation_order={} rng_cursor={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                self.world.original_creation_order(npc_id),
+                self.control.rng.original_replay_cursor(),
+            );
+        }
     }
 
     /// Drain a queued `pending_panic_seek_fallback` on a single NPC.

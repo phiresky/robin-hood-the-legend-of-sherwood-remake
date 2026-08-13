@@ -6,6 +6,31 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
+#[derive(Clone, Copy)]
+struct ThinkStimulusDebugFilter {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn think_stimulus_debug_filter() -> Option<ThinkStimulusDebugFilter> {
+    static FILTER: std::sync::OnceLock<Option<ThinkStimulusDebugFilter>> =
+        std::sync::OnceLock::new();
+    *FILTER.get_or_init(|| {
+        std::env::var_os("PARITY_DEBUG_THINK_STIMULUS")?;
+        let parse = |name: &str| {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| panic!("{name} is required for THINK_STIMULUS diagnostic"));
+            value
+                .parse::<u32>()
+                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
+        };
+        Some(ThinkStimulusDebugFilter {
+            frame: parse("PARITY_DEBUG_THINK_STIMULUS_FRAME"),
+            creation_order: parse("PARITY_DEBUG_THINK_STIMULUS_CREATION_ORDER"),
+        })
+    })
+}
+
 #[cfg(test)]
 std::thread_local! {
     static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -2959,8 +2984,84 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) -> bool {
+        // Original StartThink runs FilterAIEvent before the Think body
+        // (`RHArtificialintelligence.cpp:1258`). Keep this diagnostic at that
+        // exact engine boundary. The master/frame gates deliberately precede
+        // creation-order and AI-state reads so the disabled path is inert.
+        let think_debug = think_stimulus_debug_filter().is_some_and(|filter| {
+            self.control.frame_counter == filter.frame
+                && self.world.original_creation_order(entity_id) == filter.creation_order
+        });
+        let debug_snapshot = |engine: &Self, phase: &str| {
+            if !think_debug {
+                return;
+            }
+            let rng_cursor = engine.control.rng.original_replay_cursor();
+            let ai = engine
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::ai_controller)
+                .unwrap_or_else(|| {
+                    panic!("THINK_STIMULUS owner {} lost its AI", entity_id.index())
+                });
+            let source = match stimulus.info {
+                crate::ai::StimulusInfo::Human(human) => Some(human),
+                _ => None,
+            };
+            let expected_class = matches!(
+                stimulus.stimulus_type,
+                crate::ai::StimulusType::EventReachPoint
+                    | crate::ai::StimulusType::EventDone
+                    | crate::ai::StimulusType::EventTimer
+                    | crate::ai::StimulusType::EventSyncCharly
+                    | crate::ai::StimulusType::CallCoordinate
+                    | crate::ai::StimulusType::CallInstruction
+                    | crate::ai::StimulusType::CallReport
+                    | crate::ai::StimulusType::EventGaloppLoopEnd
+                    | crate::ai::StimulusType::EventMyTalk0
+                    | crate::ai::StimulusType::EventMyTalk1
+                    | crate::ai::StimulusType::EventMyTalk2
+                    | crate::ai::StimulusType::EventMyTalk3
+                    | crate::ai::StimulusType::CallYourTalk0
+                    | crate::ai::StimulusType::CallYourTalk1
+                    | crate::ai::StimulusType::CallYourTalk2
+                    | crate::ai::StimulusType::CallYourTalk3
+            );
+            eprintln!(
+                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={} context_antagonist={:?} ai_antagonist={} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} owner_work={:?} begin_panic={} rng_cursor={rng_cursor:?}",
+                engine.control.frame_counter,
+                entity_id.index(),
+                engine.world.original_creation_order(entity_id),
+                stimulus.stimulus_type,
+                crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type).unwrap_or(-2),
+                expected_class,
+                stimulus.owner,
+                ctx.antagonist,
+                ai.antagonist,
+                ai.current_state,
+                ai.current_substate,
+                ai.locks_flag_field,
+                ai.script_locked,
+                ai.think_recursion_depth,
+                ai.stimulus_queue,
+                ai.outbox.reentrant.self_stimuli,
+                ai.outbox.reentrant.owner_work,
+                ai.outbox.actor.begin_panic.is_some(),
+            );
+        };
+        debug_snapshot(self, "before_filter");
         let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
-        if !self.filter_stimulus(sim, assets, handle, stimulus) {
+        let filter_allowed = self.filter_stimulus(sim, assets, handle, stimulus);
+        debug_snapshot(
+            self,
+            if filter_allowed {
+                "after_filter_allowed"
+            } else {
+                "after_filter_rejected"
+            },
+        );
+        if !filter_allowed {
             return false;
         }
         // Original `FilterAIEvent` returns synchronously before the virtual
@@ -3076,6 +3177,14 @@ impl EngineInner {
                 return false;
             }
         };
+        debug_snapshot(
+            self,
+            if handled {
+                "after_think_handled"
+            } else {
+                "after_think_unhandled"
+            },
+        );
         let after_script_suspended = stimulus.stimulus_type
             == crate::ai::StimulusType::EventAfterScriptGoOn
             && self
@@ -3253,6 +3362,13 @@ impl EngineInner {
             defer_turn_instruction,
         );
         handled
+    }
+
+    pub(super) fn debug_think_stimulus_matches(&self, owner: crate::element::EntityId) -> bool {
+        think_stimulus_debug_filter().is_some_and(|filter| {
+            self.control.frame_counter == filter.frame
+                && self.world.original_creation_order(owner) == filter.creation_order
+        })
     }
 
     fn dispatch_state_change_attentive_mode(
