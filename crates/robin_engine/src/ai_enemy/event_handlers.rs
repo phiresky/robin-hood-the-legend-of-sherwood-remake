@@ -2111,6 +2111,13 @@ impl EnemyAi {
             self.base.object_of_desire = 0;
         }
 
+        // EventHearStandardProcedure passes `noise.posOrigin` to the
+        // RHposition overload of Face. That overload ignores RHnoise's
+        // separately stored elevation and projects the position's sector
+        // through PositionToPoint3D before subtracting the owner's live 3D
+        // point. This matters even for an ordinary sector with no projection
+        // plane: substituting the producer's actor elevation changes the
+        // facing sector at angular boundaries.
         match noise.noise_type {
             NoiseType::Pfiiit => {
                 // Whistling.
@@ -2128,11 +2135,7 @@ impl EnemyAi {
                     self.base.seek_position = noise.origin;
                     self.base.stop_all();
                     if self.base.current_state != AiState::Sleeping {
-                        self.base.face_position_at_elevation_with_ctx(
-                            noise.origin,
-                            noise.elevation as f32,
-                            ctx,
-                        );
+                        self.base.face_position_3d_with_ctx(noise.origin, ctx);
                     }
                     self.base.say(Remark::HearsNoise);
                     self.base
@@ -2155,11 +2158,7 @@ impl EnemyAi {
                     // the middle of a seek).
                     self.set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
                     self.base.say(Remark::HearsNoise);
-                    self.base.face_position_at_elevation_with_ctx(
-                        noise.origin,
-                        noise.elevation as f32,
-                        ctx,
-                    );
+                    self.base.face_position_3d_with_ctx(noise.origin, ctx);
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     // Idle / officer → curious-react into the wondering
@@ -2210,11 +2209,7 @@ impl EnemyAi {
                     if noise.noise_type != NoiseType::Aaargh {
                         self.base.say(Remark::HearsNoise);
                     }
-                    self.base.face_position_at_elevation_with_ctx(
-                        noise.origin,
-                        noise.elevation as f32,
-                        ctx,
-                    );
+                    self.base.face_position_3d_with_ctx(noise.origin, ctx);
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     if noise.noise_type != NoiseType::Aaargh {
@@ -2240,11 +2235,7 @@ impl EnemyAi {
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position_at_elevation_with_ctx(
-                    noise.origin,
-                    noise.elevation as f32,
-                    ctx,
-                );
+                self.base.face_position_3d_with_ctx(noise.origin, ctx);
                 self.base.launch_timer(50, ctx.frame);
             }
 
@@ -2254,11 +2245,7 @@ impl EnemyAi {
                 self.base.stop_all();
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position_at_elevation_with_ctx(
-                    noise.origin,
-                    noise.elevation as f32,
-                    ctx,
-                );
+                self.base.face_position_3d_with_ctx(noise.origin, ctx);
                 self.base.launch_timer(
                     70 + crate::sim_rng::u32(
                         sim,
@@ -4032,5 +4019,75 @@ mod tests {
         assert_eq!(ai.actual_seek_point, Some(0));
         assert_eq!(ai.base.last_goto_destination, actor_seek_point);
         assert_ne!(ai.base.last_goto_destination, stale_body_seek_point);
+    }
+
+    #[test]
+    fn event_hear_faces_noise_position_projection_not_recorded_actor_elevation() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(70);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSeekpoint;
+
+        // Trace-shaped boundary from SuN/Profile_004/Savegame_016 r013
+        // frame 895. Sector 0 has no projection area, so PositionToPoint3D
+        // leaves the noise at z=0 even though the producing PC recorded its
+        // own elevation (36) on RHnoise.
+        let noise = Noise {
+            origin: Position {
+                x: f32::from_bits(0x428b_1027),
+                y: f32::from_bits(0x43af_c940),
+                sector: crate::position_interface::SectorHandle::new(0),
+                level: 0,
+            },
+            noise_type: NoiseType::ZingZing,
+            volume: 200,
+            elevation: 36,
+            element_id: 133,
+        };
+        let ctx = AiContext {
+            position: Position {
+                x: f32::from_bits(0x4326_9901),
+                y: f32::from_bits(0x438f_54f0),
+                sector: crate::position_interface::SectorHandle::new(0),
+                level: 0,
+            },
+            self_body_position_world: crate::coordinates::WorldPoint3D::new(
+                f32::from_bits(0x4326_9901),
+                f32::from_bits(0x43a1_5511),
+                f32::from_bits(0x4210_0107),
+            ),
+            elevation: f32::from_bits(0x4210_0107),
+            direction: 4,
+            ..AiContext::default()
+        };
+
+        let scalar_dx = noise.origin.x - ctx.position.x;
+        let scalar_dy =
+            (noise.origin.y - ctx.position.y) + (noise.elevation as f32 - ctx.elevation);
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_with_aspect(
+                scalar_dx,
+                scalar_dy,
+                crate::position_interface::ASPECT_RATIO,
+            ),
+            10,
+            "the replaced scalar-elevation shortcut must select the adjacent sector"
+        );
+
+        ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
+
+        let turn = ai
+            .base
+            .outbox
+            .actor
+            .orders
+            .iter()
+            .find(|intent| intent.order_type == OrderType::Turning)
+            .expect("the seeking EventHear arm must author a Turn");
+        assert_eq!(turn.explicit_direction, Some(11));
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingHeardstepsReactiontime
+        );
     }
 }
