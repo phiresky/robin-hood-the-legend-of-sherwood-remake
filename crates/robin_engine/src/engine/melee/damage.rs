@@ -480,6 +480,34 @@ impl EngineInner {
             .get_entity(victim_id)
             .map(get_life_points)
             .unwrap_or(raw_life_points_after);
+
+        // Human::SetLifePoints invokes virtual Kill synchronously, before
+        // ReceiveSwordDamage returns to TranslateSwordDamage.  In
+        // particular, Kill clears an unconscious victim before the later
+        // virtual SayOuch call, so a lethal hit says DIES rather than taking
+        // SayOuch's unconscious early return.  Push strikes already close
+        // this boundary below because their translator owns the sole falling
+        // order; close it here for ordinary strikes while leaving the dying
+        // animation/roll to the later translation phase.
+        let push_strike = combat::strike_has_push_effect(&attacker_profile, strike);
+        let fresh_lethal_ordinary =
+            !push_strike && !coma_saved && life_points_before > 0 && life_points_after <= 0;
+        if fresh_lethal_ordinary {
+            let killer_is_pc = attacker_id
+                .map(|id| {
+                    self.expect_entity(id, "lethal sword attacker")
+                        .kind()
+                        .is_pc()
+                })
+                .unwrap_or(false);
+            self.apply_nonvisual_death_cascade(
+                sim,
+                assets,
+                victim_id,
+                damage_element,
+                killer_is_pc,
+            );
+        }
         let victim_went_unconscious = !victim_was_unconscious
             && self
                 .expect_entity(victim_id, "sword-damage concussion victim")
@@ -640,7 +668,6 @@ impl EngineInner {
         // ReceiveSwordDamage returns to TranslatePushDamage. Apply that
         // nonvisual cascade first; the push translator below remains the sole
         // owner of the falling order.
-        let push_strike = combat::strike_has_push_effect(&attacker_profile, strike);
         let fresh_lethal_push = push_strike
             && attacker_id.is_some()
             && !coma_saved
@@ -1042,16 +1069,25 @@ impl EngineInner {
                     self.queue_knockout_orders(assets, victim_id, damage_element);
                 }
             } else {
-                self.handle_post_damage(
-                    sim,
-                    assets,
-                    victim_id,
-                    life_points_before,
-                    attacker_id,
-                    false,
-                    damage_element,
-                    dying_anim_override,
-                );
+                if fresh_lethal_ordinary {
+                    self.queue_death_visuals_with_damage_element(
+                        assets,
+                        victim_id,
+                        damage_element,
+                        dying_anim_override,
+                    );
+                } else {
+                    self.handle_post_damage(
+                        sim,
+                        assets,
+                        victim_id,
+                        life_points_before,
+                        attacker_id,
+                        false,
+                        damage_element,
+                        dying_anim_override,
+                    );
+                }
             }
         }
         self.trace_sword_damage_lifecycle(
@@ -2639,25 +2675,11 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
         dying_anim_override: Option<crate::order::OrderType>,
     ) {
-        tracing::info!(entity = ?victim_id, "Entity died");
-
-        // Select dying animation (None when posture is already
-        // Lying/Dead/Carried — the "already on the ground" case).
-        // When the caller supplied an override (sword strike with a
-        // positive stunning effect against a non-rider), use it in
-        // place of the default `dying_forward`; the override is
-        // itself None when the selector returns None for the
-        // posture.
-        let dying_anim = self.get_entity(victim_id).and_then(|e| {
-            let posture = e.element_data().posture;
-            let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
-            select_combat_animations(posture, action)
-                .map(|a| dying_anim_override.unwrap_or(a.dying_forward))
-        });
-
-        if let Some(anim) = dying_anim {
-            self.queue_damage_anim(victim_id, damage_element, anim);
-        }
+        self.queue_death_animation_with_damage_element(
+            victim_id,
+            damage_element,
+            dying_anim_override,
+        );
 
         // Read the killer from the damage element so we can set the
         // `inform_my_friends` flag below (true when the killer is a
@@ -2677,8 +2699,47 @@ impl EngineInner {
 
         self.apply_nonvisual_death_cascade(sim, assets, victim_id, damage_element, killer_is_pc);
 
-        // Queue roll if on a slope.
+        // Queue roll only after virtual Kill has synchronously completed.
         self.try_queue_roll(assets, victim_id, damage_element);
+    }
+
+    /// Finish the TranslateDamage-owned visual half of a death.  This is
+    /// separate from virtual Kill because SetLifePoints completes the
+    /// nonvisual cascade synchronously before translation resumes.
+    fn queue_death_visuals_with_damage_element(
+        &mut self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        damage_element: (crate::sequence::SequenceId, usize),
+        dying_anim_override: Option<crate::order::OrderType>,
+    ) {
+        self.queue_death_animation_with_damage_element(
+            victim_id,
+            damage_element,
+            dying_anim_override,
+        );
+        self.try_queue_roll(assets, victim_id, damage_element);
+    }
+
+    fn queue_death_animation_with_damage_element(
+        &mut self,
+        victim_id: EntityId,
+        damage_element: (crate::sequence::SequenceId, usize),
+        dying_anim_override: Option<crate::order::OrderType>,
+    ) {
+        tracing::info!(entity = ?victim_id, "Entity died");
+
+        // Select dying animation (None when posture is already
+        // Lying/Dead/Carried — the "already on the ground" case).
+        let dying_anim = self.get_entity(victim_id).and_then(|e| {
+            let posture = e.element_data().posture;
+            let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+            select_combat_animations(posture, action)
+                .map(|a| dying_anim_override.unwrap_or(a.dying_forward))
+        });
+        if let Some(anim) = dying_anim {
+            self.queue_damage_anim(victim_id, damage_element, anim);
+        }
     }
 
     /// Apply the synchronous virtual `Kill` cascade without translating a
