@@ -3957,7 +3957,14 @@ mod tests {
         // Lacklandist modifier raises it to 80, allowing the counterstrike.
         engine.control.rng = SimulationRng::with_original_replay(vec![65]);
         engine.with_simulation_context(|engine, sim| {
-            engine.consider_to_begin_parade(sim, &assets, victim, attacker, SwordStrike::A);
+            engine.consider_to_begin_parade(
+                sim,
+                &assets,
+                victim,
+                attacker,
+                Some(SwordStrike::A),
+                SwordStrike::A,
+            );
             engine.dispatch_condolations(sim, &assets);
         });
 
@@ -3975,6 +3982,188 @@ mod tests {
                 .orders
                 .sequence_manager
                 .has_live_element_for_actor_matching(victim, Command::is_swordstrike)
+        );
+    }
+
+    #[test]
+    fn reactive_strike_recognition_uses_command_not_replacement_animation() {
+        fn run(remembered: SwordStrike) -> (usize, crate::ai::Substate) {
+            let mut engine = make_engine();
+            let (victim, attacker) = make_enemy_strike_pair(&mut engine, false);
+            engine.world.fast_grid_mut().size_map(4, 4);
+            engine.world.fast_grid_mut().allocate_layers(1);
+            engine.world.fast_grid_mut().add_sector(
+                crate::fast_find_grid::GridSector {
+                    points: vec![
+                        crate::coordinates::MapPoint::new(0.0, 0.0),
+                        crate::coordinates::MapPoint::new(256.0, 0.0),
+                        crate::coordinates::MapPoint::new(256.0, 256.0),
+                        crate::coordinates::MapPoint::new(0.0, 256.0),
+                    ],
+                    bounding_box: crate::coordinates::MapBBox::from_coords(0.0, 0.0, 256.0, 256.0),
+                    sector_type: crate::sector::SectorType::MOTION
+                        | crate::sector::SectorType::AREA,
+                    layer: 0,
+                    sector_number: crate::sector::SectorNumber::new(0),
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                0,
+            );
+            {
+                let victim_element = engine.get_entity_mut(victim).unwrap().element_data_mut();
+                victim_element.set_position(WorldPoint3D::new(100.0, 100.0, 0.0));
+                victim_element.set_sector(crate::position_interface::SectorHandle::new(0));
+                victim_element.sprite.position_iface.set_move_box(
+                    crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
+                );
+            }
+            engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .set_position(WorldPoint3D::new(180.0, 100.0, 0.0));
+            for actor in [victim, attacker] {
+                let sprite = &mut engine
+                    .get_entity_mut(actor)
+                    .unwrap()
+                    .element_data_mut()
+                    .sprite;
+                let mut scripts = vec![
+                    crate::sprite_script::SpriteScript {
+                        action_done: 10,
+                        frame_ids: (0..16).collect(),
+                        delays: vec![1; 16],
+                        distances: vec![0; 16],
+                        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 16],
+                        sound_ids: vec![0; 16],
+                        ..Default::default()
+                    };
+                    16
+                ];
+                // The incoming H animation has ten frames left, while the
+                // victim's authored parry transition starts in three. This
+                // satisfies Original's strict startup deadline and lets the
+                // test observe the later PushAside geometry branch.
+                scripts[1].action_done = 3;
+                sprite.scripts = std::sync::Arc::new(scripts);
+                let mut conversion = vec![0; crate::sprite_script::NONANIMATION_END];
+                conversion[OrderType::TransitionWaitingSwordParryingSword as usize] = 1;
+                sprite.conversion = std::sync::Arc::new(conversion);
+            }
+
+            let old_movement = crate::sequence::SequenceElement::new_movement(
+                1,
+                Command::MoveOk,
+                Some(victim),
+                OrderType::WalkingWithSword,
+            );
+            let old_sequence = engine.launch_element(old_movement);
+            let old_order =
+                engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(old_sequence, 0);
+            {
+                let actor = engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .actor_data_mut()
+                    .unwrap();
+                actor.action_state = ActionState::MovingSword;
+                actor.installed_order = Some(crate::element::InstalledActorOrder {
+                    order_id: old_order,
+                    order_type: OrderType::WalkingWithSword,
+                });
+                actor.active_movement = crate::movement::ActiveMovement::new(old_sequence, 0);
+            }
+
+            // The selected request remains F while its installed replacement
+            // row is H, exactly separating Original GetCommand from
+            // GetAnimation at WarnForStrike.
+            let strike_element = crate::sequence::SequenceElement::new_interaction(
+                1,
+                Command::SwordstrikeThrustF,
+                Some(attacker),
+                Some(victim),
+            );
+            let strike_sequence = engine.launch_element(strike_element);
+            let strike_order = engine.push_new_order(
+                strike_sequence,
+                0,
+                OrderType::StrikingRoundLeftSword,
+                100.0,
+                100.0,
+            );
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(strike_sequence, 0);
+            {
+                let attacker_entity = engine.get_entity_mut(attacker).unwrap();
+                let actor = attacker_entity.actor_data_mut().unwrap();
+                actor.action_state = ActionState::WaitingSword;
+                actor.installed_order = Some(crate::element::InstalledActorOrder {
+                    order_id: strike_order,
+                    order_type: OrderType::StrikingRoundLeftSword,
+                });
+                let sprite = &mut attacker_entity.element_data_mut().sprite;
+                sprite.current_row = 0;
+                sprite.current_frame = 0;
+                sprite.frame_count = 0;
+                sprite.action_done_frame = 10;
+                sprite.action_done_counter = 1;
+                sprite.last_action = OrderType::StrikingRoundLeftSword;
+            }
+
+            let mut assets = assets_with_sword_profile(7, 30);
+            let profiles = std::sync::Arc::get_mut(&mut assets.profile_manager).unwrap();
+            profiles.soldiers[0].fighting = 50;
+            profiles.hth_weapons[0].thrusts[SwordStrike::H as usize].kind =
+                crate::profiles::WeaponThrustKind::PushAside;
+            profiles.hth_weapons[0].thrusts[SwordStrike::H as usize].maximal_distance = 30;
+            let ai = engine
+                .get_entity_mut(victim)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap();
+            ai.known_enemy_strike_1 = Some(remembered);
+
+            // 65 selects parade at ability 50. Only the H animation's
+            // PushAside geometry can turn that parade into a step-back.
+            engine.control.rng = SimulationRng::with_original_replay(vec![85]);
+            engine.with_simulation_context(|engine, sim| {
+                engine.warn_for_strike(sim, &assets, attacker, &[victim], SwordStrike::H);
+            });
+            (
+                engine.control.rng.original_replay_cursor().unwrap(),
+                engine
+                    .get_entity(victim)
+                    .and_then(Entity::enemy_ai)
+                    .unwrap()
+                    .base
+                    .current_substate,
+            )
+        }
+
+        assert_eq!(
+            run(SwordStrike::F),
+            (1, crate::ai::Substate::AttackingSwordfightStepBack),
+            "command F must admit the proposal while animation H supplies PushAside geometry"
+        );
+        assert_eq!(
+            run(SwordStrike::H),
+            (0, crate::ai::Substate::AttackingSwordfight),
+            "remembering only replacement H must not admit selected command F"
         );
     }
 
@@ -4101,7 +4290,14 @@ mod tests {
             // callback returns.
             engine.control.rng = SimulationRng::with_original_replay(vec![65]);
             engine.with_simulation_context(|engine, sim| {
-                engine.consider_to_begin_parade(sim, &assets, victim, attacker, SwordStrike::A);
+                engine.consider_to_begin_parade(
+                    sim,
+                    &assets,
+                    victim,
+                    attacker,
+                    Some(SwordStrike::A),
+                    SwordStrike::A,
+                );
             });
 
             let ai = engine

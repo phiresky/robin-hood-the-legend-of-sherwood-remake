@@ -1517,7 +1517,27 @@ impl EngineInner {
                     }
                 }
                 if in_swordfight_substate {
-                    self.consider_to_begin_parade(sim, assets, victim_id, attacker_id, strike);
+                    // Original ConsiderToBeginParade first compares the
+                    // attacker's selected command with its command-valued
+                    // strike memory, then independently derives the strike
+                    // kind used for push-back geometry from GetAnimation().
+                    // A replacement sprite can make those identities differ.
+                    let attacker_command_strike = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(attacker_id)
+                        .and_then(|(seq_id, elem_idx)| {
+                            self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                        })
+                        .and_then(|element| SwordStrike::from_command(element.command));
+                    self.consider_to_begin_parade(
+                        sim,
+                        assets,
+                        victim_id,
+                        attacker_id,
+                        attacker_command_strike,
+                        strike,
+                    );
                 }
                 continue;
             }
@@ -1889,11 +1909,15 @@ impl EngineInner {
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
-        strike: SwordStrike,
+        attacker_command_strike: Option<SwordStrike>,
+        animation_strike: SwordStrike,
     ) {
         // ── 1. Check if the victim recognizes this strike ────────────
-        // Compare against the soldier's three known-enemy-strike slots.
-        let strike_opt = Some(strike);
+        // Original compares pHitter->GetCommand() with the three command-valued
+        // memory slots. It does not use the animation-derived strike here.
+        let Some(command_strike) = attacker_command_strike else {
+            return;
+        };
         let is_known = {
             let Some(Entity::Soldier(s)) = self.world.entities.get(victim_id) else {
                 return;
@@ -1901,16 +1925,16 @@ impl EngineInner {
             let Some(ai) = s.npc.ai_brain.enemy() else {
                 return;
             };
-            strike_opt == ai.known_enemy_strike_1
-                || strike_opt == ai.known_enemy_strike_2
-                || strike_opt == ai.known_enemy_strike_3
+            Some(command_strike) == ai.known_enemy_strike_1
+                || Some(command_strike) == ai.known_enemy_strike_2
+                || Some(command_strike) == ai.known_enemy_strike_3
         };
         if !is_known {
             return;
         }
 
         // ── 2. Record this strike experience (promote to head of list).
-        self.make_bad_sword_strike_experience(assets, victim_id, strike, true);
+        self.make_bad_sword_strike_experience(assets, victim_id, command_strike, true);
 
         // ── 3. Determine push-back distance from attacker's weapon ──
         // PushAside, FalseCircle, TrueCircle → strike's maximal
@@ -1922,12 +1946,12 @@ impl EngineInner {
             attacker_weapon_id
                 .and_then(|wid| {
                     let profile = assets.profile_manager.get_hth_weapon(wid)?;
-                    let kind = profile.thrusts.get(strike as usize)?.kind;
+                    let kind = profile.thrusts.get(animation_strike as usize)?.kind;
                     match kind {
                         WeaponThrustKind::PushAside
                         | WeaponThrustKind::FalseCircle
                         | WeaponThrustKind::TrueCircle => {
-                            Some(profile.thrusts[strike as usize].maximal_distance)
+                            Some(profile.thrusts[animation_strike as usize].maximal_distance)
                         }
                         _ => Some(0),
                     }
@@ -2351,17 +2375,19 @@ impl EngineInner {
                     .get_entity(attacker_id)
                     .map(|e| &e.element_data().sprite)
                     .map(|sprite| {
-                        sprite.frames_from_start_till_action_done(strike_to_animation(strike))
+                        sprite.frames_from_start_till_action_done(strike_to_animation(
+                            animation_strike,
+                        ))
                     }) {
                     Some(f) => f,
                     None => {
                         tracing::warn!(
                             ?attacker_id,
-                            ?strike,
+                            ?animation_strike,
                             "ConsiderToBeginParade: no sprite data for attacker, using estimated strike frames for parade timer"
                         );
                         crate::combat::STRIKE_STARTUP_FRAMES
-                            .get(strike as usize)
+                            .get(animation_strike as usize)
                             .copied()
                             .unwrap_or(25) as u16
                     }
@@ -2388,7 +2414,7 @@ impl EngineInner {
                 tracing::debug!(
                     ?victim_id,
                     ?attacker_id,
-                    ?strike,
+                    ?animation_strike,
                     "ConsiderToBeginParade: parrying"
                 );
             }
