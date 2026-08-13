@@ -4289,12 +4289,26 @@ mod tests {
         assert_eq!(ai.base.seek_position, position(0.0, 100.0));
         assert_eq!(vec_to_sector(100.0, 0.0), 4);
         assert_eq!(vec_to_sector(0.0, 100.0), 8);
-        let crate::ai::AiOwnerWork::ActorEffects(direction_prefix) =
-            &ai.base.outbox.reentrant.owner_work[0]
-        else {
-            panic!("direction snap must precede GetBattleOverview's StopAll barrier")
-        };
-        assert_eq!(direction_prefix.set_direction_instantly, Some(4));
+        let direction_prefixes: Vec<_> = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .filter_map(|work| match work {
+                crate::ai::AiOwnerWork::ActorEffects(effects) => effects.set_direction_instantly,
+                crate::ai::AiOwnerWork::StateChange(change) => change
+                    .actor_effects_before_callback
+                    .as_ref()
+                    .and_then(|effects| effects.set_direction_instantly),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            direction_prefixes,
+            vec![4],
+            "the live-target snap must cross exactly one pre-StopAll actor boundary"
+        );
         assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
         assert_eq!(
             ai.base.current_substate,
