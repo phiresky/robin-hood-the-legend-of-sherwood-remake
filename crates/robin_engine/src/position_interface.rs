@@ -1194,6 +1194,19 @@ impl PositionInterface {
         self.direction_goal = d;
     }
 
+    /// Hidden direction latches exposed only to opt-in parity diagnostics.
+    /// Gameplay must continue to mutate these exclusively through the
+    /// ordinary `Turn*` and movement paths.
+    #[inline]
+    pub(crate) fn parity_turn_provenance_state(&self) -> (bool, i8, u8, u8) {
+        (
+            self.deviated,
+            self.direction_count,
+            self.direction.as_u8(),
+            self.direction_goal.as_u8(),
+        )
+    }
+
     /// Preserve a stable deviation turn across an in-place movement
     /// transition. The next `TurnAntiVibration` call may rotate immediately.
     pub fn prime_deviated_turn_for_current_goal(&mut self) {

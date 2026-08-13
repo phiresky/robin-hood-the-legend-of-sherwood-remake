@@ -6,6 +6,92 @@ use crate::sprite::{FrameProgression, MotionState};
 
 const WEAKNESS_DISMISH: u16 = 5;
 
+/// Whether the opt-in direction-latch diagnostic admits this actor/frame.
+///
+/// The master switch deliberately requires both an owner and either an exact
+/// frame or a bounded frame range. This keeps an accidentally enabled release
+/// runner from printing every actor's `Turn()` calls.
+fn turn_provenance_matches(frame: u32, owner: EntityId) -> bool {
+    if std::env::var_os("PARITY_DEBUG_TURN_PROVENANCE").is_none() {
+        return false;
+    }
+
+    let parse_u32 = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for Turn provenance diagnostic: {error}")
+            })
+        })
+    };
+    let owner_filter = std::env::var("PARITY_DEBUG_TURN_OWNER").unwrap_or_else(|_| {
+        panic!(
+            "PARITY_DEBUG_TURN_PROVENANCE requires PARITY_DEBUG_TURN_OWNER=pc|soldier|civilian:INDEX"
+        )
+    });
+    let (kind, index) = owner_filter.split_once(':').unwrap_or_else(|| {
+        panic!("PARITY_DEBUG_TURN_OWNER must look like pc|soldier|civilian:INDEX")
+    });
+    let index = index.parse::<u32>().unwrap_or_else(|error| {
+        panic!("invalid PARITY_DEBUG_TURN_OWNER={owner_filter:?}: {error}")
+    });
+    let owner_matches = match (kind, owner) {
+        ("pc", EntityId::Pc(_))
+        | ("soldier", EntityId::Soldier(_))
+        | ("civilian", EntityId::Civilian(_)) => owner.index() == index,
+        ("pc" | "soldier" | "civilian", _) => false,
+        _ => panic!("PARITY_DEBUG_TURN_OWNER has unsupported kind {kind:?}"),
+    };
+    if !owner_matches {
+        return false;
+    }
+
+    if let Some(exact) = parse_u32("PARITY_DEBUG_TURN_FRAME") {
+        return frame == exact;
+    }
+    let from = parse_u32("PARITY_DEBUG_TURN_FROM").unwrap_or_else(|| {
+        panic!(
+            "PARITY_DEBUG_TURN_PROVENANCE requires PARITY_DEBUG_TURN_FRAME or PARITY_DEBUG_TURN_FROM"
+        )
+    });
+    let until = parse_u32("PARITY_DEBUG_TURN_UNTIL").unwrap_or(from);
+    assert!(
+        from <= until,
+        "PARITY_DEBUG_TURN_FROM must not exceed PARITY_DEBUG_TURN_UNTIL"
+    );
+    (from..=until).contains(&frame)
+}
+
+/// Execute one actor-owned Turn call and, when explicitly selected, expose
+/// the serialized anti-vibration latch on both sides of that exact call.
+fn turn_with_provenance(
+    entity: &mut Entity,
+    owner: EntityId,
+    frame: u32,
+    call_class: &'static str,
+    fast: bool,
+) -> bool {
+    if !turn_provenance_matches(frame, owner) {
+        return if fast {
+            entity.position_iface_mut().turn_fast()
+        } else {
+            entity.position_iface_mut().turn()
+        };
+    }
+
+    let before = entity.position_iface().parity_turn_provenance_state();
+    let result = if fast {
+        entity.position_iface_mut().turn_fast()
+    } else {
+        entity.position_iface_mut().turn()
+    };
+    let after = entity.position_iface().parity_turn_provenance_state();
+    eprintln!(
+        "TURNPROV frame={frame} owner={owner:?} class={call_class} fast={fast} result={result} before_deviated={} before_count={} before_dir={} before_goal={} after_deviated={} after_count={} after_dir={} after_goal={}",
+        before.0, before.1, before.2, before.3, after.0, after.1, after.2, after.3,
+    );
+    result
+}
+
 /// Return the "alerted" variant of an animation order type when a
 /// soldier is attentive.  Each soldier-specific animation handler
 /// substitutes the alerted variant at the top of its "attentive"
@@ -174,6 +260,8 @@ fn actor_action_row(
 fn apply_standing_up_sword_post_perform_facing(
     entity: &mut Entity,
     principal_direction: Option<i16>,
+    owner: EntityId,
+    frame: u32,
 ) {
     if entity.is_soldier() {
         return;
@@ -181,7 +269,13 @@ fn apply_standing_up_sword_post_perform_facing(
     if let Some(direction) = principal_direction {
         entity.element_data_mut().set_direction_goal(direction);
     }
-    let _ = entity.position_iface_mut().turn();
+    let _ = turn_with_provenance(
+        entity,
+        owner,
+        frame,
+        "standing_up_sword_post_perform",
+        false,
+    );
 }
 
 #[cfg(test)]
@@ -362,14 +456,24 @@ mod tests {
 
         // No swordfight on the preceding tick: the stale goal is retained,
         // but Original still calls Turn().
-        apply_standing_up_sword_post_perform_facing(&mut pc, None);
+        apply_standing_up_sword_post_perform_facing(
+            &mut pc,
+            None,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            0,
+        );
         assert_eq!(pc.element_data().direction(), 11);
         assert_eq!(i16::from(pc.position_iface().get_direction_goal()), 11);
 
         // A reciprocal EnterSwordfight later in that Hourglass makes the
         // principal visible on the next tick. StandingUpSword must refresh
         // the goal then take exactly one slow-turn step toward it.
-        apply_standing_up_sword_post_perform_facing(&mut pc, Some(3));
+        apply_standing_up_sword_post_perform_facing(
+            &mut pc,
+            Some(3),
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            0,
+        );
         assert_eq!(i16::from(pc.position_iface().get_direction_goal()), 3);
         assert_eq!(pc.element_data().direction(), 10);
 
@@ -377,7 +481,12 @@ mod tests {
         let mut soldier = weak_soldier_at_action_done(0);
         soldier.element_data_mut().kind = ElementKind::ActorSoldier;
         soldier.element_data_mut().set_direction_instantly(11);
-        apply_standing_up_sword_post_perform_facing(&mut soldier, Some(3));
+        apply_standing_up_sword_post_perform_facing(
+            &mut soldier,
+            Some(3),
+            EntityId::Soldier(crate::entity_id::SoldierId(0)),
+            0,
+        );
         assert_eq!(i16::from(soldier.position_iface().get_direction_goal()), 11);
         assert_eq!(soldier.element_data().direction(), 11);
     }
@@ -417,7 +526,12 @@ mod tests {
         );
         assert!(pc.position_iface().is_anti_collision_on());
 
-        apply_standing_up_sword_post_perform_facing(&mut pc, Some(0));
+        apply_standing_up_sword_post_perform_facing(
+            &mut pc,
+            Some(0),
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            0,
+        );
         assert_eq!(pc.element_data().direction(), 0);
     }
 
@@ -535,7 +649,12 @@ mod tests {
         pc.element_data_mut().set_direction_instantly(11);
         pc.element_data_mut().set_direction_goal(3);
 
-        apply_standing_up_sword_post_perform_facing(&mut pc, None);
+        apply_standing_up_sword_post_perform_facing(
+            &mut pc,
+            None,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            0,
+        );
 
         assert_eq!(i16::from(pc.position_iface().get_direction_goal()), 3);
         assert_eq!(pc.element_data().direction(), 10);
@@ -5246,10 +5365,18 @@ impl EngineInner {
                         let direction_before_turn = entity.element_data().direction() as u16;
                         let still_turning = if order_is_initialising && defer_initial_turn_step {
                             true
-                        } else if cur_command == Some(Command::TurnFast) {
-                            entity.position_iface_mut().turn_fast()
                         } else {
-                            entity.position_iface_mut().turn()
+                            turn_with_provenance(
+                                entity,
+                                entity_id,
+                                self.control.frame_counter,
+                                if cur_command == Some(Command::TurnFast) {
+                                    "turn_order_fast"
+                                } else {
+                                    "turn_order"
+                                },
+                                cur_command == Some(Command::TurnFast),
+                            )
                         };
                         if !globally_frozen {
                             let direction_after_turn = entity.element_data().direction() as u16;
@@ -5456,9 +5583,27 @@ impl EngineInner {
                                 // the human arm, which turns again: a PC
                                 // raising its shield rotates two steps per
                                 // tick, unlike every other shield holder.
-                                let _ = entity.position_iface_mut().turn();
+                                let _ = turn_with_provenance(
+                                    entity,
+                                    entity_id,
+                                    self.control.frame_counter,
+                                    "raising_shield_pc_override",
+                                    false,
+                                );
                             }
-                            let still_turning = entity.position_iface_mut().turn();
+                            let still_turning = turn_with_provenance(
+                                entity,
+                                entity_id,
+                                self.control.frame_counter,
+                                if anim_type == OrderType::RaisingShield {
+                                    "raising_shield_human"
+                                } else if anim_type == OrderType::WaitingShield {
+                                    "waiting_shield_human"
+                                } else {
+                                    "animation_turn_arm"
+                                },
+                                false,
+                            );
                             if anim_type == OrderType::WaitingShield && still_turning {
                                 // WaitingShield calls UpdateShield iff Turn()
                                 // actually changed the facing direction.
@@ -5671,6 +5816,8 @@ impl EngineInner {
                             apply_standing_up_sword_post_perform_facing(
                                 entity,
                                 standing_up_sword_direction_goal,
+                                entity_id,
+                                self.control.frame_counter,
                             );
                         }
                         if !weak_sword_held {
