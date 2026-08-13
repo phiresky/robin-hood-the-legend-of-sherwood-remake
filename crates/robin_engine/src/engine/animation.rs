@@ -80,9 +80,11 @@ pub(super) fn direction_provenance_snapshot(
     let state = position.parity_turn_provenance_state();
     let map = position.map_position();
     let old_map = position.old_map_position();
-    let increment = position.get_increment_map();
+    let increment = position
+        .is_increment_map_computed()
+        .then(|| position.get_increment_map());
     eprintln!(
-        "DIRPROV frame={frame} owner={owner:?} class={call_class} deviated={} count={} dir={} goal={} map_x={:08x} map_y={:08x} old_x={:08x} old_y={:08x} inc_x={:08x} inc_y={:08x}",
+        "DIRPROV frame={frame} owner={owner:?} class={call_class} deviated={} count={} dir={} goal={} map_x={:08x} map_y={:08x} old_x={:08x} old_y={:08x} increment={increment:?}",
         state.0,
         state.1,
         state.2,
@@ -91,8 +93,6 @@ pub(super) fn direction_provenance_snapshot(
         map.y.to_bits(),
         old_map.x.to_bits(),
         old_map.y.to_bits(),
-        increment.x.to_bits(),
-        increment.y.to_bits(),
     );
 }
 
