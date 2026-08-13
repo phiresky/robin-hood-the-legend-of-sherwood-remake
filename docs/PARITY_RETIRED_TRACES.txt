@@ -113,6 +113,7 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_
 # prove both targets out of range; current Original and Rust preserve bow height.
 parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Continue/replay-001-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Savegame_046/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_030/replay-001-session-0001.jsonl.zst
 # Task 350: schema-12 selected-view rendering contaminated visibility queries.
 parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-session-0001.jsonl.zst
 # Task 488: projectile landing membership contradicts current Original source and geometry.
