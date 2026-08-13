@@ -1995,6 +1995,172 @@ mod tests {
         })
     }
 
+    fn attach_drop_test_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+        let script = SpriteScript {
+            action_id: 0,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            Arc::new(vec![script; 16]),
+            Arc::new(vec![0; NONANIMATION_END]),
+        );
+    }
+
+    fn corpse_drop_pair(
+        carrier_pos: crate::coordinates::MapPoint,
+    ) -> (
+        EngineInner,
+        crate::element::EntityId,
+        crate::element::EntityId,
+    ) {
+        let mut engine = EngineInner::new();
+        let target_id = engine.add_entity(make_pc(Posture::Carried));
+        let mut carrier = make_pc(Posture::CarryingCorpse);
+        attach_drop_test_sprite(&mut carrier);
+        carrier.pc_data_mut().unwrap().carried = Some(target_id);
+        carrier.element_data_mut().set_position_map(carrier_pos);
+        let carrier_id = engine.add_entity(carrier);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+        (engine, carrier_id, target_id)
+    }
+
+    fn install_corpse_drop_building_sector(engine: &mut EngineInner, raw_sector: u16) {
+        let mut level = crate::fast_find_grid::LevelGrid::default();
+        level
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::BUILDING,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        engine.world.fast_grid_mut().level = Arc::new(level);
+    }
+
+    #[test]
+    fn delayed_corpse_drop_carries_sloped_surface_into_next_frame_position() {
+        let carrier_pos = crate::coordinates::MapPoint::new(743.0, 1681.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: -0.270_139,
+            bz: -1.787_207,
+            dz: 3396.161_9,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Grass);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(1);
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 15);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().layer(), 1);
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Grass
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(743.0, 1681.0).to_bits()
+        );
+        assert_ne!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn instant_building_corpse_drop_keeps_carrier_surface_and_commits_immediately() {
+        let carrier_pos = crate::coordinates::MapPoint::new(120.0, 240.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: 0.125,
+            bz: -0.25,
+            dz: 45.0,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(17).unwrap();
+        let sector = crate::position_interface::SectorHandle::new(7).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        install_corpse_drop_building_sector(&mut engine, 7);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Leaves);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(3);
+            elem.set_sector(Some(sector));
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 4);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(!target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(target.element_data().layer(), 3);
+        assert_eq!(target.element_data().sector(), Some(sector));
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Leaves
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(120.0, 240.0).to_bits()
+        );
+    }
+
     #[test]
     fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
         let projectile = Entity::Projectile(ElementProjectile {
@@ -3180,18 +3346,20 @@ impl EngineInner {
             }
         }
 
-        let (carrier_sector, carrier_layer, drop_box_origin) = self
-            .get_entity(carrier_id)
-            .map(|e| {
-                (
-                    e.element_data().sector(),
-                    e.element_data().layer(),
-                    e.cxx_current_point_map().unwrap_or_else(|| {
-                        panic!("corpse-drop carrier {carrier_id:?} has no current action point")
-                    }),
-                )
-            })
-            .unwrap_or_else(|| panic!("corpse-drop carrier {carrier_id:?} disappeared"));
+        let (carrier_sector, carrier_layer, carrier_obstacle, carrier_plane, drop_box_origin) =
+            self.get_entity(carrier_id)
+                .map(|e| {
+                    (
+                        e.element_data().sector(),
+                        e.element_data().layer(),
+                        e.position_iface().get_obstacle(),
+                        e.position_iface().get_plane().copied(),
+                        e.cxx_current_point_map().unwrap_or_else(|| {
+                            panic!("corpse-drop carrier {carrier_id:?} has no current action point")
+                        }),
+                    )
+                })
+                .unwrap_or_else(|| panic!("corpse-drop carrier {carrier_id:?} disappeared"));
         let in_building = carrier_sector
             .and_then(|s| {
                 self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(s)))
@@ -3229,17 +3397,23 @@ impl EngineInner {
 
         if let Some(target) = self.get_entity_mut(target_id) {
             target.set_posture(drop_posture);
+            // RHElementActorPC::DropCorpse transfers the carrier's obstacle,
+            // plane, layer, and sector before either the instant or delayed
+            // position write. It deliberately does not replace the corpse's
+            // material. In particular, an outdoor delayed drop must retain
+            // the carrier's plane so next-frame SetPositionMapDelayed computes
+            // elevation on that plane rather than falling back to z=0.
+            let elem = target.element_data_mut();
+            elem.set_obstacle_index(carrier_obstacle, carrier_plane);
+            elem.set_layer(carrier_layer);
+            elem.set_sector(carrier_sector);
             if in_building {
-                target.element_data_mut().set_position_map(drop_pos);
+                elem.set_position_map(drop_pos);
             } else {
-                target.element_data_mut().set_position_map_delayed(drop_pos);
+                elem.set_position_map_delayed(drop_pos);
             }
-            target
-                .element_data_mut()
-                .set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
-            target
-                .element_data_mut()
-                .set_direction_goal(carrier_direction as i16);
+            elem.set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
+            elem.set_direction_goal(carrier_direction as i16);
             if let Some(human) = target.human_data_mut() {
                 human.carrier = None;
             }
