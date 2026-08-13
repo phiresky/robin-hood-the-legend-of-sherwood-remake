@@ -1894,7 +1894,9 @@ impl EngineInner {
                 .position_map()
         });
         let (unit_x, unit_y) = if let Some(rider_dir) = charging_rider_dir {
-            sector_to_vector_iso(rider_dir, ASPECT_RATIO)
+            let (x, y) = sector_to_vector_iso(rider_dir, ASPECT_RATIO);
+            let distance = (x * x + y * y).sqrt();
+            (x / distance, y / distance)
         } else if let Some(attacker_pos) = attacker_pos {
             let dx = victim_pos.x - attacker_pos.x;
             let dy = victim_pos.y - attacker_pos.y;
@@ -1905,7 +1907,9 @@ impl EngineInner {
                 (dx / distance, dy / distance)
             }
         } else {
-            sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO)
+            let (x, y) = sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO);
+            let distance = (x * x + y * y).sqrt();
+            (x / distance, y / distance)
         };
         let flight_x = unit_x * 30.0;
         let flight_y = unit_y * 30.0;

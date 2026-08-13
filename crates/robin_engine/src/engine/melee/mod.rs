@@ -3128,6 +3128,138 @@ mod tests {
         );
     }
 
+    fn initialized_hit_flight_delta(
+        engine: &EngineInner,
+        victim: EntityId,
+    ) -> crate::coordinates::MapPoint {
+        let victim = engine.get_entity(victim).unwrap();
+        let flight = victim
+            .actor_data()
+            .unwrap()
+            .active_flight
+            .as_ref()
+            .expect("unobstructed falling hit must initialize a flight");
+        let position = victim.element_data().position_map();
+        crate::coordinates::MapPoint::new(flight.goal_x - position.x, flight.goal_y - position.y)
+    }
+
+    fn authorize_test_hit_flight(engine: &mut EngineInner, victim: EntityId) {
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -5.0, -5.0, 5.0, 5.0,
+            ));
+    }
+
+    #[test]
+    fn charging_rider_falling_hit_normalizes_non_cardinal_sector_vector() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 100.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        authorize_test_hit_flight(&mut engine, victim);
+        {
+            let Entity::Soldier(attacker) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            attacker.soldier.rider = true;
+            attacker.actor.active_rider_charge = Some(crate::element::ActiveRiderCharge {
+                pending_victims: vec![victim],
+            });
+            attacker.element.set_direction_instantly(11);
+        }
+
+        engine.initialize_hit_flight(
+            &LevelAssets::new(),
+            victim,
+            Some(attacker),
+            OrderType::FallingHitUpright,
+        );
+
+        let delta = initialized_hit_flight_delta(&engine, victim);
+        assert!(((delta.x * delta.x + delta.y * delta.y).sqrt() - 30.0).abs() < 0.0001);
+        assert!(
+            delta.x < 0.0 && delta.y > 0.0,
+            "direction 11 flies southwest"
+        );
+    }
+
+    #[test]
+    fn antagonistless_falling_hit_normalizes_opposite_non_cardinal_sector_vector() {
+        let mut engine = make_engine();
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 100.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        authorize_test_hit_flight(&mut engine, victim);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .position_iface_mut()
+            .set_direction_instantly(crate::position_interface::Direction::from_raw(3));
+
+        engine.initialize_hit_flight(
+            &LevelAssets::new(),
+            victim,
+            None,
+            OrderType::FallingHitUpright,
+        );
+
+        let delta = initialized_hit_flight_delta(&engine, victim);
+        assert!(((delta.x * delta.x + delta.y * delta.y).sqrt() - 30.0).abs() < 0.0001);
+        assert!(
+            delta.x < 0.0 && delta.y > 0.0,
+            "opposite direction 11 flies southwest"
+        );
+    }
+
+    #[test]
+    fn positioned_antagonist_falling_hit_keeps_radial_normalization() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 97.0,
+                y: 96.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 100.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        authorize_test_hit_flight(&mut engine, victim);
+
+        engine.initialize_hit_flight(
+            &LevelAssets::new(),
+            victim,
+            Some(attacker),
+            OrderType::FallingHitUpright,
+        );
+
+        let delta = initialized_hit_flight_delta(&engine, victim);
+        assert_eq!(delta.x.to_bits(), 18.0_f32.to_bits());
+        assert_eq!(delta.y.to_bits(), 24.0_f32.to_bits());
+    }
+
     #[test]
     fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
         let mut engine = make_engine();
