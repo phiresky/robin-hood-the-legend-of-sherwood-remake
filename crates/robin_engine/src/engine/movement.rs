@@ -6549,6 +6549,14 @@ impl EngineInner {
         if !selected_is_live {
             return;
         }
+        if let Some(entity) = self.world.entities.get(owner) {
+            super::animation::direction_provenance_snapshot(
+                entity.position_iface(),
+                owner,
+                self.control.frame_counter,
+                "movement_entry",
+            );
+        }
         if self
             .world
             .entities
@@ -7173,6 +7181,14 @@ impl EngineInner {
             door_pass_climb_direction,
             decorative_building_trap_at_destination,
         };
+        if let Some(entity) = self.world.entities.get(owner) {
+            super::animation::direction_provenance_snapshot(
+                entity.position_iface(),
+                owner,
+                self.control.frame_counter,
+                "movement_after_prepass",
+            );
+        }
         let mut deferred = MovementDeferred::default();
 
         // Iterate a stable creation-order ID list instead of holding one
@@ -7718,6 +7734,13 @@ impl EngineInner {
             .entities
             .get_mut(entity_id)
             .expect("movement actor ID collected from entity table must remain present");
+        let provenance_frame = self.control.frame_counter;
+        super::animation::direction_provenance_snapshot(
+            entity.position_iface(),
+            entity_id,
+            provenance_frame,
+            "movement_execute_entry",
+        );
         let is_pc = entity.is_pc();
         let human_is_carried = entity
             .human_data()
@@ -8211,9 +8234,21 @@ impl EngineInner {
                     sector = crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
                     "combat facing target"
                 );
+                super::animation::direction_provenance_snapshot(
+                    &elem.sprite.position_iface,
+                    entity_id,
+                    provenance_frame,
+                    "writer:combat_face_goal:before",
+                );
                 elem.set_direction_goal(crate::position_interface::vector_to_sector_0_to_15_iso(
                     fdx, fdy,
                 ));
+                super::animation::direction_provenance_snapshot(
+                    &elem.sprite.position_iface,
+                    entity_id,
+                    provenance_frame,
+                    "writer:combat_face_goal:after",
+                );
             }
         }
         // Ordinary movement does not recompute facing from the remaining
@@ -8515,7 +8550,19 @@ impl EngineInner {
         }) = prepass.lift_translation
             && initialising_climb_uses_lift_direction(anim, lift_type, execute_order_initialising)
         {
+            super::animation::direction_provenance_snapshot(
+                &elem.sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "writer:initial_climb_lift_goal:before",
+            );
             elem.set_direction_goal(lift_direction);
+            super::animation::direction_provenance_snapshot(
+                &elem.sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "writer:initial_climb_lift_goal:after",
+            );
         }
         if let Some(posture) = door_pass_eager_posture(
             anim,
@@ -8537,7 +8584,19 @@ impl EngineInner {
             } else {
                 climb_dir
             };
+            super::animation::direction_provenance_snapshot(
+                &elem.sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "writer:initial_door_climb_goal:before",
+            );
             elem.set_direction_goal(dir);
+            super::animation::direction_provenance_snapshot(
+                &elem.sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "writer:initial_door_climb_goal:after",
+            );
         }
 
         let motion_order = order_id.map(|order_id| MotionOrderContext {
@@ -8584,7 +8643,19 @@ impl EngineInner {
             && combat_target.is_some()
             && active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
         {
+            super::animation::direction_provenance_snapshot(
+                &sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "turn:combat_face:before",
+            );
             let _ = sprite.position_iface.turn();
+            super::animation::direction_provenance_snapshot(
+                &sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "turn:combat_face:after",
+            );
         }
         // Entity-target PerformSeek returns from its successful
         // pre-motion tolerance branch without calling PerformMotion.
@@ -8609,7 +8680,19 @@ impl EngineInner {
             // branch before the ordinary Turn/PerformMotion block. Do
             // not advance anti-vibration turning on a terminal tolerance
             // sample whose post-seek sequence is taking over.
+            super::animation::direction_provenance_snapshot(
+                &sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "turn:perform_seek:before",
+            );
             let _ = sprite.position_iface.turn();
+            super::animation::direction_provenance_snapshot(
+                &sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "turn:perform_seek:after",
+            );
             let result = sprite.perform_motion(
                 sim,
                 motion_order,
@@ -8619,6 +8702,12 @@ impl EngineInner {
                 false,
                 motion_method,
                 dest_already_at_pos,
+            );
+            super::animation::direction_provenance_snapshot(
+                &sprite.position_iface,
+                entity_id,
+                provenance_frame,
+                "perform_motion:return",
             );
             // A generated stop transition can begin exactly where an
             // anti-collision deviation ended. The shipped Linux game

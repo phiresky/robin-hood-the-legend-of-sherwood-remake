@@ -61,6 +61,41 @@ fn turn_provenance_matches(frame: u32, owner: EntityId) -> bool {
     (from..=until).contains(&frame)
 }
 
+/// Emit one direction-latch boundary for the opt-in Turn provenance probe.
+///
+/// This deliberately shares the existing strict owner/frame gate: the PC181
+/// investigation needs to distinguish a genuine `Turn` from direct
+/// `SetDirection*` writers and from owner-envelope work, without adding any
+/// reads of sprite state when the diagnostic is disabled.
+pub(super) fn direction_provenance_snapshot(
+    position: &crate::position_interface::PositionInterface,
+    owner: EntityId,
+    frame: u32,
+    call_class: &'static str,
+) {
+    if !turn_provenance_matches(frame, owner) {
+        return;
+    }
+
+    let state = position.parity_turn_provenance_state();
+    let map = position.map_position();
+    let old_map = position.old_map_position();
+    let increment = position.get_increment_map();
+    eprintln!(
+        "DIRPROV frame={frame} owner={owner:?} class={call_class} deviated={} count={} dir={} goal={} map_x={:08x} map_y={:08x} old_x={:08x} old_y={:08x} inc_x={:08x} inc_y={:08x}",
+        state.0,
+        state.1,
+        state.2,
+        state.3,
+        map.x.to_bits(),
+        map.y.to_bits(),
+        old_map.x.to_bits(),
+        old_map.y.to_bits(),
+        increment.x.to_bits(),
+        increment.y.to_bits(),
+    );
+}
+
 /// Execute one actor-owned Turn call and, when explicitly selected, expose
 /// the serialized anti-vibration latch on both sides of that exact call.
 fn turn_with_provenance(

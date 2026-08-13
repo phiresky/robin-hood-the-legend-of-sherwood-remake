@@ -4212,6 +4212,14 @@ impl EngineInner {
                             entity_id,
                             selected_order,
                         );
+                        if let Some(entity) = self.world.entities.get(entity_id) {
+                            super::animation::direction_provenance_snapshot(
+                                entity.position_iface(),
+                                entity_id,
+                                self.control.frame_counter,
+                                "owner_execute_entry",
+                            );
+                        }
                         let explicit_execute_motion = execute_owner_arm(
                             self,
                             entity_id,
@@ -4222,6 +4230,14 @@ impl EngineInner {
                             beggar_selection,
                         )
                         .into_explicit_execute_motion();
+                        if let Some(entity) = self.world.entities.get(entity_id) {
+                            super::animation::direction_provenance_snapshot(
+                                entity.position_iface(),
+                                entity_id,
+                                self.control.frame_counter,
+                                "owner_post_execute",
+                            );
+                        }
                         let specialized_execute_motion = explicit_execute_motion.or_else(|| {
                             (!validity_short_circuited)
                                 .then_some(selected_owner_family)
@@ -4623,6 +4639,14 @@ impl EngineInner {
                             Some(installed_tail_order_type),
                         );
                         after_slot(self, entity_id, installed_tail_order_type);
+                        if let Some(entity) = self.world.entities.get(entity_id) {
+                            super::animation::direction_provenance_snapshot(
+                                entity.position_iface(),
+                                entity_id,
+                                self.control.frame_counter,
+                                "owner_tail_after_derived",
+                            );
+                        }
 
                         if let Some(actor) = self
                             .world
@@ -5916,7 +5940,19 @@ impl EngineInner {
                     }
                     let elem = entity.element_data_mut();
                     if let Some(dir) = lift_direction {
+                        super::animation::direction_provenance_snapshot(
+                            &elem.sprite.position_iface,
+                            entity_id,
+                            self.control.frame_counter,
+                            "writer:crenel_completion_instant:before",
+                        );
                         elem.set_direction_instantly(dir);
+                        super::animation::direction_provenance_snapshot(
+                            &elem.sprite.position_iface,
+                            entity_id,
+                            self.control.frame_counter,
+                            "writer:crenel_completion_instant:after",
+                        );
                     }
                     // The teleported position is re-aimed at the map goal the
                     // actor was already standing on; the direction is the one
