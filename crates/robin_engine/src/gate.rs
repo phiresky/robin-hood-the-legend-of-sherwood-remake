@@ -1731,7 +1731,7 @@ pub fn compute_avenger_wait_position(
             door,
             reverse_direct,
             me_auth,
-            true,
+            building_has_capacity(door, reverse_direct, building_is_authorized),
             false,
             sector_lift_type,
         ) {
@@ -2651,6 +2651,69 @@ mod tests {
         assert_eq!(wait.x, 100.0);
         assert_eq!(wait.y, 100.0);
         assert_eq!(wait.sector, 1);
+    }
+
+    /// The reverse me→avenger scan must apply the same live building
+    /// capacity check as `RHDoor::IsActorAutorized`. The avenger can leave a
+    /// full building through the near door, while the waiting soldier cannot
+    /// enter it; once capacity becomes available, the later soldier lock is
+    /// the first blocker instead.
+    #[test]
+    fn avenger_wait_position_reverse_scan_observes_building_capacity() {
+        let building = Door {
+            door_type: DoorType::Building,
+            sector_out: SectorNumber::new(1), // me's sector
+            sector_in: SectorNumber::new(2),
+            point_out: MapPoint::new(10.0, 0.0),
+            point_in: MapPoint::new(20.0, 0.0),
+            ..Door::default()
+        };
+        let mut later_blocker = Door {
+            sector_out: SectorNumber::new(2),
+            sector_in: SectorNumber::new(3), // avenger's sector
+            point_out: MapPoint::new(30.0, 0.0),
+            point_in: MapPoint::new(40.0, 0.0),
+            ..Door::default()
+        };
+        later_blocker.lock_npc_villain();
+        let mut doors = vec![building, later_blocker];
+        build_gate_links(&mut doors);
+
+        let avenger = pc_actor(false);
+        let me = soldier_actor(false);
+        let full = |sector: SectorNumber| sector != SectorNumber::new(2);
+        let wait = compute_avenger_wait_position(
+            &doors,
+            (40.0, 0.0),
+            3,
+            &avenger,
+            (0.0, 0.0),
+            1,
+            &me,
+            &full,
+            &no_lift,
+        )
+        .expect("full building is the first reverse-direction blocker");
+        assert_eq!(wait.x, 10.0);
+        assert_eq!(wait.y, 0.0);
+        assert_eq!(wait.sector, 1);
+
+        let available = |_: SectorNumber| true;
+        let wait = compute_avenger_wait_position(
+            &doors,
+            (40.0, 0.0),
+            3,
+            &avenger,
+            (0.0, 0.0),
+            1,
+            &me,
+            &available,
+            &no_lift,
+        )
+        .expect("later soldier lock blocks once the building has capacity");
+        assert_eq!(wait.x, 30.0);
+        assert_eq!(wait.y, 0.0);
+        assert_eq!(wait.sector, 2);
     }
 
     /// Me can pass every gate on the path — caller-misuse case.
