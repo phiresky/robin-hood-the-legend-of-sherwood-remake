@@ -812,7 +812,30 @@ impl EngineInner {
                                 Some((seq_id, elem_idx)),
                             );
                         }
+                        let trace_path_owner = matches!(
+                            command,
+                            Some(crate::element::Command::Move)
+                                | Some(crate::element::Command::Seek)
+                        );
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                "before_instruct_arbitration",
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         let arbitration_accepted = self.arbitrate_instruct(seq_id, elem_idx);
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                if arbitration_accepted {
+                                    "after_instruct_arbitration_accepted"
+                                } else {
+                                    "after_instruct_arbitration_rejected"
+                                },
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         if trace_reactive_topology {
                             self.trace_reactive_sword_topology(
                                 if arbitration_accepted {

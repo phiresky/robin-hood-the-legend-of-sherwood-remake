@@ -1622,6 +1622,7 @@ struct ProcessedPathRequest {
     waypoints: Option<Vec<MapPoint>>,
 }
 
+#[derive(Debug)]
 pub(crate) struct ParityPendingPathRequest {
     pub(crate) request: crate::pathfinder::ParityPathRequest,
     pub(crate) sequence_id: crate::sequence::SequenceId,
@@ -2702,6 +2703,95 @@ fn apply_prepared_anti_collision_step(
 }
 
 impl EngineInner {
+    /// Opt-in sequence/path ownership trace for parity frontiers where the
+    /// queued path operands already agree but the selected movement command
+    /// does not. Keep this on stderr and outside serialized state so enabling
+    /// it cannot affect simulation or cache compatibility.
+    pub(in crate::engine) fn trace_path_owner_lifecycle(
+        &self,
+        stage: &'static str,
+        owner: EntityId,
+        focus: Option<(crate::sequence::SequenceId, usize)>,
+    ) {
+        if std::env::var_os("PARITY_DEBUG_PATH_OWNER_LIFECYCLE").is_none() {
+            return;
+        }
+        let parse_filter = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for path-owner lifecycle diagnostic: {error}")
+                })
+            })
+        };
+        let frame = self.control.frame_counter;
+        if parse_filter("PARITY_DEBUG_PATH_OWNER_FRAME").is_some_and(|expected| expected != frame)
+            || self.get_entity(owner).is_none()
+        {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(owner);
+        if parse_filter("PARITY_DEBUG_PATH_OWNER_CREATION_ORDER")
+            .is_some_and(|expected| expected != creation_order)
+        {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let selected = manager.current_element_for_actor(owner);
+        let current_order =
+            manager
+                .current_order_for_actor(owner)
+                .map(|(sequence_id, element_index, order)| {
+                    (
+                        sequence_id,
+                        element_index,
+                        order.order_type,
+                        order.order_id,
+                        order.done,
+                    )
+                });
+        let graph = manager
+            .sequences_iter()
+            .flat_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .filter(move |(_, element)| element.owner == Some(owner))
+                    .map(move |(element_index, element)| {
+                        (
+                            sequence.id,
+                            element_index,
+                            element.command,
+                            element.state,
+                            element.priority,
+                            element.cross_postponed,
+                            manager.is_registered_to_go(sequence.id, element_index),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let actor = self.get_entity(owner).and_then(|entity| {
+            entity.actor_data().map(|actor| {
+                (
+                    actor.action_state,
+                    actor
+                        .installed_order
+                        .as_ref()
+                        .map(|order| (order.order_type, order.order_id)),
+                )
+            })
+        });
+        let pending_paths = self
+            .orders
+            .pending_path_requests
+            .parity_state(&self.world.fast_grid);
+        eprintln!(
+            "[PATH_OWNER frame={frame} co={creation_order} owner={} stage={stage} focus={focus:?} selected={selected:?} current_order={current_order:?} actor={actor:?} pending={pending_paths:?} graph={graph:?}]",
+            owner.index(),
+        );
+    }
+
     pub(crate) fn parity_failed_path_requests(
         &self,
     ) -> Vec<crate::pathfinder::ParityFailedPathRequest> {
@@ -12773,7 +12863,9 @@ impl EngineInner {
             }
             let parity_request = crate::pathfinder::parity_path_capture_is_active()
                 .then(|| parity_path_request_state(&self.world.fast_grid, &request));
+            self.trace_path_owner_lifecycle("before_path_enqueue", owner, Some((seq_id, elem_idx)));
             self.orders.pending_path_requests.enqueue(request);
+            self.trace_path_owner_lifecycle("after_path_enqueue", owner, Some((seq_id, elem_idx)));
             if let Some(request) = parity_request {
                 crate::pathfinder::record_parity_path_event(
                     crate::pathfinder::ParityPathEvent::Queued(request),
