@@ -2075,6 +2075,12 @@ mod tests {
         };
         let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        let cached_position = crate::coordinates::WorldPoint3D::new(700.0, 1906.001, 225.001);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_position(cached_position);
         engine
             .get_entity_mut(target_id)
             .unwrap()
@@ -2098,6 +2104,7 @@ mod tests {
         );
         assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
         assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(target.element_data().position(), cached_position);
 
         engine
             .get_entity_mut(target_id)
@@ -2112,6 +2119,50 @@ mod tests {
             plane.compute_z(743.0, 1681.0).to_bits()
         );
         assert_ne!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn outdoor_null_surface_corpse_drop_preserves_cached_elevation_until_delayed_commit() {
+        let carrier_pos = crate::coordinates::MapPoint::new(3126.2605, 2149.9695);
+        let carried_position = crate::coordinates::WorldPoint3D::new(3125.0, 2375.001, 225.001);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position(carried_position);
+        }
+        let carried_map = engine
+            .get_entity(target_id)
+            .unwrap()
+            .element_data()
+            .position_map();
+
+        engine.apply_completed_corpse_drop(
+            carrier_id,
+            target_id,
+            Posture::DeadBack,
+            carrier_pos,
+            0,
+        );
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position(), carried_position);
+        assert_eq!(target.element_data().position_map(), carried_map);
+        assert_eq!(target.position_iface().get_obstacle(), None);
+        assert_eq!(target.position_iface().get_plane(), None);
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
             target.element_data().position().z.to_bits(),
             0.0_f32.to_bits()
         );
@@ -3395,6 +3446,13 @@ impl EngineInner {
             }
         };
 
+        let preserved_outdoor_position = (!in_building).then(|| {
+            self.get_entity(target_id)
+                .unwrap_or_else(|| panic!("corpse-drop target {target_id:?} disappeared"))
+                .element_data()
+                .position()
+        });
+
         if let Some(target) = self.get_entity_mut(target_id) {
             target.set_posture(drop_posture);
             // RHElementActorPC::DropCorpse transfers the carrier's obstacle,
@@ -3411,6 +3469,19 @@ impl EngineInner {
                 elem.set_position_map(drop_pos);
             } else {
                 elem.set_position_map_delayed(drop_pos);
+                if let Some(position) = preserved_outdoor_position {
+                    // Original SetObstacle(nullptr) invalidates the cached 3D
+                    // position without overwriting it. SetPositionMapDelayed
+                    // then queues next-frame work, and SetPositionAllComputed
+                    // keeps the old elevated coordinate visible for this
+                    // frame. Rust's eager obstacle setter has already
+                    // projected the current map onto z=0, so restore only the
+                    // cached 3D value/validity here; the delayed write will
+                    // authoritatively recompute it on the next Hourglass.
+                    elem.sprite
+                        .position_iface
+                        .restore_cached_position_all_computed(position);
+                }
             }
             elem.set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
             elem.set_direction_goal(carrier_direction as i16);

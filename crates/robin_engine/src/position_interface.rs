@@ -1019,6 +1019,19 @@ impl PositionInterface {
         self.recompute_from_3d();
     }
 
+    /// Restore the cached 3D coordinate while declaring every position
+    /// projection valid, matching Original's `SetPositionAllComputed()`.
+    ///
+    /// This compatibility operation deliberately does not derive map or
+    /// sprite coordinates from `pt`. Original uses it after queuing an
+    /// outdoor corpse drop to preserve the current-frame projections until
+    /// the delayed map position is applied by the next Actor Hourglass.
+    #[inline]
+    pub(crate) fn restore_cached_position_all_computed(&mut self, pt: WorldPoint3D) {
+        self.position = pt;
+        self.computed_position = PositionComputed::ALL;
+    }
+
     #[inline]
     pub fn set_map_position(&mut self, pt: MapPoint) {
         self.position_map = pt;
