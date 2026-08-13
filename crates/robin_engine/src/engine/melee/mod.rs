@@ -5343,6 +5343,11 @@ mod tests {
             },
             None,
         ));
+        engine
+            .get_entity_mut(victim)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap()
+            .hth_weapon_id = 1;
 
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();
@@ -5362,6 +5367,12 @@ mod tests {
             .push(crate::profiles::CharacterProfile {
                 hth_weapon_id: 1,
                 ..crate::profiles::CharacterProfile::default()
+            });
+        profile_manager
+            .soldiers
+            .push(crate::profiles::SoldierProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::SoldierProfile::default()
             });
         let assets = LevelAssets {
             profile_manager: std::sync::Arc::new(profile_manager),
@@ -5504,6 +5515,13 @@ mod tests {
             },
             None,
         ));
+        for target in [victim, unreached_victim] {
+            engine
+                .get_entity_mut(target)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap()
+                .hth_weapon_id = 1;
+        }
 
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();
@@ -5526,6 +5544,12 @@ mod tests {
             .push(crate::profiles::CharacterProfile {
                 hth_weapon_id: 1,
                 ..crate::profiles::CharacterProfile::default()
+            });
+        profile_manager
+            .soldiers
+            .push(crate::profiles::SoldierProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::SoldierProfile::default()
             });
         let assets = LevelAssets {
             profile_manager: std::sync::Arc::new(profile_manager),
@@ -5722,6 +5746,13 @@ mod tests {
             },
             None,
         ));
+        for target in [retained_victim, replacement_target] {
+            engine
+                .get_entity_mut(target)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap()
+                .hth_weapon_id = 1;
+        }
         let mut assets = assets_with_nonstraight_profile(
             SwordStrike::G,
             crate::profiles::WeaponThrustKind::TrueHalfCircle,
