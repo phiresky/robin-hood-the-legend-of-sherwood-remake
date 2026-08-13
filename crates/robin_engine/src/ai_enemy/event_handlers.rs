@@ -525,11 +525,22 @@ impl EnemyAi {
             }
 
             StimulusType::EventSwordStrike => {
-                // ConsiderToBeginParade is handled in the engine melee layer
-                // (EngineInner::consider_to_begin_parade) rather than here, because
-                // it needs direct access to entity state, weapon profiles, and
-                // the sequence manager.  It's dispatched from warn_for_strike
-                // when a sword strike starts targeting this soldier.
+                if matches!(
+                    self.base.current_substate,
+                    Substate::AttackingSwordfight
+                        | Substate::AttackingSwordfightSpecialStrike
+                        | Substate::AttackingMovingAroundOldEnemy
+                        | Substate::AttackingApproachingNewEnemy
+                ) {
+                    let StimulusInfo::Human(attacker) = stimulus.info else {
+                        panic!("EVENT_SWORDSTRIKE requires its human attacker")
+                    };
+                    self.base
+                        .outbox
+                        .reentrant
+                        .owner_work
+                        .push(crate::ai::AiOwnerWork::ConsiderToBeginParade { attacker });
+                }
             }
 
             StimulusType::EventSeesSoldier => {

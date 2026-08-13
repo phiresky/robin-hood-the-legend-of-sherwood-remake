@@ -4124,7 +4124,7 @@ mod tests {
 
     #[test]
     fn reactive_strike_recognition_uses_command_not_replacement_animation() {
-        fn run(remembered: SwordStrike) -> (usize, crate::ai::Substate) {
+        fn run(remembered: SwordStrike, busy: bool) -> (usize, crate::ai::Substate, usize) {
             let mut engine = make_engine();
             let (victim, attacker) = make_enemy_strike_pair(&mut engine, false);
             engine.world.fast_grid_mut().size_map(4, 4);
@@ -4274,6 +4274,9 @@ mod tests {
                 .and_then(Entity::enemy_ai_mut)
                 .unwrap();
             ai.known_enemy_strike_1 = Some(remembered);
+            if busy {
+                ai.base.locks_flag_field = crate::ai::AiLockFlags::BUSY;
+            }
 
             // 65 selects parade at ability 50. Only the H animation's
             // PushAside geometry can turn that parade into a step-back.
@@ -4281,27 +4284,49 @@ mod tests {
             engine.with_simulation_context(|engine, sim| {
                 engine.warn_for_strike(sim, &assets, attacker, &[victim], SwordStrike::H);
             });
+            let ai = engine
+                .get_entity(victim)
+                .and_then(Entity::enemy_ai)
+                .unwrap();
+            if busy {
+                assert_eq!(
+                    ai.base.stimulus_queue[0].stimulus_type,
+                    crate::ai::StimulusType::EventSwordStrike,
+                );
+                assert_eq!(
+                    ai.base.stimulus_queue[0].info,
+                    crate::ai::StimulusInfo::Human(attacker.index()),
+                    "queued EVENT_SWORDSTRIKE must retain the attacking human"
+                );
+            }
             (
                 engine.control.rng.original_replay_cursor().unwrap(),
-                engine
-                    .get_entity(victim)
-                    .and_then(Entity::enemy_ai)
-                    .unwrap()
-                    .base
-                    .current_substate,
+                ai.base.current_substate,
+                ai.base.stimulus_queue.len(),
             )
         }
 
         assert_eq!(
-            run(SwordStrike::F),
-            (1, crate::ai::Substate::AttackingSwordfightStepBack),
+            run(SwordStrike::F, false),
+            (1, crate::ai::Substate::AttackingSwordfightStepBack, 0,),
             "command F must admit the proposal while animation H supplies PushAside geometry"
         );
         assert_eq!(
-            run(SwordStrike::H),
-            (0, crate::ai::Substate::AttackingSwordfight),
+            run(SwordStrike::H, false),
+            (0, crate::ai::Substate::AttackingSwordfight, 0),
             "remembering only replacement H must not admit selected command F"
         );
+        let locked = run(SwordStrike::F, true);
+        assert_eq!(
+            locked.0, 0,
+            "BUSY StartThink must not reach the proposal RNG"
+        );
+        assert_eq!(
+            locked.1,
+            crate::ai::Substate::AttackingSwordfight,
+            "BUSY warning must not launch a parade or counter-strike"
+        );
+        assert_eq!(locked.2, 1);
     }
 
     #[test]

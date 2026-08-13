@@ -1550,8 +1550,6 @@ impl EngineInner {
             // fallback — so soldiers not in these substates simply
             // get nothing.
             if is_npc_soldier {
-                // A soldier mid-special-strike can still parade an incoming
-                // blow; Original explicitly includes that observable state.
                 let in_swordfight_substate = matches!(
                     npc_substate,
                     Some(crate::ai::Substate::AttackingSwordfight)
@@ -1603,41 +1601,47 @@ impl EngineInner {
                         );
                     }
                 }
-                if in_swordfight_substate {
-                    // Original ConsiderToBeginParade first compares the
-                    // attacker's selected command with its command-valued
-                    // strike memory, then independently derives the strike
-                    // kind used for push-back geometry from GetAnimation().
-                    // A replacement sprite can make those identities differ.
-                    let attacker_command_strike = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(attacker_id)
-                        .and_then(|(seq_id, elem_idx)| {
-                            self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                        })
-                        .and_then(|element| SwordStrike::from_command(element.command));
-                    let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
-                    self.consider_to_begin_parade(
-                        sim,
-                        assets,
-                        victim_id,
-                        attacker_id,
-                        attacker_command_strike,
-                        strike,
+                let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                let victim = self
+                    .world
+                    .entities
+                    .get(victim_id)
+                    .expect("sword-strike warning victim disappeared");
+                let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                    victim,
+                    frame,
+                    self.entity_building_sector(victim.element_data().sector()),
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                );
+                self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
+                let tick =
+                    self.build_npc_tick_data_without_forecasts(sim, victim_id, &scratch, assets);
+                let stimulus = crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventSwordStrike,
+                    attacker_id.index(),
+                );
+                let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+                self.dispatch_filtered_stimulus_without_forecast(
+                    sim, assets, victim_id, &stimulus, &ctx, &tick,
+                );
+                if let Some(creation_order) = debug {
+                    eprintln!(
+                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning_return rng_before={:?} rng_after={:?}]",
+                        frame,
+                        creation_order,
+                        victim_id.index(),
+                        attacker_id.index(),
+                        rng_before,
+                        self.control.rng.original_replay_cursor(),
                     );
-                    if let Some(creation_order) = debug {
-                        eprintln!(
-                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning_return attacker_command_strike={:?} rng_before={:?} rng_after={:?}]",
-                            frame,
-                            creation_order,
-                            victim_id.index(),
-                            attacker_id.index(),
-                            attacker_command_strike,
-                            rng_before,
-                            self.control.rng.original_replay_cursor(),
-                        );
-                    }
                 }
                 continue;
             }
@@ -2016,7 +2020,7 @@ impl EngineInner {
     /// - **Counter-strike**: `propose_good_sword_strike(sim, also_parade=true)`
     ///   may pick an offensive counter-attack.
     /// - **Parade fallback**: if no good counter-strike, fall into parry stance.
-    pub(super) fn consider_to_begin_parade(
+    pub(crate) fn consider_to_begin_parade(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

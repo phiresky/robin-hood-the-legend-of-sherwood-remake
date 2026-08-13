@@ -3479,6 +3479,66 @@ impl EngineInner {
                     self.nearby_civilians_panic(sim, assets, owner);
                     continue;
                 }
+                crate::ai::AiOwnerWork::ConsiderToBeginParade { attacker } => {
+                    let attacker =
+                        self.expect_entity_id_for_index(attacker, "EVENT_SWORDSTRIKE attacker");
+                    let command_strike = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(attacker)
+                        .and_then(|(sequence_id, element_index)| {
+                            self.orders
+                                .sequence_manager
+                                .get_element(sequence_id, element_index)
+                        })
+                        .and_then(|element| {
+                            crate::weapons::SwordStrike::from_command(element.command)
+                        });
+                    let Some(command_strike) = command_strike else {
+                        continue;
+                    };
+                    let recognized = self
+                        .world
+                        .entities
+                        .get(owner)
+                        .and_then(Entity::enemy_ai)
+                        .is_some_and(|ai| {
+                            [
+                                ai.known_enemy_strike_1,
+                                ai.known_enemy_strike_2,
+                                ai.known_enemy_strike_3,
+                            ]
+                            .contains(&Some(command_strike))
+                        });
+                    if !recognized {
+                        continue;
+                    }
+                    let animation = self.live_actor_animation(attacker).unwrap_or_else(|| {
+                        panic!(
+                            "recognized EVENT_SWORDSTRIKE owner {} attacker {} has no live animation",
+                            owner.index(),
+                            attacker.index(),
+                        )
+                    });
+                    let animation_strike =
+                        crate::engine::melee::sword_strike_from_animation(animation)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "recognized EVENT_SWORDSTRIKE owner {} attacker {} has unmapped animation {animation:?}",
+                                    owner.index(),
+                                    attacker.index(),
+                                )
+                            });
+                    self.consider_to_begin_parade(
+                        sim,
+                        assets,
+                        owner,
+                        attacker,
+                        Some(command_strike),
+                        animation_strike,
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint {
                     owner_boundary_positions,
                 } => {

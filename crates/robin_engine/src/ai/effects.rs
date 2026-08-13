@@ -215,6 +215,13 @@ pub enum AiOwnerWork {
     ResumeSoldierGiveReportAfterSpeech {
         current_frame: u32,
     },
+    /// Continue an admitted `EVENT_SWORDSTRIKE` at the engine boundary.
+    /// Appended to preserve the serialized discriminants of existing work.
+    /// The Enemy AI owns the StartThink/filter/lock gates, while the actual
+    /// parade proposal needs live weapon, sprite, and sequence-manager data.
+    ConsiderToBeginParade {
+        attacker: HumanHandle,
+    },
 }
 
 #[derive(
