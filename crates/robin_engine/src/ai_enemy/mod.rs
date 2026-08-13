@@ -43,6 +43,29 @@ pub(super) fn them_lifecycle_debug_matches(ctx: &AiContext) -> bool {
         && parse_filter("PARITY_DEBUG_THEM_CREATION_ORDER")
             .is_none_or(|creation_order| ctx.original_creation_order == Some(creation_order))
 }
+
+/// Master switch for the opt-in primary-target selection/swap diagnostic.
+///
+/// Keep this separate from [`primary_swap_debug_matches`] so every call site
+/// can return before reading AI/entity state when diagnostics are disabled.
+pub(crate) fn primary_swap_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_PRIMARY_SWAP").is_some()
+}
+
+/// Apply the required exact frame/owner gate for primary-target diagnostics.
+/// Invalid or incomplete enabled configurations fail loudly rather than
+/// accidentally producing a broad trace.
+pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool {
+    let parse_required = |name: &str| {
+        let value = std::env::var(name)
+            .unwrap_or_else(|_| panic!("{name} is required for PRIMARY_SWAP diagnostic"));
+        value.parse::<u32>().unwrap_or_else(|error| {
+            panic!("invalid {name}={value:?} for PRIMARY_SWAP diagnostic: {error}")
+        })
+    };
+    frame == parse_required("PARITY_DEBUG_PRIMARY_SWAP_FRAME")
+        && u32::from(owner) == parse_required("PARITY_DEBUG_PRIMARY_SWAP_OWNER")
+}
 use crate::position_interface::ASPECT_RATIO;
 use util::soldier_detects_position_180;
 

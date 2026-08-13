@@ -7781,6 +7781,7 @@ impl EngineInner {
         // other soldier when the swap heuristic fires — for every
         // improving friend in the pass, not just the last one — so we
         // apply the whole queue here after the owner's AI tick ran.
+        let debug_primary_swap = crate::ai_enemy::primary_swap_debug_enabled();
         for (friend_id, new_target) in effects.friend_primary_target_swaps {
             let friend = self.world.entities.get_mut(friend_id).unwrap_or_else(|| {
                 panic!(
@@ -7796,18 +7797,29 @@ impl EngineInner {
                     friend_id.index()
                 );
             };
-            friend
-                .npc
-                .ai_brain
-                .base_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "pending-drain NPC {} primary-target friend {} has no AI",
-                        npc_id.index(),
-                        friend_id.index()
-                    )
-                })
-                .primary_target = new_target;
+            let friend_ai = friend.npc.ai_brain.base_mut().unwrap_or_else(|| {
+                panic!(
+                    "pending-drain NPC {} primary-target friend {} has no AI",
+                    npc_id.index(),
+                    friend_id.index()
+                )
+            });
+            if debug_primary_swap
+                && crate::ai_enemy::primary_swap_debug_matches(
+                    self.control.frame_counter,
+                    npc_id.index(),
+                )
+            {
+                eprintln!(
+                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={} new_target={}]",
+                    self.control.frame_counter,
+                    npc_id.index(),
+                    friend_id,
+                    friend_ai.primary_target,
+                    new_target,
+                );
+            }
+            friend_ai.primary_target = new_target;
         }
 
         // Process pending bow shot.

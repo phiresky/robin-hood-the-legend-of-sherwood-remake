@@ -752,6 +752,18 @@ impl EnemyAi {
             tick,
             Some(&decision_target_multiplicity),
         );
+        if super::primary_swap_debug_enabled()
+            && super::primary_swap_debug_matches(ctx.frame, self.base.me)
+        {
+            eprintln!(
+                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=battle_primary_selected list_them={:?} selected={}]",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+                self.list_them,
+                self.base.primary_target,
+            );
+        }
 
         // Continue the same Original friend loop after primary-target
         // selection: attacking friends already committed to a swordfight
@@ -2500,15 +2512,34 @@ impl EnemyAi {
         let mut working_target = self.base.primary_target;
         let mut working_target_pos = live_target_pos;
         let mut working_distance = distance;
+        let debug_primary_swap = super::primary_swap_debug_enabled()
+            && super::primary_swap_debug_matches(ctx.frame, self.base.me);
         // Iterate friends only when we have our own target —
         // Position(primary_target) would crash on NULL otherwise. Skip
         // the swap heuristic if our primary_target is unset so we never
         // hand 0 to a friend via `friend_primary_target_swaps`.
         for cand in &tick.friend_swap_candidates {
             if working_target == 0 {
+                if debug_primary_swap {
+                    eprintln!(
+                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_stop_zero friend={:?}]",
+                        ctx.frame, ctx.original_creation_order, self.base.me, cand.friend_id,
+                    );
+                }
                 break;
             }
             if cand.friend_primary_target == working_target {
+                if debug_primary_swap {
+                    eprintln!(
+                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_skip_same friend={:?} owner_target={} friend_target={}]",
+                        ctx.frame,
+                        ctx.original_creation_order,
+                        self.base.me,
+                        cand.friend_id,
+                        working_target,
+                        cand.friend_primary_target,
+                    );
+                }
                 continue;
             }
             let me_to_friend_target = {
@@ -2526,9 +2557,36 @@ impl EnemyAi {
                 let dy = cand.friend_position.y - cand.friend_primary_target_position.y;
                 (dx * dx + dy * dy).sqrt()
             };
-            if me_to_friend_target + friend_to_my_target
-                < working_distance + friend_to_friend_target
-            {
+            let left = me_to_friend_target + friend_to_my_target;
+            let right = working_distance + friend_to_friend_target;
+            let swap = left < right;
+            if debug_primary_swap {
+                eprintln!(
+                    "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_test friend={:?} owner_target={} friend_target={} owner_pos=({:08x},{:08x}) owner_target_pos=({:08x},{:08x}) friend_pos=({:08x},{:08x}) friend_target_pos=({:08x},{:08x}) working_distance={:08x} me_to_friend_target={:08x} friend_to_my_target={:08x} friend_to_friend_target={:08x} left={:08x} right={:08x} swap={}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    cand.friend_id,
+                    working_target,
+                    cand.friend_primary_target,
+                    ctx.position.x.to_bits(),
+                    ctx.position.y.to_bits(),
+                    working_target_pos.x.to_bits(),
+                    working_target_pos.y.to_bits(),
+                    cand.friend_position.x.to_bits(),
+                    cand.friend_position.y.to_bits(),
+                    cand.friend_primary_target_position.x.to_bits(),
+                    cand.friend_primary_target_position.y.to_bits(),
+                    working_distance.to_bits(),
+                    me_to_friend_target.to_bits(),
+                    friend_to_my_target.to_bits(),
+                    friend_to_friend_target.to_bits(),
+                    left.to_bits(),
+                    right.to_bits(),
+                    swap,
+                );
+            }
+            if swap {
                 // Each improving friend is retargeted immediately: the
                 // reference writes the friend's new primary target on the
                 // spot, so several friends can be swapped in a single
@@ -2545,6 +2603,19 @@ impl EnemyAi {
                     reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
                 self.base.primary_target = working_target;
             }
+        }
+        if debug_primary_swap {
+            eprintln!(
+                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_final target={} target_pos=({:08x},{:08x}) distance={:08x} queued_swaps={:?}]",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+                working_target,
+                working_target_pos.x.to_bits(),
+                working_target_pos.y.to_bits(),
+                working_distance.to_bits(),
+                self.base.outbox.actor.friend_primary_target_swaps,
+            );
         }
 
         // Original tests the `posPrimTarget` that remains after every
