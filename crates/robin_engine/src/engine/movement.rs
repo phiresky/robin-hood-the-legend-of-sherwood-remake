@@ -7708,19 +7708,48 @@ impl EngineInner {
         // transition can therefore have no FinalTol target while the
         // actor still owns the entity interaction. Keep this snapshot
         // separate: genuine point seeks have no actor-owned target.
-        let live_actor_seek_target = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(|entity| entity.actor_data())
-            .and_then(|actor| actor.seek_target)
-            .and_then(|target_id| self.world.entities.get(target_id))
-            .map(|target| {
-                (
-                    target.element_data().position_map(),
-                    target.ground_position(),
+        let actor_seek_flags = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement { flags, .. } => Some(*flags),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "selected PerformSeek owner {entity_id:?} lost movement flags for sequence {:?} element {}",
+                    selected.seq_id, selected.elem_idx
                 )
             });
+        let live_actor_seek_target = self.world.entities.get(entity_id).and_then(|entity| {
+            let actor = entity.actor_data()?;
+            let target = self.world.entities.get(actor.seek_target?)?;
+            let target_position = target.element_data().position_map();
+            let sampled_target = actor_seek_flags
+                .contains(crate::sequence::MoveFlags::USE_POINT)
+                .then(|| target.cxx_current_point_map())
+                .flatten()
+                .filter(|point| *point != target_position)
+                .unwrap_or(target_position);
+            let delta = sampled_target - entity.element_data().position_map();
+            let stretched_y =
+                if actor_seek_flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE) {
+                    delta.y * 1.743_446_8
+                } else {
+                    delta.y
+                };
+            let target_unchanged_or_in_tolerance = target_position
+                == actor.last_seek_target_position
+                || delta.x * delta.x + stretched_y * stretched_y
+                    < actor.seek_distance * actor.seek_distance * 1.1025;
+            Some((
+                target_position,
+                target.ground_position(),
+                target.element_data().sector(),
+                target_unchanged_or_in_tolerance,
+            ))
+        });
         let seek_tolerance_reached = |position: MapPoint, self_sector| {
             if ft.tol <= 0.0 {
                 return false;
@@ -9754,16 +9783,40 @@ impl EngineInner {
                     && entity
                         .actor_data()
                         .is_some_and(|actor| actor.active_door_pass.is_none());
+                // A copied terminal stop transition can lose the movement
+                // element's target while Actor::PerformSeek still owns the
+                // entity in mpSeekTarget. That remains entity-seek mode, not
+                // point-seek mode: on the last order Original starts the
+                // post-seek when the target is still in our sector and either
+                // has not moved since RefreshSeek or is inside tolerance.
+                let final_actor_entity_post_seek_arrival = is_final_waypoint
+                    && movement_is_last_sequence_element
+                    && ft.target_id.is_none()
+                    && live_actor_seek_target.is_some_and(
+                        |(_, _, target_sector, target_unchanged_or_in_tolerance)| {
+                            target_sector.is_some()
+                                && target_sector == entity.element_data().sector()
+                                && target_unchanged_or_in_tolerance
+                        },
+                    )
+                    && entity
+                        .actor_data()
+                        .is_some_and(|actor| actor.post_seek_sequence.is_some())
+                    && entity
+                        .actor_data()
+                        .is_some_and(|actor| actor.active_door_pass.is_none());
+                let final_actor_owned_post_seek_arrival =
+                    final_point_post_seek_arrival || final_actor_entity_post_seek_arrival;
                 let actor_owned_interaction = entity
                     .is_pc()
                     .then(|| {
                         actor_post_seek_interaction(entity.actor_data().expect("actor-only branch"))
                     })
                     .flatten();
-                let actor_owned_interaction_out_of_range = final_point_post_seek_arrival
+                let actor_owned_interaction_out_of_range = final_actor_owned_post_seek_arrival
                     && actor_owned_interaction.is_some()
                     && live_actor_seek_target
-                        .map(|(target_position, _)| {
+                        .map(|(target_position, _, _, _)| {
                             interaction_exceeds_init_range(
                                 entity.element_data().position_map(),
                                 target_position,
@@ -9776,7 +9829,7 @@ impl EngineInner {
                     // remains actor-owned. HITTING still turns before its
                     // validity abort; TYING validates before turning.
                     if actor_owned_interaction == Some(ActorPostSeekInteraction::Hit) {
-                        let (_, target_ground) = live_actor_seek_target
+                        let (_, target_ground, _, _) = live_actor_seek_target
                             .expect("out-of-range actor-owned Hit retained a live target");
                         let here_ground = entity.ground_position();
                         let facing = vector_to_sector_0_to_15(
@@ -9797,7 +9850,7 @@ impl EngineInner {
                     return;
                 }
                 let actor = entity.actor_data_mut().expect("actor-only branch");
-                if final_point_post_seek_arrival {
+                if final_actor_owned_post_seek_arrival {
                     deferred
                         .post_seek_arrivals
                         .push((eid, move_seq_id, move_elem_idx));
