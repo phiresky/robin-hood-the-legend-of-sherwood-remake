@@ -15,6 +15,84 @@ pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
     })
 }
 
+#[test]
+fn owner_boundary_positions_follow_original_creation_order_not_entity_slots() {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::entities::{BoundaryPosition, EntitySlots};
+    use std::collections::BTreeMap;
+
+    let mut engine = EngineInner::new();
+    // Deliberately allocate in the opposite order from Original's element
+    // walk. Rust slots are loader/runtime storage identities; Original
+    // Hourglass visibility is determined by creation order.
+    let later_target = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let earlier_target = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    engine.world.install_original_creation_orders(
+        BTreeMap::from([(later_target, 30), (owner, 20), (earlier_target, 10)]),
+        31,
+    );
+    assert!(later_target.index() < owner.index());
+    assert!(earlier_target.index() > owner.index());
+
+    let earlier_before = BoundaryPosition {
+        map: MapPoint::new(10.0, 20.0),
+        world: WorldPoint3D::new(10.0, 23.0, 3.0),
+    };
+    let owner_before = BoundaryPosition {
+        map: MapPoint::new(30.0, 40.0),
+        world: WorldPoint3D::new(30.0, 45.0, 5.0),
+    };
+    let later_before = BoundaryPosition {
+        map: MapPoint::new(50.0, 60.0),
+        world: WorldPoint3D::new(50.0, 67.0, 7.0),
+    };
+    let mut before = EntitySlots::filled(engine.world.entities.len(), None);
+    before[earlier_target] = Some(earlier_before);
+    before[owner] = Some(owner_before);
+    before[later_target] = Some(later_before);
+
+    let earlier_live = WorldPoint3D::new(110.0, 123.0, 13.0);
+    let owner_live = WorldPoint3D::new(130.0, 145.0, 15.0);
+    let later_live = WorldPoint3D::new(150.0, 167.0, 17.0);
+    engine
+        .get_entity_mut(earlier_target)
+        .unwrap()
+        .element_data_mut()
+        .set_position(earlier_live);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_position(owner_live);
+    engine
+        .get_entity_mut(later_target)
+        .unwrap()
+        .element_data_mut()
+        .set_position(later_live);
+
+    assert_eq!(
+        engine.boundary_position(earlier_target, owner, &before, true),
+        BoundaryPosition::of(engine.get_entity(earlier_target).unwrap().element_data()),
+        "an earlier Original slot has already completed its actor movement"
+    );
+    assert_eq!(
+        engine.boundary_position(later_target, owner, &before, true),
+        later_before,
+        "a later Original slot still exposes its preserved pre-movement position"
+    );
+    assert_eq!(
+        engine.boundary_position(owner, owner, &before, false),
+        owner_before,
+        "the owner itself is pre-movement before its Actor Hourglass arm"
+    );
+    assert_eq!(
+        engine.boundary_position(owner, owner, &before, true),
+        BoundaryPosition::of(engine.get_entity(owner).unwrap().element_data()),
+        "the owner itself is live after its Actor Hourglass arm"
+    );
+}
+
 const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
 
 fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {

@@ -2694,7 +2694,8 @@ impl EngineInner {
                 })
                 .element_data(),
         );
-        let target_has_not_moved = target.index() > owner.index()
+        let target_has_not_moved = self.world.original_creation_order(target)
+            > self.world.original_creation_order(owner)
             || (!owner_actor_complete && target.index() == owner.index());
         if target_has_not_moved {
             positions_before_movement
