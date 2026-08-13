@@ -216,6 +216,20 @@ impl EngineInner {
                 )
             })
         });
+        let owner_work = |owner: EntityId| {
+            self.get_entity(owner)
+                .and_then(Entity::ai_controller)
+                .map(|ai| {
+                    (
+                        ai.outbox.reentrant.owner_work.len(),
+                        ai.outbox.reentrant.self_stimuli.len(),
+                        ai.outbox.reentrant.cross_npc_actions.len(),
+                    )
+                })
+        };
+        let victim_owner_work = owner_work(victim);
+        let attacker_owner_work = attacker.and_then(owner_work);
+        let rng_cursor = self.control.rng.original_replay_cursor();
         tracing::trace!(
             target: "parity_sword_damage_lifecycle",
             frame,
@@ -230,6 +244,9 @@ impl EngineInner {
             ?selected_graph,
             ?damage_orders,
             ?actor_state,
+            ?rng_cursor,
+            ?victim_owner_work,
+            ?attacker_owner_work,
             "sword-damage lifecycle"
         );
     }
@@ -7790,6 +7807,132 @@ mod tests {
                                 || value == StimulusType::EventLoseConsciousness as u16
                         )
                 })
+        );
+    }
+
+    #[test]
+    fn lethal_sword_hit_kills_unconscious_npc_before_say_ouch_translation() {
+        use crate::ai::{AiState, LogLineType, Remark, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.npc_data_mut().unwrap().life_points = 15;
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            let ai = victim_entity.enemy_ai_mut().unwrap();
+            ai.hth_weapon_id = 1;
+            ai.base.current_state = AiState::Sleeping;
+            ai.base.current_substate = Substate::SleepingUnconscious;
+        }
+
+        let assets = assets_with_sword_profile_effects(1, 50, 100, 0);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(victim_entity.is_dead());
+        assert!(!victim_entity.human_data().unwrap().unconscious);
+        let ai = victim_entity.ai_controller().unwrap();
+        assert_eq!(ai.current_substate, Substate::SleepingForever);
+        assert!(ai.ai_log.iter().any(|entry| {
+            entry.line_type == LogLineType::Speak && entry.info == Remark::Dies as u16
+        }));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .any(|order| order.order_type == OrderType::DyingSword),
+            "TranslateSwordDamage must retain ownership of the dying visual after synchronous Kill"
+        );
+    }
+
+    #[test]
+    fn nonlethal_sword_hit_keeps_unconscious_npc_silent() {
+        use crate::ai::{AiState, LogLineType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            let ai = victim_entity.enemy_ai_mut().unwrap();
+            ai.hth_weapon_id = 1;
+            ai.base.current_state = AiState::Sleeping;
+            ai.base.current_substate = Substate::SleepingUnconscious;
+        }
+
+        let assets = assets_with_sword_profile_effects(1, 50, 1, 0);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(victim_entity.npc_data().unwrap().life_points, 49);
+        assert!(victim_entity.human_data().unwrap().unconscious);
+        assert!(
+            !victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .any(|entry| entry.line_type == LogLineType::Speak),
+            "the ordinary unconscious SayOuch early return must remain intact for survivors"
         );
     }
 
