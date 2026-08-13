@@ -5905,7 +5905,7 @@ impl EngineInner {
             super::special_motion::SpecialMovePosition::Map(point),
             None,
             None,
-            Some(point),
+            None,
             "door transition",
         );
     }

@@ -2773,6 +2773,123 @@ mod tests {
     }
 
     #[test]
+    fn wall_up_transition_completion_recomputes_midpoint_on_installed_rail_plane() {
+        use crate::sight_obstacle::{ObstaclePoint, SIGHTOBSTACLE_PROJECTION_AREA, SightObstacle};
+
+        for start in [MapPoint::new(20.0, 30.0), MapPoint::new(10.0, 30.0)] {
+            let mut engine = EngineInner::new();
+            engine
+                .script_domains
+                .interactables
+                .doors
+                .push(default_door());
+            let owner = engine.add_entity(make_pc(7));
+
+            // Competing authored projection: resolving the source-sector
+            // projection at the midpoint would flatten the actor to Z=90.
+            // Original's transition arm does not perform that lookup.
+            let mut flat_projection = SightObstacle::new(
+                1,
+                crate::sight_obstacle::SIGHTOBSTACLE_SOLID | SIGHTOBSTACLE_PROJECTION_AREA,
+            );
+            flat_projection.layer = 0;
+            flat_projection.sector = 7;
+            flat_projection.material = 2;
+            flat_projection.obstacle_points = vec![
+                ObstaclePoint {
+                    x: 0.0,
+                    y: 110.0,
+                    z_bottom: 0.0,
+                    z_top: 90.0,
+                },
+                ObstaclePoint {
+                    x: 40.0,
+                    y: 110.0,
+                    z_bottom: 0.0,
+                    z_top: 90.0,
+                },
+                ObstaclePoint {
+                    x: 40.0,
+                    y: 130.0,
+                    z_bottom: 0.0,
+                    z_top: 90.0,
+                },
+                ObstaclePoint {
+                    x: 0.0,
+                    y: 130.0,
+                    z_bottom: 0.0,
+                    z_top: 90.0,
+                },
+            ];
+            flat_projection.top_plane_points =
+                [[0.0, 110.0, 90.0], [40.0, 110.0, 90.0], [0.0, 130.0, 90.0]];
+            flat_projection.rebuild_geometry();
+            let mut installed_rail = SightObstacle::new_default(2);
+            installed_rail.material = 1;
+            let mut assets = LevelAssets::new();
+            assets.static_sight_obstacles =
+                std::sync::Arc::new(vec![flat_projection, installed_rail]);
+            engine.world.static_sight_obstacle_active = vec![true, true];
+            assert_eq!(
+                engine.get_projection_area_index(&assets, 7, 0, MapPoint::new(20.0, 30.0)),
+                Some(0),
+                "the control projection must genuinely compete at the transition midpoint"
+            );
+
+            let rail_plane = crate::position_interface::PlaneZCoeffs {
+                az: 0.1,
+                bz: 0.0,
+                dz: 91.3318,
+            };
+            {
+                let entity = engine.world.entities.get_mut(owner).unwrap();
+                let pi = entity.position_iface_mut();
+                pi.set_obstacle(
+                    crate::position_interface::ObstacleHandle::new(1),
+                    Some(rail_plane),
+                );
+                pi.set_material(crate::element::GameMaterial::Wood);
+                pi.set_map_position(start);
+                pi.set_old_map_position(start);
+                pi.set_old_position(pi.get_position());
+                entity.actor_data_mut().unwrap().active_door_pass = Some(ActiveDoorPass {
+                    door_index: crate::gate::DoorIndex(0),
+                    direct: true,
+                    position_direct: true,
+                    steps: VecDeque::new(),
+                    triggers_fired: 0,
+                    current_action: OrderType::TransitionWaitingUprightClimbingWallUp,
+                    current_reverse: false,
+                    saved_action_state: None,
+                });
+            }
+
+            engine.apply_door_pass_transition_completion_side_effects(&assets, owner);
+
+            let entity = engine.world.entities.get(owner).unwrap();
+            let pi = entity.position_iface();
+            assert_eq!(pi.map_position(), MapPoint::new(20.0, 30.0));
+            assert_eq!(
+                pi.get_obstacle(),
+                crate::position_interface::ObstacleHandle::new(1)
+            );
+            assert_eq!(pi.get_plane(), Some(&rail_plane));
+            assert_eq!(pi.get_material(), crate::element::GameMaterial::Wood);
+            assert_eq!(
+                pi.get_elevation().to_bits(),
+                93.3318_f32.to_bits(),
+                "SetPositionMap + ComputePositionAll must project the midpoint on the installed rail plane"
+            );
+            if start == MapPoint::new(20.0, 30.0) {
+                assert!(
+                    !pi.is_moving(),
+                    "an in-place transition completion must not publish phantom 3D movement"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn direct_door_completion_does_not_reconstruct_an_already_committed_endpoint() {
         let mut engine = EngineInner::new();
         let endpoint = MapPoint::new(250.0, 270.0);
