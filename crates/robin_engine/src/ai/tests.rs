@@ -902,8 +902,6 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
         crate::order::OrderType::WalkingUpright,
         crate::order::OrderType::RunningUpright,
         crate::order::OrderType::WalkingCrouched,
-        crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
-        crate::order::OrderType::TransitionRunningUprightWaitingUpright,
         crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched,
     ] {
         let mut transition_ctx = goto_short_circuit_ctx(animation);
@@ -920,6 +918,29 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
         assert_eq!(
             one_halt_ai.take_pending_orders().len(),
             1,
+            "animation {animation:?}"
+        );
+    }
+
+    // Original's close-point switch observes the upright Wait successor of
+    // these outgoing transitions, so one synchronous halt is sufficient.
+    for animation in [
+        crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
+        crate::order::OrderType::TransitionRunningUprightWaitingUpright,
+    ] {
+        let mut transition_ctx = goto_short_circuit_ctx(animation);
+        transition_ctx.self_selected_element_is_default_wait = Some(false);
+        transition_ctx.self_selected_element_priority =
+            Some(Some(crate::sequence::SequencePriority::Preference));
+        let mut one_halt_ai = AiController::new(1);
+        one_halt_ai.think_recursion_depth = 1;
+        one_halt_ai.outbox.actor.queue_halt();
+
+        one_halt_ai.go_to(transition_ctx.position, GotoFlags::empty(), &transition_ctx);
+
+        assert!(one_halt_ai.already_on_point, "animation {animation:?}");
+        assert!(
+            one_halt_ai.take_pending_orders().is_empty(),
             "animation {animation:?}"
         );
     }
