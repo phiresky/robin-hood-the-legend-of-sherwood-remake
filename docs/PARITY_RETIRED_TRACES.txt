@@ -168,3 +168,8 @@ parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegam
 # The same schema gap has one locked-patch member. RHengine.cpp:6389 emits
 # exclamation 14; its schema-14 replacement records locked_patch before it.
 parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_012/replay-007-session-0001.jsonl.zst
+# Auxiliary audio RNG policy: Original delayed sound-source restarts consume the
+# shared process RNG (RHsound.cpp:491-503), while Rust intentionally isolates
+# DelayedSoundTimer from gameplay/replay RNG (docs/RNG_AUDIT.md). This trace's
+# first independent frontier is exactly two such sound-restart draws.
+parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/QuickSave/replay-012-session-0001.jsonl.zst
