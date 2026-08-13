@@ -4433,6 +4433,12 @@ impl EngineInner {
         Option<ActorExecuteResult>,
     ) {
         let globally_frozen = self.actors_frozen();
+        let diagnostic_frame = self.control.frame_counter;
+        let diagnostic_creation_order =
+            crate::sprite::sprite_row_diagnostic_creation_order(diagnostic_frame, || {
+                self.world.original_creation_order(entity_id)
+            });
+        let sprite_row_diagnostic = diagnostic_creation_order.is_some();
 
         // Production enters through the owner coordinator, which stamps this
         // before choosing a specialized arm. Keep this helper self-contained
@@ -5802,14 +5808,31 @@ impl EngineInner {
                             }
                             let elem = entity.element_data_mut();
                             let sprite = &mut elem.sprite;
-                            Some(sprite.perform_action(
+                            let diagnostic_pre = sprite_row_diagnostic
+                                .then(|| sprite.sprite_row_diagnostic_pre());
+                            let raw_motion = sprite.perform_action(
                                 sim,
                                 order_id,
                                 played,
                                 row,
                                 progression,
                                 false,
-                            ))
+                            );
+                            if let Some(pre) = diagnostic_pre {
+                                sprite.emit_sprite_row_diagnostic(
+                                    "perform_action",
+                                    diagnostic_frame,
+                                    diagnostic_creation_order.expect("enabled diagnostic has owner"),
+                                    entity_id.index(),
+                                    anim_type,
+                                    played,
+                                    row,
+                                    progression,
+                                    pre,
+                                    raw_motion,
+                                );
+                            }
+                            Some(raw_motion)
                         });
                         // While still turning, the arm returns
                         // InProgress regardless of what the

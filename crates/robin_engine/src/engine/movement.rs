@@ -7895,12 +7895,17 @@ impl EngineInner {
                 dist_sq < ft.tol * ft.tol * 1.1025
             }
         };
+        let provenance_frame = self.control.frame_counter;
+        let diagnostic_creation_order =
+            crate::sprite::sprite_row_diagnostic_creation_order(provenance_frame, || {
+                self.world.original_creation_order(entity_id)
+            });
+        let sprite_row_diagnostic = diagnostic_creation_order.is_some();
         let entity = self
             .world
             .entities
             .get_mut(entity_id)
             .expect("movement actor ID collected from entity table must remain present");
-        let provenance_frame = self.control.frame_counter;
         super::animation::direction_provenance_snapshot(
             entity.position_iface(),
             entity_id,
@@ -8859,16 +8864,32 @@ impl EngineInner {
                 provenance_frame,
                 "turn:perform_seek:after",
             );
+            let diagnostic_pre = sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
+            let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
             let result = sprite.perform_motion(
                 sim,
                 motion_order,
                 sprite_motion_order_for_nonanimation(anim),
-                u16::from(sprite.position_iface.get_direction().as_u8()),
+                played_direction,
                 FrameProgression::Default,
                 false,
                 motion_method,
                 dest_already_at_pos,
             );
+            if let Some(pre) = diagnostic_pre {
+                sprite.emit_sprite_row_diagnostic(
+                    "perform_motion",
+                    provenance_frame,
+                    diagnostic_creation_order.expect("enabled diagnostic has owner"),
+                    entity_id.index(),
+                    order_action,
+                    sprite_motion_order_for_nonanimation(anim),
+                    played_direction,
+                    FrameProgression::Default,
+                    pre,
+                    result.0,
+                );
+            }
             super::animation::direction_provenance_snapshot(
                 &sprite.position_iface,
                 entity_id,

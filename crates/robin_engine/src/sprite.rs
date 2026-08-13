@@ -169,6 +169,40 @@ pub enum FrameProgression {
     SkipShadowFreezeWhenTerminated,
 }
 
+/// Whether the opt-in sprite-row parity diagnostic applies to this exact
+/// owner slot.  Requiring both filters keeps accidental broad captures from
+/// perturbing timing-sensitive parity runs.  Callers must check this before
+/// reading any sprite state so the disabled path remains neutral.
+pub(crate) fn sprite_row_diagnostic_creation_order(
+    frame: u32,
+    resolve_creation_order: impl FnOnce() -> u32,
+) -> Option<u32> {
+    if std::env::var_os("PARITY_DEBUG_SPRITE_ROW").is_none() {
+        return None;
+    }
+    let required = |name: &str| {
+        std::env::var(name)
+            .unwrap_or_else(|_| panic!("{name} is required when PARITY_DEBUG_SPRITE_ROW is set"))
+            .parse::<u32>()
+            .unwrap_or_else(|error| panic!("invalid {name} for sprite-row diagnostic: {error}"))
+    };
+    let required_frame = required("PARITY_DEBUG_SPRITE_ROW_FRAME");
+    let required_creation_order = required("PARITY_DEBUG_SPRITE_ROW_CREATION_ORDER");
+    if frame != required_frame {
+        return None;
+    }
+    let creation_order = resolve_creation_order();
+    (creation_order == required_creation_order).then_some(creation_order)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SpriteRowDiagnosticPre {
+    last_action: OrderType,
+    row: u16,
+    frame: u16,
+    frame_count: u16,
+}
+
 impl FrameProgression {
     /// Invert the `as u32` ordinal cast used by call sites that
     /// persist a progression to storage (e.g. `TargetData.progression`
@@ -437,6 +471,53 @@ struct SpriteSnapshot {
 }
 
 impl Sprite {
+    pub(crate) fn sprite_row_diagnostic_pre(&self) -> SpriteRowDiagnosticPre {
+        SpriteRowDiagnosticPre {
+            last_action: self.last_action,
+            row: self.current_row,
+            frame: self.current_frame,
+            frame_count: self.frame_count,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn emit_sprite_row_diagnostic(
+        &self,
+        stage: &'static str,
+        frame: u32,
+        creation_order: u32,
+        owner_index: u32,
+        requested: OrderType,
+        played: OrderType,
+        played_direction: u16,
+        progression: FrameProgression,
+        pre: SpriteRowDiagnosticPre,
+        raw_motion: MotionState,
+    ) {
+        let resolved = self.resolve_animation(played);
+        let conversion_row = self.row_for_action(resolved);
+        let row_meta = conversion_row.map(|base| {
+            let row = base + played_direction;
+            let frames = self.num_frames_for_row(row);
+            let current = self.current_frame.min(frames.saturating_sub(1));
+            (base, row, frames, current, self.wait_time(row, current))
+        });
+        eprintln!(
+            "[SPRITE_ROW frame={frame} co={creation_order} owner={owner_index} stage={stage} profile={:?} cache={:?} alternate={} requested={requested:?} played={played:?} resolved={resolved:?} direction={played_direction} progression={progression:?} row_meta={row_meta:?} pre=({:?},{},{},{}) post=({:?},{},{},{}) raw={raw_motion:?}]",
+            self.frame_profile_name,
+            self.profile_cache_key,
+            self.use_alternate_profile,
+            pre.last_action,
+            pre.row,
+            pre.frame,
+            pre.frame_count,
+            self.last_action,
+            self.current_row,
+            self.current_frame,
+            self.frame_count,
+        );
+    }
+
     fn snapshot_ref(&self) -> SpriteSnapshotRef<'_> {
         SpriteSnapshotRef {
             position_iface: &self.position_iface,
