@@ -70,6 +70,7 @@ parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/re
 parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst
 # External parity 20: schema-12 selected-view rendering contaminated visibility queries.
 parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_033-session-0001.jsonl.zst
+parity-random-save-replays/traces/Savegame_linux2/Profile_002/Savegame_033/replay-003-session-0001.jsonl.zst
 parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_035-session-0001.jsonl.zst
 # Task 244: historical Original read uninitialized ShootType for an out-of-range target.
 parity-random-save-replays-60s-15x/traces/Savegame_Nescafe/Profile_002/Continue/replay-002-session-0001.jsonl.zst
