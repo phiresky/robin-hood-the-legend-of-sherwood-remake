@@ -3564,6 +3564,8 @@ impl EnemyAi {
         self.base.cached_in_building = ctx.in_building;
 
         let stimulus_type = stimulus.stimulus_type;
+        self.base
+            .debug_macro_lifecycle(ctx, "think_enter", stimulus_type);
 
         tracing::trace!(
             me = self.base.me,
@@ -3583,6 +3585,8 @@ impl EnemyAi {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
             self.end_think(sim, global, ctx, tick, grid);
+            self.base
+                .debug_macro_lifecycle(ctx, "think_rejected_return", stimulus_type);
             return true;
         }
 
@@ -3697,6 +3701,8 @@ impl EnemyAi {
         {
             self.end_think(sim, global, ctx, tick, grid);
         }
+        self.base
+            .debug_macro_lifecycle(ctx, "think_return", stimulus_type);
         return_value
     }
 

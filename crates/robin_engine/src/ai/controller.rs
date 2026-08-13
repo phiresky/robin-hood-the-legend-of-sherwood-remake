@@ -66,6 +66,39 @@ fn will_stop_debug_config() -> &'static WillStopDebugConfig {
     })
 }
 
+#[derive(Debug)]
+struct MacroLifecycleDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    owner: Option<u32>,
+}
+
+fn macro_lifecycle_debug_config() -> &'static MacroLifecycleDebugConfig {
+    static CONFIG: std::sync::OnceLock<MacroLifecycleDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_MACRO_LIFECYCLE").is_some();
+        if !enabled {
+            return MacroLifecycleDebugConfig {
+                enabled: false,
+                frame: None,
+                owner: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for MACROLIFE diagnostic: {error}")
+                })
+            })
+        };
+        MacroLifecycleDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_MACRO_LIFECYCLE_FRAME"),
+            owner: parse("PARITY_DEBUG_MACRO_LIFECYCLE_OWNER"),
+        }
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum WillStopCaller {
     MacroCompletion,
@@ -1410,6 +1443,53 @@ impl AiController {
 
     // -- Break macro --
 
+    pub(crate) fn debug_macro_lifecycle(
+        &self,
+        ctx: &AiContext,
+        phase: &str,
+        reason: impl std::fmt::Debug,
+    ) {
+        let config = macro_lifecycle_debug_config();
+        if !config.enabled
+            || !config.frame.is_none_or(|frame| frame == ctx.frame)
+            || !config
+                .owner
+                .is_none_or(|owner| ctx.original_creation_order == Some(owner))
+        {
+            return;
+        }
+        eprintln!(
+            "MACROLIFE frame={} owner={:?} me={} phase={phase} reason={reason:?} state={:?} substate={:?} in_progress={} timer_running={} timer_deadline={} started_this_frame={} command_offset={} remaining_bytes={} waypoint={:?} owner_work_len={} self_stimuli_len={} finish_after_stimuli={}",
+            ctx.frame,
+            ctx.original_creation_order,
+            self.me,
+            self.current_state,
+            self.current_substate,
+            self.macro_in_progress,
+            self.macro_timer_is_running,
+            self.when_does_macro_timer_ring,
+            self.macro_started_in_this_frame,
+            self.macro_command_offset,
+            self.number_of_remaining_macro_bytes,
+            self.macro_command_waypoint,
+            self.outbox.reentrant.owner_work.len(),
+            self.outbox.reentrant.self_stimuli.len(),
+            self.outbox.reentrant.finish_macro_after_self_stimuli,
+        );
+    }
+
+    fn break_macro_debug(&mut self, ctx: &AiContext, reason: &str) {
+        self.debug_macro_lifecycle(ctx, "break_before", reason);
+        self.break_macro();
+        self.debug_macro_lifecycle(ctx, "break_after", reason);
+    }
+
+    fn finish_patrol_macro_debug(&mut self, ctx: &AiContext, reason: &str) {
+        self.debug_macro_lifecycle(ctx, "finish_before", reason);
+        self.finish_patrol_macro();
+        self.debug_macro_lifecycle(ctx, "finish_after", reason);
+    }
+
     pub fn break_macro(&mut self) {
         self.macro_in_progress = false;
         self.macro_timer_is_running = false;
@@ -2182,10 +2262,13 @@ impl AiController {
         self.number_of_remaining_macro_bytes = macro_byte_count;
 
         // Start the macro machine.
+        self.debug_macro_lifecycle(ctx, "start_before", "launch_waypoint_macro");
         self.set_ai_state(AiState::Default);
         self.current_substate = Substate::DefaultInMacro;
         self.macro_started_in_this_frame = true;
+        self.debug_macro_lifecycle(ctx, "start_armed", "launch_waypoint_macro");
         self.execute_next_macro_command(sim, ctx);
+        self.debug_macro_lifecycle(ctx, "start_return", "launch_waypoint_macro");
         true
     }
 
@@ -2206,6 +2289,7 @@ impl AiController {
         sim: &crate::sim_rng::SimulationContext,
         ctx: &AiContext,
     ) {
+        self.debug_macro_lifecycle(ctx, "execute_enter", "execute_next_macro_command");
         // If we're still in STATE_DEFAULT, make sure the substate
         // reflects that we're inside the VM.
         if self.current_state == AiState::Default {
@@ -2226,7 +2310,7 @@ impl AiController {
                             self.me,
                             self.macro_command_offset
                         );
-                        self.break_macro();
+                        self.break_macro_debug(ctx, "macro_pc_out_of_bounds");
                         return;
                     }
                 };
@@ -2245,6 +2329,7 @@ impl AiController {
                     self.number_of_remaining_macro_bytes = 0;
                     continue 'vm;
                 };
+                self.debug_macro_lifecycle(ctx, "opcode_started", opcode);
 
                 match opcode {
                     MacroOpcode::ReversePath => {
@@ -2265,7 +2350,7 @@ impl AiController {
 
                     MacroOpcode::GotoPoint => {
                         let Some(index) = self.peek_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "goto_point_truncated");
                             return;
                         };
                         if let Some(ref mut path) = self.patrol_path {
@@ -2287,7 +2372,7 @@ impl AiController {
 
                     MacroOpcode::FaceTo => {
                         let Some(direction) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "face_to_truncated");
                             return;
                         };
                         self.current_substate = Substate::DefaultInMacroWaitingForDone;
@@ -2297,21 +2382,22 @@ impl AiController {
 
                     MacroOpcode::Wait => {
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "wait_truncated");
                             return;
                         };
                         self.launch_macro_timer(frames as u32, ctx.frame);
+                        self.debug_macro_lifecycle(ctx, "timer_started", "wait");
                         self.macro_started_in_this_frame = false;
                         return;
                     }
 
                     MacroOpcode::Check4 => {
                         let Some(friend_id) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_friend_truncated");
                             return;
                         };
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_frames_truncated");
                             return;
                         };
                         // Civilians/royalists log a warning but still
@@ -2326,15 +2412,15 @@ impl AiController {
 
                     MacroOpcode::Check4Sync => {
                         let Some(friend_id) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_sync_friend_truncated");
                             return;
                         };
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_sync_frames_truncated");
                             return;
                         };
                         let Some(index) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_sync_index_truncated");
                             return;
                         };
                         // Log-and-proceed for civilians.
@@ -2368,7 +2454,7 @@ impl AiController {
 
                     MacroOpcode::ChangeWay => {
                         let Some(index) = self.peek_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "change_way_truncated");
                             return;
                         };
                         // The helper runs break_macro + bounds check
@@ -2417,6 +2503,11 @@ impl AiController {
                                 owner_position_before_callback: ctx.position,
                                 owner_boundary_positions,
                             },
+                        );
+                        self.debug_macro_lifecycle(
+                            ctx,
+                            "owner_work_queued",
+                            "change_way_assignment_tail",
                         );
                         return;
                     }
@@ -2490,7 +2581,7 @@ impl AiController {
 
                     MacroOpcode::Bend => {
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "bend_truncated");
                             return;
                         };
                         // Log-and-proceed for civilians.
@@ -2499,6 +2590,7 @@ impl AiController {
                         }
                         self.outbox.actor.look_sidewards = Some(LookDirection::Down);
                         self.launch_macro_timer(frames as u32, ctx.frame);
+                        self.debug_macro_lifecycle(ctx, "timer_started", "bend");
                         self.macro_started_in_this_frame = false;
                         return;
                     }
@@ -2520,7 +2612,7 @@ impl AiController {
 
                     MacroOpcode::PatrolDirection => {
                         let Some(direction) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "patrol_direction_truncated");
                             return;
                         };
                         // Log-and-proceed for civilians.
@@ -2559,6 +2651,11 @@ impl AiController {
                                     .collect(),
                             },
                         );
+                        self.debug_macro_lifecycle(
+                            ctx,
+                            "owner_work_queued",
+                            "resume_macro_after_patrol_init",
+                        );
                         return;
                     }
                 }
@@ -2573,7 +2670,7 @@ impl AiController {
                 // wired anyway so a future override that doesn't share
                 // that gate will be invoked from this site.
                 if self.default_bored_standard_procedure(ctx) {
-                    self.break_macro();
+                    self.break_macro_debug(ctx, "default_bored_standard_procedure");
                     return;
                 }
 
@@ -2599,10 +2696,11 @@ impl AiController {
                             crate::parameters_ai::AI_ONE_POINT_DEFAULT_TIME as u32,
                             ctx.frame,
                         );
+                        self.debug_macro_lifecycle(ctx, "timer_started", "one_point_path");
                     } else {
                         // Already here → synthesize a REACH_POINT event so
                         // the stimulus queue picks up the next waypoint.
-                        self.finish_patrol_macro();
+                        self.finish_patrol_macro_debug(ctx, "one_point_reach_point");
                         self.current_substate = Substate::DefaultEnroute;
                         self.fire_self_stimulus(StimulusType::EventReachPoint);
                     }
@@ -2647,12 +2745,17 @@ impl AiController {
                             // may start its next WAIT before the outer macro
                             // completion clears the running flags.
                             self.outbox.reentrant.finish_macro_after_self_stimuli = true;
+                            self.debug_macro_lifecycle(
+                                ctx,
+                                "finish_deferred",
+                                "queued_reach_point",
+                            );
                         } else {
-                            self.finish_patrol_macro();
+                            self.finish_patrol_macro_debug(ctx, "goto_no_reentrant_reach_point");
                         }
                     } else {
                         self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                        self.finish_patrol_macro();
+                        self.finish_patrol_macro_debug(ctx, "missing_next_waypoint");
                     }
                 }
                 return;
