@@ -1417,7 +1417,15 @@ impl EnemyAi {
         let shield_advancing = Substate::AttackingAdvancingWithShield as u32;
 
         let mut count: i32 = 0;
-        for f in &tick.nearby_fighters {
+        // Original walks the complete camp soldier registry. In particular it
+        // does not apply IsAbleToFight/Active before counting an orphan
+        // archer: an inactive Seeking soldier still owns its AI state and
+        // shield-bearer link and therefore remains a protection candidate.
+        // `nearby_fighters` applies that unrelated able-to-fight filter;
+        // `fighter_registry` preserves the complete Original scan domain and
+        // ordering, while the distance/state gates below do the actual
+        // admission work.
+        for f in &tick.fighter_registry {
             if !f.is_friendly {
                 continue;
             }
@@ -4086,6 +4094,56 @@ mod tests {
         };
 
         assert_eq!(ai.get_nearest_free_shield_bearer(&ctx, &tick), Some(62));
+    }
+
+    #[test]
+    fn arrow_protection_counts_inactive_seeking_orphan_from_complete_registry() {
+        // linux3 Profile_003 Savegame_071 replay-012 frame 5208: Soldiers
+        // 250..255 are inactive but remain Seeking orphan archers within the
+        // Original 500-unit camp-soldier scan. The swordfight-oriented nearby
+        // cache excludes them through IsAbleToFight and must not define this
+        // decision's candidate domain.
+        let ai = EnemyAi::new(219);
+        let ctx = AiContext {
+            position: position(1_520.0, 900.0),
+            ..AiContext::default()
+        };
+        let orphan = FighterSnapshot {
+            handle: 250,
+            position: position(1_328.0, 1_033.0),
+            elevation: 0.0,
+            is_friendly: true,
+            is_able_to_fight: false,
+            is_archer_unit: true,
+            ai_state: AiState::Seeking,
+            shield_bearer_before_me: 0,
+            is_tower_guard: false,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(orphan.clone());
+        assert_eq!(
+            ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
+            1,
+            "inactive is not an Original admission gate"
+        );
+
+        tick.fighter_registry[0].ai_state = AiState::Default;
+        assert_eq!(
+            ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
+            0,
+            "the explicit AI-state gate still rejects an inactive Default archer"
+        );
+
+        tick.fighter_registry[0] = FighterSnapshot {
+            position: position(2_100.0, 900.0),
+            ..orphan
+        };
+        assert_eq!(
+            ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
+            0,
+            "the complete registry must still obey the strict 500-unit radius"
+        );
     }
 
     #[test]
