@@ -60,6 +60,30 @@ fn reconsider_position_debug_matches(frame: u32, creation_order: Option<u32>, ow
             .is_none_or(|expected| owner == expected)
 }
 
+/// Opt-in trace for the periodic shield-protection decision. The master gate
+/// is checked before either closure is evaluated so a disabled diagnostic
+/// performs no additional simulation-state reads.
+fn arrow_protection_debug_matches(
+    frame: impl FnOnce() -> u32,
+    owner: impl FnOnce() -> u32,
+) -> bool {
+    if std::env::var_os("PARITY_DEBUG_ARROW_PROTECTION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for ARROW_PROTECTION diagnostic: {error}")
+            })
+        })
+    };
+    let frame = frame();
+    let owner = owner();
+    parse_filter("PARITY_DEBUG_ARROW_PROTECTION_FRAME").is_none_or(|expected| frame == expected)
+        && parse_filter("PARITY_DEBUG_ARROW_PROTECTION_OWNER_HANDLE")
+            .is_none_or(|expected| owner == expected)
+}
+
 fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
@@ -2098,6 +2122,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let debug = arrow_protection_debug_matches(|| ctx.frame, || self.base.me);
         // Check if we're in the right substate
         match self.base.current_substate {
             Substate::AttackingReactiontimeTurning
@@ -2119,15 +2144,38 @@ impl EnemyAi {
             }
             Substate::AttackingAdvancingWithShield => {
                 if called_from_hourglass {
+                    if debug {
+                        eprintln!(
+                            "ARROW_PROTECTION frame={} owner={} result=reject reason=advancing_hourglass substate={:?}",
+                            ctx.frame, self.base.me, self.base.current_substate
+                        );
+                    }
                     return false;
                 }
             }
-            _ => return false,
+            _ => {
+                if debug {
+                    eprintln!(
+                        "ARROW_PROTECTION frame={} owner={} result=reject reason=substate substate={:?} from_hourglass={}",
+                        ctx.frame, self.base.me, self.base.current_substate, called_from_hourglass
+                    );
+                }
+                return false;
+            }
         }
 
         // Shield bearers only
         let me_snap = self.find_fighter(self.base.me, tick);
         if !me_snap.map(|f| f.is_shield_bearer).unwrap_or(false) {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=reject reason=shield_bearer owner_present={} is_shield_bearer={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    me_snap.is_some(),
+                    me_snap.map(|fighter| fighter.is_shield_bearer)
+                );
+            }
             return false;
         }
         tracing::trace!(
@@ -2143,6 +2191,12 @@ impl EnemyAi {
         let nearest_enemy =
             self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         if nearest_enemy == 0 {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=reject reason=no_nearest_enemy list_them={:?}",
+                    ctx.frame, self.base.me, self.list_them
+                );
+            }
             return false;
         }
 
@@ -2155,11 +2209,26 @@ impl EnemyAi {
         // Are we already near enough to fight? (PHALANX_ATTACK_DISTANCE gate)
         if let Some(enemy_snap) = self.find_fighter(nearest_enemy, tick) {
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if square_distance_to(&enemy_snap.position, enemy_snap.elevation as f32)
-                < atk_dist * atk_dist
-            {
+            let enemy_square_distance =
+                square_distance_to(&enemy_snap.position, enemy_snap.elevation as f32);
+            if enemy_square_distance < atk_dist * atk_dist {
+                if debug {
+                    eprintln!(
+                        "ARROW_PROTECTION frame={} owner={} result=reject reason=enemy_near nearest={} square_distance_bits={} threshold={}",
+                        ctx.frame,
+                        self.base.me,
+                        nearest_enemy,
+                        enemy_square_distance.to_bits(),
+                        atk_dist * atk_dist
+                    );
+                }
                 return false;
             }
+        } else if debug {
+            eprintln!(
+                "ARROW_PROTECTION frame={} owner={} stage=nearest_enemy_snapshot_missing nearest={}",
+                ctx.frame, self.base.me, nearest_enemy
+            );
         }
 
         // Scan all visible enemies for a dangerous one (using a bow).
@@ -2236,6 +2305,30 @@ impl EnemyAi {
                 "RefreshArrowProtection: no dangerous archer"
             );
             if protectable <= 0 {
+                if debug {
+                    eprintln!(
+                        "ARROW_PROTECTION frame={} owner={} result=reject reason=no_protection_target nearest={} dangerous=0 protectable={} nearby={:?}",
+                        ctx.frame,
+                        self.base.me,
+                        nearest_enemy,
+                        protectable,
+                        tick.nearby_fighters
+                            .iter()
+                            .map(|fighter| (
+                                fighter.handle,
+                                fighter.is_friendly,
+                                fighter.ai_state,
+                                fighter.current_substate,
+                                fighter.is_archer_unit,
+                                fighter.is_shield_bearer,
+                                fighter.shield_bearer_before_me,
+                                fighter.archer_behind_me,
+                                fighter.position,
+                                fighter.elevation,
+                            ))
+                            .collect::<Vec<_>>()
+                    );
+                }
                 return false;
             }
             self.base.primary_target = nearest_enemy;
@@ -2273,6 +2366,20 @@ impl EnemyAi {
         if let Some((run_pos, direction, left_neighbour, right_neighbour)) =
             self.find_phalanx_place(ctx, tick, grid)
         {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=run_to_phalanx nearest={} dangerous={} target={} run_pos={:?} direction={} left={} right={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest_enemy,
+                    dangerous_enemy,
+                    self.base.primary_target,
+                    run_pos,
+                    direction,
+                    left_neighbour,
+                    right_neighbour
+                );
+            }
             self.base.say(Remark::ShieldBearersLineFormation);
             self.base.seek_position = run_pos;
             self.shield_bearer_direction = direction;
@@ -2312,6 +2419,18 @@ impl EnemyAi {
                 ctx,
             );
         } else {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=raise_shield nearest={} dangerous={} target={} target_pos={:?} target_elevation_bits={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest_enemy,
+                    dangerous_enemy,
+                    self.base.primary_target,
+                    target_pos,
+                    target_elevation.to_bits()
+                );
+            }
             // No phalanx slot — raise shield in place
             tracing::trace!(
                 target: "robin_engine::ai_enemy::shield",
