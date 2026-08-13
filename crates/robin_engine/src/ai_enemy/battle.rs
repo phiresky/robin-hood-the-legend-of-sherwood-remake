@@ -288,38 +288,18 @@ impl EnemyAi {
             }
         }
 
-        // Pick the nearest allowed target. The reference calls
-        // `GetNewPrimaryTarget()` here — that function walks `list_them`
-        // and picks the lowest distance (plus a multiplicity penalty).
-        // In our port the cached `enemy_sq_distances` doesn't contain
-        // unconscious enemies (they were filtered out at snapshot time),
-        // so we do the same distance pick directly against the
-        // sleeping-enemy list. VIP / mission rules still apply.
-        let my_pos = ctx.position;
-        let mut best: Option<(HumanHandle, crate::ai::Position)> = None;
-        let mut best_sq: f32 = f32::MAX;
-        for se in targets {
-            // IsAllowedToAttack: VIPs can only fight Robin, and nobody can
-            // start a fight with a VIP NPC. Sleeping enemies are always
-            // PCs in our current scan, but we still honour the VIP rules
-            // so heroes in a VIP-only mission can't be finished off by
-            // regular soldiers.
-            if self.is_vip && (!se.is_pc || !se.is_robin) {
-                continue;
-            }
-            if !se.is_pc && se.is_vip {
-                continue;
-            }
-            let dx = se.position.x - my_pos.x;
-            let dy = se.position.y - my_pos.y;
-            let sq = dx * dx + dy * dy;
-            if sq < best_sq {
-                best_sq = sq;
-                best = Some((se.handle, se.position));
-            }
-        }
-
-        if let Some((target_handle, target_pos)) = best {
+        // Original calls the ordinary GetNewPrimaryTarget here after
+        // inserting the sleeping enemies. Reuse that path so target ranking
+        // keeps its live GetPosition() geometry, isometric Y stretch, Z
+        // component, UWORD truncation, and IsAllowedToAttack gate.
+        let target_handle = self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
+        if target_handle != 0 {
+            let target_pos = ctx
+                .entity_view(target_handle)
+                .unwrap_or_else(|| {
+                    panic!("sleeping primary target {target_handle} disappeared after selection")
+                })
+                .position;
             // SetState(Attacking, ApproachingSleepingEnemy) +
             // GoNear(target_pos, 20, RUN).
             self.base.primary_target = target_handle;
@@ -3730,6 +3710,127 @@ mod tests {
         assert!(sleeping_enemy_detected_360(&ctx, &candidate, &target));
         target.in_building = true;
         assert!(!sleeping_enemy_detected_360(&ctx, &candidate, &target));
+    }
+
+    fn sleeping_target_case(
+        first: Position,
+        second: Position,
+        expected: HumanHandle,
+    ) -> (EnemyAi, AiContext) {
+        let mut first_view = pc_view();
+        first_view.position = first;
+        first_view.elevation = 0.0;
+        first_view.is_unconscious = true;
+        let mut second_view = pc_view();
+        second_view.position = second;
+        second_view.elevation = 0.0;
+        second_view.is_unconscious = true;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(346, first_view);
+        views.insert(345, second_view);
+        let ctx = AiContext {
+            position: Position {
+                x: 1377.2015,
+                y: 252.88869,
+                sector: crate::position_interface::SectorHandle::new(14),
+                ..Position::default()
+            },
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let targets = [
+            SleepingEnemyInfo {
+                handle: 346,
+                position: first,
+                is_pc: true,
+                is_robin: false,
+                is_vip: false,
+            },
+            SleepingEnemyInfo {
+                handle: 345,
+                position: second,
+                is_pc: true,
+                is_robin: false,
+                is_vip: false,
+            },
+        ];
+        let mut ai = EnemyAi::new(139);
+        ai.approach_sleeping_enemies(
+            &crate::sim_rng::test_context(),
+            &targets,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.base.primary_target, expected);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingApproachingSleepingEnemy
+        );
+        let order = ai
+            .base
+            .outbox
+            .actor
+            .orders
+            .last()
+            .expect("sleeping target selection must queue GoNear");
+        let target = ctx.entity_view(expected).unwrap().position;
+        assert_eq!((order.target_x, order.target_y), (target.x, target.y));
+        (ai, ctx)
+    }
+
+    #[test]
+    fn sleeping_enemy_selection_uses_isometric_get_position_distance() {
+        let raw_nearer = Position {
+            x: 1394.2125,
+            y: 328.31696,
+            sector: crate::position_interface::SectorHandle::new(14),
+            ..Position::default()
+        };
+        let isometric_nearer = Position {
+            x: 1417.7587,
+            y: 185.4791,
+            sector: crate::position_interface::SectorHandle::new(14),
+            ..Position::default()
+        };
+
+        let owner = Position {
+            x: 1377.2015,
+            y: 252.88869,
+            ..Position::default()
+        };
+        let raw_sq = |target: Position| {
+            let dx = target.x - owner.x;
+            let dy = target.y - owner.y;
+            dx * dx + dy * dy
+        };
+        let isometric_sq = |target: Position| {
+            let dx = target.x - owner.x;
+            let dy = (target.y - owner.y) * INVERSE_ASPECT_RATIO;
+            dx * dx + dy * dy
+        };
+        assert!(raw_sq(raw_nearer) < raw_sq(isometric_nearer));
+        assert!(isometric_sq(isometric_nearer) < isometric_sq(raw_nearer));
+
+        let _ = sleeping_target_case(raw_nearer, isometric_nearer, 345);
+    }
+
+    #[test]
+    fn sleeping_enemy_selection_keeps_ordinary_nearest_target() {
+        let nearest = Position {
+            x: 1417.0,
+            y: 250.0,
+            sector: crate::position_interface::SectorHandle::new(14),
+            ..Position::default()
+        };
+        let farther = Position {
+            x: 1500.0,
+            y: 400.0,
+            sector: crate::position_interface::SectorHandle::new(14),
+            ..Position::default()
+        };
+
+        let _ = sleeping_target_case(nearest, farther, 346);
     }
 
     #[test]
