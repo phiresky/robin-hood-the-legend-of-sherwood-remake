@@ -2647,11 +2647,12 @@ impl EnemyAi {
         );
         let stare_dx = (ctx.self_stare_point.x - actor_ground.x) * ASPECT_RATIO;
         let stare_dy = ctx.self_stare_point.y - actor_ground.y;
-        // `SetSector0to15` inverse — turn the 0..15 direction back into
-        // a unit vector (y is the isometric-stretched component).
-        let angle = (ctx.direction as f32) * (std::f32::consts::TAU / 16.0);
-        let look_dx = angle.sin();
-        let look_dy = -angle.cos();
+        // Original constructs this with `SBGeoVector2D::SetSector0to15`,
+        // whose literal lookup table matters at perpendicular boundaries.
+        // Reconstructing the same nominal direction through sin/cos can
+        // round an exact-zero dot product slightly negative and suppress a
+        // legitimate OUTOFVIEW event.
+        let (look_dx, look_dy) = crate::element::direction_vector_16(ctx.direction as i16);
         let dot = look_dx * stare_dx + look_dy * stare_dy;
         tracing::trace!(
             me = self.base.me,
@@ -6773,5 +6774,75 @@ mod tests {
         let _ = ai.is_too_proud_to_attack(&ctx, &tick, Some(&live_decision_multiplicity));
 
         assert_eq!(ai.base.primary_target, 174);
+    }
+
+    fn perpendicular_out_of_view_context(stare_y: f32) -> AiContext {
+        AiContext {
+            frame: 920,
+            position: test_position(1546.658_2, 318.299_56),
+            direction: 14,
+            self_stare_point: crate::coordinates::GroundPoint::new(1500.696_3, stare_y),
+            ..AiContext::default()
+        }
+    }
+
+    #[test]
+    fn direction_table_keeps_exact_perpendicular_stare_in_front() {
+        let ai = EnemyAi::new(111);
+        let ctx = perpendicular_out_of_view_context(344.662_23);
+
+        assert!(
+            !ai.enemy_is_behind_me(&ctx),
+            "Original's literal direction-14 vector produces an exact-zero dot product"
+        );
+    }
+
+    #[test]
+    fn direction_table_still_rejects_stare_slightly_behind() {
+        let ai = EnemyAi::new(111);
+        let ctx = perpendicular_out_of_view_context(344.672_24);
+
+        assert!(ai.enemy_is_behind_me(&ctx));
+    }
+
+    #[test]
+    fn out_of_view_removes_non_primary_target_at_perpendicular_boundary() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(111);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
+        ai.base.primary_target = 84;
+        ai.list_them = vec![84, 171];
+
+        let mut primary = soldier_view(test_position(1519.443_7, 309.084_5));
+        primary.kind = EntityKind::Pc;
+        primary.is_pc = true;
+        let mut lost = soldier_view(test_position(1226.175_4, 315.871_6));
+        lost.kind = EntityKind::Pc;
+        lost.is_pc = true;
+        let mut views = AiEntityViewMap::new();
+        views.insert(84, primary);
+        views.insert(171, lost);
+        let mut ctx = perpendicular_out_of_view_context(344.662_23);
+        ctx.entity_views = crate::ai_entity_view::shared_entity_views(views);
+        ctx.self_seen_enemy_handles = vec![84];
+
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_detectable_forecasts.push((
+            171,
+            crate::ai::PreparedForecastDestination::fixed(test_position(1226.175_4, 315.871_6), 4),
+        ));
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventOutOfView, 171),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.list_them, vec![84]);
+        assert_eq!(ai.missed_pc, 171);
     }
 }
