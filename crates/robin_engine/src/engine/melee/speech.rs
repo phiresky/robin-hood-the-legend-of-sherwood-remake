@@ -640,7 +640,11 @@ impl EngineInner {
     /// Apply the human tiredness tail for one live owner.
     pub(crate) fn tick_tiredness_for(&mut self, id: EntityId, assets: &LevelAssets) {
         let frame = self.control.frame_counter;
-        if (frame & 63) != (id.index() & 31) {
+        // Original staggers this tail by RHElement::mulCreationOrder, not by
+        // the port's kind-local entity slot. Saved games can restore an
+        // authored creation order which differs from `EntityId::index()`.
+        let creation_order = self.world.original_creation_order(id);
+        if (frame & 63) != (creation_order & 31) {
             return;
         }
         let entity = self.world.entities.get_mut(id).unwrap_or_else(|| {
