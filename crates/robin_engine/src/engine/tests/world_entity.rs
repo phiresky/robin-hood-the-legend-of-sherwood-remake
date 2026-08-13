@@ -4705,8 +4705,9 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
 fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order() {
     use crate::ai::{AiState, CharlySeekerTarget, StimulusType, Substate};
     use crate::coordinates::WorldPoint3D;
-    use crate::element::{AiBrain, Posture};
+    use crate::element::{AiBrain, Command, Detectable, DetectableType, Posture};
     use crate::position_interface::Direction;
+    use crate::sequence::SequenceState;
     use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
 
     fn add_enemy(
@@ -4779,12 +4780,27 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     );
 
     for candidate in [second_arm, first_arm, near_side] {
-        let enemy = engine
+        let soldier = engine
             .get_entity_mut(candidate)
-            .and_then(Entity::enemy_ai_mut)
+            .and_then(|entity| match entity {
+                Entity::Soldier(soldier) => Some(soldier),
+                _ => None,
+            })
+            .expect("Charly-seeker candidate is a soldier");
+        let enemy = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
             .expect("Charly-seeker candidate has EnemyAi");
         enemy.set_state(AiState::Seeking, Substate::SeekingBody);
         enemy.base.my_reconnaissance_report.charly = charly.index();
+        enemy.base.checkpoint_charly = charly.index();
+        enemy.base.sorrow_level = 37;
+        soldier.npc.detectable_lists[DetectableType::MissedFriend as usize].push(Detectable {
+            element: Some(charly),
+            detectable_type: DetectableType::MissedFriend,
+            ..Detectable::default()
+        });
     }
     engine
         .get_entity_mut(owner)
@@ -4860,9 +4876,17 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         "the real pending action must be consumed"
     );
     for candidate in [second_arm, first_arm, near_side] {
-        let enemy = engine
+        let soldier = engine
             .get_entity(candidate)
-            .and_then(Entity::enemy_ai)
+            .and_then(|entity| match entity {
+                Entity::Soldier(soldier) => Some(soldier),
+                _ => None,
+            })
+            .expect("admitted candidate remains a soldier");
+        let enemy = soldier
+            .npc
+            .ai_brain
+            .enemy()
             .expect("admitted candidate retains EnemyAi");
         assert_eq!(
             enemy.base.current_substate,
@@ -4878,7 +4902,38 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
                 .any(|line| line.info == StimulusType::CallCharlyIsBack as u16),
             "the admitted recipient must synchronously receive CALL_CHARLY_IS_BACK"
         );
+        assert_eq!(enemy.base.checkpoint_charly, 0);
+        assert_eq!(enemy.base.sorrow_level, 0);
+        assert!(
+            soldier.npc.detectable_lists[DetectableType::MissedFriend as usize].is_empty(),
+            "SetCheckpointCharly(NULL) must synchronously clear the recipient's missed-friend list"
+        );
+        assert!(enemy.base.outbox.actor.delete_detectables.is_empty());
     }
+    assert_eq!(
+        u8::from(
+            engine
+                .get_entity(first_arm)
+                .expect("deferred-face candidate exists")
+                .position_iface()
+                .get_direction()
+        ),
+        Direction::EAST.as_u8(),
+        "the synchronous callback must register Face without instructing Turn in the actor slot"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(first_arm)
+                    && element.command == Command::Turn
+                    && element.state == SequenceState::Todo
+            }),
+        "the admitted recipient's Face must remain a deferred standalone Turn"
+    );
 }
 
 #[test]

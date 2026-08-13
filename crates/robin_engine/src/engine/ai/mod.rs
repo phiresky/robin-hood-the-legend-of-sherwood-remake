@@ -8254,8 +8254,8 @@ impl EngineInner {
                     // recipient context above was built at this exact Think
                     // boundary and is also the one used for dispatch.
                     let tick_data = self.build_npc_tick_data(sim, other_id, &scratch, assets);
-                    self.dispatch_filtered_stimulus(
-                        sim, assets, other_id, &stimulus, &other_ctx, &tick_data,
+                    self.dispatch_think_with_drain_without_forecast_deferred_turn(
+                        sim, other_id, &stimulus, &other_ctx, &tick_data, assets,
                     );
                 }
             }
