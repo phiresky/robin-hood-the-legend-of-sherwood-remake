@@ -9932,6 +9932,7 @@ impl EngineInner {
                 let final_actor_entity_post_seek_arrival = is_final_waypoint
                     && movement_is_last_sequence_element
                     && ft.target_id.is_none()
+                    && actor_seek_flags.contains(crate::sequence::MoveFlags::SEEK)
                     && live_actor_seek_target.is_some_and(
                         |(_, _, target_sector, target_unchanged_or_in_tolerance)| {
                             target_sector.is_some()
@@ -15720,6 +15721,58 @@ mod movement_transition_state_tests {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         finish_terminal_seek_tick(&mut engine, owner);
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::Hitting));
+    }
+
+    #[test]
+    fn terminal_non_seek_move_does_not_launch_stale_actor_post_seek() {
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 16.0);
+        let (seq_id, elem_idx) = {
+            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            (
+                actor.active_movement.sequence_id.unwrap(),
+                actor.active_movement.element_index,
+            )
+        };
+        let SequenceElementData::Movement { flags, .. } = &mut engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .expect("terminal movement fixture lost its selected element")
+            .data
+        else {
+            panic!("terminal movement fixture lost movement data")
+        };
+        *flags = MoveFlags::empty();
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        for _ in 0..64 {
+            engine.tick_entity_movement(&sim, &assets);
+            engine.hourglass_phase_sequences(
+                &sim,
+                &mut crate::engine::HostDisplayState::default(),
+                &assets,
+            );
+            if engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_movement
+                .sequence_id
+                .is_none()
+            {
+                break;
+            }
+        }
+
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert!(actor.active_movement.sequence_id.is_none());
+        assert!(
+            actor.post_seek_sequence.is_some(),
+            "ordinary Move must not consume stale actor-owned post-seek state"
+        );
+        assert_ne!(engine.actor_order_type(owner), Some(OrderType::Hitting));
     }
 
     #[test]
