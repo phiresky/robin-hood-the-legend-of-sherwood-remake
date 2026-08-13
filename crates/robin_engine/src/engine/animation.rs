@@ -132,8 +132,10 @@ pub(super) fn alerted_variant(anim: OrderType) -> Option<OrderType> {
 /// `RHElementActorSoldier::Execute` while leaving the authored order intact.
 ///
 /// The Original's guards are deliberately branch-specific: upright movement
-/// transitions only test `mbAttentive`, ordinary walking excludes two sword
-/// states, and stairs/turning exclude the complete sword-action family.
+/// transitions and ordinary walking only test `mbAttentive`, while
+/// stairs/turning exclude the complete sword-action family. The two sword
+/// checks in the ordinary-walking branch are assertions, not release-build
+/// control flow.
 pub(super) fn soldier_movement_animation(
     anim: OrderType,
     attentive: bool,
@@ -161,14 +163,7 @@ pub(super) fn soldier_movement_animation(
         | OT::TransitionWaitingUprightRunningUpright
         | OT::TransitionWalkingUprightRunningUpright
         | OT::TransitionRunningUprightWalkingUpright => alerted_variant(anim).unwrap_or(anim),
-        OT::WalkingUpright
-            if !matches!(
-                action_state,
-                ActionState::WaitingSword | ActionState::MovingSword
-            ) =>
-        {
-            OT::WalkingAlerted
-        }
+        OT::WalkingUpright => OT::WalkingAlerted,
         OT::WalkingStairs | OT::Turning if !all_sword_states => {
             alerted_variant(anim).unwrap_or(anim)
         }
@@ -6306,7 +6301,8 @@ mod soldier_take_drink_parity_tests {
         }
         assert_eq!(
             soldier_movement_animation(OT::WalkingUpright, true, ActionState::MovingSword),
-            OT::WalkingUpright
+            OT::WalkingAlerted,
+            "Original's sword-state check is only an assertion after entering the attentive branch"
         );
         assert_eq!(
             soldier_movement_animation(OT::WalkingStairs, true, ActionState::MovingFastSword),
