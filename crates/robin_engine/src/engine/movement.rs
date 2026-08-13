@@ -723,10 +723,11 @@ fn door_pass_eager_posture(
     action: OrderType,
     has_door_pass_animation: bool,
     execute_order_initialising: bool,
+    decorative_building_trap_at_destination: bool,
 ) -> Option<crate::element::Posture> {
     use crate::element::Posture;
 
-    if !has_door_pass_animation {
+    if !has_door_pass_animation || decorative_building_trap_at_destination {
         return None;
     }
     match action {
@@ -764,17 +765,17 @@ mod door_pass_posture_tests {
         let transition = OrderType::TransitionClimbingWallUpWaitingCrouched;
 
         assert_eq!(
-            door_pass_eager_posture(transition, true, true),
+            door_pass_eager_posture(transition, true, true, false),
             Some(Posture::OnWall),
             "an initializing wall-exit transition inherits the climb posture"
         );
         assert_eq!(
-            door_pass_eager_posture(transition, true, false),
+            door_pass_eager_posture(transition, true, false, false),
             None,
             "a recursively reached Execute must not stomp the crouched posture published by DONE"
         );
         assert_eq!(
-            door_pass_eager_posture(OrderType::ClimbingWallUp, true, false),
+            door_pass_eager_posture(OrderType::ClimbingWallUp, true, false, false),
             Some(Posture::OnWall),
             "ordinary wall-climb rows continue owning their posture on every Execute"
         );
@@ -2551,6 +2552,7 @@ struct MovementPrepass {
     point_seek_post_sector: Option<crate::position_interface::SectorHandle>,
     lift_translation: Option<LiftAnimContext>,
     door_pass_climb_direction: Option<i16>,
+    decorative_building_trap_at_destination: bool,
 }
 
 /// Deferred side effects collected by `tick_one_movement_actor` while the
@@ -5984,7 +5986,7 @@ impl EngineInner {
             .filter(|order| order.order_id == selected.order_id)
             .map(|order| order.order_type)
             .expect("globally frozen movement owner lost its selected order");
-        let (action, door_index, current_sector, execute_order_initialising) = self
+        let (action, door_index, current_sector, execute_order_initialising, position) = self
             .world
             .entities
             .get(owner)
@@ -5998,6 +6000,7 @@ impl EngineInner {
                     actor.active_door_pass.as_ref().map(|pass| pass.door_index),
                     entity.element_data().sector(),
                     actor.execute_order_initialising,
+                    entity.element_data().position_map(),
                 ))
             })
             .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} is not an actor"));
@@ -6005,6 +6008,13 @@ impl EngineInner {
             return;
         };
 
+        let selected_order = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .and_then(|element| element.current_order())
+            .filter(|order| order.order_id == selected.order_id)
+            .expect("globally frozen climb owner lost its selected order");
         let lift_direction = if let Some(door_index) = door_index {
             let door = self
                 .script_domains
@@ -6016,7 +6026,19 @@ impl EngineInner {
                         "globally frozen climb owner {owner:?} references missing door {door_index}"
                     )
                 });
-            if !door_type_uses_lift_climb_direction(door.door_type) {
+            if door.door_type == crate::gate::DoorType::BuildingTrap
+                && action == OrderType::ClimbingLadderDown
+                && selected_order.reverse
+                && position == MapPoint::new(selected_order.target_x, selected_order.target_y)
+            {
+                // TODO(parity): Original casts the BuildingTrap's inside
+                // RHSectorBuilding to RHSectorLift in the decorative ladder
+                // Execute arm. Three shipped traces consistently expose zero
+                // from that invalid release-build read. Preserve that narrow
+                // compatibility result without applying it to real ladders or
+                // to a decorative row which still has distance to travel.
+                None
+            } else if !door_type_uses_lift_climb_direction(door.door_type) {
                 // Building-trap passes deliberately contain a decorative
                 // ClimbingLadderDown order even though their inside sector is
                 // a building. It skips only the lift-facing setup; the climb
@@ -6051,6 +6073,24 @@ impl EngineInner {
                 lift.lift_direction
             }
         });
+        let lift_direction = if execute_order_initialising
+            && door_index.is_some_and(|door_index| {
+                self.script_domains
+                    .interactables
+                    .doors
+                    .get(usize::from(door_index))
+                    .is_some_and(|door| {
+                        door.door_type == crate::gate::DoorType::BuildingTrap
+                            && action == OrderType::ClimbingLadderDown
+                            && selected_order.reverse
+                            && position
+                                == MapPoint::new(selected_order.target_x, selected_order.target_y)
+                    })
+            }) {
+            Some(0)
+        } else {
+            lift_direction
+        };
         let turns = if is_fast_climb_action(action) { 2 } else { 1 };
         let entity = self
             .world
@@ -6881,6 +6921,7 @@ impl EngineInner {
         // mutably without touching `self.world.fast_grid` or the door table.
         let mut lift_translation = None;
         let mut door_pass_climb_direction = None;
+        let mut decorative_building_trap_at_destination = false;
         for (actor_id, entity) in self
             .world
             .entities
@@ -6888,10 +6929,10 @@ impl EngineInner {
             .filter(|(id, _)| EntityId::from(*id) == owner)
         {
             let posture = entity.element_data().posture;
-            let door_pass_action = entity
+            let door_pass = entity
                 .actor_data()
-                .and_then(|actor| actor.active_door_pass.as_ref())
-                .map(|dp| dp.current_action);
+                .and_then(|actor| actor.active_door_pass.as_ref());
+            let door_pass_action = door_pass.map(|dp| dp.current_action);
             let Some(sector) = entity.element_data().sector() else {
                 continue;
             };
@@ -6940,6 +6981,37 @@ impl EngineInner {
                         );
                         sector.lift_direction
                     });
+                if action == OrderType::ClimbingLadderDown
+                    && door_pass.is_some_and(|pass| {
+                        pass.current_reverse
+                            && self
+                                .script_domains
+                                .interactables
+                                .doors
+                                .get(usize::from(pass.door_index))
+                                .is_some_and(|door| {
+                                    door.door_type == crate::gate::DoorType::BuildingTrap
+                                })
+                    })
+                    && self
+                        .orders
+                        .sequence_manager
+                        .get_element(selected.seq_id, selected.elem_idx)
+                        .and_then(|element| element.current_order())
+                        .filter(|order| order.order_id == selected.order_id)
+                        .is_some_and(|order| {
+                            entity.element_data().position_map()
+                                == MapPoint::new(order.target_x, order.target_y)
+                        })
+                {
+                    // TODO(parity): Original's decorative BuildingTrap row
+                    // invalidly casts its RHSectorBuilding to RHSectorLift.
+                    // The three shipped witnesses read direction zero. Keep
+                    // that release-build compatibility value confined to the
+                    // exact-target reverse row which immediately terminates.
+                    door_pass_climb_direction = Some(0);
+                    decorative_building_trap_at_destination = true;
+                }
             }
             let Some(lt) = gs.lift_type else { continue };
             match posture {
@@ -7026,6 +7098,7 @@ impl EngineInner {
             point_seek_post_sector,
             lift_translation,
             door_pass_climb_direction,
+            decorative_building_trap_at_destination,
         };
         let mut deferred = MovementDeferred::default();
 
@@ -8352,9 +8425,12 @@ impl EngineInner {
         {
             elem.set_direction_goal(lift_direction);
         }
-        if let Some(posture) =
-            door_pass_eager_posture(anim, door_pass_anim.is_some(), execute_order_initialising)
-        {
+        if let Some(posture) = door_pass_eager_posture(
+            anim,
+            door_pass_anim.is_some(),
+            execute_order_initialising,
+            prepass.decorative_building_trap_at_destination,
+        ) {
             elem.posture = posture;
         }
         if execute_order_initialising && let Some(climb_dir) = prepass.door_pass_climb_direction {

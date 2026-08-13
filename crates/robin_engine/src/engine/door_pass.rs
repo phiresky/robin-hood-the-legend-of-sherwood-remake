@@ -3052,102 +3052,176 @@ mod tests {
     }
 
     #[test]
-    fn building_trap_decorative_ladder_down_preserves_facing_without_lift_metadata() {
-        for frozen in [false, true] {
-            let mut engine = EngineInner::new();
-            let owner = engine.add_entity(make_soldier(Some(7)));
-            let door = crate::gate::Door {
-                door_type: DoorType::BuildingTrap,
-                ..default_door()
-            };
-            engine.script_domains.interactables.doors.push(door.clone());
+    fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(Some(7)));
+        let door = crate::gate::Door {
+            door_type: DoorType::BuildingTrap,
+            ..default_door()
+        };
+        engine.script_domains.interactables.doors.push(door.clone());
 
-            let (barrier, seq_id) = dispatch_pass(&mut engine, &[door], owner);
-            assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
-            assert!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .actor_data()
-                    .unwrap()
-                    .active_door_pass
-                    .as_ref()
-                    .unwrap()
-                    .steps
-                    .iter()
-                    .any(|step| matches!(
-                        step,
-                        DoorPassStep::Walk {
-                            action: OrderType::ClimbingLadderDown,
-                            reverse: true,
-                            ..
-                        }
-                    )),
-                "the production BuildingTrap chain must supply its decorative reverse ladder row"
-            );
+        let (barrier, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        assert!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_door_pass
+                .as_ref()
+                .unwrap()
+                .steps
+                .iter()
+                .any(|step| matches!(
+                    step,
+                    DoorPassStep::Walk {
+                        destination,
+                        action: OrderType::ClimbingLadderDown,
+                        reverse: true,
+                        ..
+                    } if *destination == MapPoint::new(30.0, 30.0)
+                ))
+        );
 
-            bind_single_animation(&mut engine, owner, OrderType::ClimbingLadderDown);
-            let order_id = engine.orders.allocate_order_id();
-            {
-                let element = engine
-                    .orders
-                    .sequence_manager
-                    .get_element_mut(seq_id, 0)
-                    .unwrap();
-                element.orders.clear();
-                let mut order =
-                    crate::order::Order::new(OrderType::ClimbingLadderDown, 30.0, 30.0, order_id);
-                order.reverse = true;
-                order.compute_direction = false;
-                element.orders.push_back(order);
-            }
-            {
-                let entity = engine.get_entity_mut(owner).unwrap();
-                entity
-                    .element_data_mut()
-                    .set_position_map(MapPoint::new(30.0, 30.0));
-                entity
-                    .element_data_mut()
-                    .set_sector(crate::position_interface::SectorHandle::new(8));
-                entity.element_data_mut().set_direction_instantly(7);
-                entity.element_data_mut().set_direction_goal(9);
-                let actor = entity.actor_data_mut().unwrap();
-                actor.execute_order_initialising = true;
-                actor.active_door_pass.as_mut().unwrap().current_action =
-                    OrderType::ClimbingLadderDown;
-                actor.active_door_pass.as_mut().unwrap().current_reverse = true;
-            }
-            engine.set_actors_frozen(frozen);
-
-            engine.tick_entity_movement_owner(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                owner,
-                Some(crate::engine::movement::MovementOwnerSelection {
-                    seq_id,
-                    elem_idx: 0,
-                    order_id,
-                }),
-            );
-
-            assert_eq!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .position_iface()
-                    .get_direction_goal()
-                    .as_u8(),
-                9,
-                "a decorative BuildingTrap ladder row must not read or replace lift facing (frozen={frozen})"
-            );
-            if frozen {
-                assert_eq!(
-                    engine.get_entity(owner).unwrap().element_data().direction(),
-                    8,
-                    "FrozenAll suppresses sprite motion, not the decorative climb arm's ordinary Turn()"
-                );
-            }
+        bind_single_animation(&mut engine, owner, OrderType::ClimbingLadderDown);
+        let order_id = engine.orders.allocate_order_id();
+        let passing_id = engine.orders.allocate_order_id();
+        {
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, 0)
+                .unwrap();
+            element.orders.clear();
+            let mut order =
+                crate::order::Order::new(OrderType::ClimbingLadderDown, 30.0, 30.0, order_id);
+            order.reverse = true;
+            order.compute_direction = false;
+            element.orders.push_back(order);
+            element.orders.push_back(crate::order::Order::new(
+                OrderType::PassingDoor,
+                0.0,
+                0.0,
+                passing_id,
+            ));
         }
+        {
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity
+                .element_data_mut()
+                .set_position_map(MapPoint::new(30.0, 30.0));
+            entity
+                .element_data_mut()
+                .set_sector(crate::position_interface::SectorHandle::new(8));
+            entity.element_data_mut().set_direction_instantly(1);
+            entity.element_data_mut().set_direction_goal(1);
+            let actor = entity.actor_data_mut().unwrap();
+            actor.execute_order_initialising = true;
+            actor.active_door_pass.as_mut().unwrap().current_action = OrderType::ClimbingLadderDown;
+            actor.active_door_pass.as_mut().unwrap().current_reverse = true;
+        }
+
+        engine.tick_entity_movement_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            Some(crate::engine::movement::MovementOwnerSelection {
+                seq_id,
+                elem_idx: 0,
+                order_id,
+            }),
+        );
+
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().direction(), 0);
+        assert_eq!(entity.position_iface().get_direction_goal().as_u8(), 0);
+        assert_eq!(entity.element_data().sprite.current_row, 0);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_id,
+            passing_id,
+            "the exact-target decorative row must retire into the authored PassingDoor tail"
+        );
+    }
+
+    #[test]
+    fn real_ladder_nonzero_climb_keeps_lift_facing_and_posture() {
+        let mut engine = EngineInner::new();
+        install_lift_sector(&mut engine, LiftType::Ladder);
+        let owner = engine.add_entity(make_soldier(Some(42)));
+        let door = crate::gate::Door {
+            door_type: DoorType::LiftLow,
+            sector_in: crate::sector::SectorNumber::new(42),
+            ..default_door()
+        };
+        engine.script_domains.interactables.doors.push(door.clone());
+        let (_, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+        bind_single_animation(&mut engine, owner, OrderType::ClimbingLadderDown);
+        let order_id = engine.orders.allocate_order_id();
+        {
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, 0)
+                .unwrap();
+            element.orders.clear();
+            let mut order =
+                crate::order::Order::new(OrderType::ClimbingLadderDown, 40.0, 30.0, order_id);
+            order.reverse = true;
+            order.compute_direction = false;
+            element.orders.push_back(order);
+        }
+        {
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity
+                .element_data_mut()
+                .set_position_map(MapPoint::new(30.0, 30.0));
+            entity
+                .element_data_mut()
+                .set_sector(crate::position_interface::SectorHandle::new(42));
+            entity.element_data_mut().set_direction_instantly(1);
+            entity.element_data_mut().set_direction_goal(1);
+            let actor = entity.actor_data_mut().unwrap();
+            actor.execute_order_initialising = true;
+            actor.active_door_pass.as_mut().unwrap().current_action = OrderType::ClimbingLadderDown;
+            actor.active_door_pass.as_mut().unwrap().current_reverse = true;
+        }
+
+        engine.tick_entity_movement_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            Some(crate::engine::movement::MovementOwnerSelection {
+                seq_id,
+                elem_idx: 0,
+                order_id,
+            }),
+        );
+
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(entity.element_data().posture, Posture::OnLadder);
+        assert_eq!(entity.position_iface().get_direction_goal().as_u8(), 5);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_id,
+            order_id,
+            "a nonzero real ladder row must remain live after its Start edge"
+        );
     }
 
     #[test]
