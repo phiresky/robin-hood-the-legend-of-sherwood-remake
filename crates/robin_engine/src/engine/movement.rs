@@ -831,11 +831,29 @@ fn is_sword_motion_context(
     door_pass_action: Option<OrderType>,
     order_action: OrderType,
 ) -> bool {
-    matches!(
+    let selected_action =
+        door_pass_sprite_animation_override(order_action, door_pass_action).unwrap_or(order_action);
+    let stale_sword_state = matches!(
         action_state,
         crate::element::ActionState::MovingSword | crate::element::ActionState::MovingFastSword
-    ) || door_pass_action.is_some_and(is_sword_movement_nonanimation)
-        || is_sword_movement_nonanimation(order_action)
+    );
+
+    // Human's FaceOpponent override owns only its literal sword-movement
+    // Execute arms. A door route can select a base Actor wall/ladder
+    // transition while the preceding walk's MOVING_SWORD state is still
+    // latched; that transition must go directly to Actor::Execute and retain
+    // its lift-facing goal. Ordinary distance-movement successors still use
+    // the outgoing sword state as their visual/facing context until their
+    // START effect publishes the successor state. Human's original dispatch
+    // converts exactly WALKING_UPRIGHT, RUNNING_UPRIGHT, and
+    // WALKING_WITH_CORPSE through this stale state; crouched, shield, and
+    // authored climb distance arms remain base Actor work too.
+    let stale_state_converts_selected_action = matches!(
+        selected_action,
+        OrderType::WalkingUpright | OrderType::RunningUpright | OrderType::WalkingWithCorpse
+    );
+    is_sword_movement_nonanimation(selected_action)
+        || stale_sword_state && stale_state_converts_selected_action
 }
 
 /// Whether the selected logical action enters Human's sword-movement Execute
@@ -14268,14 +14286,217 @@ mod orphaned_sword_movement_tests {
 mod movement_transition_state_tests {
     use super::*;
     use crate::element::{
-        ActionState, ActorData, ActorPc, ActorSoldier, AiBrain, Camp, Command, ElementData,
-        ElementKind, Entity, HumanData, NpcData, PcData, Posture, SoldierData,
+        ActionState, ActiveDoorPass, ActorData, ActorPc, ActorSoldier, AiBrain, Camp, Command,
+        ElementData, ElementKind, Entity, HumanData, NpcData, PcData, Posture, SoldierData,
     };
     use crate::order::{AiOrderIntent, Order};
     use crate::sequence::{
         MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    fn run_stale_sword_crenel_transition() -> (u8, u8) {
+        use crate::fast_find_grid::GridSector;
+        use crate::gate::{Door, DoorIndex, DoorType};
+        use crate::sector::{LiftType, SectorNumber, SectorType};
+
+        let mut engine = EngineInner::new();
+        let transition = OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel;
+        let script = SpriteScript {
+            action_id: transition as u16,
+            action_done: 7,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1; 8],
+            delays: vec![0; 8],
+            distances: vec![0; 8],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
+            sound_ids: vec![0; 8],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[transition as usize] = 0;
+        let start = MapPoint::new(100.0, 100.0);
+        let goal = MapPoint::new(108.0, 106.0);
+        let lift_sector = SectorNumber::new(7);
+
+        let mut opponent = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        opponent
+            .element_data_mut()
+            .set_position_map(MapPoint::new(120.0, 90.0));
+        let opponent = engine.add_entity(opponent);
+
+        let mut owner_entity = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData {
+                action_state: ActionState::MovingSword,
+                execute_order_initialising: true,
+                active_door_pass: Some(ActiveDoorPass {
+                    door_index: DoorIndex(0),
+                    direct: true,
+                    position_direct: true,
+                    steps: Default::default(),
+                    triggers_fired: 0,
+                    current_action: transition,
+                    current_reverse: false,
+                    saved_action_state: None,
+                }),
+                ..ActorData::default()
+            },
+            human: HumanData {
+                opponents: vec![opponent],
+                ..HumanData::default()
+            },
+            pc: PcData::default(),
+        });
+        owner_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        owner_entity.element_data_mut().set_position_map(start);
+        owner_entity.element_data_mut().set_direction_instantly(2);
+        owner_entity
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(7));
+        owner_entity
+            .position_iface_mut()
+            .set_anti_collision_on(false);
+        let owner = engine.add_entity(owner_entity);
+
+        {
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+            level.sector_number_map.insert(lift_sector, 0);
+            level.sectors.push(GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: SectorType::LIFT,
+                layer: 0,
+                sector_number: lift_sector,
+                door_index: Some(0),
+                lift_type: Some(LiftType::Wall),
+                lift_direction: 15,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: Some(start),
+                high_exit_point: Some(goal),
+                lowest_door_index: Some(0),
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
+        engine.script_domains.interactables.doors.push(Door {
+            door_type: DoorType::LiftHighCrenel,
+            sector_in: lift_sector,
+            point_in: goal,
+            ..Door::default()
+        });
+
+        let order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingWithSword,
+        );
+        movement
+            .orders
+            .push_back(Order::new(transition, goal.x, goal.y, order_id));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        engine.tick_entity_movement_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            Some(MovementOwnerSelection {
+                seq_id: sequence,
+                elem_idx: 0,
+                order_id,
+            }),
+        );
+        let pi = engine.get_entity(owner).unwrap().position_iface();
+        (pi.get_direction().as_u8(), pi.get_direction_goal().as_u8())
+    }
+
+    #[test]
+    fn crenel_transition_does_not_inherit_stale_sword_facing_context() {
+        assert!(matches!(
+            ActionState::MovingSword,
+            ActionState::MovingSword | ActionState::MovingFastSword
+        ));
+        assert!(!order_uses_distance_motion(
+            OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
+        ));
+        assert!(
+            climb_lift_type(OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel).is_some()
+        );
+        assert!(
+            !is_sword_motion_context(
+                ActionState::MovingSword,
+                Some(OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel),
+                OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel,
+            ),
+            "the base Actor crenel transition must retain its lift-facing goal instead of entering Human::FaceOpponent"
+        );
+        let (direction, goal) = run_stale_sword_crenel_transition();
+        assert_eq!(
+            direction, 3,
+            "the trace-shaped Execute must turn toward the climb goal, from direction 2 to 3"
+        );
+        assert_ne!(
+            goal, 1,
+            "the opponent-facing writer selected by the old classification must not replace the climb trajectory"
+        );
+    }
+
+    #[test]
+    fn ordinary_distance_successor_retains_stale_sword_facing_context() {
+        assert!(order_uses_distance_motion(OrderType::WalkingUpright));
+        assert!(is_sword_motion_context(
+            ActionState::MovingSword,
+            Some(OrderType::WalkingUpright),
+            OrderType::WalkingUpright,
+        ));
+        assert!(is_sword_motion_context(
+            ActionState::Waiting,
+            None,
+            OrderType::WalkingWithSword,
+        ));
+        assert!(!is_sword_motion_context(
+            ActionState::MovingSword,
+            None,
+            OrderType::ClimbingWallDown,
+        ));
+        assert!(!is_sword_motion_context(
+            ActionState::MovingSword,
+            None,
+            OrderType::WalkingCrouched,
+        ));
+    }
 
     #[test]
     fn same_action_transition_arrival_applies_terminated_state_before_advancing() {
