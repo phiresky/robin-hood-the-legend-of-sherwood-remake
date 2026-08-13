@@ -714,6 +714,17 @@ pub fn apply_anti_collision_step(
         // Deviated && !reachable: fall through.
     }
 
+    // RHPositionInterface::UpdatePositionAntiCollision gathers repulsive
+    // objects first, but returns immediately when that gathered pass has a
+    // zero movement vector.  In particular it does not run the later
+    // no-new-deviation recovery that clears `IsDeviated` and rebuilds the
+    // cached increment.  Keep this after the empty-list arm above: Original
+    // tries to recover the old trajectory first when there are no repulsive
+    // objects, even if the requested step itself is zero.
+    if future == mover.position_map {
+        return (0.0, 0.0);
+    }
+
     // Original forwards the animation's requested `fDistance` unchanged to
     // every repulsive object's `ComputeDeviation`. Recomputing the norm from
     // the rounded `(increment * distance)` vector changes the deviation by
@@ -1229,6 +1240,78 @@ mod tests {
         );
 
         assert_eq!(movement, (1.0, 0.0));
+    }
+
+    #[test]
+    fn zero_step_with_repulsive_object_preserves_deviation() {
+        let mover = mk_snapshot(0, 0.0, 0.0);
+        let mut object = mk_snapshot(1, 10.0, 0.0);
+        object.is_actor = false;
+        object.is_human = false;
+        object.repulsive_point = Some(RepulsivePoint::new(map_pt(10.0, 0.0), 5.0, 10.0));
+        let snapshots = vec![Some(mover.clone()), Some(object)];
+
+        let mut pi = crate::position_interface::PositionInterface::default();
+        pi.deviated = true;
+        let mut state = AntiCollisionState {
+            pi: &mut pi,
+            move_box: Default::default(),
+            half_diagonal: MoveBoxHalfDiagonal::new(6.0, 4.0),
+            goal_map: map_pt(10.0, 0.0),
+        };
+        let grid = FastFindGrid::default();
+
+        let movement = apply_anti_collision_step(
+            &mover,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(&grid),
+            Some(&mut state),
+            0.0,
+            0.0,
+            1.8,
+            true,
+        );
+
+        assert_eq!(movement, (0.0, 0.0));
+        assert!(state.pi.deviated);
+    }
+
+    #[test]
+    fn zero_step_with_empty_repulsive_lists_recovers_deviation_first() {
+        let mover = mk_snapshot(0, 0.0, 0.0);
+        let snapshots = vec![Some(mover.clone())];
+
+        let mut pi = crate::position_interface::PositionInterface::default();
+        pi.deviated = true;
+        let mut state = AntiCollisionState {
+            pi: &mut pi,
+            move_box: Default::default(),
+            half_diagonal: MoveBoxHalfDiagonal::new(6.0, 4.0),
+            goal_map: map_pt(10.0, 0.0),
+        };
+        let grid = FastFindGrid::default();
+
+        let movement = apply_anti_collision_step(
+            &mover,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(&grid),
+            Some(&mut state),
+            0.0,
+            0.0,
+            1.8,
+            true,
+        );
+
+        assert_eq!(movement, (0.0, 0.0));
+        assert!(!state.pi.deviated);
     }
 
     #[test]
