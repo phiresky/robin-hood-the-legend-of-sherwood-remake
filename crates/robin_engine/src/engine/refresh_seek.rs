@@ -289,10 +289,16 @@ impl crate::engine::EngineInner {
             && send_stop_sqr > 0.0
             && target_entity.npc_data().is_some()
         {
-            let owner_pos = owner_entity.element_data().position_map();
+            // RHElementActor::RefreshSeek uses the literal stored 3D
+            // GetPosition values here, not their projected map positions.
+            // In particular, actors on different elevations can be close in
+            // map space while remaining far outside the stop radius.
+            let owner_pos = owner_entity.element_data().position();
+            let target_pos = target_entity.element_data().position();
             let dx = target_pos.x - owner_pos.x;
             let dy = target_pos.y - owner_pos.y;
-            dx * dx + dy * dy < send_stop_sqr
+            let dz = target_pos.z - owner_pos.z;
+            dx * dx + dy * dy + dz * dz < send_stop_sqr
         } else {
             false
         };
@@ -1008,7 +1014,8 @@ impl crate::engine::EngineInner {
 mod tests {
     use super::*;
     use crate::element::{
-        ActorData, ActorPc, Command, ElementData, ElementKind, Entity, HumanData, PcData, Posture,
+        ActorData, ActorPc, ActorSoldier, AiBrain, Command, ElementData, ElementKind, Entity,
+        HumanData, PcData, Posture, SoldierData,
     };
     use crate::movement::ActiveMovement;
     use crate::position_interface::SectorHandle;
@@ -1039,6 +1046,97 @@ mod tests {
             .set_position_map(crate::coordinates::MapPoint { x, y });
         pc.element.set_sector(SectorHandle::new(sector));
         Entity::Pc(pc)
+    }
+
+    fn test_moving_soldier_at(position: crate::coordinates::WorldPoint3D) -> Entity {
+        let mut soldier = ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: ActorData {
+                action_state: ActionState::Moving,
+                ..Default::default()
+            },
+            human: HumanData::default(),
+            npc: Default::default(),
+            soldier: SoldierData::default(),
+        };
+        soldier.element.set_position(position);
+        soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+        Entity::Soldier(soldier)
+    }
+
+    fn resolve_stop_npc_seek_with_target_at(
+        target_position: crate::coordinates::WorldPoint3D,
+    ) -> (crate::ai::AiState, crate::ai::Substate) {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = crate::engine::EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let mut owner_entity = test_pc_at(0.0, 0.0, 1);
+        owner_entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::ZERO);
+        owner_entity
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -6.0, -4.0, 6.0, 4.0,
+            ));
+        owner_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+        let owner = engine.add_entity(owner_entity);
+        let target = engine.add_entity(test_moving_soldier_at(target_position));
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        let _ = engine.resolve_entity_seek(
+            &sim,
+            &assets,
+            owner,
+            target,
+            MoveFlags::SEEK | MoveFlags::SEEK_STOP_NPC,
+            32.0,
+        );
+
+        let ai = engine
+            .get_entity(target)
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .ai_brain
+            .base()
+            .unwrap();
+        (ai.current_state, ai.current_substate)
+    }
+
+    #[test]
+    fn seek_stop_npc_uses_raw_3d_distance_across_elevations() {
+        // Map projection is (20, 16), inside the 64-unit moving-target
+        // stop radius, while the literal 3D distance is about 224.6.
+        assert_eq!(
+            resolve_stop_npc_seek_with_target_at(crate::coordinates::WorldPoint3D::new(
+                20.0, 166.0, 150.0,
+            )),
+            (
+                crate::ai::AiState::Default,
+                crate::ai::Substate::DefaultOnPost,
+            ),
+            "a map-near actor on another elevation must not receive EventStop"
+        );
+    }
+
+    #[test]
+    fn seek_stop_npc_still_stops_raw_3d_near_target() {
+        assert_eq!(
+            resolve_stop_npc_seek_with_target_at(crate::coordinates::WorldPoint3D::new(
+                20.0, 16.0, 0.0,
+            )),
+            (
+                crate::ai::AiState::Seeking,
+                crate::ai::Substate::SeekingGotStopEvent,
+            ),
+            "a raw-3D-near moving NPC must receive EventStop"
+        );
     }
 
     #[test]
