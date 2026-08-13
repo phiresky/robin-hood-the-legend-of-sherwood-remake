@@ -4,6 +4,18 @@
 
 use super::*;
 
+/// Match `SBGeoVector2D::operator*=(30.0 / vtFlight.Norm())` for FallingHit's
+/// sector vectors and live antagonist deltas. The vector's squared sum is
+/// stored as `GEOTYPE` (`f32`), while `sqrt` and the unsuffixed `30.0`
+/// division execute as doubles before the one shared scale is stored back to
+/// `f32` and applied to both components.
+fn scale_falling_hit_sector_vector(x: f32, y: f32) -> (f32, f32) {
+    let squared_norm = x * x + y * y;
+    let distance = f64::from(squared_norm).sqrt() as f32;
+    let scale = (30.0_f64 / f64::from(distance)) as f32;
+    (x * scale, y * scale)
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct TestSwordDamageObservation {
@@ -1893,26 +1905,23 @@ impl EngineInner {
                 .element_data()
                 .position_map()
         });
-        let (unit_x, unit_y) = if let Some(rider_dir) = charging_rider_dir {
+        let (flight_x, flight_y) = if let Some(rider_dir) = charging_rider_dir {
             let (x, y) = sector_to_vector_iso(rider_dir, ASPECT_RATIO);
-            let distance = (x * x + y * y).sqrt();
-            (x / distance, y / distance)
+            scale_falling_hit_sector_vector(x, y)
         } else if let Some(attacker_pos) = attacker_pos {
             let dx = victim_pos.x - attacker_pos.x;
             let dy = victim_pos.y - attacker_pos.y;
             let distance = (dx * dx + dy * dy).sqrt();
             if distance < 0.01 {
-                sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO)
+                let (x, y) = sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO);
+                scale_falling_hit_sector_vector(x, y)
             } else {
-                (dx / distance, dy / distance)
+                scale_falling_hit_sector_vector(dx, dy)
             }
         } else {
             let (x, y) = sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO);
-            let distance = (x * x + y * y).sqrt();
-            (x / distance, y / distance)
+            scale_falling_hit_sector_vector(x, y)
         };
-        let flight_x = unit_x * 30.0;
-        let flight_y = unit_y * 30.0;
 
         let candidate = |fraction: f32| {
             crate::coordinates::MapPoint::new(

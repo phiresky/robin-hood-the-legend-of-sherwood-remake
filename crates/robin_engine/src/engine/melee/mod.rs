@@ -3161,8 +3161,8 @@ mod tests {
         let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let victim = engine.add_entity(make_pc(
             WorldPoint3D {
-                x: 100.0,
-                y: 100.0,
+                x: 32.0,
+                y: 1.0,
                 z: 0.0,
             },
             None,
@@ -3187,7 +3187,8 @@ mod tests {
         );
 
         let delta = initialized_hit_flight_delta(&engine, victim);
-        assert!(((delta.x * delta.x + delta.y * delta.y).sqrt() - 30.0).abs() < 0.0001);
+        assert_eq!(delta.x.to_bits(), 0xc1e9_801b);
+        assert_eq!(delta.y.to_bits(), 0x40dd_e72e);
         assert!(
             delta.x < 0.0 && delta.y > 0.0,
             "direction 11 flies southwest"
@@ -3199,8 +3200,8 @@ mod tests {
         let mut engine = make_engine();
         let victim = engine.add_entity(make_pc(
             WorldPoint3D {
-                x: 100.0,
-                y: 100.0,
+                x: 32.0,
+                y: 1.0,
                 z: 0.0,
             },
             None,
@@ -3220,7 +3221,8 @@ mod tests {
         );
 
         let delta = initialized_hit_flight_delta(&engine, victim);
-        assert!(((delta.x * delta.x + delta.y * delta.y).sqrt() - 30.0).abs() < 0.0001);
+        assert_eq!(delta.x.to_bits(), 0xc1e9_801b);
+        assert_eq!(delta.y.to_bits(), 0x40dd_e72e);
         assert!(
             delta.x < 0.0 && delta.y > 0.0,
             "opposite direction 11 flies southwest"
@@ -3232,16 +3234,16 @@ mod tests {
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_soldier(
             WorldPoint3D {
-                x: 97.0,
-                y: 96.0,
+                x: -2.0,
+                y: -4.0,
                 z: 0.0,
             },
             None,
         ));
         let victim = engine.add_entity(make_pc(
             WorldPoint3D {
-                x: 100.0,
-                y: 100.0,
+                x: 1.0,
+                y: 1.0,
                 z: 0.0,
             },
             None,
@@ -3256,8 +3258,11 @@ mod tests {
         );
 
         let delta = initialized_hit_flight_delta(&engine, victim);
-        assert_eq!(delta.x.to_bits(), 18.0_f32.to_bits());
-        assert_eq!(delta.y.to_bits(), 24.0_f32.to_bits());
+        // Adding the exact source component 0x4176_f53d to x=1 and
+        // subtracting the origin rounds the observable displacement once;
+        // the old per-component normalization instead produced 0x4176_f53e.
+        assert_eq!(delta.x.to_bits(), 0x4176_f53c);
+        assert_eq!(delta.y.to_bits(), 0x41cd_cc5e);
     }
 
     #[test]
