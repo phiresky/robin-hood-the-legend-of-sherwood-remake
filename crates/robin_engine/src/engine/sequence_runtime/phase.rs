@@ -458,6 +458,23 @@ impl EngineInner {
                     Some(destination),
                     "building interior move",
                 );
+                // Actor::Instruct accepts this translated Move, writes
+                // mmotionState=IN_PROGRESS, then discovers that the building
+                // teleport produced no current order. Original clears
+                // mpSequenceElement before SetState(TERMINATED), so the
+                // terminal SendCondolationCard cannot erase the destination
+                // goal that FinalizeSpecialMovePosition just installed
+                // (`RHelementactor.cpp:960-994`). Rust's translating-element
+                // mirror is the selected identity at this boundary; detach it
+                // before queuing the terminal card for the same ordering.
+                self.world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::actor_data_mut)
+                    .expect("accepted empty building Move lost its actor")
+                    .continuation
+                    .motion_state = crate::sprite::MotionState::InProgress;
+                self.orders.sequence_manager.set_translating_element(None);
                 self.orders
                     .sequence_manager
                     .element_terminated(sequence_id, element_index);
