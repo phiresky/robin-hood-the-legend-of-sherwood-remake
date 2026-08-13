@@ -2026,7 +2026,6 @@ pub fn tick_ability(
     }
 
     let ability = actor.active_ability.clone();
-    let execute_order_initialising = actor.execute_order_initialising;
     let listen_phase = actor.listen_phase;
     let receive_purse_phase = actor.receive_purse_phase;
     let kind = ability.kind.unwrap(); // safe: is_active() checked
@@ -2103,25 +2102,6 @@ pub fn tick_ability(
             element.set_position_map(carrier_position);
             element.set_direction_instantly(carried_direction);
         }
-    }
-
-    // RHElementActorPC::Execute(TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT)
-    // aligns the carried body when the Drop order is initialized, before the
-    // carrier's PerformAction and the carried animation synchronization
-    // (`RHelementactorpc.cpp:4905-4955`).  This is deliberately initialization-
-    // only and, unlike Carry initialization above, does not move the body.
-    if kind == AbilityKind::Drop && !sprite_frozen && execute_order_initialising {
-        let carrier = entities
-            .get(requested_actor)
-            .expect("validated Drop owner vanished before initialization");
-        let target_id = ability.target.expect("active Drop ability target");
-        let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
-        let target = entities
-            .get_mut(target_id)
-            .unwrap_or_else(|| panic!("Drop target {target_id:?} vanished at initialization"));
-        target
-            .element_data_mut()
-            .set_direction_instantly(carried_direction);
     }
 
     let entity = entities
@@ -3254,98 +3234,6 @@ mod tests {
             body.element_data().sprite.last_action,
             OrderType::BeingCarriedPeasantC
         );
-    }
-
-    #[test]
-    fn drop_initialization_aligns_body_once_without_moving_it() {
-        let (mut entities, carrier, body) = corpse_carry_fixture(OrderType::WaitingWithCorpse);
-        let body_position = entities.get(body).unwrap().element_data().position_map();
-        let order_id = std::num::NonZeroU32::new(77).unwrap();
-        let sequence_id = SequenceId(9);
-
-        std::sync::Arc::make_mut(
-            &mut entities
-                .get_mut(body)
-                .unwrap()
-                .element_data_mut()
-                .sprite
-                .conversion,
-        )[OrderType::BeingDroppedPeasantC as usize] = 100;
-
-        {
-            let carrier_entity = entities.get_mut(carrier).unwrap();
-            carrier_entity
-                .element_data_mut()
-                .set_direction_instantly(13);
-            carrier_entity.actor_data_mut().unwrap().active_ability = ActiveAbility {
-                kind: Some(AbilityKind::Drop),
-                sequence_id: Some(sequence_id),
-                element_index: 0,
-                target: Some(body),
-                order_id: Some(order_id),
-                done_effect_applied: false,
-                strangle_initialized: false,
-            };
-            carrier_entity
-                .actor_data_mut()
-                .unwrap()
-                .execute_order_initialising = true;
-            let mut conversion =
-                vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
-            conversion[OrderType::TransitionCarryingCorpseWaitingUpright as usize] = 0;
-            carrier_entity.element_data_mut().sprite.conversion = std::sync::Arc::new(conversion);
-            let mut script = crate::sprite_script::SpriteScript::default();
-            script.frame_ids = vec![0, 1];
-            script.delays = vec![10, 10];
-            script.distances = vec![0, 0];
-            script.offsets = vec![crate::coordinates::SpriteFrameOffset::ZERO; 2];
-            script.sound_ids = vec![0, 0];
-            carrier_entity.element_data_mut().sprite.scripts =
-                std::sync::Arc::new(vec![script; 16]);
-            // Loaded/translated orders can already have entered the sprite
-            // before the PC Execute arm sees mbNewOrder. The actor-owned
-            // Execute latch, not this sprite identity, is authoritative.
-            carrier_entity
-                .element_data_mut()
-                .sprite
-                .last_processed_order_id = order_id.get();
-        }
-
-        let sim = crate::sim_rng::test_context();
-        let manager = SequenceManager::new();
-        assert!(tick_ability(&sim, &mut entities, &manager, carrier, false).is_empty());
-        let body_entity = entities.get(body).unwrap();
-        assert_eq!(body_entity.element_data().direction(), 9);
-        assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 9);
-        assert_eq!(body_entity.element_data().position_map(), body_position);
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
-        let body_entity = entities.get(body).unwrap();
-        assert_eq!(
-            body_entity.element_data().sprite.last_action,
-            OrderType::BeingDroppedPeasantC
-        );
-        assert_eq!(body_entity.element_data().sprite.current_row, 109);
-
-        // Original's alignment lives under IsInitialisation().  Once the same
-        // order has entered PerformAction, a later tick must not restamp it.
-        entities
-            .get_mut(body)
-            .unwrap()
-            .element_data_mut()
-            .set_direction_instantly(3);
-        entities
-            .get_mut(carrier)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .execute_order_initialising = false;
-        assert!(tick_ability(&sim, &mut entities, &manager, carrier, false).is_empty());
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
-        let body_entity = entities.get(body).unwrap();
-        assert_eq!(body_entity.element_data().direction(), 3);
-        assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 3);
-        assert_eq!(body_entity.element_data().position_map(), body_position);
-        assert_eq!(body_entity.element_data().sprite.current_row, 103);
     }
 
     #[test]

@@ -4030,6 +4030,59 @@ impl EngineInner {
                         // sampling in a global pre-pass would validate stale work.
                         let validity_short_circuited =
                             self.pre_tick_human_execute_validity_for(assets, entity_id);
+                        if !validity_short_circuited
+                            && selected_order_type
+                                == Some(
+                                    crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
+                                )
+                            && self
+                                .world
+                                .entities
+                                .get(entity_id)
+                                .and_then(Entity::actor_data)
+                                .is_some_and(|actor| actor.execute_order_initialising)
+                        {
+                            // RHElementActorPC::Execute owns this initialization,
+                            // not the DROP_CORPSE command builder. Posture
+                            // transitions inserted for another PC command enter
+                            // the same animation arm without an ActiveAbility.
+                            // Original aligns mpCarried after validity and before
+                            // PerformAction (RHelementactorpc.cpp:4905-4955).
+                            let (carried, carried_direction) = {
+                                let carrier = self.world.entities.get(entity_id).unwrap_or_else(|| {
+                                    panic!(
+                                        "corpse-exit transition owner {entity_id:?} vanished before initialization"
+                                    )
+                                });
+                                let carried = carrier
+                                    .pc_data()
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "corpse-exit transition owner {entity_id:?} is not a PC"
+                                        )
+                                    })
+                                    .carried
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "corpse-exit transition owner {entity_id:?} has no carried body"
+                                        )
+                                    });
+                                (
+                                    carried,
+                                    carrier.element_data().direction().wrapping_sub(4) & 15,
+                                )
+                            };
+                            self.world
+                                .entities
+                                .get_mut(carried)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "corpse-exit transition target {carried:?} vanished before initialization"
+                                    )
+                                })
+                                .element_data_mut()
+                                .set_direction_instantly(carried_direction);
+                        }
                         let movement_selection = (!validity_short_circuited)
                             .then_some(selected_order)
                             .flatten()

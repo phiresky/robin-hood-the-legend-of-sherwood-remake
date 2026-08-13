@@ -1481,6 +1481,189 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     assert_ne!(selected.order_id, transition_id);
 }
 
+fn corpse_exit_initialization_fixture(
+    active_drop: bool,
+) -> (EngineInner, EntityId, EntityId, crate::sequence::SequenceId) {
+    use crate::element::{Command, Posture};
+    use crate::movement::{AbilityKind, ActiveAbility};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let body = engine.add_entity(make_test_soldier(Posture::Carried));
+    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
+    {
+        let carrier_entity = engine.get_entity_mut(carrier).unwrap();
+        carrier_entity.pc_data_mut().unwrap().carried = Some(body);
+        carrier_entity
+            .element_data_mut()
+            .set_direction_instantly(13);
+    }
+    {
+        let body_entity = engine.get_entity_mut(body).unwrap();
+        body_entity.human_data_mut().unwrap().carrier = Some(carrier);
+        body_entity.actor_data_mut().unwrap().execution_frozen = true;
+        body_entity.element_data_mut().set_direction_instantly(4);
+    }
+
+    let transition = OrderType::TransitionCarryingCorpseWaitingUpright;
+    let script = SpriteScript {
+        action_id: transition as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2],
+        delays: vec![10, 10],
+        distances: vec![0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+        sound_ids: vec![0, 0],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[transition as usize] = 0;
+    engine
+        .get_entity_mut(carrier)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    engine
+        .get_entity_mut(carrier)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(13);
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut element = SequenceElement::new(1, Command::WhistleCmd, Some(carrier));
+    let mut transition_order = Order::new(transition, 0.0, 0.0, order_id);
+    transition_order.compute_direction = false;
+    element.orders.push_back(transition_order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    if active_drop {
+        engine
+            .get_entity_mut(carrier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_ability = ActiveAbility {
+            kind: Some(AbilityKind::Drop),
+            sequence_id: Some(sequence),
+            element_index: 0,
+            target: Some(body),
+            order_id: Some(order_id),
+            done_effect_applied: false,
+            strangle_initialized: false,
+        };
+    }
+    (engine, carrier, body, sequence)
+}
+
+#[test]
+fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
+    use crate::movement::AbilityKind;
+    use crate::order::OrderType;
+
+    let (mut engine, carrier, body, _) = corpse_exit_initialization_fixture(false);
+    let body_position = engine
+        .get_entity(body)
+        .unwrap()
+        .element_data()
+        .position_map();
+    assert_eq!(
+        engine
+            .get_entity(carrier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .kind,
+        None
+    );
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.element_data().direction(), 9);
+    assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 9);
+    assert_eq!(body_entity.element_data().position_map(), body_position);
+    assert_eq!(
+        engine.get_entity(carrier).unwrap().sprite().last_action,
+        OrderType::TransitionCarryingCorpseWaitingUpright,
+        "the no-ability transition must enter the generic PerformAction arm"
+    );
+    assert_ne!(
+        engine
+            .get_entity(carrier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .kind,
+        Some(AbilityKind::Drop)
+    );
+
+    engine
+        .get_entity_mut(body)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(3);
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.element_data().direction(), 3);
+    assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 3);
+}
+
+#[test]
+fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
+    use crate::movement::AbilityKind;
+
+    let (mut engine, carrier, body, _) = corpse_exit_initialization_fixture(true);
+    assert_eq!(
+        engine
+            .get_entity(carrier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .kind,
+        Some(AbilityKind::Drop)
+    );
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.element_data().direction(), 9);
+    assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 9);
+
+    engine
+        .get_entity_mut(body)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(2);
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.element_data().direction(), 2);
+    assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 2);
+}
+
 #[test]
 fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     use crate::element::{Command, Posture};
