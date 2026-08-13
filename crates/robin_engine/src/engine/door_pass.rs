@@ -1382,18 +1382,38 @@ impl EngineInner {
                     "PassDoor callback for {entity_id:?}, door {door_index} references missing target sector {target_sector_num}"
                 )
             });
-        let entity = self
-            .get_entity_mut(entity_id)
-            .expect("PassDoor owner disappeared after canonical callback lookup");
-        let elem = entity.element_data_mut();
-        elem.set_layer(target_layer);
-        elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
-            target_sector_num,
-        )));
-        // RHElementActor::PassDoor consumes the sprite door pointer on the
-        // first PassingDoor callback. A later callback only restores
-        // anti-collision and must continue to observe a null door.
-        elem.sprite.position_iface.clear_door();
+        let carried = self
+            .get_entity(entity_id)
+            .expect("PassDoor owner disappeared after canonical callback lookup")
+            .pc_data()
+            .and_then(|pc| pc.carried);
+        let target_sector =
+            crate::position_interface::SectorHandle::new(u16::from(target_sector_num));
+        {
+            let entity = self
+                .get_entity_mut(entity_id)
+                .expect("PassDoor owner disappeared after canonical callback lookup");
+            let elem = entity.element_data_mut();
+            elem.set_layer(target_layer);
+            elem.set_sector(target_sector);
+            // RHElementActor::PassDoor consumes the sprite door pointer on the
+            // first PassingDoor callback. A later callback only restores
+            // anti-collision and must continue to observe a null door.
+            elem.sprite.position_iface.clear_door();
+        }
+        // `RHElementActorHuman::ChangeLayerAndSector` immediately gives a
+        // PC's carried actor the same layer and sector before refreshing
+        // paired jump lines. It does not copy position, obstacle, or material.
+        if let Some(carried_id) = carried {
+            let carried = self.get_entity_mut(carried_id).unwrap_or_else(|| {
+                panic!(
+                    "PassDoor owner {entity_id:?} references missing carried actor {carried_id:?}"
+                )
+            });
+            let elem = carried.element_data_mut();
+            elem.set_layer(target_layer);
+            elem.set_sector(target_sector);
+        }
         tracing::debug!(
             entity_id = ?entity_id,
             layer = target_layer,
@@ -2077,6 +2097,94 @@ mod tests {
             point_in: MapPoint::new(30.0, 30.0),
             ..crate::gate::Door::default()
         }
+    }
+
+    #[test]
+    fn pass_door_change_layer_and_sector_follows_pc_carried_actor() {
+        for direct in [true, false] {
+            let mut engine = EngineInner::new();
+            let door = crate::gate::Door {
+                layer_out: 2,
+                layer_in: 5,
+                ..default_door()
+            };
+            let (source_sector, source_layer, target_sector, target_layer) =
+                if direct { (7, 2, 8, 5) } else { (8, 5, 7, 2) };
+            let owner = engine.add_entity(make_pc(source_sector));
+            let carried = engine.add_entity(make_soldier(Some(99)));
+            {
+                let owner_entity = engine.world.entities.get_mut(owner).unwrap();
+                owner_entity.element_data_mut().set_layer(source_layer);
+                owner_entity.pc_data_mut().unwrap().carried = Some(carried);
+            }
+            {
+                let carried_entity = engine.world.entities.get_mut(carried).unwrap();
+                carried_entity.set_posture(Posture::Carried);
+                carried_entity.element_data_mut().set_layer(12);
+                carried_entity.human_data_mut().unwrap().carrier = Some(owner);
+            }
+
+            let _ = dispatch_pass(&mut engine, std::slice::from_ref(&door), owner);
+            engine.script_domains.interactables.doors.push(door);
+            engine.execute_pass_door(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                owner,
+                crate::gate::DoorIndex(0),
+                direct,
+                0,
+            );
+
+            for actor in [owner, carried] {
+                let element = engine.world.entities.get(actor).unwrap().element_data();
+                assert_eq!(element.layer(), target_layer);
+                assert_eq!(element.sector().unwrap().get(), target_sector);
+            }
+        }
+    }
+
+    #[test]
+    fn pass_door_change_layer_and_sector_does_not_rewrite_unrelated_actor() {
+        let mut engine = EngineInner::new();
+        let door = crate::gate::Door {
+            layer_out: 2,
+            layer_in: 5,
+            ..default_door()
+        };
+        let owner = engine.add_entity(make_pc(7));
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .set_layer(2);
+        let unrelated = engine.add_entity(make_soldier(Some(99)));
+        engine
+            .world
+            .entities
+            .get_mut(unrelated)
+            .unwrap()
+            .element_data_mut()
+            .set_layer(12);
+
+        let _ = dispatch_pass(&mut engine, std::slice::from_ref(&door), owner);
+        engine.script_domains.interactables.doors.push(door);
+        engine.execute_pass_door(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            crate::gate::DoorIndex(0),
+            true,
+            0,
+        );
+
+        let owner_element = engine.world.entities.get(owner).unwrap().element_data();
+        assert_eq!(owner_element.layer(), 5);
+        assert_eq!(owner_element.sector().unwrap().get(), 8);
+        let unrelated_element = engine.world.entities.get(unrelated).unwrap().element_data();
+        assert_eq!(unrelated_element.layer(), 12);
+        assert_eq!(unrelated_element.sector().unwrap().get(), 99);
     }
 
     fn install_lift_sector(engine: &mut EngineInner, lift_type: LiftType) {
