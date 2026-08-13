@@ -7,7 +7,7 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::{ai_square_distance, resolve_seek_point_id, vec_to_sector};
+use super::util::{ai_max_norm_distance, ai_square_distance, resolve_seek_point_id, vec_to_sector};
 use super::{
     AlertSoldiersFailureContinuation, EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags,
     UNDEFINED_DIRECTION, archer, combat, task_priority,
@@ -2825,14 +2825,18 @@ impl EnemyAi {
                     // If body is further than
                     // OFFICER_EXAMINE_BODY_HIMSELF_DISTANCE,
                     // delegate via ShallISendOutSoldier.
-                    let dist = ctx
-                        .entity_view(body)
-                        .map(|v| {
-                            let dx = (v.position.x - ctx.position.x).abs();
-                            let dy = (v.position.y - ctx.position.y).abs();
-                            dx.max(dy)
-                        })
-                        .unwrap_or(0.0);
+                    let body_view = ctx.entity_view(body).unwrap_or_else(|| {
+                        panic!(
+                            "officer {} cannot react to missing body {}",
+                            self.base.me, body
+                        )
+                    });
+                    let dist = ai_max_norm_distance(
+                        &body_view.position,
+                        body_view.elevation,
+                        &ctx.position,
+                        ctx.elevation,
+                    );
                     if dist > combat::OFFICER_EXAMINE_BODY_HIMSELF_DISTANCE as f32 {
                         look_for_soldiers =
                             self.answer_question(Question::ShallISendOutSoldier, ctx);
@@ -9590,6 +9594,199 @@ mod tests {
             None,
             crate::order::OrderType::NonanimationEnd,
         )
+    }
+
+    fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSoldierInfo {
+        crate::ai_enemy::CampSoldierInfo {
+            handle,
+            active: true,
+            position,
+            position_world: crate::coordinates::WorldPoint3D::new(position.x, position.y, 0.0),
+            direction: 0,
+            rank: ProfileRank::Soldier,
+            ai_state: AiState::Default,
+            ai_substate: Substate::DefaultOnPost,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            detected_body: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 300,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        }
+    }
+
+    #[test]
+    fn officer_body_reaction_uses_stretched_max_norm_to_delegate() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(185);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBodyReactiontime;
+        ai.base.detected_body = 179;
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        ai.soldier_profile_initiative = 0;
+
+        let mut body = pc_view(crate::element::Posture::Lying);
+        body.kind = crate::ai_entity_view::EntityKind::Soldier;
+        body.is_pc = false;
+        body.position = Position {
+            x: 50.0,
+            y: 149.5,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(179, body);
+        let mut friend = soldier_view_with_substate(181, Substate::DefaultOnPost);
+        friend.position = Position {
+            x: 20.0,
+            ..Position::default()
+        };
+        views.insert(181, friend);
+        let ctx = AiContext {
+            frame: 1_200,
+            position: Position::default(),
+            direction: 7,
+            self_is_active: true,
+            in_building: false,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(alert_candidate(
+            181,
+            Position {
+                x: 20.0,
+                ..Position::default()
+            },
+        ));
+
+        let raw_max_norm = 50.0_f32.max(149.5);
+        let stretched_max_norm = ai_max_norm_distance(
+            &ctx.entity_view(179).unwrap().position,
+            0.0,
+            &ctx.position,
+            0.0,
+        );
+        assert!(raw_max_norm < 150.0);
+        assert!(stretched_max_norm > 150.0);
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingOfficerLookingForSoldiers1
+        );
+        assert_eq!(ai.base.when_does_timer_ring, 1_220);
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .iter()
+                .any(|order| { order.order_type == crate::order::OrderType::Turning })
+        );
+        let friend = (
+            crate::element::EntityId::Soldier(crate::entity_id::SoldierId(181)),
+            crate::element::DetectableType::Friend,
+        );
+        assert!(
+            ai.base.outbox.actor.add_detectables.contains(&friend)
+                || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+                    matches!(work, AiOwnerWork::StateChange(change)
+                    if change.actor_effects_before_callback.as_ref().is_some_and(
+                        |effects| effects.add_detectables.contains(&friend)
+                    ))
+                })
+        );
+    }
+
+    #[test]
+    fn officer_body_reaction_examines_body_within_stretched_threshold() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(185);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBodyReactiontime;
+        ai.base.detected_body = 179;
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        ai.soldier_profile_initiative = 0;
+
+        let mut body = pc_view(crate::element::Posture::Lying);
+        body.kind = crate::ai_entity_view::EntityKind::Soldier;
+        body.is_pc = false;
+        body.position = Position {
+            x: 50.0,
+            y: 80.0,
+            ..Position::default()
+        };
+        let destination = body.position;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(179, body);
+        let ctx = AiContext {
+            frame: 1_200,
+            position: Position::default(),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        assert!(ai_max_norm_distance(&destination, 0.0, &ctx.position, 0.0) <= 150.0);
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingBody);
+        assert_eq!(ai.base.seek_position, destination);
+        assert!(
+            ai.base.outbox.actor.focus == Some(179)
+                || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+                    matches!(work, AiOwnerWork::StateChange(change)
+                    if change.actor_effects_before_callback.as_ref().is_some_and(
+                        |effects| effects.focus == Some(179)
+                    ))
+                })
+        );
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .iter()
+                .any(|order| { order.order_type == crate::order::OrderType::RunningUpright })
+        );
+        assert!(ai.base.outbox.actor.add_detectables.is_empty());
     }
 
     fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
