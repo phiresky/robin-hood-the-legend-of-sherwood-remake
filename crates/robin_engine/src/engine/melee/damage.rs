@@ -624,10 +624,36 @@ impl EngineInner {
             }
         }
 
-        // Handle push effect — the push path handles animations and
-        // death/KO internally, so skip the regular hit anim and
-        // `handle_post_damage` when pushed.
-        let pushed = if combat::strike_has_push_effect(&attacker_profile, strike) {
+        // SetLifePoints invokes virtual Kill synchronously before
+        // ReceiveSwordDamage returns to TranslatePushDamage. Apply that
+        // nonvisual cascade first; the push translator below remains the sole
+        // owner of the falling order.
+        let push_strike = combat::strike_has_push_effect(&attacker_profile, strike);
+        let fresh_lethal_push = push_strike
+            && attacker_id.is_some()
+            && !coma_saved
+            && life_points_before > 0
+            && life_points_after <= 0;
+        if fresh_lethal_push {
+            let killer_is_pc = attacker_id
+                .map(|id| {
+                    self.expect_entity(id, "lethal push attacker")
+                        .kind()
+                        .is_pc()
+                })
+                .unwrap_or(false);
+            self.apply_nonvisual_death_cascade(
+                sim,
+                assets,
+                victim_id,
+                damage_element,
+                killer_is_pc,
+            );
+        }
+
+        // Handle push effect — the push path handles animations and skips the
+        // regular hit animation / post-damage translation below.
+        let pushed = if push_strike {
             let thrust = &attacker_profile.thrusts[strike as usize];
             if let Some(attacker) = attacker_id {
                 let push_info = PushStrikeInfo {
@@ -641,7 +667,7 @@ impl EngineInner {
                     &push_info,
                     result,
                     damage_element,
-                    victim_went_unconscious,
+                    fresh_lethal_push,
                 )
             } else {
                 false
@@ -2636,6 +2662,24 @@ impl EngineInner {
             .map(|e| e.is_pc())
             .unwrap_or(false);
 
+        self.apply_nonvisual_death_cascade(sim, assets, victim_id, damage_element, killer_is_pc);
+
+        // Queue roll if on a slope.
+        self.try_queue_roll(assets, victim_id, damage_element);
+    }
+
+    /// Apply the synchronous virtual `Kill` cascade without translating a
+    /// dying animation. `SetLifePoints` reaches this work before the caller
+    /// resumes damage translation; push strikes therefore use it before
+    /// `TranslatePushDamage` authors their sole falling order.
+    pub(super) fn apply_nonvisual_death_cascade(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        damage_element: (crate::sequence::SequenceId, usize),
+        killer_is_pc: bool,
+    ) {
         // Throw away unrelated sequence work the victim owns. The active
         // damage sequence (which just had its dying order queued) and Todo
         // commands Original admits while dead remain in the manager FIFO.
@@ -2759,9 +2803,6 @@ impl EngineInner {
 
         // Quit swordfight (removes from all opponents' lists)
         self.quit_swordfight(sim, assets, victim_id);
-
-        // Queue roll if on a slope.
-        self.try_queue_roll(assets, victim_id, damage_element);
 
         // Mission-stat bump for Royalist soldier deaths.
         let bump_killed_allied = self

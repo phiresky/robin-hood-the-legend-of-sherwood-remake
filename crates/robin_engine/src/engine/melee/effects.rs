@@ -797,7 +797,7 @@ impl EngineInner {
         push: &PushStrikeInfo,
         damage_result: combat::SwordDamageResult,
         damage_element: (crate::sequence::SequenceId, usize),
-        _knockout_side_effects_already_applied: bool,
+        death_cascade_already_applied: bool,
     ) -> bool {
         // NonInterruptable guard: if the victim is already playing a
         // non-interruptable sequence (an earlier falling-pushed /
@@ -930,7 +930,7 @@ impl EngineInner {
             // `ExecuteFallingPushed` owns Flying on motion Start and the
             // DeadBack/Lying landing transition. `DyingUpright` likewise
             // owns the dead rider's posture transition on animation Start.
-            if is_dead {
+            if is_dead && !death_cascade_already_applied {
                 let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
                     if let Some(actor) = entity.actor_data_mut() {
                         clear_fatal_push_path(actor);
@@ -973,7 +973,7 @@ impl EngineInner {
             true // push handled everything
         } else {
             // No falling animation (already lying/dead/carried).
-            if is_dead {
+            if is_dead && !death_cascade_already_applied {
                 let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.clear_path();

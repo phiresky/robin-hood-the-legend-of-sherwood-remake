@@ -7601,6 +7601,229 @@ mod tests {
     }
 
     #[test]
+    fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
+        use crate::ai::{AiState, AlertLevel, Substate};
+        use crate::element::{Detectable, DetectableType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        let observer = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.npc_data_mut().unwrap().life_points = 1;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            victim_entity
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+            let ai = victim_entity.enemy_ai_mut().unwrap();
+            ai.hth_weapon_id = 1;
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfight;
+            ai.base.current_music_alert_status = AlertLevel::Red;
+            ai.base.view_alert_status = AlertLevel::Red;
+        }
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(victim);
+        {
+            let observer_npc = engine
+                .get_entity_mut(observer)
+                .unwrap()
+                .npc_data_mut()
+                .unwrap();
+            observer_npc.ai_brain.enemy_mut().unwrap().hth_weapon_id = 1;
+            for detectable_type in [DetectableType::Friend, DetectableType::MissedFriend] {
+                observer_npc.detectable_lists[detectable_type as usize].push(Detectable {
+                    element: Some(victim),
+                    detectable_type,
+                    ..Detectable::default()
+                });
+            }
+        }
+
+        let mut assets = assets_with_sword_profile_effects(1, 50, 100, 0);
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::A as usize];
+        thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+        thrust.repulsion = 100;
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        let score_before = engine
+            .mission_domain
+            .campaign
+            .get_value(crate::campaign::CampaignValue::Score);
+        let killed_allied_before = engine.mission_domain.mission_stat.killed_allied_count;
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        let victim_ai = victim_entity.ai_controller().unwrap();
+        assert!(victim_entity.is_dead());
+        assert_eq!(victim_ai.current_state, AiState::Sleeping);
+        assert_eq!(victim_ai.current_substate, Substate::SleepingForever);
+        assert_eq!(victim_ai.current_music_alert_status, AlertLevel::Green);
+        assert_eq!(victim_ai.view_alert_status, AlertLevel::Green);
+        assert!(victim_entity.human_data().unwrap().opponents.is_empty());
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents
+                .is_empty()
+        );
+        let observer_npc = engine.get_entity(observer).unwrap().npc_data().unwrap();
+        assert!(
+            observer_npc.detectable_lists[DetectableType::Friend as usize].is_empty()
+                && observer_npc.detectable_lists[DetectableType::MissedFriend as usize].is_empty()
+        );
+        let damage = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("push damage remains the visual owner");
+        assert_eq!(
+            damage
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![OrderType::FallingPushedWithSword]
+        );
+        assert_eq!(
+            engine
+                .mission_domain
+                .campaign
+                .get_value(crate::campaign::CampaignValue::Score),
+            score_before + 50,
+            "the Lacklandist lethal push applies the Kill score exactly once"
+        );
+        assert_eq!(
+            engine.mission_domain.mission_stat.killed_allied_count, killed_allied_before,
+            "an enemy death must not enter the allied-death statistic arm"
+        );
+    }
+
+    #[test]
+    fn surviving_push_does_not_run_npc_kill_cascade() {
+        use crate::ai::{AiState, AlertLevel, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            victim_entity
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+            let ai = victim_entity.enemy_ai_mut().unwrap();
+            ai.hth_weapon_id = 1;
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfight;
+            ai.base.current_music_alert_status = AlertLevel::Red;
+            ai.base.view_alert_status = AlertLevel::Red;
+        }
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(victim);
+
+        let mut assets = assets_with_sword_profile_effects(1, 50, 4, 0);
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::A as usize];
+        thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+        thrust.repulsion = 100;
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        let victim_ai = victim_entity.ai_controller().unwrap();
+        assert!(get_life_points(victim_entity) > 0);
+        assert_eq!(victim_ai.current_state, AiState::Attacking);
+        assert_eq!(victim_ai.current_substate, Substate::AttackingSwordfight);
+        assert_eq!(victim_ai.current_music_alert_status, AlertLevel::Red);
+        assert_eq!(
+            victim_entity.human_data().unwrap().opponents,
+            vec![attacker]
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![victim]
+        );
+    }
+
+    #[test]
     fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
         use crate::ai::{LogLineType, StimulusType};
 
