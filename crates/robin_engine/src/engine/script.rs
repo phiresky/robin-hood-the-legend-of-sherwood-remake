@@ -3586,6 +3586,64 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+                    center,
+                    check_door_path,
+                    failure,
+                } => {
+                    // Original AlertSoldier observes GoNear's route result in
+                    // the same call, retries once with CHECK_DOOR_PATH, and
+                    // returns that final verdict to its caller. Rebuild the
+                    // live context after path construction, but consume the
+                    // failure latch here rather than emitting an independent
+                    // EVENT_COULDNT_REACHPOINT.
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!("AlertSoldier owner {} disappeared", owner.index())
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let doors = self.script_domains.interactables.doors.as_slice();
+                    let friendly = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::friendly_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!("AlertSoldier owner {} lost Friendly AI", owner.index())
+                        });
+                    friendly.resume_alert_soldier_after_go_near(
+                        sim,
+                        center,
+                        check_door_path,
+                        failure,
+                        &ctx,
+                        Some(&self.world.fast_grid),
+                        Some(doors),
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::NearbyCiviliansPanic => {
                     tracing::trace!(
                         target: "parity_nearby_panic",

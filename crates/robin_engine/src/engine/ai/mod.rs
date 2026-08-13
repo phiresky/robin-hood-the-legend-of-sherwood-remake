@@ -12010,7 +12010,7 @@ impl EngineInner {
     /// owner-work continuations such as patrol initialization resume outside
     /// the typed Think call. Surface all three `EndThink` latches before a
     /// sibling synchronous event can enter `StartThink` and clear them.
-    fn surface_synchronous_completion_events_for_owner(&mut self, npc_id: EntityId) {
+    pub(super) fn surface_synchronous_completion_events_for_owner(&mut self, npc_id: EntityId) {
         let ai = self
             .world
             .entities
@@ -12034,7 +12034,8 @@ impl EngineInner {
         // clears all three latches before the nested handler runs, so a single
         // boundary surfaces at most one event even when several were set.
         let typed_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending
-            || ai.outbox.reentrant.look_for_help_completion_pending;
+            || ai.outbox.reentrant.look_for_help_completion_pending
+            || ai.outbox.reentrant.alert_soldier_completion_pending;
         let retain_couldnt_reachpoint =
             ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
         let event = if !ai.completion_latch_inside_think {

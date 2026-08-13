@@ -1824,6 +1824,219 @@ pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
     })
 }
 
+#[test]
+fn alert_soldier_typed_tail_owns_couldnt_reachpoint_before_event_surface() {
+    use crate::element::AiBrain;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(owner)
+        .expect("AlertSoldier test civilian exists")
+    else {
+        panic!("AlertSoldier test owner changed kind")
+    };
+    civilian.npc.ai_brain =
+        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
+    let ai = civilian
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("AlertSoldier test civilian has AI");
+    ai.completion_latch_inside_think = true;
+    ai.couldnt_reachpoint = true;
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier test civilian retains AI");
+    assert!(ai.couldnt_reachpoint);
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier test civilian retains mutable AI")
+        .outbox
+        .reentrant
+        .alert_soldier_completion_pending = false;
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier test civilian retains AI after surface");
+    assert!(!ai.couldnt_reachpoint);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        vec![crate::ai::StimulusType::EventCouldntReachPoint]
+    );
+}
+
+fn make_alert_soldier_owner(engine: &mut EngineInner) -> EntityId {
+    use crate::element::AiBrain;
+
+    let owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(owner)
+        .expect("AlertSoldier test civilian exists")
+    else {
+        panic!("AlertSoldier test owner changed kind")
+    };
+    civilian.element.active = true;
+    civilian.npc.life_points = 100;
+    civilian.civilian.cached_camp = crate::element::Camp::Lacklandists;
+    civilian.npc.ai_brain =
+        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
+    owner
+}
+
+#[test]
+fn alert_soldier_owner_boundary_first_route_success_runs_success_tail() {
+    use crate::ai::{AiOwnerWork, Remark};
+    use crate::ai_friendly::AlertSoldierFailureContinuation;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = make_alert_soldier_owner(&mut engine);
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier owner has AI");
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+            center: Default::default(),
+            check_door_path: false,
+            failure: AlertSoldierFailureContinuation::Panic,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier owner retains AI");
+    assert_eq!(ai.current_remark, Remark::CivPanic);
+    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+}
+
+#[test]
+fn alert_soldier_owner_boundary_first_failure_retries_and_consumes_success() {
+    use crate::ai::{AiOwnerWork, Remark};
+    use crate::ai_friendly::AlertSoldierFailureContinuation;
+    use crate::coordinates::MapPoint;
+    use crate::element::Camp;
+    use crate::position_interface::SectorHandle;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = make_alert_soldier_owner(&mut engine);
+    let soldier = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    for (id, x) in [(owner, 0.0), (soldier, 100.0)] {
+        let entity = engine
+            .get_entity_mut(id)
+            .expect("AlertSoldier route actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 0.0));
+        entity.element_data_mut().set_sector(SectorHandle::new(1));
+        entity.element_data_mut().set_layer(0);
+        entity
+            .npc_data_mut()
+            .expect("route actor is NPC")
+            .life_points = 100;
+    }
+    engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![soldier.index()]);
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier owner has AI");
+    ai.couldnt_reachpoint = true;
+    ai.completion_latch_inside_think = true;
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+            center: Default::default(),
+            check_door_path: false,
+            failure: AlertSoldierFailureContinuation::Panic,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier owner retains AI");
+    assert_eq!(ai.antagonist, soldier.index());
+    assert_eq!(ai.current_remark, Remark::CivPanic);
+    assert!(!ai.couldnt_reachpoint);
+    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.outbox.actor.begin_panic.is_none());
+}
+
+#[test]
+fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() {
+    use crate::ai::{AiOwnerWork, AiState};
+    use crate::ai_friendly::AlertSoldierFailureContinuation;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = make_alert_soldier_owner(&mut engine);
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier owner has AI");
+    ai.couldnt_reachpoint = true;
+    ai.completion_latch_inside_think = true;
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+            center: Default::default(),
+            check_door_path: false,
+            failure: AlertSoldierFailureContinuation::Panic,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier owner retains AI");
+    assert_eq!(ai.current_state, AiState::Fleeing);
+    assert!(!ai.couldnt_reachpoint);
+    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+}
+
 pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
     Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {

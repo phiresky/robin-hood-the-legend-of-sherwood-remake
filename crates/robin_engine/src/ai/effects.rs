@@ -119,6 +119,11 @@ pub struct AiReentrantOutbox {
     /// failure must not become an independent `EVENT_COULDNT_REACHPOINT`.
     pub look_for_help_completion_pending: bool,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
+    /// `FriendlyAi::AlertSoldier` is waiting for its synchronous `GoNear`
+    /// path result. The typed continuation consumes route failure and retries
+    /// with the door-path flag before the enclosing Think may see it.
+    #[serde(default)]
+    pub alert_soldier_completion_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -221,6 +226,13 @@ pub enum AiOwnerWork {
     /// parade proposal needs live weapon, sprite, and sequence-manager data.
     ConsiderToBeginParade {
         attacker: HumanHandle,
+    },
+    /// Resume `FriendlyAi::AlertSoldier` after synchronous route construction.
+    /// Appended to preserve serialized discriminants of existing work.
+    ResumeFriendlyAlertSoldierAfterGoNear {
+        center: Position,
+        check_door_path: bool,
+        failure: crate::ai_friendly::AlertSoldierFailureContinuation,
     },
 }
 
