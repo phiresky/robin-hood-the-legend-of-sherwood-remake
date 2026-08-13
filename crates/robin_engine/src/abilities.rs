@@ -2026,6 +2026,7 @@ pub fn tick_ability(
     }
 
     let ability = actor.active_ability.clone();
+    let execute_order_initialising = actor.execute_order_initialising;
     let listen_phase = actor.listen_phase;
     let receive_purse_phase = actor.receive_purse_phase;
     let kind = ability.kind.unwrap(); // safe: is_active() checked
@@ -2109,21 +2110,18 @@ pub fn tick_ability(
     // carrier's PerformAction and the carried animation synchronization
     // (`RHelementactorpc.cpp:4905-4955`).  This is deliberately initialization-
     // only and, unlike Carry initialization above, does not move the body.
-    if kind == AbilityKind::Drop && !sprite_frozen {
-        let order_id = ability.order_id.expect("active Drop ability order");
+    if kind == AbilityKind::Drop && !sprite_frozen && execute_order_initialising {
         let carrier = entities
             .get(requested_actor)
             .expect("validated Drop owner vanished before initialization");
-        if carrier.element_data().sprite.last_processed_order_id != order_id.get() {
-            let target_id = ability.target.expect("active Drop ability target");
-            let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
-            let target = entities
-                .get_mut(target_id)
-                .unwrap_or_else(|| panic!("Drop target {target_id:?} vanished at initialization"));
-            target
-                .element_data_mut()
-                .set_direction_instantly(carried_direction);
-        }
+        let target_id = ability.target.expect("active Drop ability target");
+        let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
+        let target = entities
+            .get_mut(target_id)
+            .unwrap_or_else(|| panic!("Drop target {target_id:?} vanished at initialization"));
+        target
+            .element_data_mut()
+            .set_direction_instantly(carried_direction);
     }
 
     let entity = entities
@@ -3288,6 +3286,10 @@ mod tests {
                 done_effect_applied: false,
                 strangle_initialized: false,
             };
+            carrier_entity
+                .actor_data_mut()
+                .unwrap()
+                .execute_order_initialising = true;
             let mut conversion =
                 vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
             conversion[OrderType::TransitionCarryingCorpseWaitingUpright as usize] = 0;
@@ -3300,6 +3302,13 @@ mod tests {
             script.sound_ids = vec![0, 0];
             carrier_entity.element_data_mut().sprite.scripts =
                 std::sync::Arc::new(vec![script; 16]);
+            // Loaded/translated orders can already have entered the sprite
+            // before the PC Execute arm sees mbNewOrder. The actor-owned
+            // Execute latch, not this sprite identity, is authoritative.
+            carrier_entity
+                .element_data_mut()
+                .sprite
+                .last_processed_order_id = order_id.get();
         }
 
         let sim = crate::sim_rng::test_context();
@@ -3324,6 +3333,12 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_direction_instantly(3);
+        entities
+            .get_mut(carrier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = false;
         assert!(tick_ability(&sim, &mut entities, &manager, carrier, false).is_empty());
         sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
         let body_entity = entities.get(body).unwrap();
