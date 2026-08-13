@@ -835,6 +835,7 @@ impl EngineInner {
         });
         let mutual = principal_human.opponents.first().copied() == Some(entity_id);
 
+        let mut nonmutual_gate_roll = None;
         if mutual {
             let (has_initiative, received, relative_ability) = self
                 .get_entity(entity_id)
@@ -889,10 +890,29 @@ impl EngineInner {
                 self.update_swordfight_distance(sim, assets, entity_id);
                 return;
             }
-        } else if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100)
-            >= 10
-        {
-            return;
+        } else {
+            let roll =
+                crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100);
+            nonmutual_gate_roll = Some(roll);
+            if roll >= 10 {
+                let frame = self.control.frame_counter;
+                if reactive_sword_debug_frame_matches(frame) {
+                    let creation_order = self.world.original_creation_order(entity_id);
+                    if reactive_sword_debug_creation_order_matches(creation_order) {
+                        eprintln!(
+                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_nonmutual roll={} accepted=false is_pc={} selected_pc={}]",
+                            frame,
+                            creation_order,
+                            entity_id.index(),
+                            principal_id.index(),
+                            roll,
+                            is_pc,
+                            is_pc && self.selected_pc_ids().contains(&entity_id),
+                        );
+                    }
+                }
+                return;
+            }
         }
 
         let (self_pos, self_max, selected_pc) = {
@@ -926,6 +946,24 @@ impl EngineInner {
         let dy = principal_pos.y - self_pos.y;
         let dz = principal_pos.z - self_pos.z;
         let near = self_max * self_max >= dx * dx + dy * dy + dz * dz;
+        let frame = self.control.frame_counter;
+        if reactive_sword_debug_frame_matches(frame) {
+            let creation_order = self.world.original_creation_order(entity_id);
+            if reactive_sword_debug_creation_order_matches(creation_order) {
+                eprintln!(
+                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_gate mutual={} nonmutual_roll={:?} near={} is_pc={} selected_pc={}]",
+                    frame,
+                    creation_order,
+                    entity_id.index(),
+                    principal_id.index(),
+                    mutual,
+                    nonmutual_gate_roll,
+                    near,
+                    is_pc,
+                    selected_pc,
+                );
+            }
+        }
         if !near {
             self.update_swordfight_distance(sim, assets, entity_id);
             return;
@@ -1161,8 +1199,41 @@ impl EngineInner {
             is_npc: false,
         };
 
-        let proposed =
-            crate::combat::propose_good_sword_strike(sim, &ctx, &nearby, &mut boredom, false);
+        let frame = self.control.frame_counter;
+        let debug = reactive_sword_debug_frame_matches(frame)
+            .then(|| {
+                let creation_order = self.world.original_creation_order(pc_id);
+                reactive_sword_debug_creation_order_matches(creation_order).then_some(
+                    crate::combat::SwordStrikeProposalDebug {
+                        frame,
+                        victim: pc_id.index(),
+                        victim_creation_order: creation_order,
+                        attacker: target_id.index(),
+                    },
+                )
+            })
+            .flatten();
+        let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+        let proposed = crate::combat::propose_good_sword_strike_with_debug(
+            sim,
+            &ctx,
+            &nearby,
+            &mut boredom,
+            false,
+            debug,
+        );
+        if let Some(debug) = debug {
+            eprintln!(
+                "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_evaluate rng_before={:?} rng_after={:?} result={:?}]",
+                debug.frame,
+                debug.victim_creation_order,
+                debug.victim,
+                debug.attacker,
+                rng_before,
+                self.control.rng.original_replay_cursor(),
+                proposed,
+            );
+        }
 
         // ProposeGoodSwordStrike mutates the live boredom counters while
         // evaluating candidates, even when no strike is ultimately viable.
@@ -1846,6 +1917,7 @@ impl EngineInner {
                 is_npc: false, // PC path — different skill gate
             };
 
+            let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
             let proposed = crate::combat::propose_good_sword_strike_with_debug(
                 sim,
                 &strike_ctx,
@@ -1854,6 +1926,18 @@ impl EngineInner {
                 true, // also_parade
                 debug,
             );
+            if let Some(debug) = debug {
+                eprintln!(
+                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
+                    debug.frame,
+                    debug.victim_creation_order,
+                    debug.victim,
+                    debug.attacker,
+                    rng_before,
+                    self.control.rng.original_replay_cursor(),
+                    proposed,
+                );
+            }
 
             // Write back boredom
             if let Some(entity) = self.world.entities.get_mut(victim_id)
@@ -2265,6 +2349,7 @@ impl EngineInner {
             is_npc: true,
         };
 
+        let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
         let proposed = crate::combat::propose_good_sword_strike_with_debug(
             sim,
             &strike_ctx,
@@ -2273,6 +2358,18 @@ impl EngineInner {
             true, // also_parade — this is the reactive parry path
             debug,
         );
+        if let Some(debug) = debug {
+            eprintln!(
+                "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
+                debug.frame,
+                debug.victim_creation_order,
+                debug.victim,
+                debug.attacker,
+                rng_before,
+                self.control.rng.original_replay_cursor(),
+                proposed,
+            );
+        }
 
         // Write back boredom state
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id) {

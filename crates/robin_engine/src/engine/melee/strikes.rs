@@ -2764,14 +2764,28 @@ impl EngineInner {
                     opponent_time_limit,
                 );
             }
-            let strike = match crate::combat::propose_good_sword_strike_with_debug(
+            let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+            let proposed = crate::combat::propose_good_sword_strike_with_debug(
                 sim,
                 &ctx,
                 &nearby,
                 &mut attack.boredom,
                 false,
                 debug,
-            ) {
+            );
+            if let Some(debug) = debug {
+                eprintln!(
+                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=enemy_reconsider rng_before={:?} rng_after={:?} result={:?}]",
+                    debug.frame,
+                    debug.victim_creation_order,
+                    debug.victim,
+                    debug.attacker,
+                    rng_before,
+                    self.control.rng.original_replay_cursor(),
+                    proposed,
+                );
+            }
+            let strike = match proposed {
                 Some(crate::combat::ProposedCombatAction::Strike(s)) => Some(s),
                 _ => None,
             };
