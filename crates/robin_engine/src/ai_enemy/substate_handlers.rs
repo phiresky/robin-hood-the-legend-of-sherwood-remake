@@ -5373,6 +5373,10 @@ impl EnemyAi {
             }
             StimulusType::EventMyTalk2 => {
                 self.set_state(AiState::Seeking, Substate::SeekingLookingResurrectedCharly);
+                // Original `SUBSTATE_SEEKING_SEND_CHARLY_TO_OFFICER` faces
+                // `mpFriendInTrouble` between SetState and LaunchTimer when
+                // the second speech callback completes.
+                self.base.face_entity(self.base.friend_in_trouble, ctx);
                 self.base.launch_timer(100, ctx.frame);
             }
             _ => {}
@@ -8454,6 +8458,91 @@ mod tests {
         view.ai_state = AiState::Seeking;
         view.ai_substate = substate;
         view
+    }
+
+    #[test]
+    fn send_charly_speech_completion_faces_live_friend_before_waiting() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(93);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSendCharlyToOfficer;
+        ai.base.friend_in_trouble = 94;
+
+        let mut friend = soldier_view_with_substate(94, Substate::SeekingCharlySentToOfficer);
+        friend.position = Position {
+            x: 200.0,
+            y: 100.0,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(94, friend);
+        let ctx = AiContext {
+            frame: 12_391,
+            position: Position {
+                x: 100.0,
+                y: 100.0,
+                ..Position::default()
+            },
+            direction: 12,
+            self_action_state: crate::element::ActionState::Waiting,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventMyTalk2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingLookingResurrectedCharly
+        );
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 12_491);
+        let [turn] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("live Charly must receive the authored Face turn");
+        };
+        assert_eq!(turn.order_type, crate::order::OrderType::Turning);
+        assert_eq!(turn.explicit_direction, Some(4));
+    }
+
+    #[test]
+    fn send_charly_speech_completion_without_live_friend_still_waits() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(93);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSendCharlyToOfficer;
+        ai.base.friend_in_trouble = 94;
+        let ctx = AiContext {
+            frame: 12_391,
+            direction: 12,
+            self_action_state: crate::element::ActionState::Waiting,
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventMyTalk2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingLookingResurrectedCharly
+        );
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 12_491);
+        assert!(ai.base.outbox.actor.orders.is_empty());
     }
 
     #[test]
