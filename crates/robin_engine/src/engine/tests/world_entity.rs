@@ -1838,6 +1838,61 @@ pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
 }
 
 #[test]
+fn alert_soldier_friend_append_drain_preserves_preexisting_duplicate_and_order() {
+    use crate::element::{AiBrain, Detectable, DetectableType};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let first_friend = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let second_friend = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("alerting civilian exists")
+    else {
+        panic!("alerting civilian changed kind")
+    };
+    civilian.npc.ai_brain = AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(
+        civilian_id.index(),
+    )));
+    civilian.npc.detectable_lists[DetectableType::Friend as usize].push(Detectable {
+        element: Some(first_friend),
+        detectable_type: DetectableType::Friend,
+        ..Default::default()
+    });
+    let ai = civilian
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("alerting civilian has AI");
+    ai.owner_entity_id = Some(civilian_id);
+    // This is the exact duplicate-preserving lane used by AlertSoldier's
+    // direct retail AddDetectable calls.
+    ai.outbox.actor.append_detectables.extend([
+        (first_friend, DetectableType::Friend),
+        (second_friend, DetectableType::Friend),
+    ]);
+
+    engine.drain_pending_for_npc(&sim, civilian_id, &LevelAssets::default());
+
+    let friends = &engine
+        .get_entity(civilian_id)
+        .expect("alerting civilian remains live")
+        .npc_data()
+        .expect("alerting civilian retains NPC data")
+        .detectable_lists[DetectableType::Friend as usize];
+    assert_eq!(
+        friends
+            .iter()
+            .map(|detectable| detectable.element)
+            .collect::<Vec<_>>(),
+        vec![Some(first_friend), Some(first_friend), Some(second_friend)],
+        "the existing friend must be duplicated and the AlertSoldier registry order retained"
+    );
+}
+
+#[test]
 fn original_pc_registry_is_independent_from_portrait_priority_order() {
     let mut engine = EngineInner::new();
     let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));

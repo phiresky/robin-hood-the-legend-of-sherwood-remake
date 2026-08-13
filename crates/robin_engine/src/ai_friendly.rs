@@ -1857,7 +1857,7 @@ impl FriendlyAi {
         const OO: u32 = u32::MAX;
 
         let mut best: Option<(NpcHandle, u32, Position)> = None;
-        let mut detectables_to_add: Vec<(
+        let mut detectables_to_append: Vec<(
             crate::element::EntityId,
             crate::element::DetectableType,
         )> = Vec::new();
@@ -1889,7 +1889,7 @@ impl FriendlyAi {
             // a friend-detectable so the follow-up "someone alerted
             // me" checks later find it.
             if !check_door_path {
-                detectables_to_add.push((
+                detectables_to_append.push((
                     crate::element::EntityId::Soldier(crate::entity_id::SoldierId(handle)),
                     crate::element::DetectableType::Friend,
                 ));
@@ -2044,14 +2044,17 @@ impl FriendlyAi {
             }
         }
 
-        // Queue the friend-detectable adds we accumulated above.
+        // Queue the friend-detectable adds we accumulated above. Original
+        // calls AddDetectable directly here: its uniqueness check is an
+        // assert, so the retail build appends even when the friend is already
+        // present. Keep these calls on the duplicate-preserving lane.
         // Done here (not inline) so the early-return above doesn't
         // add detectables we're about to drop.
         self.base
             .outbox
             .actor
-            .add_detectables
-            .extend(detectables_to_add);
+            .append_detectables
+            .extend(detectables_to_append);
 
         let Some((target_handle, _, target_pos)) = best else {
             // No candidate found — clear friend list and give up.
@@ -3657,7 +3660,7 @@ mod tests {
                 .as_ref()
                 .expect("friend detectables must precede the Friendly state callback");
             let friends: Vec<_> = effects
-                .add_detectables
+                .append_detectables
                 .iter()
                 .filter(|(_, t)| *t == DetectableType::Friend)
                 .map(|(entity, _)| entity.index())
