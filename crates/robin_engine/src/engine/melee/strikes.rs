@@ -25,6 +25,43 @@ fn strike_effect_debug_matches(
         && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_VICTIM_CREATION_ORDER")
             .is_none_or(|expected| expected == victim_creation_order)
 }
+
+fn special_strike_lifecycle_debug_matches(frame: u32, owner: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_SPECIAL_STRIKE_LIFECYCLE").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for special-strike diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_FRAME").is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_OWNER_HANDLE")
+            .is_none_or(|expected| expected == owner)
+}
+
+fn special_strike_selected_snapshot(
+    manager: &crate::sequence::SequenceManager,
+    owner: EntityId,
+) -> String {
+    let selected = manager.current_element_for_actor(owner);
+    let element = selected.and_then(|(sequence, index)| {
+        manager.get_element(sequence, index).map(|element| {
+            (
+                sequence,
+                index,
+                element.command,
+                element.state,
+                element.priority,
+                element.cross_postponed,
+                element.orders.len(),
+            )
+        })
+    });
+    format!("{element:?}")
+}
 use crate::combat::{self};
 use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::profiles::WeaponThrustKind;
@@ -2465,6 +2502,27 @@ impl EngineInner {
                     .then_some(EntityId::from(npc_id))
             })
             .collect();
+        for &owner in &pending_considerations {
+            if special_strike_lifecycle_debug_matches(current_frame, owner.index()) {
+                let ai = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .unwrap_or_else(|| panic!("special-strike owner {owner:?} lost Enemy AI"));
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=authorization_consumed pending_consideration={} pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    owner.index(),
+                    ai.pending_sword_strike_consideration,
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(&self.orders.sequence_manager, owner),
+                );
+            }
+        }
 
         // Collect pending attacks
         struct PendingAttack {
@@ -2596,6 +2654,20 @@ impl EngineInner {
         // elements as Interaction(1, command, this,
         // principal_opponent).
         for mut attack in attacks {
+            let special_debug =
+                special_strike_lifecycle_debug_matches(current_frame, attack.soldier_id.index());
+            if special_debug {
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=before_proposal target={} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    attack.target_id.index(),
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
             let distance =
                 entity_distance(&self.world.entities, attack.soldier_id, attack.target_id);
 
@@ -2773,6 +2845,18 @@ impl EngineInner {
                 false,
                 debug,
             );
+            if special_debug {
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_proposal result={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    proposed,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
             if let Some(debug) = debug {
                 eprintln!(
                     "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=enemy_reconsider rng_before={:?} rng_after={:?} result={:?}]",
@@ -2842,6 +2926,21 @@ impl EngineInner {
                 0
             };
 
+            if special_debug {
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=before_begin strike={:?} command={:?} wait_time={} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    strike,
+                    command,
+                    wait_time,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
+
             // Flag the pending special strike and cancel movement so
             // the soldier stands still during the delay.
             // `begin_special_strike` sets the lifecycle latch and enters the
@@ -2854,9 +2953,51 @@ impl EngineInner {
                 ai.begin_special_strike();
                 ai.base.stop_all();
             }
+            if special_debug {
+                let ai = self
+                    .world
+                    .entities
+                    .get(attack.soldier_id)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .expect("special-strike owner lost Enemy AI after begin");
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_begin pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
             self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
             self.apply_pending_ai_halt(attack.soldier_id);
             self.dispatch_condolations_for_owner_boundary(sim, attack.soldier_id, assets);
+            if special_debug {
+                let ai = self
+                    .world
+                    .entities
+                    .get(attack.soldier_id)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .expect("special-strike owner lost Enemy AI after drain");
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_begin_drain pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
 
             // War-cry remarks for thrusts C/F/G/H/I.  Placed after
             // the state-set + stop-all so the say-order is correct.
@@ -2908,6 +3049,28 @@ impl EngineInner {
             seq.append_element(strike_elem);
 
             self.launch_sequence(seq);
+
+            if special_debug {
+                let ai = self
+                    .world
+                    .entities
+                    .get(attack.soldier_id)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .expect("special-strike owner lost Enemy AI after launch");
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_launch pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
 
             tracing::debug!(
                 soldier = ?attack.soldier_id,
