@@ -682,7 +682,13 @@ impl EnemyAi {
                                 return false;
                             }
                             self.base.antagonist = civilian;
-                            self.base.stop_all();
+                            // Original CALL_ALERT's civilian arm calls the actor's
+                            // `Halt()` directly, not AI `StopAll()`.  The actor work
+                            // must be interrupted before the state callback, while an
+                            // in-flight waypoint macro and its macro timer survive.
+                            // See RHartificialmalignity.cpp, ThinkUnexpectedEvent's
+                            // CALL_ALERT / civilian branch.
+                            self.base.outbox.actor.queue_halt();
                             self.base.face_entity(civilian, ctx);
                             self.set_state(
                                 AiState::Seeking,
@@ -3821,6 +3827,67 @@ mod tests {
             ai.base.current_substate,
             Substate::SeekingGroupCalledByOfficer
         );
+    }
+
+    #[test]
+    fn civilian_call_alert_halts_actor_without_breaking_running_macro() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(44);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultInMacro;
+        ai.base.macro_in_progress = true;
+        ai.base.macro_timer_is_running = true;
+        ai.base.when_does_macro_timer_ring = 10_054;
+
+        let mut civilian = object_view(ObjectType::None);
+        civilian.kind = EntityKind::Civilian;
+        civilian.position = Position {
+            x: 100.0,
+            y: 20.0,
+            sector: None,
+            level: 0,
+        };
+        let mut views = AiEntityViewMap::new();
+        views.insert(91, civilian);
+        let ctx = AiContext {
+            frame: 9_768,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let accepted = ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::CallAlert, 91),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(accepted);
+        let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                crate::ai::AiOwnerWork::StateChange(notification)
+                    if notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .is_some_and(|effects| effects.halt)
+            )
+        });
+        assert!(halted_before_state_change);
+        assert!(ai.base.macro_in_progress);
+        assert!(ai.base.macro_timer_is_running);
+        assert_eq!(ai.base.when_does_macro_timer_ring, 10_054);
+        assert_eq!(ai.base.antagonist, 91);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingWaitForAlertingCivilian
+        );
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 9_788);
     }
 
     #[test]
