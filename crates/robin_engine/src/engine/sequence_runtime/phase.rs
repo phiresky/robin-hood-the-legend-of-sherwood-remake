@@ -321,9 +321,12 @@ impl EngineInner {
                     ) {
                         // Original resumes Translate after RefreshSeek's
                         // no-order return, rewrites SEEK to MOVE, and then
-                        // Instruct immediately terminates the empty element.
-                        // That selected MOVE condolence is authoritative for
-                        // NPC EventReachPoint (notably return-to-post facing).
+                        // Actor::Instruct publishes IN_PROGRESS before it
+                        // discovers the empty order list. It clears
+                        // mpSequenceElement before SetState(TERMINATED), so
+                        // this element's condolence must not erase the goal
+                        // retained from the movement it replaced
+                        // (`RHelementactor.cpp:965-990,3150-3182,6217-6241`).
                         if let Some(element) = self
                             .orders
                             .sequence_manager
@@ -337,6 +340,14 @@ impl EngineInner {
                             })
                         {
                             element.command = Command::Move;
+                            self.world
+                                .entities
+                                .get_mut(owner)
+                                .and_then(Entity::actor_data_mut)
+                                .expect("accepted empty building Seek lost its actor")
+                                .continuation
+                                .motion_state = crate::sprite::MotionState::InProgress;
+                            self.orders.sequence_manager.set_translating_element(None);
                             self.orders
                                 .sequence_manager
                                 .element_terminated(sequence_id, element_index);

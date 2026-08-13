@@ -1595,6 +1595,152 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
     );
 }
 
+#[test]
+fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_empty() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    install_test_building_sector(&mut engine, 42);
+    let owner = engine.add_entity(make_test_civilian(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let retained_goal = MapPoint::new(1137.9464, 490.93048);
+    for entity in [owner, target] {
+        engine
+            .get_entity_mut(entity)
+            .unwrap()
+            .element_data_mut()
+            .set_sector(SectorHandle::new(42));
+    }
+
+    let mut outgoing =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
+    outgoing.priority = SequencePriority::Normal;
+    outgoing.orders.push_back(Order::new(
+        OrderType::RunningUpright,
+        retained_goal.x,
+        retained_goal.y,
+        engine.orders.allocate_order_id(),
+    ));
+    let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(outgoing_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.position_iface_mut().set_map_goal(retained_goal);
+        let actor = entity.actor_data_mut().unwrap();
+        actor.active_movement = ActiveMovement::new(outgoing_sequence, 0);
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut seek =
+        SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::RunningUpright);
+    seek.priority = SequencePriority::Normal;
+    if let SequenceElementData::Movement { element, .. } = &mut seek.data {
+        *element = Some(target);
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let seek_sequence = engine.orders.sequence_manager.launch_element(seek);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let outgoing = engine
+        .orders
+        .sequence_manager
+        .get_element(outgoing_sequence, 0)
+        .expect("replaced movement remains inspectable");
+    assert_eq!(outgoing.state, SequenceState::Interrupted);
+    let seek = engine
+        .orders
+        .sequence_manager
+        .get_element(seek_sequence, 0)
+        .expect("empty building Seek remains inspectable");
+    assert_eq!(seek.command, Command::Move);
+    assert_eq!(seek.state, SequenceState::Terminated);
+    assert!(seek.orders.is_empty());
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(entity.position_iface().map_goal(), retained_goal);
+    assert_eq!(
+        entity.actor_data().unwrap().continuation.motion_state,
+        MotionState::InProgress
+    );
+}
+
+#[test]
+fn different_building_rewritten_seek_keeps_its_refresh_order() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
+
+    let mut engine = EngineInner::new();
+    install_test_building_sector(&mut engine, 42);
+    {
+        let mut level = (*engine.world.fast_grid.level).clone();
+        let mut other_building = level.sectors[0].clone();
+        other_building.sector_number = crate::sector::SectorNumber::new(43);
+        level
+            .sector_number_map
+            .insert(other_building.sector_number, 1);
+        level.sectors.push(other_building);
+        engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
+    }
+    let owner = engine.add_entity(make_test_civilian(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_sector(SectorHandle::new(42));
+    engine
+        .get_entity_mut(target)
+        .unwrap()
+        .element_data_mut()
+        .set_sector(SectorHandle::new(43));
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RunningUpright);
+    if let SequenceElementData::Movement { flags, element, .. } = &mut movement.data {
+        *flags = MoveFlags::SEEK;
+        *element = Some(target);
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("rewritten Seek remains inspectable");
+    assert_eq!(movement.state, SequenceState::InProgress);
+    assert_eq!(movement.orders.len(), 1);
+    assert_eq!(
+        movement.current_order().map(|order| order.order_type),
+        Some(OrderType::RefreshingSeek)
+    );
+}
+
 fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
     stale_sprite_motion: crate::sprite::MotionState,
 ) {
