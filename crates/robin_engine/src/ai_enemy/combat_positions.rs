@@ -2593,11 +2593,20 @@ impl EnemyAi {
                     tick,
                 );
             } else {
-                // SetDirectionInstantly to the missed-PC direction with
-                // the isometric Y-stretch via `vec_to_sector` so the
-                // snapped direction matches the AI's face target.
-                let dx = self.base.seek_position.x - ctx.position.x;
-                let dy = self.base.seek_position.y - ctx.position.y;
+                // ForecastDestinationForIA above only populates the retained
+                // seek center. Original aims this immediate snap at the
+                // missed actor's current `Position`, not that forecast.
+                let missed_position = ctx
+                    .entity_view(self.missed_pc)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "lost-enemy overview owner {} is missing current position for target {}",
+                            self.base.me, self.missed_pc
+                        )
+                    })
+                    .position;
+                let dx = missed_position.x - ctx.position.x;
+                let dy = missed_position.y - ctx.position.y;
                 let dir = vec_to_sector(dx, dy);
                 self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
                 self.get_battle_overview(0, ctx, tick);
@@ -4202,6 +4211,113 @@ mod tests {
             &refreshed_primary.position,
             "a refreshed principal opponent must not inherit the old target's live geometry"
         );
+    }
+
+    fn lost_enemy_reconsider_fixture(company_number: u16) -> (EnemyAi, AiContext, AiPerTickData) {
+        const OWNER: u32 = 21;
+        const TARGET: u32 = 20;
+
+        let target = crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        let mut target_view = crate::ai_entity_view::entity_view_from_entity(
+            &target,
+            51,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        target_view.position = position(100.0, 0.0);
+        target_view.camp = crate::element::Camp::Royalists;
+        target_view.active = false;
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(TARGET, target_view);
+        let ctx = AiContext {
+            position: position(0.0, 0.0),
+            self_is_active: true,
+            camp: crate::element::Camp::Lacklandists,
+            is_swordfighting: true,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: OWNER,
+            principal_opponent: TARGET,
+            is_friendly: true,
+            ..FighterSnapshot::default()
+        });
+        tick.primary_target_is_pc = true;
+        tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
+            position(0.0, 100.0),
+            4,
+        ));
+
+        let mut ai = EnemyAi::new(OWNER);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
+        ai.base.primary_target = TARGET;
+        ai.company_number = company_number;
+        (ai, ctx, tick)
+    }
+
+    #[test]
+    fn lost_enemy_overview_faces_live_target_not_forecast_destination() {
+        // randomguy Profile_004/Savegame_030 replay-014 frame 3456:
+        // Original forecasts the missed PC for possible pursuit, but the
+        // no-follow branch snaps Soldier 21 toward the PC's current Position.
+        let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(100);
+        let sim = SimulationContext::with_seed(0);
+        ai.reconsider_swordfight(
+            &sim,
+            false,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.seek_position, position(0.0, 100.0));
+        assert_eq!(vec_to_sector(100.0, 0.0), 4);
+        assert_eq!(vec_to_sector(0.0, 100.0), 8);
+        let crate::ai::AiOwnerWork::ActorEffects(direction_prefix) =
+            &ai.base.outbox.reentrant.owner_work[0]
+        else {
+            panic!("direction snap must precede GetBattleOverview's StopAll barrier")
+        };
+        assert_eq!(direction_prefix.set_direction_instantly, Some(4));
+        assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+    }
+
+    #[test]
+    fn lost_enemy_follow_path_keeps_forecast_as_seek_center_without_direction_snap() {
+        let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(0);
+        let sim = SimulationContext::with_seed(0);
+        ai.reconsider_swordfight(
+            &sim,
+            false,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
+        assert_eq!(ai.seek_center, position(0.0, 100.0));
+        assert_eq!(ai.base.current_state, AiState::Seeking);
     }
 
     #[test]
