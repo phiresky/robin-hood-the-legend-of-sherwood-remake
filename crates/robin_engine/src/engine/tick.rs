@@ -16,6 +16,47 @@ use crate::game_operation::GameCode;
 use crate::messenger::{MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
+/// Strict opt-in gate for the Drop Execute-boundary diagnostic.
+fn drop_owner_boundary_matches(frame: u32, owner: EntityId) -> bool {
+    if std::env::var_os("PARITY_DEBUG_DROP_BOUNDARY").is_none() {
+        return false;
+    }
+    let owner_filter = std::env::var("PARITY_DEBUG_DROP_OWNER").unwrap_or_else(|_| {
+        panic!("PARITY_DEBUG_DROP_BOUNDARY requires PARITY_DEBUG_DROP_OWNER=pc:INDEX")
+    });
+    let (kind, index) = owner_filter
+        .split_once(':')
+        .unwrap_or_else(|| panic!("PARITY_DEBUG_DROP_OWNER must look like pc:INDEX"));
+    assert_eq!(kind, "pc", "PARITY_DEBUG_DROP_OWNER only accepts PC owners");
+    let index = index.parse::<u32>().unwrap_or_else(|error| {
+        panic!("invalid PARITY_DEBUG_DROP_OWNER={owner_filter:?}: {error}")
+    });
+    if !matches!(owner, EntityId::Pc(_)) || owner.index() != index {
+        return false;
+    }
+    let parse_frame = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for Drop boundary diagnostic: {error}")
+            })
+        })
+    };
+    if let Some(exact) = parse_frame("PARITY_DEBUG_DROP_FRAME") {
+        return frame == exact;
+    }
+    let from = parse_frame("PARITY_DEBUG_DROP_FROM").unwrap_or_else(|| {
+        panic!(
+            "PARITY_DEBUG_DROP_BOUNDARY requires PARITY_DEBUG_DROP_FRAME or PARITY_DEBUG_DROP_FROM"
+        )
+    });
+    let until = parse_frame("PARITY_DEBUG_DROP_UNTIL").unwrap_or(from);
+    assert!(
+        from <= until,
+        "PARITY_DEBUG_DROP_FROM must not exceed PARITY_DEBUG_DROP_UNTIL"
+    );
+    (from..=until).contains(&frame)
+}
+
 #[cfg(test)]
 thread_local! {
     static PROJECTILE_DERIVED_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, crate::element::ObjectType)>>> =
@@ -1793,6 +1834,46 @@ impl Drop for HourglassTimer {
 }
 
 impl EngineInner {
+    /// Expose the exact actor/sprite/sequence identities around the PC Drop
+    /// Execute boundary without changing any authoritative state.
+    fn debug_drop_owner_boundary(
+        &self,
+        phase: &'static str,
+        owner: EntityId,
+        selected_order: Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
+    ) {
+        let frame = self.control.frame_counter;
+        if !drop_owner_boundary_matches(frame, owner) {
+            return;
+        }
+        let entity = self
+            .world
+            .entities
+            .get(owner)
+            .unwrap_or_else(|| panic!("Drop boundary owner {owner:?} disappeared"));
+        let actor = entity
+            .actor_data()
+            .unwrap_or_else(|| panic!("Drop boundary owner {owner:?} is not an actor"));
+        let ability = &actor.active_ability;
+        let selected_state = selected_order.and_then(|(seq, elem, _)| {
+            self.orders
+                .sequence_manager
+                .get_element(seq, elem)
+                .map(|element| element.state)
+        });
+        eprintln!(
+            "DROPBOUND frame={frame} phase={phase} owner={owner:?} execute_initialising={} active_kind={:?} active_seq={:?} active_elem={} active_order={:?} selected={selected_order:?} selected_state={selected_state:?} installed={:?} actor_last_execute={:?} sprite_last_processed={} sprite_action={:?}",
+            actor.execute_order_initialising,
+            ability.kind,
+            ability.sequence_id,
+            ability.element_index,
+            ability.order_id,
+            actor.installed_order,
+            actor.last_execute_order_id,
+            entity.element_data().sprite.last_processed_order_id,
+            entity.element_data().sprite.last_action,
+        );
+    }
     // ─── Main update tick ────────────────────────────────────────
 
     /// The main per-frame logic update.
@@ -3937,6 +4018,11 @@ impl EngineInner {
                                 actor.last_execute_order_id != Some(order_id);
                             actor.last_execute_order_id = Some(order_id);
                         }
+                        self.debug_drop_owner_boundary(
+                            "execute_latch_published",
+                            entity_id,
+                            selected_order,
+                        );
                         // Human/PC validity belongs to the live Execute entry,
                         // after Actor::Hourglass has established mbNewOrder for
                         // this exact selected order. Earlier actor callbacks may
@@ -4068,6 +4154,11 @@ impl EngineInner {
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                             entity_id,
                         ));
+                        self.debug_drop_owner_boundary(
+                            "tick_ability_entry",
+                            entity_id,
+                            selected_order,
+                        );
                         let explicit_execute_motion = execute_owner_arm(
                             self,
                             entity_id,
@@ -4488,6 +4579,11 @@ impl EngineInner {
                         {
                             actor.execute_order_initialising = false;
                         }
+                        self.debug_drop_owner_boundary(
+                            "execute_latch_cleared",
+                            entity_id,
+                            selected_order,
+                        );
 
                         // Human::SetPosture updates intersecting-corpse state
                         // synchronously in Original. Close the owner-local
