@@ -2765,6 +2765,11 @@ impl EnemyAi {
         // Re-focus (redundant but mirrored for parity).
         self.base.outbox.actor.set_focus(working_target);
 
+        // Only a StateChange appended by the approach selected below may own
+        // this GoNear prefix. An older matching notification can legitimately
+        // still be queued by a recursive caller.
+        let owner_work_before_approach = self.base.outbox.reentrant.owner_work.len();
+
         // Not below run distance: charge or run.
         if !b_below_run_distance {
             if b_charge {
@@ -2874,27 +2879,48 @@ impl EnemyAi {
                 .reentrant
                 .owner_work
                 .iter()
-                .rposition(|work| {
+                .enumerate()
+                .skip(owner_work_before_approach)
+                .rev()
+                .find_map(|(index, work)| {
                     matches!(
                         work,
                         crate::ai::AiOwnerWork::StateChange(notification)
                             if notification.incoming_state == self.base.current_state
                                 && notification.incoming_substate == self.base.current_substate
                     )
-                })
-                .expect("reconsider approach SetState lost its owner-work notification");
-            let route_effects = match &mut self.base.outbox.reentrant.owner_work[state_change_index]
-            {
-                crate::ai::AiOwnerWork::StateChange(notification) => notification
-                    .actor_effects_before_callback
-                    .take()
-                    .expect("reconsider approach GoNear was not captured before SetState"),
-                _ => unreachable!(),
-            };
-            self.base.outbox.reentrant.owner_work.insert(
-                state_change_index,
-                crate::ai::AiOwnerWork::ActorEffects(route_effects),
-            );
+                    .then_some(index)
+                });
+            if let Some(state_change_index) = state_change_index {
+                let route_effects =
+                    match &mut self.base.outbox.reentrant.owner_work[state_change_index] {
+                        crate::ai::AiOwnerWork::StateChange(notification) => notification
+                            .actor_effects_before_callback
+                            .take()
+                            .expect("reconsider approach GoNear was not captured before SetState"),
+                        _ => unreachable!(),
+                    };
+                self.base.outbox.reentrant.owner_work.insert(
+                    state_change_index,
+                    crate::ai::AiOwnerWork::ActorEffects(route_effects),
+                );
+            } else {
+                // SetState deliberately omits FilterAIEvent when the selected
+                // substate is unchanged. GoNear therefore remains in the live
+                // actor outbox, but Original still constructs it synchronously
+                // before testing mbCouldntReachpoint.
+                assert!(
+                    self.base.outbox.actor.has_boundary_work(),
+                    "reconsider approach same-substate GoNear lost its actor effects"
+                );
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                        &mut self.base.outbox.actor,
+                    )));
+            }
             // SetState's virtual attentive-mode tail also precedes the return
             // to `mbCouldntReachpoint`.
             if self.base.outbox.actor.has_boundary_work() {
@@ -4258,6 +4284,95 @@ mod tests {
                 } if *queued_target == target_position
             )
         }));
+    }
+
+    #[test]
+    fn reconsider_approach_same_substate_seals_live_move_without_stealing_old_callback() {
+        let mut ai = EnemyAi::new(180);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.primary_target = 198;
+        ai.base.think_recursion_depth = 1;
+        ai.sword_range = 50;
+        ai.base
+            .outbox
+            .reentrant
+            .owner_work
+            .push(crate::ai::AiOwnerWork::StateChange(
+                crate::ai::AiStateChangeNotification {
+                    outgoing_state: AiState::Attacking,
+                    outgoing_substate: Substate::AttackingTooProudToAttackApproach,
+                    incoming_state: AiState::Attacking,
+                    incoming_substate: Substate::AttackingRunningToEnemy,
+                    source: crate::ai::AiStateChangeSource::from_optional_human(198),
+                    actor_effects_before_callback: None,
+                },
+            ));
+
+        let target_position = Position {
+            x: 1731.4956,
+            y: 2379.8796,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            position: Position {
+                x: 1773.7925,
+                y: 2523.631,
+                ..Position::default()
+            },
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 198;
+        tick.primary_target_position = Some(target_position);
+
+        ai.reconsider_enemy_approach(true, 0.0, &ctx, &tick, None);
+
+        let work = &ai.base.outbox.reentrant.owner_work;
+        let crate::ai::AiOwnerWork::StateChange(old_notification) = &work[0] else {
+            panic!("older matching callback must retain its owner slot")
+        };
+        assert!(old_notification.actor_effects_before_callback.is_none());
+        assert_eq!(
+            work.iter()
+                .filter(|work| matches!(work, crate::ai::AiOwnerWork::StateChange(_)))
+                .count(),
+            1,
+            "same-substate SetState must not manufacture a callback"
+        );
+        let actor_effects_index = work
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(index, work)| match work {
+                crate::ai::AiOwnerWork::ActorEffects(effects)
+                    if effects.orders.iter().any(|order| {
+                        order.order_type == crate::order::OrderType::RunningUpright
+                            && order.tolerance == 50.0
+                    }) =>
+                {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .expect("same-substate GoNear must become real actor owner work");
+        let resume_index = work
+            .iter()
+            .position(|work| {
+                matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear { .. }
+                )
+            })
+            .expect("route completion must resume the source statement");
+        assert!(actor_effects_index < resume_index);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .reconsider_approach_completion_pending
+        );
     }
 
     #[test]
