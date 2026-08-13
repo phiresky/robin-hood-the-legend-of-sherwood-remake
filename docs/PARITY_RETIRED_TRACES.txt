@@ -201,3 +201,6 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003
 # DelayedSoundTimer from gameplay/replay RNG (docs/RNG_AUDIT.md). This trace's
 # first independent frontier is exactly two such sound-restart draws.
 parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/QuickSave/replay-012-session-0001.jsonl.zst
+# Corpus integrity: capture ends at ordinary frame 85815 with no rng_suffix
+# terminator despite a completion marker; retire pending clean recapture.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/ExQuickSave/replay-006-session-0001.jsonl.zst
