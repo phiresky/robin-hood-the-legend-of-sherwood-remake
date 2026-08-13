@@ -2791,6 +2791,50 @@ impl EnemyAi {
                 ctx,
             );
         } else {
+            // Original GoNear constructs its route before control reaches the
+            // following SetState and the `mbCouldntReachpoint` test
+            // (RHartificialmalignity.cpp:6888-6910). SetState captures that
+            // actor prefix for its callback barrier; lift it into an explicit
+            // earlier owner boundary so route construction is not deferred
+            // with ordinary sequence instruction.
+            let state_change_index = self
+                .base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .rposition(|work| {
+                    matches!(
+                        work,
+                        crate::ai::AiOwnerWork::StateChange(notification)
+                            if notification.incoming_state == self.base.current_state
+                                && notification.incoming_substate == self.base.current_substate
+                    )
+                })
+                .expect("reconsider approach SetState lost its owner-work notification");
+            let route_effects = match &mut self.base.outbox.reentrant.owner_work[state_change_index]
+            {
+                crate::ai::AiOwnerWork::StateChange(notification) => notification
+                    .actor_effects_before_callback
+                    .take()
+                    .expect("reconsider approach GoNear was not captured before SetState"),
+                _ => unreachable!(),
+            };
+            self.base.outbox.reentrant.owner_work.insert(
+                state_change_index,
+                crate::ai::AiOwnerWork::ActorEffects(route_effects),
+            );
+            // SetState's virtual attentive-mode tail also precedes the return
+            // to `mbCouldntReachpoint`.
+            if self.base.outbox.actor.has_boundary_work() {
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                        &mut self.base.outbox.actor,
+                    )));
+            }
             self.base
                 .outbox
                 .reentrant
@@ -4034,6 +4078,7 @@ mod tests {
                         .actor_effects_before_callback
                         .as_ref()
                         .and_then(|effects| effects.orders.first()),
+                    crate::ai::AiOwnerWork::ActorEffects(effects) => effects.orders.first(),
                     _ => None,
                 })
         });
@@ -4087,10 +4132,30 @@ mod tests {
                 _ => None,
             })
             .expect("running approach must queue its state-change callback");
-        let prefix = transition
-            .actor_effects_before_callback
-            .as_ref()
-            .expect("GoNear must be visible before the state-change callback");
+        assert!(transition.actor_effects_before_callback.is_none());
+        let work = &ai.base.outbox.reentrant.owner_work;
+        let actor_effects_index = work
+            .iter()
+            .position(|work| matches!(work, crate::ai::AiOwnerWork::ActorEffects(_)))
+            .expect("GoNear must be sealed as an actor-effects owner boundary");
+        let resume_index = work
+            .iter()
+            .position(|work| {
+                matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear { .. }
+                )
+            })
+            .expect("failed-route continuation must remain queued");
+        assert!(actor_effects_index < resume_index);
+        let state_change_index = work
+            .iter()
+            .position(|work| matches!(work, crate::ai::AiOwnerWork::StateChange(_)))
+            .expect("approach SetState remains queued after its route prefix");
+        assert!(actor_effects_index < state_change_index);
+        let crate::ai::AiOwnerWork::ActorEffects(prefix) = &work[actor_effects_index] else {
+            unreachable!()
+        };
         assert_eq!(prefix.orders.len(), 1);
         assert_eq!(
             prefix.orders[0].order_type,
@@ -4098,13 +4163,14 @@ mod tests {
         );
         assert_eq!(prefix.orders[0].tolerance, 50.0);
         assert!(ai.base.outbox.actor.orders.is_empty());
-        assert_eq!(
-            ai.base
-                .outbox
-                .actor
-                .set_attentive_mode
-                .map(|effect| effect.target),
-            Some(true)
+        assert!(
+            work[state_change_index + 1..resume_index]
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ActorEffects(effects)
+                        if effects.set_attentive_mode.map(|effect| effect.target) == Some(true)
+                ))
         );
         assert!(
             ai.base

@@ -3084,6 +3084,195 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
 }
 
 #[test]
+fn reconsider_approach_route_settles_before_roof_wait_resume() {
+    use crate::ai::{AiContext, AiOwnerWork, AiState, GotoFlags, Position, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::gate::{Door, GateType};
+    use crate::sector::SectorNumber;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "reconsider_approach_owner_boundary_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission exposes the installed test jump"),
+    );
+
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner_position = Position {
+        x: 0.0,
+        y: 0.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    let target_position = Position {
+        x: 100.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(2),
+        level: 1,
+    };
+    for (id, position) in [(owner_id, owner_position), (target_id, target_position)] {
+        let entity = engine.get_entity_mut(id).expect("approach actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(position.x, position.y));
+        entity.element_data_mut().set_sector(position.sector);
+        entity.element_data_mut().set_layer(position.level);
+    }
+    engine
+        .get_entity_mut(target_id)
+        .and_then(Entity::pc_data_mut)
+        .expect("target is a PC")
+        .has_jump = true;
+    engine.script_domains.interactables.doors = vec![Door {
+        gate_type: GateType::Jump,
+        sector_out: SectorNumber::new(1),
+        sector_in: SectorNumber::new(2),
+        point_out: MapPoint::new(50.0, 100.0),
+        point_in: MapPoint::new(50.0, 150.0),
+        layer_out: 0,
+        layer_in: 1,
+        ..Door::default()
+    }];
+
+    let ctx = AiContext {
+        position: owner_position,
+        ..AiContext::default()
+    };
+    let ai = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("owner has Enemy AI");
+    ai.base.me = owner_id.index();
+    ai.base.primary_target = target_id.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingRunningToEnemy;
+    ai.base.think_recursion_depth = 1;
+    ai.base.go_near(target_position, 50, GotoFlags::RUN, &ctx);
+    let first_route = std::mem::take(&mut ai.base.outbox.actor);
+    assert_eq!(first_route.orders.len(), 1);
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ActorEffects(first_route));
+    ai.base
+        .outbox
+        .reentrant
+        .reconsider_approach_completion_pending = true;
+    ai.base.outbox.reentrant.owner_work.push(
+        AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
+            target: target_id.index(),
+            target_position,
+        },
+    );
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner_id);
+
+    let ai = engine
+        .get_entity(owner_id)
+        .and_then(Entity::enemy_ai)
+        .expect("owner retains Enemy AI");
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::AttackingRunToAvengerOnRoof
+    );
+    assert_eq!(ai.base.last_goto_destination.x, 50.0);
+    assert_eq!(ai.base.last_goto_destination.y, 100.0);
+    assert!(!ai.base.couldnt_reachpoint);
+
+    // Reachable first approaches must consume the same typed tail without
+    // entering the roof-wait branch.
+    let reachable_owner =
+        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let reachable_target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let reachable_owner_position = Position {
+        x: 200.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    let reachable_target_position = Position {
+        x: 300.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    for (id, position) in [
+        (reachable_owner, reachable_owner_position),
+        (reachable_target, reachable_target_position),
+    ] {
+        let entity = engine.get_entity_mut(id).expect("reachable actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(position.x, position.y));
+        entity.element_data_mut().set_sector(position.sector);
+        entity.element_data_mut().set_layer(position.level);
+    }
+    let reachable_ctx = AiContext {
+        position: reachable_owner_position,
+        ..AiContext::default()
+    };
+    let ai = engine
+        .get_entity_mut(reachable_owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("reachable owner has Enemy AI");
+    ai.base.me = reachable_owner.index();
+    ai.base.primary_target = reachable_target.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingRunningToEnemy;
+    ai.base.think_recursion_depth = 1;
+    ai.base
+        .go_near(reachable_target_position, 5, GotoFlags::RUN, &reachable_ctx);
+    let reachable_route = std::mem::take(&mut ai.base.outbox.actor);
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ActorEffects(reachable_route));
+    ai.base
+        .outbox
+        .reentrant
+        .reconsider_approach_completion_pending = true;
+    ai.base.outbox.reentrant.owner_work.push(
+        AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
+            target: reachable_target.index(),
+            target_position: reachable_target_position,
+        },
+    );
+
+    engine.drain_ai_owner_work_for(&sim, &assets, reachable_owner);
+
+    let ai = engine
+        .get_entity(reachable_owner)
+        .and_then(Entity::enemy_ai)
+        .expect("reachable owner retains Enemy AI");
+    assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
+    assert_eq!(ai.base.last_goto_destination, reachable_target_position);
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(
+        !ai.base
+            .outbox
+            .reentrant
+            .reconsider_approach_completion_pending
+    );
+}
+
+#[test]
 fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};
