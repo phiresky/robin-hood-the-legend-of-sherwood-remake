@@ -620,6 +620,16 @@ fn climb_lift_type(action: OrderType) -> Option<crate::sector::LiftType> {
     }
 }
 
+#[inline]
+fn door_type_uses_lift_climb_direction(door_type: crate::gate::DoorType) -> bool {
+    matches!(
+        door_type,
+        crate::gate::DoorType::LiftHigh
+            | crate::gate::DoorType::LiftHighCrenel
+            | crate::gate::DoorType::LiftLow
+    )
+}
+
 fn is_fast_climb_action(action: OrderType) -> bool {
     matches!(
         action,
@@ -5995,8 +6005,9 @@ impl EngineInner {
             return;
         };
 
-        let sector_number = if let Some(door_index) = door_index {
-            self.script_domains
+        let lift_direction = if let Some(door_index) = door_index {
+            let door = self
+                .script_domains
                 .interactables
                 .doors
                 .get(usize::from(door_index))
@@ -6004,39 +6015,49 @@ impl EngineInner {
                     panic!(
                         "globally frozen climb owner {owner:?} references missing door {door_index}"
                     )
-                })
-                .sector_in
+                });
+            if !door_type_uses_lift_climb_direction(door.door_type) {
+                // Building-trap passes deliberately contain a decorative
+                // ClimbingLadderDown order even though their inside sector is
+                // a building. It skips only the lift-facing setup; the climb
+                // Execute arm still calls Turn below while sprites are frozen.
+                None
+            } else {
+                Some(door.sector_in)
+            }
         } else {
             let sector = current_sector.unwrap_or_else(|| {
                 panic!("globally frozen climb owner {owner:?} has no lift sector")
             });
-            crate::sector::SectorNumber::new(i16::from(sector))
-        };
-        let lift = self
-            .grid_sector_by_number(sector_number)
-            .unwrap_or_else(|| {
-                panic!(
-                    "globally frozen climb owner {owner:?} references missing lift sector {sector_number}"
-                )
-            });
-        assert_eq!(
-            lift.lift_type,
-            Some(expected_lift_type),
-            "globally frozen climb owner {owner:?} action {action:?} requires {expected_lift_type:?}, found {:?}",
-            lift.lift_type
-        );
-        let direction = if action == OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel {
-            (lift.lift_direction + 8) & 15
-        } else {
-            lift.lift_direction
-        };
+            Some(crate::sector::SectorNumber::new(i16::from(sector)))
+        }
+        .map(|sector_number| {
+            let lift = self
+                .grid_sector_by_number(sector_number)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "globally frozen climb owner {owner:?} references missing lift sector {sector_number}"
+                    )
+                });
+            assert_eq!(
+                lift.lift_type,
+                Some(expected_lift_type),
+                "globally frozen climb owner {owner:?} action {action:?} requires {expected_lift_type:?}, found {:?}",
+                lift.lift_type
+            );
+            if action == OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel {
+                (lift.lift_direction + 8) & 15
+            } else {
+                lift.lift_direction
+            }
+        });
         let turns = if is_fast_climb_action(action) { 2 } else { 1 };
         let entity = self
             .world
             .entities
             .get_mut(owner)
             .expect("globally frozen climb owner disappeared after canonical lookup");
-        if execute_order_initialising {
+        if execute_order_initialising && let Some(direction) = lift_direction {
             entity.element_data_mut().set_direction_goal(direction);
         }
         for _ in 0..turns {
@@ -6885,8 +6906,9 @@ impl EngineInner {
                 door_pass_climb_direction = entity
                     .actor_data()
                     .and_then(|actor| actor.active_door_pass.as_ref())
-                    .map(|dp| {
-                        self.script_domains
+                    .and_then(|dp| {
+                        let door = self
+                            .script_domains
                             .interactables
                             .doors
                             .get(usize::from(dp.door_index))
@@ -6895,8 +6917,9 @@ impl EngineInner {
                                     "door-pass climb owner {actor_id:?} references missing door {}",
                                     dp.door_index
                                 )
-                            })
-                            .sector_in
+                            });
+                        door_type_uses_lift_climb_direction(door.door_type)
+                            .then_some(door.sector_in)
                     })
                     .map(|sector_in| {
                         self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(

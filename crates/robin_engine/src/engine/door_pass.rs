@@ -3052,6 +3052,105 @@ mod tests {
     }
 
     #[test]
+    fn building_trap_decorative_ladder_down_preserves_facing_without_lift_metadata() {
+        for frozen in [false, true] {
+            let mut engine = EngineInner::new();
+            let owner = engine.add_entity(make_soldier(Some(7)));
+            let door = crate::gate::Door {
+                door_type: DoorType::BuildingTrap,
+                ..default_door()
+            };
+            engine.script_domains.interactables.doors.push(door.clone());
+
+            let (barrier, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+            assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+            assert!(
+                engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .actor_data()
+                    .unwrap()
+                    .active_door_pass
+                    .as_ref()
+                    .unwrap()
+                    .steps
+                    .iter()
+                    .any(|step| matches!(
+                        step,
+                        DoorPassStep::Walk {
+                            action: OrderType::ClimbingLadderDown,
+                            reverse: true,
+                            ..
+                        }
+                    )),
+                "the production BuildingTrap chain must supply its decorative reverse ladder row"
+            );
+
+            bind_single_animation(&mut engine, owner, OrderType::ClimbingLadderDown);
+            let order_id = engine.orders.allocate_order_id();
+            {
+                let element = engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, 0)
+                    .unwrap();
+                element.orders.clear();
+                let mut order =
+                    crate::order::Order::new(OrderType::ClimbingLadderDown, 30.0, 30.0, order_id);
+                order.reverse = true;
+                order.compute_direction = false;
+                element.orders.push_back(order);
+            }
+            {
+                let entity = engine.get_entity_mut(owner).unwrap();
+                entity
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(30.0, 30.0));
+                entity
+                    .element_data_mut()
+                    .set_sector(crate::position_interface::SectorHandle::new(8));
+                entity.element_data_mut().set_direction_instantly(7);
+                entity.element_data_mut().set_direction_goal(9);
+                let actor = entity.actor_data_mut().unwrap();
+                actor.execute_order_initialising = true;
+                actor.active_door_pass.as_mut().unwrap().current_action =
+                    OrderType::ClimbingLadderDown;
+                actor.active_door_pass.as_mut().unwrap().current_reverse = true;
+            }
+            engine.set_actors_frozen(frozen);
+
+            engine.tick_entity_movement_owner(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                owner,
+                Some(crate::engine::movement::MovementOwnerSelection {
+                    seq_id,
+                    elem_idx: 0,
+                    order_id,
+                }),
+            );
+
+            assert_eq!(
+                engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .position_iface()
+                    .get_direction_goal()
+                    .as_u8(),
+                9,
+                "a decorative BuildingTrap ladder row must not read or replace lift facing (frozen={frozen})"
+            );
+            if frozen {
+                assert_eq!(
+                    engine.get_entity(owner).unwrap().element_data().direction(),
+                    8,
+                    "FrozenAll suppresses sprite motion, not the decorative climb arm's ordinary Turn()"
+                );
+            }
+        }
+    }
+
+    #[test]
     #[should_panic(expected = "has no sector for door 0 direction resolution")]
     fn missing_actor_sector_is_an_invariant_failure() {
         let mut engine = EngineInner::new();
