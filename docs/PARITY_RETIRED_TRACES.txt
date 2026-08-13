@@ -89,6 +89,25 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_014/replay-002-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_017/replay-001-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_018/replay-001-session-0001.jsonl.zst
+# Task 244 extension: 15 additional LowerBow captures came from historical
+# Original AimWithBowAt branching on an uninitialized ShootType after
+# CanShootWithBowAt returned OUT_OF_RANGE. Frozen e2 input diagnostics prove
+# every target out of range; current Original and Rust leave bow height unchanged.
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_014/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_034/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_039/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_002/QuickSave/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_007/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_026/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_026/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_026/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_039/replay-010-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_050/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_068/replay-015-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_031/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_041/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_076/replay-014-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Savegame_036/replay-013-session-0001.jsonl.zst
 # Task 350: schema-12 selected-view rendering contaminated visibility queries.
 parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-session-0001.jsonl.zst
 # Task 488: projectile landing membership contradicts current Original source and geometry.
