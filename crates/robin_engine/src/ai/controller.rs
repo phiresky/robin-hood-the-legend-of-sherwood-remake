@@ -3134,6 +3134,24 @@ impl AiController {
         dx.max(dy) < tolerance
     }
 
+    /// Rust can still expose the outgoing move-to-wait transition in the AI
+    /// snapshot after Original's actor boundary has exposed its idle
+    /// successor. Keep this projection narrower than GoTo's ordinary
+    /// five-pixel gate: only a literal same-position request can observe it.
+    fn outgoing_wait_transition_at_exact_destination(
+        destination: &Position,
+        ctx: &AiContext,
+    ) -> bool {
+        ctx.position == *destination
+            && matches!(
+                ctx.self_animation,
+                crate::order::OrderType::TransitionWalkingUprightWaitingUpright
+                    | crate::order::OrderType::TransitionRunningUprightWaitingUpright
+                    | crate::order::OrderType::TransitionWalkingAlertedWaitingAlerted
+                    | crate::order::OrderType::TransitionRunningAlertedWaitingAlerted
+            )
+    }
+
     /// `GoNear` has a separate early-out from ordinary `GoTo`: Original
     /// compares `RHposition::SquareNorm()` with the squared near tolerance.
     /// Do not reuse the MaxNorm-based five-pixel `GoTo` gate above.
@@ -3297,6 +3315,7 @@ impl AiController {
         // into a `Think(EVENT_REACHPOINT)` re-entry. Deferred Halt effects are
         // projected through Original StopMovement by the helper above.
         let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
+            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
             || (ctx.self_animation_reached_action_done
                 && matches!(
                     ctx.self_animation,
@@ -3474,6 +3493,7 @@ impl AiController {
         // units of a newly coordinated formation point and must still book
         // the replacement walk rather than synthesize EventReachPoint.
         let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
+            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
             || matches!(
                 ctx.self_animation,
                 crate::order::OrderType::WaitingUpright

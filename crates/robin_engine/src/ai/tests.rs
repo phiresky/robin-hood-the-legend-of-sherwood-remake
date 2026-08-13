@@ -1013,10 +1013,11 @@ fn goto_pending_halt_respects_selected_injury_priority_near_route_point() {
 }
 
 #[test]
-fn goto_already_on_point_projects_completed_move_to_wait_transition() {
-    // Original Actor::Hourglass retires the terminal transition and installs
-    // its idle Wait before the later timer-driven BattleDecisions call. The
-    // Rust phase split still exposes the authored transition to AiContext.
+fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destination() {
+    // Original Actor::Hourglass exposes the idle successor before the later
+    // timer-driven BattleDecisions call. The Rust phase split can still expose
+    // the authored transition to AiContext, including the Save049 trace where
+    // the proposed archer step-back goal is the actor's exact position.
     let mut ctx =
         goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
     ctx.self_animation_reached_action_done = true;
@@ -1032,8 +1033,36 @@ fn goto_already_on_point_projects_completed_move_to_wait_transition() {
     let mut unfinished_ai = AiController::new(93);
     unfinished_ai.think_recursion_depth = 1;
     unfinished_ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
-    assert!(!unfinished_ai.already_on_point);
-    assert_eq!(unfinished_ai.take_pending_orders().len(), 1);
+    assert!(unfinished_ai.already_on_point);
+    assert!(unfinished_ai.take_pending_orders().is_empty());
+
+    // This projection is exact-position only. A nearby nonzero destination
+    // still sees the unfinished transition and must launch a real movement.
+    let nearby = Position {
+        x: ctx.position.x + 1.0,
+        ..ctx.position
+    };
+    let mut nearby_ai = AiController::new(93);
+    nearby_ai.think_recursion_depth = 1;
+    nearby_ai.go_to(nearby, GotoFlags::RUN, &ctx);
+    assert!(!nearby_ai.already_on_point);
+    assert_eq!(nearby_ai.take_pending_orders().len(), 1);
+
+    let mut speed_ai = AiController::new(93);
+    speed_ai.think_recursion_depth = 1;
+    speed_ai.go_to_speed(ctx.position, GotoFlags::RUN, 1.5, &ctx);
+    assert!(speed_ai.already_on_point);
+    assert!(speed_ai.take_pending_orders().is_empty());
+
+    // Original's close-point animation switch does not accept
+    // WaitingCrouched, so its outgoing transition must remain a real GoTo.
+    let crouched_ctx =
+        goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched);
+    let mut crouched_ai = AiController::new(93);
+    crouched_ai.think_recursion_depth = 1;
+    crouched_ai.go_to(crouched_ctx.position, GotoFlags::RUN, &crouched_ctx);
+    assert!(!crouched_ai.already_on_point);
+    assert_eq!(crouched_ai.take_pending_orders().len(), 1);
 }
 
 #[test]
