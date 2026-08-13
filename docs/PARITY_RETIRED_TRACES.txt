@@ -108,12 +108,20 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_
 parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_041/replay-008-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_076/replay-014-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Savegame_036/replay-013-session-0001.jsonl.zst
+# Task 244 extension (wave 1750): two additional historical Original captures
+# branch on uninitialized ShootType after OUT_OF_RANGE. Frozen e2 diagnostics
+# prove both targets out of range; current Original and Rust preserve bow height.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Continue/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Savegame_046/replay-001-session-0001.jsonl.zst
 # Task 350: schema-12 selected-view rendering contaminated visibility queries.
 parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-session-0001.jsonl.zst
 # Task 488: projectile landing membership contradicts current Original source and geometry.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_017/replay-013-session-0001.jsonl.zst
 # Task 497: schema-12 sword-strike record omits resolved click/gesture seek distance.
 Savegame_nicouzouf/Profile_001/Savegame_045/replay-014-session-0001.jsonl.zst
+# Task 161: current Original cannot produce the archived ReturnToDuty watchdog
+# transition; retire the stale capture pending recapture.
+parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_045/replay-011-session-0001.jsonl.zst
 # Task 348: schema-12 captures ended without a clean rng_suffix terminator.
 parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_019-session-0001.jsonl.zst
 parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_021-session-0001.jsonl.zst
