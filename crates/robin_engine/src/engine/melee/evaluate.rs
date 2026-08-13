@@ -1489,6 +1489,13 @@ impl EngineInner {
                         | Some(crate::ai::Substate::AttackingApproachingNewEnemy)
                 );
                 let frame = self.control.frame_counter;
+                let debug = reactive_sword_debug_frame_matches(frame)
+                    .then(|| {
+                        let creation_order = self.world.original_creation_order(victim_id);
+                        reactive_sword_debug_creation_order_matches(creation_order)
+                            .then_some(creation_order)
+                    })
+                    .flatten();
                 if reactive_sword_debug_frame_matches(frame) {
                     let creation_order = self.world.original_creation_order(victim_id);
                     if reactive_sword_debug_creation_order_matches(creation_order) {
@@ -1502,13 +1509,22 @@ impl EngineInner {
                                         ai.known_enemy_strike_3,
                                     ]
                                 });
+                        let attacker_command_strike = self
+                            .orders
+                            .sequence_manager
+                            .current_element_for_actor(attacker_id)
+                            .and_then(|(seq_id, elem_idx)| {
+                                self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                            })
+                            .and_then(|element| SwordStrike::from_command(element.command));
                         eprintln!(
-                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning strike={:?} substate={:?} swordfighting={} accepted_substate={} known={:?}]",
+                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning strike={:?} attacker_command_strike={:?} substate={:?} swordfighting={} accepted_substate={} known={:?}]",
                             frame,
                             creation_order,
                             victim_id.index(),
                             attacker_id.index(),
                             strike,
+                            attacker_command_strike,
                             npc_substate,
                             is_swordfighting,
                             in_swordfight_substate,
@@ -1530,6 +1546,7 @@ impl EngineInner {
                             self.orders.sequence_manager.get_element(seq_id, elem_idx)
                         })
                         .and_then(|element| SwordStrike::from_command(element.command));
+                    let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
                     self.consider_to_begin_parade(
                         sim,
                         assets,
@@ -1538,6 +1555,18 @@ impl EngineInner {
                         attacker_command_strike,
                         strike,
                     );
+                    if let Some(creation_order) = debug {
+                        eprintln!(
+                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning_return attacker_command_strike={:?} rng_before={:?} rng_after={:?}]",
+                            frame,
+                            creation_order,
+                            victim_id.index(),
+                            attacker_id.index(),
+                            attacker_command_strike,
+                            rng_before,
+                            self.control.rng.original_replay_cursor(),
+                        );
+                    }
                 }
                 continue;
             }
@@ -1916,6 +1945,20 @@ impl EngineInner {
         // Original compares pHitter->GetCommand() with the three command-valued
         // memory slots. It does not use the animation-derived strike here.
         let Some(command_strike) = attacker_command_strike else {
+            let frame = self.control.frame_counter;
+            if reactive_sword_debug_frame_matches(frame) {
+                let creation_order = self.world.original_creation_order(victim_id);
+                if reactive_sword_debug_creation_order_matches(creation_order) {
+                    eprintln!(
+                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=false reason=no_selected_strike animation_strike={:?}]",
+                        frame,
+                        creation_order,
+                        victim_id.index(),
+                        attacker_id.index(),
+                        animation_strike,
+                    );
+                }
+            }
             return;
         };
         let is_known = {
@@ -1930,7 +1973,37 @@ impl EngineInner {
                 || Some(command_strike) == ai.known_enemy_strike_3
         };
         if !is_known {
+            let frame = self.control.frame_counter;
+            if reactive_sword_debug_frame_matches(frame) {
+                let creation_order = self.world.original_creation_order(victim_id);
+                if reactive_sword_debug_creation_order_matches(creation_order) {
+                    eprintln!(
+                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=false reason=unknown command_strike={:?} animation_strike={:?}]",
+                        frame,
+                        creation_order,
+                        victim_id.index(),
+                        attacker_id.index(),
+                        command_strike,
+                        animation_strike,
+                    );
+                }
+            }
             return;
+        }
+        let frame = self.control.frame_counter;
+        if reactive_sword_debug_frame_matches(frame) {
+            let creation_order = self.world.original_creation_order(victim_id);
+            if reactive_sword_debug_creation_order_matches(creation_order) {
+                eprintln!(
+                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=true command_strike={:?} animation_strike={:?}]",
+                    frame,
+                    creation_order,
+                    victim_id.index(),
+                    attacker_id.index(),
+                    command_strike,
+                    animation_strike,
+                );
+            }
         }
 
         // ── 2. Record this strike experience (promote to head of list).
