@@ -2023,6 +2023,121 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
 }
 
 #[test]
+fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
+    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, old_id) =
+        install_rider_charge_fixture(&mut engine, &mut assets, OrderType::RiderCharging, vec![0]);
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("rider movement remains installed");
+    let charge = movement
+        .orders
+        .front_mut()
+        .expect("fixture installs a charge order");
+    charge.target_x = 102.0;
+    charge.target_y = 100.0;
+    charge.tolerance = 0.0;
+
+    let rewritten_id = std::rc::Rc::new(std::cell::Cell::new(None));
+    let observed_id = rewritten_id.clone();
+    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
+        if owner == rider {
+            observed_id.set(
+                engine
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(owner)
+                    .map(|(_, _, order)| order.order_id),
+            );
+        }
+    })));
+
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    set_post_execute_crossing_observer(None);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("terminated movement remains registered for inspection");
+    assert_eq!(element.state, crate::sequence::SequenceState::Terminated);
+    assert!(element.orders.is_empty());
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        MapPoint::ZERO,
+        "SendCondolationCard clears the completed selected movement goal"
+    );
+    assert_ne!(
+        rewritten_id
+            .get()
+            .expect("post-Execute crossing must observe the rewritten order"),
+        old_id,
+        "the completed order was legitimately assigned a fresh ID during Execute"
+    );
+}
+
+#[test]
+fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
+    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, _) =
+        install_rider_charge_fixture(&mut engine, &mut assets, OrderType::RiderCharging, vec![0]);
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("rider movement remains installed");
+    let charge = movement
+        .orders
+        .front_mut()
+        .expect("fixture installs a charge order");
+    charge.target_x = 102.0;
+    charge.target_y = 100.0;
+    charge.tolerance = 0.0;
+
+    let replacement_id = engine.orders.allocate_order_id();
+    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
+        if owner != rider {
+            return;
+        }
+        let replacement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .and_then(|element| element.orders.front_mut())
+            .expect("post-Execute replacement retains the selected element");
+        assert_eq!(replacement.order_type, OrderType::RunningUpright);
+        replacement.order_type = OrderType::WaitingUpright;
+        replacement.order_id = replacement_id;
+    })));
+
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    set_post_execute_crossing_observer(None);
+
+    let current = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .and_then(|element| element.current_order())
+        .expect("callback replacement must remain selected");
+    assert_eq!(current.order_id, replacement_id);
+    assert_eq!(current.order_type, OrderType::WaitingUpright);
+}
+
+#[test]
 fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,

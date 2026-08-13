@@ -425,10 +425,19 @@ struct LiveMobileGeometry {
         std::collections::BTreeMap<u16, Vec<Vec<crate::coordinates::MapPoint>>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RiderChargeExecution {
+    /// Identity of the same order object after Execute returned. Rider charge
+    /// may legitimately assign that object a fresh ID on its last animation
+    /// frame. `None` means a synchronous callback replaced the entry object
+    /// while Execute was still running.
+    completion_order_id: Option<std::num::NonZeroU32>,
+}
+
 #[cfg(test)]
 thread_local! {
     static LAST_MOBILE_CROSSING_INCREMENT: std::cell::Cell<Option<MapVec>> = const { std::cell::Cell::new(None) };
-    static POST_EXECUTE_CROSSING_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> = const { std::cell::RefCell::new(None) };
+    static POST_EXECUTE_CROSSING_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -438,13 +447,13 @@ pub(super) fn take_last_mobile_crossing_increment() -> Option<MapVec> {
 
 #[cfg(test)]
 pub(super) fn set_post_execute_crossing_observer(
-    observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
+    observer: Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>,
 ) {
     POST_EXECUTE_CROSSING_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
 }
 
 #[cfg(test)]
-fn observe_post_execute_crossing(engine: &EngineInner, entity_id: EntityId) {
+fn observe_post_execute_crossing(engine: &mut EngineInner, entity_id: EntityId) {
     POST_EXECUTE_CROSSING_OBSERVER.with(|slot| {
         if let Some(observer) = slot.borrow_mut().as_mut() {
             observer(engine, entity_id);
@@ -3010,7 +3019,7 @@ impl EngineInner {
             &LiveMobileGeometry,
             &mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
         )>,
-    ) -> bool {
+    ) -> Option<RiderChargeExecution> {
         use crate::element::{ActionState, ActiveRiderCharge, Posture};
         use crate::weapons::SwordStrike;
 
@@ -3041,7 +3050,7 @@ impl EngineInner {
                 actor.active_rider_charge = None;
                 actor.last_executed_rider_charge_order_id = None;
             }
-            return false;
+            return None;
         }
         let (seq_id, elem_idx, order, next_order, speed_factor) = live.unwrap();
 
@@ -3379,7 +3388,7 @@ impl EngineInner {
             );
         }
 
-        if last_frame {
+        let completion_order_id = if last_frame {
             // Rewrite only the same live order identity sampled above. Damage
             // can interrupt or replace it synchronously; never mutate a newer
             // order in that case.
@@ -3392,7 +3401,7 @@ impl EngineInner {
                     current.order_type == OrderType::RiderCharging
                         && current.order_id == order.order_id
                 });
-            if still_same {
+            let rewritten_id = if still_same {
                 let fresh_id = self.orders.allocate_order_id();
                 let current = self
                     .orders
@@ -3414,14 +3423,28 @@ impl EngineInner {
                     order_id: fresh_id,
                     order_type: OrderType::RunningUpright,
                 });
-            }
+                Some(fresh_id)
+            } else {
+                None
+            };
             self.world.entities[rider_id]
                 .as_mut()
                 .expect("rider remained present at charge completion")
                 .actor_data_mut()
                 .expect("RiderCharging soldier must have actor data")
                 .active_rider_charge = None;
-        }
+            rewritten_id
+        } else {
+            self.orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| element.current_order())
+                .filter(|current| {
+                    current.order_type == OrderType::RiderCharging
+                        && current.order_id == order.order_id
+                })
+                .map(|current| current.order_id)
+        };
 
         // RHElementActor::Hourglass clears mbNewOrder after Execute even when
         // FrozenAll prevented RHSprite::PerformMotion from initializing. Stamp
@@ -3442,7 +3465,9 @@ impl EngineInner {
             frozen_all,
             "executed rider charge in owner movement slot"
         );
-        true
+        Some(RiderChargeExecution {
+            completion_order_id,
+        })
     }
 
     pub(super) fn lift_endpoint_points(
@@ -6750,8 +6775,8 @@ impl EngineInner {
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon
             // work or RunningUpright samples that frozen frame and may Think.
-            let consumed_charge = self.tick_rider_charge_owner(sim, assets, owner, true, None);
-            if !consumed_charge && self.selected_galopp_decision_frame(owner, selected) {
+            let charge_execution = self.tick_rider_charge_owner(sim, assets, owner, true, None);
+            if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
             return;
@@ -7716,7 +7741,7 @@ impl EngineInner {
             .and_then(|element| element.current_order())
             .filter(|order| order.order_id == selected.order_id)
             .map(|order| order.compute_direction);
-        if self.tick_rider_charge_owner(
+        if let Some(charge_execution) = self.tick_rider_charge_owner(
             sim,
             assets,
             entity_id,
@@ -7736,14 +7761,18 @@ impl EngineInner {
             );
             if charge_motion == Some(MotionState::Terminated) {
                 // Actor::Hourglass advances only after line-crossing
-                // callbacks. Never consume a replacement installed by
-                // one of those callbacks in place of the entry order.
+                // callbacks. ExecuteRiderCharge may legitimately call NewID
+                // on its same `pOrder`; compare against that post-Execute
+                // identity, while still refusing to consume a callback
+                // replacement installed after Execute returned.
                 let entry_still_current = self
                     .orders
                     .sequence_manager
                     .get_element(selected.seq_id, selected.elem_idx)
                     .and_then(|element| element.current_order())
-                    .is_some_and(|order| order.order_id == selected.order_id);
+                    .is_some_and(|order| {
+                        Some(order.order_id) == charge_execution.completion_order_id
+                    });
                 if entry_still_current {
                     self.do_next_order(selected.seq_id, selected.elem_idx);
                 }
