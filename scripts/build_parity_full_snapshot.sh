@@ -13,10 +13,7 @@ old_corpus=parity-save-replays/60s-random-input/schema12
 corpora=(
     parity-save-replays/60s-random-input/schema14
     parity-save-replays/30s-random-input
-    # Keep legacy silent coverage authoritative until all 444 schema14
-    # 15-second captures complete and pass identity validation. At that point,
-    # replace this entry with parity-save-replays/15-no-input atomically.
-    parity-save-replays-legacy/10s-no-input-schema12
+    parity-save-replays/15-no-input
 )
 
 if [[ ! -f "$retired_file" ]]; then
