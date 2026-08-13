@@ -69,6 +69,82 @@ fn sword_damage_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool
 }
 
 impl EngineInner {
+    pub(in crate::engine) fn trace_reactive_sword_topology(
+        &self,
+        stage: &'static str,
+        owner: EntityId,
+        focus: Option<(crate::sequence::SequenceId, usize)>,
+    ) {
+        let frame = self.control.frame_counter;
+        if !evaluate::reactive_sword_debug_frame_matches(frame) {
+            return;
+        }
+        if self.get_entity(owner).is_none() {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(owner);
+        if !evaluate::reactive_sword_debug_creation_order_matches(creation_order) {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let selected = manager.current_element_for_actor(owner);
+        let current_order =
+            manager
+                .current_order_for_actor(owner)
+                .map(|(sequence_id, element_index, order)| {
+                    (
+                        sequence_id,
+                        element_index,
+                        order.order_type,
+                        order.order_id,
+                        order.done,
+                    )
+                });
+        let graph = manager
+            .sequences_iter()
+            .flat_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .filter(move |(_, element)| element.owner == Some(owner))
+                    .map(move |(element_index, element)| {
+                        (
+                            sequence.id,
+                            element_index,
+                            element.command,
+                            element.state,
+                            element.priority,
+                            element.postponed_element_index,
+                            element.cross_postponed,
+                            manager.is_registered_to_go(sequence.id, element_index),
+                            element
+                                .orders
+                                .iter()
+                                .map(|order| (order.order_type, order.order_id, order.done))
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let actor = self.get_entity(owner).and_then(|entity| {
+            entity.actor_data().map(|actor| {
+                (
+                    actor.action_state,
+                    actor
+                        .installed_order
+                        .as_ref()
+                        .map(|order| (order.order_type, order.order_id)),
+                )
+            })
+        });
+        eprintln!(
+            "[REACTIVE_SWORD frame={frame} co={creation_order} victim={} phase=topology stage={stage} focus={focus:?} selected={selected:?} current_order={current_order:?} actor={actor:?} graph={graph:?}]",
+            owner.index(),
+        );
+    }
+
     fn trace_sword_damage_lifecycle(
         &self,
         stage: &'static str,

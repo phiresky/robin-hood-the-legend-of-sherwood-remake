@@ -1827,7 +1827,17 @@ impl EngineInner {
                         crate::element::Command::ParrySword,
                         Some(victim_id),
                     );
-                    self.register_owned_element_deferred(parry_elem);
+                    self.trace_reactive_sword_topology(
+                        "before_parry_registration",
+                        victim_id,
+                        None,
+                    );
+                    let parry_sequence = self.register_owned_element_deferred(parry_elem);
+                    self.trace_reactive_sword_topology(
+                        "after_parry_registration",
+                        victim_id,
+                        Some((parry_sequence, 0)),
+                    );
                 }
                 Some(crate::combat::ProposedCombatAction::Strike(counter_strike)) => {
                     // PC counter-strike: launch the strike sequence

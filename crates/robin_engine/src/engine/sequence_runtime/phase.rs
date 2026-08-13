@@ -800,7 +800,31 @@ impl EngineInner {
                                     })
                             })
                             .flatten();
-                        if !self.arbitrate_instruct(seq_id, elem_idx) {
+                        let trace_reactive_topology = matches!(
+                            command,
+                            Some(crate::element::Command::ParrySword)
+                                | Some(crate::element::Command::ReceiveSwordDamage)
+                        );
+                        if trace_reactive_topology {
+                            self.trace_reactive_sword_topology(
+                                "before_instruct_arbitration",
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
+                        let arbitration_accepted = self.arbitrate_instruct(seq_id, elem_idx);
+                        if trace_reactive_topology {
+                            self.trace_reactive_sword_topology(
+                                if arbitration_accepted {
+                                    "after_instruct_arbitration_accepted"
+                                } else {
+                                    "after_instruct_arbitration_rejected"
+                                },
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
+                        if !arbitration_accepted {
                             // Abandon/Impossible calls SetState synchronously in
                             // Original too. Postpone produces no card, making this
                             // drain a no-op for that arm.

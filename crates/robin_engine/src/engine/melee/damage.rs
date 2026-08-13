@@ -260,12 +260,18 @@ impl EngineInner {
             sword_strike,
             attacker_profile_idx,
         );
+        self.trace_reactive_sword_topology("before_damage_registration", victim_id, None);
         // Resolve the value normally determined by Instruct, but bypass the
         // engine's ordinary owned-element launcher because that path performs
         // synchronous arbitration. The manager-tail InstructOwner action owns
         // arbitration, transition generation, and damage dispatch.
         self.resolve_element_priority(&mut elem);
         let sequence_id = self.orders.sequence_manager.launch_element(elem);
+        self.trace_reactive_sword_topology(
+            "after_damage_registration",
+            victim_id,
+            Some((sequence_id, 0)),
+        );
         self.trace_sword_damage_lifecycle(
             "queued",
             victim_id,
