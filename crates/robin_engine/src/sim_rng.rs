@@ -449,6 +449,17 @@ pub(crate) fn last_original_raw_draw(context: &SimulationContext) -> Option<u32>
     })
 }
 
+/// Return the current Original replay cursor without advancing either RNG
+/// stream. This is parity-diagnostic state only and must not gate behavior.
+pub(crate) fn original_replay_cursor(context: &SimulationContext) -> Option<usize> {
+    context.original_replay.as_ref().map(|replay| {
+        replay
+            .lock()
+            .expect("original RNG replay mutex poisoned")
+            .cursor()
+    })
+}
+
 fn unsigned_bounds<T>(range: &impl RangeBounds<T>, max: u64) -> (u64, u64)
 where
     T: Copy + Into<u64>,

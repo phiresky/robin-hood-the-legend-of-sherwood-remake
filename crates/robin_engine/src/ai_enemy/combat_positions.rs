@@ -2494,6 +2494,25 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let reconsider_debug =
+            reconsider_position_debug_matches(ctx.frame, ctx.original_creation_order, self.base.me);
+        if reconsider_debug {
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} creation_order={:?} phase=entry rng={:?} substate={:?} primary={} swordfighting={} enter_pending={} position=({:?},{:?},{:?}) direction={}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                crate::sim_rng::original_replay_cursor(sim),
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.is_swordfighting,
+                ctx.enter_swordfight_pending,
+                ctx.position.x.to_bits(),
+                ctx.position.y.to_bits(),
+                ctx.elevation.to_bits(),
+                ctx.direction,
+            );
+        }
         // Keep ourselves on a heartbeat while in swordfight.
         if self.base.current_substate == Substate::AttackingSwordfight {
             self.base.launch_timer(20, ctx.frame);
@@ -2504,6 +2523,14 @@ impl EnemyAi {
         // `enter_swordfight_pending` on AiContext when there's a pending
         // ENTER_SWORDFIGHT in the sequence manager.
         if ctx.enter_swordfight_pending {
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=enter_pending rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             return;
         }
 
@@ -2512,6 +2539,14 @@ impl EnemyAi {
         // fires. Cascade caveat: skips engine FilterAIEvent gate — see
         // end_think comment.
         if !ctx.is_swordfighting {
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=not_swordfighting rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             let quit_stimulus = Stimulus::new(StimulusType::EventQuitSwordfight);
             if self.base.has_script_filter_override {
                 tracing::warn!(
@@ -2531,6 +2566,15 @@ impl EnemyAi {
         if let Some(me) = self.find_fighter(self.base.me, tick) {
             self.base.primary_target = me.principal_opponent;
         }
+        if reconsider_debug {
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=principal primary={} rng={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.primary_target,
+                crate::sim_rng::original_replay_cursor(sim),
+            );
+        }
 
         // Scotch: if we somehow ended up with a friendly target, bail
         // out cleanly. Use the live entity-view snapshot rather than
@@ -2549,6 +2593,15 @@ impl EnemyAi {
                 false
             });
         if primary_is_friend {
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=primary_friend primary={} rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.primary_target,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             self.end_swordfight(ctx, tick);
             self.left_combat_neighbour = 0;
             self.right_combat_neighbour = 0;
@@ -2563,7 +2616,18 @@ impl EnemyAi {
         // animation transitions; treating that absence as lost sight
         // made soldiers quit combat and walk into battle-overview
         // positions while still engaged.
-        if !self.is_detecting_360_degrees(self.base.primary_target, ctx) {
+        let detects_primary = self.is_detecting_360_degrees(self.base.primary_target, ctx);
+        if reconsider_debug {
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=detection primary={} detected={} rng={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.primary_target,
+                detects_primary,
+                crate::sim_rng::original_replay_cursor(sim),
+            );
+        }
+        if !detects_primary {
             // Lost sight: forecast their direction and abandon the fight.
             if let Some(prepared) = &tick.primary_target_forecast {
                 let forecast = prepared.resolve(sim);
@@ -2624,17 +2688,42 @@ impl EnemyAi {
                 primary_target = self.base.primary_target,
                 "reconsider_swordfight: detected primary target is absent from nearby_fighters"
             );
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=missing_primary_snapshot primary={} rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.primary_target,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             return;
         };
 
         // Are we facing the primary opponent?
-        if !is_facing_swordfight_target(
+        let facing_target_position = swordfight_facing_target_position(&primary, tick);
+        let facing_primary = is_facing_swordfight_target(
             &ctx.position,
             ctx.elevation,
             ctx.direction,
-            swordfight_facing_target_position(&primary, tick),
+            facing_target_position,
             primary.elevation,
-        ) {
+        );
+        if reconsider_debug {
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=facing primary={} target=({:?},{:?},{:?}) direction={} facing={} rng={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.primary_target,
+                facing_target_position.x.to_bits(),
+                facing_target_position.y.to_bits(),
+                primary.elevation.to_bits(),
+                ctx.direction,
+                facing_primary,
+                crate::sim_rng::original_replay_cursor(sim),
+            );
+        }
+        if !facing_primary {
             // Need to turn first; the engine will rotate us, then call back.
             return;
         }
@@ -2677,6 +2766,18 @@ impl EnemyAi {
             }
         }
         let number_of_friends = self.base.list_us.len() as u16;
+        if reconsider_debug {
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=lists us={:?} them={:?} swordfighting_enemies={} nearest_friend_solo={} rng={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.list_us,
+                self.list_them,
+                number_of_swordfighting_enemies,
+                nearest_friend_solo,
+                crate::sim_rng::original_replay_cursor(sim),
+            );
+        }
 
         // Merry men with bow flee!
         if self.is_merry_man_forest(ctx)
@@ -2684,6 +2785,14 @@ impl EnemyAi {
             && self.merry_man_forest_cassos(ctx, global)
         {
             // Flee!
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=merry_archer_flee rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             return;
         }
 
@@ -2712,6 +2821,15 @@ impl EnemyAi {
                     // command's EventDone re-enter this branch recursively.
                     self.base.outbox.actor.enter_swordfight =
                         Some(EnterSwordfightRequest::Rebalance(nearest_enemy_of_solo));
+                    if reconsider_debug {
+                        eprintln!(
+                            "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=rebalance target={} rng={:?}",
+                            ctx.frame,
+                            self.base.me,
+                            nearest_enemy_of_solo,
+                            crate::sim_rng::original_replay_cursor(sim),
+                        );
+                    }
                     return;
                 }
             }
@@ -2723,6 +2841,14 @@ impl EnemyAi {
 
         // Stupid-soldiers cheat short circuit.
         if global.stupid_soldiers_cheat {
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=stupid_soldiers_cheat rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             return;
         }
 
@@ -2730,11 +2856,28 @@ impl EnemyAi {
         // Preserve the `||` short-circuit: a zero roll at blood alcohol 0
         // consumes only the first draw and still freezes the soldier.
         if drunk_combat_freezes(sim, self.base.blood_alcohol) {
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=drunk_freeze rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             return;
         }
 
         // Refresh primary snapshot in case it changed above.
         let Some(primary) = self.find_fighter(self.base.primary_target, tick).cloned() else {
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=missing_refreshed_primary primary={} rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.primary_target,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             return;
         };
         let to_target = pos_diff(&primary.position, &ctx.position);
@@ -2761,6 +2904,18 @@ impl EnemyAi {
             && my_fighting_ability >= combat::MIN_CAPACITY_CHARGE_WEAK_ENEMY
         {
             let target_pos = primary.position;
+            if reconsider_debug {
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=weak_enemy_charge target={} distance={} max_range={:?} ability={} rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.primary_target,
+                    dist_to_target,
+                    my_max_range,
+                    my_fighting_ability,
+                    crate::sim_rng::original_replay_cursor(sim),
+                );
+            }
             self.go_near(
                 AiState::Attacking,
                 Substate::AttackingMovingAroundOldEnemy,
@@ -2774,8 +2929,7 @@ impl EnemyAi {
 
         // Re-evaluate combat position 1 in 3 ticks (skip in pure 1v1
         // fights and combat-trainer mode).
-        let reposition_debug =
-            reconsider_position_debug_matches(ctx.frame, ctx.original_creation_order, self.base.me);
+        let reposition_debug = reconsider_debug;
         let reposition_eligible = !self.combat_trainer
             && (number_of_friends != 1 || number_of_swordfighting_enemies != 1);
         // Preserve Original's short-circuit: pure 1v1 and trainer fights do
