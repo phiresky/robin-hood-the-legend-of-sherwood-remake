@@ -1863,6 +1863,95 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
 }
 
 #[test]
+fn rider_charge_perform_motion_uses_live_anti_collision_diversion() {
+    use crate::element::Camp;
+
+    let mut engine = EngineInner::new();
+    engine.world.fast_grid_mut().size_map(8, 8);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 1],
+    );
+    engine
+        .get_entity_mut(rider)
+        .unwrap()
+        .position_iface_mut()
+        .set_anti_collision_on(true);
+    engine
+        .get_entity_mut(rider)
+        .unwrap()
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -4.0, -4.0, 4.0, 4.0,
+        ));
+
+    // The charge's raw first step is (2.4, 0). A live actor just ahead and
+    // slightly to one side contributes the repulsive point which makes
+    // RHSprite::PerformMotion deviate that physical commit.
+    let mut obstacle = make_test_ai_soldier(Camp::Royalists);
+    obstacle
+        .element_data_mut()
+        .set_position_map(MapPoint::new(108.0, 102.0));
+    engine.add_entity(obstacle);
+
+    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
+
+    let rider = engine.get_entity(rider).unwrap();
+    assert_ne!(
+        rider.element_data().position_map(),
+        MapPoint::new(102.4, 100.0),
+        "the rider must not bypass the repulsive point with its raw charge step"
+    );
+    assert!(
+        rider.position_iface().is_deviated(),
+        "the production charge commit must retain the anti-collision deviation latch"
+    );
+    assert_ne!(
+        rider.position_iface().get_increment_map(),
+        crate::coordinates::MapVec::new(1.0, 0.0),
+        "the committed deviation must rebuild the cached trajectory"
+    );
+}
+
+#[test]
+fn unobstructed_rider_charge_with_anti_collision_keeps_raw_motion() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 1],
+    );
+    engine
+        .get_entity_mut(rider)
+        .unwrap()
+        .position_iface_mut()
+        .set_anti_collision_on(true);
+    engine
+        .get_entity_mut(rider)
+        .unwrap()
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -4.0, -4.0, 4.0, 4.0,
+        ));
+
+    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
+
+    let rider = engine.get_entity(rider).unwrap();
+    assert_eq!(
+        rider.element_data().position_map(),
+        MapPoint::new(102.4, 100.0)
+    );
+    assert!(!rider.position_iface().is_deviated());
+    assert_eq!(i16::from(rider.position_iface().get_direction_goal()), 4);
+}
+
+#[test]
 fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
     use crate::engine::movement::set_post_execute_crossing_observer;
     use crate::order::{Order, OrderType};

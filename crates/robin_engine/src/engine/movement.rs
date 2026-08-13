@@ -2898,6 +2898,10 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         rider_id: EntityId,
         frozen_all: bool,
+        anti_context: Option<(
+            &LiveMobileGeometry,
+            &mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
+        )>,
     ) -> bool {
         use crate::element::{ActionState, ActiveRiderCharge, Posture};
         use crate::weapons::SwordStrike;
@@ -3094,28 +3098,97 @@ impl EngineInner {
                     != elem.sprite.position_iface.get_direction_goal(),
             );
             if distance != 0.0 {
-                elem.sprite
-                    .position_iface
-                    .update_position_map_scaled(distance);
-                if elem
-                    .sprite
-                    .position_iface
-                    .is_goal_reached(&self.world.fast_grid, None)
-                {
-                    if !elem.sprite.position_iface.is_deviated()
-                        && elem.sprite.position_iface.get_tolerance() == 0.0
+                let pre_position = elem.position_map();
+                let increment = elem.sprite.position_iface.get_increment_map();
+                let anti_on = elem.sprite.position_iface.is_anti_collision_on();
+                let (dx_step, dy_step, recovered_from_deviation, rebuild_after_deviation) =
+                    if let Some((prepared, anti_snapshots)) = anti_context.as_ref()
+                        && anti_on
+                        && let Some(mover_snapshot) = anti_snapshots
+                            .get(rider_id)
+                            .and_then(|slot| slot.as_ref())
+                            .filter(|snapshot| snapshot.active)
+                            .cloned()
                     {
-                        elem.set_position_map(goal);
+                        let move_box = *elem.sprite.position_iface.get_move_box();
+                        let half_diagonal = elem.sprite.position_iface.get_half_diagonal();
+                        let was_deviated = elem.sprite.position_iface.is_deviated();
+                        let mut anti_state = super::anti_collision::AntiCollisionState {
+                            pi: &mut elem.sprite.position_iface,
+                            move_box,
+                            half_diagonal,
+                            goal_map: goal,
+                        };
+                        let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                            &mover_snapshot,
+                            anti_snapshots,
+                            &self.ai.global.repulsive_points,
+                            prepared,
+                            &self.world.fast_grid,
+                            &mut anti_state,
+                            increment.x,
+                            increment.y,
+                            distance,
+                            anti_on,
+                        );
+                        (
+                            dx_step,
+                            dy_step,
+                            was_deviated && !anti_state.pi.is_deviated(),
+                            anti_state.pi.is_deviated() && anti_state.pi.blocked_count == 0,
+                        )
+                    } else {
+                        (increment.x * distance, increment.y * distance, false, false)
+                    };
+
+                if elem.sprite.position_iface.is_blocked() {
+                    // PerformMotion returns ABORTED before committing the
+                    // requested step or refreshing its forecast.
+                    state = MotionState::Aborted;
+                } else {
+                    if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                        let raw = vector_to_sector_0_to_15(dx_step, dy_step);
+                        elem.set_direction_goal(if order.reverse { raw ^ 8 } else { raw });
                     }
-                    state = MotionState::Terminated;
+                    elem.set_position_map(MapPoint::new(
+                        pre_position.x + dx_step,
+                        pre_position.y + dy_step,
+                    ));
+                    if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                        elem.sprite.position_iface.reset_increment_computed();
+                        elem.sprite.position_iface.compute_increment_all(false);
+                    } else if recovered_from_deviation {
+                        elem.sprite.position_iface.reset_increment_computed();
+                        elem.sprite.position_iface.compute_increment_all(true);
+                    }
+                    if elem
+                        .sprite
+                        .position_iface
+                        .is_goal_reached(&self.world.fast_grid, None)
+                    {
+                        if !elem.sprite.position_iface.is_deviated()
+                            && elem.sprite.position_iface.get_tolerance() == 0.0
+                        {
+                            elem.set_position_map(goal);
+                        }
+                        state = MotionState::Terminated;
+                    }
+                    let wait = elem
+                        .sprite
+                        .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
+                    elem.sprite
+                        .position_iface
+                        .update_forecasted_movement(distance, wait + 1);
+                    elem.update_grid_cell();
                 }
-                let wait = elem
-                    .sprite
-                    .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
-                elem.sprite
-                    .position_iface
-                    .update_forecasted_movement(distance, wait + 1);
-                elem.update_grid_cell();
+
+                if let Some((_, anti_snapshots)) = anti_context
+                    && let Some(snapshot) = anti_snapshots
+                        .get_mut(rider_id)
+                        .and_then(|slot| slot.as_mut())
+                {
+                    sync_snapshot_after_committed_step(snapshot, pre_position, elem.position_map());
+                }
             }
             elem.sprite.last_motion_state = Some(state);
             (state, elem.sprite.current_frame)
@@ -6561,7 +6634,7 @@ impl EngineInner {
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon
             // work or RunningUpright samples that frozen frame and may Think.
-            let consumed_charge = self.tick_rider_charge_owner(sim, assets, owner, true);
+            let consumed_charge = self.tick_rider_charge_owner(sim, assets, owner, true, None);
             if !consumed_charge && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
@@ -7519,7 +7592,13 @@ impl EngineInner {
             .and_then(|element| element.current_order())
             .filter(|order| order.order_id == selected.order_id)
             .map(|order| order.compute_direction);
-        if self.tick_rider_charge_owner(sim, assets, entity_id, false) {
+        if self.tick_rider_charge_owner(
+            sim,
+            assets,
+            entity_id,
+            false,
+            Some((prepared, anti_snapshots)),
+        ) {
             let charge_motion = self
                 .world
                 .entities
@@ -7554,6 +7633,19 @@ impl EngineInner {
                 }
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.element_data_mut().sprite.last_motion_state = charge_motion;
+                }
+            } else if charge_motion == Some(MotionState::Aborted) {
+                deferred
+                    .blocked_impossible
+                    .push((selected.seq_id, selected.elem_idx));
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
+                    let actor = entity
+                        .actor_data_mut()
+                        .expect("RiderCharging owner must remain an actor");
+                    actor.clear_path();
+                    actor.active_movement.clear();
+                    actor.active_rider_charge = None;
+                    entity.position_iface_mut().reset_box_blocked();
                 }
             }
             return;
