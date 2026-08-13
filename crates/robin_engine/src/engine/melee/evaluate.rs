@@ -1630,6 +1630,54 @@ impl EngineInner {
                     )
                 })
                 .flatten();
+            if let Some(debug) = debug {
+                let sprite = &self
+                    .get_entity(victim_id)
+                    .expect("reactive sword timing debug victim disappeared")
+                    .element_data()
+                    .sprite;
+                let action = crate::order::OrderType::TransitionWaitingSwordParryingSword;
+                let timing =
+                    |conversion: &[u16], scripts: &[crate::sprite_script::SpriteScript]| {
+                        let row = conversion.get(action as usize).copied()?;
+                        if row == crate::sprite_script::UNMAPPED {
+                            return None;
+                        }
+                        let script = scripts.get(row as usize)?;
+                        let frame_count = script.frame_ids.len();
+                        let waits = script
+                            .delays
+                            .iter()
+                            .copied()
+                            .take((script.action_done as usize + 1).min(frame_count))
+                            .collect::<Vec<_>>();
+                        let startup = waits.iter().copied().fold(0u16, u16::saturating_add);
+                        Some((row, script.action_done, frame_count, waits, startup))
+                    };
+                let primary = timing(&sprite.conversion, &sprite.scripts);
+                let alternate = sprite
+                    .alternate_conversion
+                    .as_deref()
+                    .zip(sprite.alternate_scripts.as_deref())
+                    .and_then(|(conversion, scripts)| timing(conversion, scripts));
+                eprintln!(
+                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=parry_timing active_alternate={} primary_key={:?} alternate_key={:?} current={:?} primary={:?} alternate={:?}]",
+                    debug.frame,
+                    debug.victim_creation_order,
+                    debug.victim,
+                    debug.attacker,
+                    sprite.use_alternate_profile,
+                    sprite.profile_cache_key,
+                    sprite.alternate_profile_cache_key,
+                    if sprite.use_alternate_profile {
+                        alternate.as_ref()
+                    } else {
+                        primary.as_ref()
+                    },
+                    primary,
+                    alternate,
+                );
+            }
 
             // RHElementActorHuman::ProposeGoodSwordStrike always limits a
             // reactive counter-strike by the principal opponent's remaining
