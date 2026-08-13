@@ -2088,7 +2088,18 @@ impl EngineInner {
                 (concussion, life_points)
             };
             let new_value = crate::combat::compute_concussion_effect(concussion, 71, life_points);
-            self.apply_concussion(sim, assets, victim_id, new_value, false);
+            let concussion_outcome =
+                self.apply_concussion(sim, assets, victim_id, new_value, false);
+            if concussion_outcome == crate::combat::ConcussionOutcome::WentUnconscious {
+                // Original FallingLadderWall::Execute calls
+                // AddConcussionOfTheBrain here. Its threshold transition
+                // synchronously closes QuitSwordFight (including reciprocal
+                // DeleteOpponent / EVENT_QUIT_SWORDFIGHT) before Execute sets
+                // the landing posture and returns Terminated. The ordinary
+                // per-frame concussion drain has already run by this actor
+                // slot, so close this newly-created knockout boundary now.
+                self.drain_pending_concussion_side_effects(sim, assets);
+            }
 
             if let Some(entity) = self.get_entity_mut(victim_id) {
                 let posture = if entity.is_dead() {
@@ -3189,7 +3200,8 @@ mod tests {
     use super::*;
     use crate::coordinates::{MapPoint, MapVec, WorldPoint3D};
     use crate::element::{
-        ActorData, ActorSoldier, Camp, ElementData, ElementKind, HumanData, NpcData, SoldierData,
+        ActorData, ActorPc, ActorSoldier, Camp, ElementData, ElementKind, HumanData, NpcData,
+        PcData, SoldierData,
     };
     use crate::position_interface::SectorHandle;
     use crate::sequence::SequenceElement;
@@ -3266,6 +3278,68 @@ mod tests {
             .installed_order = Some(crate::element::InstalledActorOrder {
             order_id,
             order_type: OrderType::FallingPushedUpright,
+        });
+    }
+
+    fn falling_ladder_pc(life_points: i16) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Flying,
+            ..ElementData::default()
+        };
+        element.set_position(WorldPoint3D {
+            x: 10.0,
+            y: 20.0,
+            z: 0.0,
+        });
+        element.set_position_map(MapPoint::new(10.0, 20.0));
+        element.set_layer(1);
+        element.set_sector(SectorHandle::new(2));
+
+        let mut actor = ActorData::default();
+        actor.action_state = ActionState::Moving;
+        actor.active_flight = Some(crate::element::ActiveFlight {
+            increment_x: 5.0,
+            goal_x: 15.0,
+            goal_y: 20.0,
+            frames_remaining: 1,
+            ladder_fall: true,
+            goal_layer: 3,
+            goal_sector: SectorHandle::new(4),
+            ..Default::default()
+        });
+        actor.continuation.motion_state = crate::sprite::MotionState::Start;
+
+        Entity::Pc(ActorPc {
+            element,
+            actor,
+            human: HumanData::default(),
+            pc: PcData {
+                life_points,
+                profile_index: crate::profiles::CharacterProfileIdx(0),
+                ..PcData::default()
+            },
+        })
+    }
+
+    fn install_falling_ladder_order(engine: &mut EngineInner, victim: EntityId) {
+        let damage =
+            SequenceElement::new_damage(1, Command::ReceiveSwordDamage, Some(victim), None, 20, 0);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order = Some(crate::element::InstalledActorOrder {
+            order_id,
+            order_type: OrderType::FallingLadderWall,
         });
     }
 
@@ -3468,11 +3542,18 @@ mod tests {
         profiles
             .soldiers
             .push(crate::profiles::SoldierProfile::default());
+        profiles.hth_weapons.push(Default::default());
         let assets = LevelAssets {
             profile_manager: std::sync::Arc::new(profiles),
             ..LevelAssets::default()
         };
         let mut entity = falling_pushed_soldier(false);
+        let Entity::Soldier(soldier) = &mut entity else {
+            unreachable!()
+        };
+        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
+        enemy_ai.hth_weapon_id = 1;
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
         entity
             .position_iface_mut()
             .set_layer_goal(crate::position_interface::Layer::ZERO);
@@ -3519,6 +3600,150 @@ mod tests {
             crate::position_interface::Layer::ZERO,
             "ladder landing changes the actual layer without retroactively publishing a goal"
         );
+    }
+
+    #[test]
+    fn ladder_arrival_knockout_closes_reciprocal_swordfight_inline() {
+        let sim = crate::sim_rng::test_context();
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+        profiles
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+        profiles.hth_weapons.push(Default::default());
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::default()
+        };
+        let mut engine = EngineInner::new();
+        let victim = engine.add_entity(falling_ladder_pc(50));
+        let mut opponent_entity = falling_pushed_soldier(false);
+        let Entity::Soldier(soldier) = &mut opponent_entity else {
+            unreachable!()
+        };
+        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
+        enemy_ai.hth_weapon_id = 1;
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
+        let opponent = engine.add_entity(opponent_entity);
+        {
+            let ai = engine
+                .get_entity_mut(opponent)
+                .unwrap()
+                .ai_controller_mut()
+                .unwrap();
+            ai.set_ai_state(crate::ai::AiState::Attacking);
+            ai.current_substate = crate::ai::Substate::AttackingSwordfight;
+            ai.primary_target = victim.index();
+        }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents = vec![opponent];
+        engine
+            .get_entity_mut(opponent)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents = vec![victim];
+        install_falling_ladder_order(&mut engine, victim);
+
+        engine.tick_push_flight_for_owner(&sim, &assets, victim);
+
+        assert!(
+            engine.orders.pending_concussion_side_effects.is_empty(),
+            "the ladder Execute boundary must close its own knockout side effects"
+        );
+        for fighter in [victim, opponent] {
+            assert!(
+                engine
+                    .get_entity(fighter)
+                    .unwrap()
+                    .human_data()
+                    .unwrap()
+                    .opponents
+                    .is_empty(),
+                "knockout must synchronously remove both reciprocal relationships"
+            );
+        }
+        let opponent_ai = engine
+            .get_entity(opponent)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert_eq!(
+            opponent_ai.current_substate,
+            crate::ai::Substate::AttackingQuittingSwordfight
+        );
+        assert!(opponent_ai.timer_is_running);
+        assert_eq!(opponent_ai.when_does_timer_ring, 3);
+    }
+
+    #[test]
+    fn ladder_arrival_below_knockout_threshold_preserves_swordfight() {
+        let sim = crate::sim_rng::test_context();
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+        profiles
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::default()
+        };
+        let mut engine = EngineInner::new();
+        let victim = engine.add_entity(falling_ladder_pc(200));
+        let opponent = engine.add_entity(falling_pushed_soldier(false));
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents = vec![opponent];
+        engine
+            .get_entity_mut(opponent)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents = vec![victim];
+        install_falling_ladder_order(&mut engine, victim);
+
+        engine.tick_push_flight_for_owner(&sim, &assets, victim);
+
+        assert!(
+            !engine
+                .get_entity(victim)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .unconscious
+        );
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![opponent]
+        );
+        assert_eq!(
+            engine
+                .get_entity(opponent)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![victim]
+        );
+        assert!(engine.orders.pending_concussion_side_effects.is_empty());
     }
 
     #[test]
