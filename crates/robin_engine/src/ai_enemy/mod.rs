@@ -5832,6 +5832,76 @@ mod tests {
     }
 
     #[test]
+    fn return_to_duty_detects_patrol_chief_at_raw_body_but_approaches_door_endpoint() {
+        let sim = crate::sim_rng::test_context();
+        let chief_id = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(2));
+        let gate_endpoint = test_position(1_000.0, 0.0);
+        let mut chief = soldier_view(gate_endpoint);
+        chief.passing_door = true;
+        chief.detection_position_world = crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(chief_id.index(), chief);
+        let ctx = AiContext {
+            position: test_position(0.0, 0.0),
+            self_body_position_world: crate::coordinates::WorldPoint3D::ZERO,
+            self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
+            self_view_radius: 200,
+            sq_self_view_radius: 200.0 * 200.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut ai = EnemyAi::new(1);
+        ai.base.patrol_chief = Some(chief_id);
+
+        ai.base
+            .return_to_duty_common_stuff(&sim, DutyFlags::empty(), &ctx);
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoChief);
+        let [order] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("detecting the chief must queue the approach");
+        };
+        assert_eq!((order.target_x, order.target_y), (1_000.0, 0.0));
+    }
+
+    #[test]
+    fn return_to_duty_does_not_detect_far_raw_chief_at_near_door_endpoint() {
+        let sim = crate::sim_rng::test_context();
+        let chief_id = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(2));
+        let mut chief = soldier_view(test_position(100.0, 0.0));
+        chief.passing_door = true;
+        chief.detection_position_world = crate::coordinates::WorldPoint3D::new(1_000.0, 0.0, 0.0);
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(chief_id.index(), chief);
+        let ctx = AiContext {
+            position: test_position(0.0, 0.0),
+            self_body_position_world: crate::coordinates::WorldPoint3D::ZERO,
+            self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
+            self_view_radius: 200,
+            sq_self_view_radius: 200.0 * 200.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut ai = EnemyAi::new(1);
+        ai.base.patrol_chief = Some(chief_id);
+
+        ai.base
+            .return_to_duty_common_stuff(&sim, DutyFlags::empty(), &ctx);
+
+        assert_ne!(ai.base.current_substate, Substate::DefaultGotoChief);
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .iter()
+                .all(|order| (order.target_x, order.target_y) != (100.0, 0.0)),
+            "the near AI Position endpoint must not admit the raw-far chief"
+        );
+    }
+
+    #[test]
     fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
         use crate::ai::{PathId, PatrolPath};
         use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};

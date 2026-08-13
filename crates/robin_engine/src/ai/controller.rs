@@ -3949,17 +3949,16 @@ impl AiController {
             && let Some(chief_view) = ctx.entity_view(chief_id.index())
             && chief_view.is_able_to_fight
             && chief_view.active
-            && crate::ai_enemy::soldier_detects_target_360(
-                ctx.position,
-                ctx.elevation,
-                ctx.self_is_rider,
+            && crate::ai_enemy::soldier_detects_detection_point_360(
+                ctx.self_upright_eye_world,
                 ctx.self_view_radius,
                 ctx.in_building,
-                chief_view.position,
-                chief_view.elevation,
-                chief_view.posture,
-                chief_view.is_rider,
-                chief_view.direction as i16,
+                crate::stealth::detection_point_world(
+                    chief_view.detection_position_world,
+                    chief_view.posture,
+                    chief_view.direction as i16,
+                    chief_view.is_rider,
+                ),
                 chief_view.in_building,
                 ctx.obstacle_list(),
             )
