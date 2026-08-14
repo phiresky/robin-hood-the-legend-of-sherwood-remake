@@ -29,6 +29,39 @@ const BLIP_ON_SHOULDERS_FACTOR: f32 = 1.3;
 const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 
 #[derive(Clone, Copy)]
+struct HearingGateDebugConfig {
+    enabled: bool,
+    frame: u32,
+    creation_order: u32,
+}
+
+fn hearing_gate_debug_config() -> &'static HearingGateDebugConfig {
+    static CONFIG: std::sync::OnceLock<HearingGateDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_HEARING_GATE").is_some();
+        if !enabled {
+            return HearingGateDebugConfig {
+                enabled,
+                frame: 0,
+                creation_order: 0,
+            };
+        }
+        let parse_required = |name: &str| {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| panic!("missing required environment variable {name}"));
+            value
+                .parse::<u32>()
+                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
+        };
+        HearingGateDebugConfig {
+            enabled,
+            frame: parse_required("PARITY_DEBUG_HEARING_GATE_FRAME"),
+            creation_order: parse_required("PARITY_DEBUG_HEARING_GATE_CREATION_ORDER"),
+        }
+    })
+}
+
+#[derive(Clone, Copy)]
 struct VisibilityStageDebugConfig {
     enabled: bool,
     frame: Option<u32>,
@@ -1099,15 +1132,48 @@ impl EngineInner {
                 npc.ai_state(),
             )
         };
+        let hearing_debug_config = hearing_gate_debug_config();
+        let hearing_debug = hearing_debug_config.enabled
+            && universal_frame == hearing_debug_config.frame
+            && self.original_static_creation_order(npc_id) == hearing_debug_config.creation_order;
+        let hearing_debug_creation_order =
+            hearing_debug.then(|| self.original_static_creation_order(npc_id));
+        let hearing_debug_modified_frame = hearing_debug_creation_order.map(|creation_order| {
+            refresh_detection_modified_frame(universal_frame, creation_order)
+        });
+        if hearing_debug {
+            let substate = self
+                .world
+                .entities
+                .get(npc_id)
+                .and_then(Entity::npc_data)
+                .expect("HEARINGGATE owner lost NPC data")
+                .ai_substate();
+            let modified_frame = hearing_debug_modified_frame.expect("HEARINGGATE frame missing");
+            eprintln!(
+                "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"pre_gate\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"state\":{},\"substate\":{},\"modified_frame\":{},\"cadence_remainder\":{},\"state_pass\":{},\"cadence_pass\":{}}}",
+                universal_frame,
+                npc_id.index(),
+                hearing_debug_creation_order.expect("HEARINGGATE creation order missing"),
+                current_state as u32,
+                substate as u32,
+                modified_frame,
+                modified_frame % DETECTION_FREQUENCY_SOUNDS,
+                !matches!(current_state, AiState::Attacking),
+                modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS),
+            );
+        }
         // Attacking NPCs are already locked onto their target
         // and don't accumulate new hearing stimuli.
         if matches!(current_state, AiState::Attacking) {
             return;
         }
-        let modified_frame = refresh_detection_modified_frame(
-            universal_frame,
-            self.original_static_creation_order(npc_id),
-        );
+        let modified_frame = hearing_debug_modified_frame.unwrap_or_else(|| {
+            refresh_detection_modified_frame(
+                universal_frame,
+                self.original_static_creation_order(npc_id),
+            )
+        });
         if !modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS) {
             return;
         }
@@ -1189,7 +1255,55 @@ impl EngineInner {
                     // and volume; outside the stale box UpdateHearing is not
                     // called and the edge latch remains untouched.
                     let noise = pc.produced_noise;
-                    if !pc.hear_noise_box.contains_point(position_map) {
+                    let inside_hear_box = pc.hear_noise_box.contains_point(position_map);
+                    if !inside_hear_box {
+                        if hearing_debug {
+                            let (det_heard, det_seen) = npc.detectable_lists[enemy_idx]
+                                .iter()
+                                .find(|d| d.element == Some(pc.id))
+                                .map(|d| (d.heard_last_frame, d.seen_last_frame))
+                                .expect("HEARINGGATE tracked PC vanished before box rejection");
+                            let (bbox_present, bbox_bits) = pc
+                                .hear_noise_box
+                                .0
+                                .map(|bbox| {
+                                    (
+                                        true,
+                                        [
+                                            bbox.min().x.to_bits(),
+                                            bbox.min().y.to_bits(),
+                                            bbox.max().x.to_bits(),
+                                            bbox.max().y.to_bits(),
+                                        ],
+                                    )
+                                })
+                                .unwrap_or((false, [0; 4]));
+                            eprintln!(
+                                "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"target\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"target_slot\":{},\"inside_box\":false,\"listener_map_bits\":[{},{}],\"listener_world_bits\":[{},{},{}],\"bbox_present\":{},\"bbox_bits\":[{},{},{},{}],\"noise_origin_bits\":[{},{}],\"noise_type\":{},\"noise_volume\":{},\"noise_elevation\":{},\"subjective\":-1,\"old_heard\":{},\"old_seen\":{},\"update\":false}}",
+                                universal_frame,
+                                npc_id.index(),
+                                hearing_debug_creation_order
+                                    .expect("HEARINGGATE creation order missing"),
+                                pc.id.index(),
+                                position_map.x.to_bits(),
+                                position_map.y.to_bits(),
+                                position_world.x.to_bits(),
+                                position_world.y.to_bits(),
+                                position_world.z.to_bits(),
+                                bbox_present,
+                                bbox_bits[0],
+                                bbox_bits[1],
+                                bbox_bits[2],
+                                bbox_bits[3],
+                                noise.origin.x.to_bits(),
+                                noise.origin.y.to_bits(),
+                                noise.noise_type as u32,
+                                pc_volume,
+                                noise.elevation,
+                                det_heard,
+                                det_seen,
+                            );
+                        }
                         None
                     } else {
                         // GetHearVolume uses the full 3D position. Its noise
@@ -1237,6 +1351,57 @@ impl EngineInner {
                                     npc_id.index()
                                 )
                             });
+
+                        if hearing_debug {
+                            let (bbox_present, bbox_bits) = pc
+                                .hear_noise_box
+                                .0
+                                .map(|bbox| {
+                                    (
+                                        true,
+                                        [
+                                            bbox.min().x.to_bits(),
+                                            bbox.min().y.to_bits(),
+                                            bbox.max().x.to_bits(),
+                                            bbox.max().y.to_bits(),
+                                        ],
+                                    )
+                                })
+                                .unwrap_or((false, [0; 4]));
+                            eprintln!(
+                                "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"target\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"target_slot\":{},\"inside_box\":true,\"listener_map_bits\":[{},{}],\"listener_world_bits\":[{},{},{}],\"bbox_present\":{},\"bbox_bits\":[{},{},{},{}],\"noise_origin_bits\":[{},{}],\"noise_type\":{},\"noise_volume\":{},\"noise_elevation\":{},\"dx_bits\":{},\"dy_stretched_bits\":{},\"dz_bits\":{},\"modified_volume_bits\":{},\"max_norm_bits\":{},\"distance_bits\":{},\"cover_volume\":{},\"subjective\":{},\"old_heard\":{},\"old_seen\":{},\"update\":true}}",
+                                universal_frame,
+                                npc_id.index(),
+                                hearing_debug_creation_order
+                                    .expect("HEARINGGATE creation order missing"),
+                                pc.id.index(),
+                                position_map.x.to_bits(),
+                                position_map.y.to_bits(),
+                                position_world.x.to_bits(),
+                                position_world.y.to_bits(),
+                                position_world.z.to_bits(),
+                                bbox_present,
+                                bbox_bits[0],
+                                bbox_bits[1],
+                                bbox_bits[2],
+                                bbox_bits[3],
+                                noise.origin.x.to_bits(),
+                                noise.origin.y.to_bits(),
+                                noise.noise_type as u32,
+                                pc_volume,
+                                noise.elevation,
+                                dx_3d.to_bits(),
+                                dy_stretched.to_bits(),
+                                dz.to_bits(),
+                                modified_volume.to_bits(),
+                                max_norm.to_bits(),
+                                distance.to_bits(),
+                                cover_volume,
+                                subjective,
+                                det_heard,
+                                det_seen,
+                            );
+                        }
 
                         let stimulus = if subjective > 0 && !det_heard && !det_seen {
                             let noise = crate::ai::Noise {
