@@ -3381,6 +3381,14 @@ impl EnemyAi {
         if !self.pending_special_strike {
             return;
         }
+        // This reconciler stands in for the Original's synchronous
+        // Think(EVENT_DONE) only when that Think is admissible. StartThink
+        // retains EventDone under every non-script AI lock (including the
+        // AILOCK_FREEZE held by a Strangle victim), so the observable
+        // special-strike substate must remain unchanged until unlock.
+        if self.base.ai_is_locked() {
+            return;
+        }
         // A synchronous combat reaction may legitimately replace the
         // special-strike state (for example, entering Parade) while stopping
         // its sequence. In that case the latch is stale cancellation
@@ -5782,10 +5790,67 @@ mod tests {
             Substate::AttackingSwordfightSpecialStrike
         );
 
+        for locks in [
+            crate::ai::AiLockFlags::BUSY,
+            crate::ai::AiLockFlags::FREEZE,
+            crate::ai::AiLockFlags::BUSY | crate::ai::AiLockFlags::FREEZE,
+        ] {
+            let mut locked = EnemyAi::new(1);
+            locked.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+            locked.base.outbox.reentrant.owner_work.clear();
+            locked.begin_special_strike();
+            locked.base.locks_flag_field = locks;
+            locked.reconcile_special_strike(false, 41);
+            assert!(locked.pending_special_strike, "locks={locks:?}");
+            assert_eq!(
+                locked.base.current_substate,
+                Substate::AttackingSwordfightSpecialStrike,
+                "all non-script AI locks must retain the EventDone-driven substate edge: {locks:?}"
+            );
+        }
+
+        ai.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
+        let sim = crate::sim_rng::test_context();
+        let mut global = AiGlobalState::default();
+        let ctx = AiContext {
+            frame: 41,
+            ..AiContext::default()
+        };
+        let tick = AiPerTickData::stub();
+        ai.think(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &mut global,
+            &ctx,
+            &tick,
+            None,
+        );
         ai.reconcile_special_strike(false, 41);
+        assert!(ai.pending_special_strike);
+        assert_eq!(
+            ai.base
+                .stimulus_queue
+                .iter()
+                .map(|stimulus| stimulus.stimulus_type)
+                .collect::<Vec<_>>(),
+            vec![StimulusType::EventDone],
+            "StartThink must retain the terminal event while Strangle holds FREEZE"
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightSpecialStrike,
+            "AILOCK_FREEZE must retain the EventDone-driven substate edge"
+        );
+        ai.base.non_script_unlock(crate::ai::AiLockFlags::FREEZE);
+        let retained = ai.base.stimulus_queue.remove(0);
+        let ctx = AiContext {
+            frame: 42,
+            ..AiContext::default()
+        };
+        ai.think(&sim, &retained, &mut global, &ctx, &tick, None);
         assert!(!ai.pending_special_strike);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert_eq!(ai.next_sword_strike_frame, 61);
+        assert_eq!(ai.next_sword_strike_frame, 62);
 
         ai.begin_special_strike();
         ai.set_state(AiState::Attacking, Substate::AttackingSwordfightParade);
