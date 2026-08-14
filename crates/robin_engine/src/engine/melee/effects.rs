@@ -45,7 +45,13 @@ fn push_flight_vector(
             attacker_dir.1 * remaining_distance,
         ),
         WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
-            let distance = dx.hypot(dy);
+            // SBGeoVector2D::Norm first rounds the squared sum as GEOTYPE
+            // (f32), runs sqrt in double precision, then stores the result
+            // back to GEOTYPE before Normalize divides each component.  The
+            // platform `hypotf` sequence differs by an ULP for some live
+            // combat vectors, which then shifts the retained flight goal.
+            let squared_norm = dx * dx + dy * dy;
+            let distance = f64::from(squared_norm).sqrt() as f32;
             if distance < 0.01 {
                 (0.0, 0.0)
             } else {
@@ -1617,6 +1623,30 @@ mod tests {
                 "{kind:?} moves radially but uses the attacker-direction projection"
             );
         }
+    }
+
+    #[test]
+    fn circle_push_uses_original_geotype_norm_rounding() {
+        let attacker = MapPoint::new(0.0, 0.0);
+        let victim = MapPoint::new(46.609222, 53.838055);
+
+        let vector = push_flight_vector(
+            WeaponThrustKind::TrueCircle,
+            (1.0, 0.0),
+            attacker,
+            victim,
+            100.0,
+        );
+
+        assert_eq!(vector.0.to_bits(), 0x420b_c85a);
+        assert_eq!(vector.1.to_bits(), 0x4221_764e);
+        let hypot_distance = (victim.x - attacker.x).hypot(victim.y - attacker.y);
+        let remaining = 100.0 - (victim.x - attacker.x);
+        assert_eq!(
+            ((victim.x - attacker.x) / hypot_distance * remaining).to_bits(),
+            0x420b_c85b,
+            "control must distinguish the platform hypot rounding"
+        );
     }
 
     #[test]
