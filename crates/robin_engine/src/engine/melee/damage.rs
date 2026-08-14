@@ -723,30 +723,59 @@ impl EngineInner {
         // mmotionState=IN_PROGRESS epilogue. This is observably different
         // from a true accepted-empty translation such as an already-held
         // parry, which publishes InProgress before detaching the element.
-        let grounded_translation_terminates = if pushed || result.is_empty() {
-            false
+        let (grounded_translation_terminates, grounded_posture, is_rider) = if pushed
+            || result.is_empty()
+        {
+            (false, Posture::Upright, false)
         } else {
             let victim = self.get_entity(victim_id).unwrap_or_else(|| {
-                panic!(
-                    "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
-                )
-            });
+                    panic!(
+                        "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
+                    )
+                });
             let posture = victim.element_data().posture;
-            let dead_rider =
-                matches!(victim, Entity::Soldier(s) if s.soldier.rider) && life_points_after <= 0;
-            matches!(
+            let is_rider = matches!(victim, Entity::Soldier(s) if s.soldier.rider);
+            let dead_rider = is_rider && life_points_after <= 0;
+            (
+                matches!(
+                    posture,
+                    Posture::Lying
+                        | Posture::StuckUnderNet
+                        | Posture::Flying
+                        | Posture::Carried
+                        | Posture::OnShoulders
+                        | Posture::Tied
+                        | Posture::Dead
+                        | Posture::DeadBack
+                ) && !dead_rider,
                 posture,
-                Posture::Lying
-                    | Posture::StuckUnderNet
-                    | Posture::Flying
-                    | Posture::Carried
-                    | Posture::OnShoulders
-                    | Posture::Tied
-                    | Posture::Dead
-                    | Posture::DeadBack
-            ) && !dead_rider
+                is_rider,
+            )
         };
         if grounded_translation_terminates {
+            // TranslateSwordDamage changes a dead, grounded non-rider to the
+            // canonical Dead posture before falling through to the common
+            // terminating arm. This publication is observable even though no
+            // replacement animation/order is authored.
+            if life_points_after <= 0
+                && !is_rider
+                && matches!(
+                    grounded_posture,
+                    Posture::Lying
+                        | Posture::StuckUnderNet
+                        | Posture::Flying
+                        | Posture::Carried
+                        | Posture::OnShoulders
+                        | Posture::Tied
+                )
+            {
+                self.expect_entity_mut(
+                    victim_id,
+                    "ReceiveSwordDamage grounded lethal posture publication",
+                )
+                .element_data_mut()
+                .posture = Posture::Dead;
+            }
             let (dseq, didx) = damage_element;
             self.orders.sequence_manager.element_terminated(dseq, didx);
         }

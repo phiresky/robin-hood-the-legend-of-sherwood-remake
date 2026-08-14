@@ -8,6 +8,29 @@ use crate::element::{ActionState, Command, Entity, EntityId};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SwordfightDistanceAdjustment {
+    None,
+    Closer,
+    Farther,
+}
+
+pub(super) fn swordfight_distance_adjustment(
+    distance: f32,
+    my_minimum: f32,
+    my_maximum: f32,
+    opponent_maximum: f32,
+    last_motion_was_step_back: bool,
+) -> SwordfightDistanceAdjustment {
+    if distance > my_maximum && distance > opponent_maximum && !last_motion_was_step_back {
+        SwordfightDistanceAdjustment::Closer
+    } else if distance < my_minimum {
+        SwordfightDistanceAdjustment::Farther
+    } else {
+        SwordfightDistanceAdjustment::None
+    }
+}
+
 pub(super) fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
     if std::env::var_os("PARITY_DEBUG_REACTIVE_SWORD").is_none() {
         return false;
@@ -421,16 +444,20 @@ impl EngineInner {
 
         // Out-of-range → walk closer (unless we just stepped back,
         // in which case stay).
-        if geo_distance > my_max_range + SWORDFIGHT_DISTANCE_EPSILON
-            && geo_distance > opp_max_range + SWORDFIGHT_DISTANCE_EPSILON
-            && !last_step_back
-        {
-            geo_movement = backward_dist;
-        }
-        // Too close → walk back with force-movement.
-        else if geo_distance + SWORDFIGHT_DISTANCE_EPSILON < my_min_range {
-            geo_movement = -backward_dist;
-            force_movement = true;
+        match swordfight_distance_adjustment(
+            geo_distance,
+            my_min_range,
+            my_max_range,
+            opp_max_range,
+            last_step_back,
+        ) {
+            SwordfightDistanceAdjustment::Closer => geo_movement = backward_dist,
+            // Too close → walk back with force-movement.
+            SwordfightDistanceAdjustment::Farther => {
+                geo_movement = -backward_dist;
+                force_movement = true;
+            }
+            SwordfightDistanceAdjustment::None => {}
         }
 
         if geo_movement == 0.0 {

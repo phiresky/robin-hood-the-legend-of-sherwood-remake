@@ -337,11 +337,6 @@ const MAX_ELEVATION_SWORDFIGHT: f32 = 40.0;
 const INVERSE_SWORDFIGHT_ASPECT_RATIO: f32 =
     crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO;
 
-/// Small comparison tolerance for swordfight spacing thresholds.  The
-/// reference compares floats directly, but the Rust port can arrive at
-/// `64.99995` for an intended `65`-unit duel spacing after replayed movement.
-const SWORDFIGHT_DISTANCE_EPSILON: f32 = 0.001;
-
 /// Isometric aspect ratio.
 const ASPECT_RATIO: f32 = crate::position_interface::ASPECT_RATIO;
 
@@ -9221,6 +9216,144 @@ mod tests {
     }
 
     #[test]
+    fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating() {
+        for initial_posture in [
+            Posture::Lying,
+            Posture::StuckUnderNet,
+            Posture::Flying,
+            Posture::Carried,
+            Posture::OnShoulders,
+            Posture::Tied,
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+            let victim = engine.add_entity(make_soldier(
+                WorldPoint3D {
+                    x: 10.0,
+                    ..WorldPoint3D::ZERO
+                },
+                None,
+            ));
+            {
+                let victim_entity = engine.get_entity_mut(victim).unwrap();
+                victim_entity.element_data_mut().posture = initial_posture;
+                victim_entity.npc_data_mut().unwrap().life_points = 1;
+                victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+            }
+            let assets = assets_with_sword_profile_effects(200, 50, 100, 0);
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            let sequence = engine.orders.sequence_manager.launch_element(damage);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence, 0),
+            );
+
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("grounded sword damage remains registered");
+            assert_eq!(
+                engine.get_entity(victim).unwrap().element_data().posture,
+                Posture::Dead,
+                "TranslateSwordDamage must publish Dead for lethal {initial_posture:?} non-riders"
+            );
+            assert_eq!(element.state, crate::sequence::SequenceState::Terminated);
+            assert!(
+                element.orders.is_empty(),
+                "grounded lethal {initial_posture:?} must not author a replacement animation"
+            );
+        }
+    }
+
+    #[test]
+    fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
+        for (life_points, rider, expected_state) in [
+            (50, false, crate::sequence::SequenceState::Terminated),
+            (1, true, crate::sequence::SequenceState::InProgress),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+            let victim = engine.add_entity(make_soldier(
+                WorldPoint3D {
+                    x: 10.0,
+                    ..WorldPoint3D::ZERO
+                },
+                None,
+            ));
+            {
+                let Entity::Soldier(victim_entity) = engine.get_entity_mut(victim).unwrap() else {
+                    unreachable!()
+                };
+                victim_entity.element.posture = Posture::Lying;
+                victim_entity.npc.life_points = life_points;
+                victim_entity.soldier.rider = rider;
+                victim_entity
+                    .npc
+                    .ai_brain
+                    .enemy_mut()
+                    .unwrap()
+                    .hth_weapon_id = 1;
+            }
+            let assets = if rider {
+                assets_with_sword_profile_effects(200, 50, 100, 0)
+            } else {
+                assets_with_sword_profile_effects(1, 50, 1, 0)
+            };
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            let sequence = engine.orders.sequence_manager.launch_element(damage);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence, 0),
+            );
+
+            assert_eq!(
+                engine.get_entity(victim).unwrap().element_data().posture,
+                Posture::Lying,
+                "living grounded actors and lethal riders bypass the Dead rewrite"
+            );
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .unwrap()
+                    .state,
+                expected_state,
+                "dead riders fall through while living grounded non-riders terminate"
+            );
+        }
+    }
+
+    #[test]
     fn sword_damage_amulet_coma_terminates_during_translation() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();
@@ -11336,5 +11469,44 @@ mod tests {
             engine.control.sim_config.difficulty,
         );
         assert!(ctx.is_in_coma);
+    }
+
+    #[test]
+    fn swordfight_distance_keeps_original_strict_minimum_boundary() {
+        use super::evaluate::{
+            SwordfightDistanceAdjustment as Adjustment, swordfight_distance_adjustment,
+        };
+
+        // Savegame_008/replay-012 reaches this representable distance after
+        // one ordinary 12-unit swordfight correction. Original compares it
+        // directly with the 45-unit MINIMAL range and requests another move.
+        assert_eq!(
+            swordfight_distance_adjustment(44.999_71, 45.0, 65.0, 65.0, false),
+            Adjustment::Farther,
+        );
+        assert_eq!(
+            swordfight_distance_adjustment(45.0, 45.0, 65.0, 65.0, false),
+            Adjustment::None,
+        );
+    }
+
+    #[test]
+    fn swordfight_distance_keeps_original_strict_maximum_and_step_back_guards() {
+        use super::evaluate::{
+            SwordfightDistanceAdjustment as Adjustment, swordfight_distance_adjustment,
+        };
+
+        assert_eq!(
+            swordfight_distance_adjustment(65.000_01, 45.0, 65.0, 60.0, false),
+            Adjustment::Closer,
+        );
+        assert_eq!(
+            swordfight_distance_adjustment(65.0, 45.0, 65.0, 60.0, false),
+            Adjustment::None,
+        );
+        assert_eq!(
+            swordfight_distance_adjustment(65.000_01, 45.0, 65.0, 60.0, true),
+            Adjustment::None,
+        );
     }
 }
