@@ -1328,12 +1328,34 @@ impl EngineInner {
                             Command::EnterAttentiveMode
                             | Command::LeaveAttentiveMode
                             | Command::LeaveAttentiveModeOfficer => {
+                                self.trace_attentive_owner_handoff(
+                                    "translate_before",
+                                    owner,
+                                    Some((seq_id, elem_idx)),
+                                    format_args!("before attentive translator"),
+                                );
                                 let barrier = NpcAttentionCommandContext {
                                     entities: &mut self.world.entities,
                                     sequence_manager: &mut self.orders.sequence_manager,
                                     next_order_id: &mut self.orders.next_order_id,
                                 }
                                 .dispatch(owner, cmd, seq_id, elem_idx);
+                                self.trace_attentive_owner_handoff(
+                                    "translate_after",
+                                    owner,
+                                    Some((seq_id, elem_idx)),
+                                    format_args!(
+                                        "{}",
+                                        match barrier {
+                                            OwnerActionBarrier::Reach => {
+                                                "attentive translator queued transition"
+                                            }
+                                            OwnerActionBarrier::Skip => {
+                                                "attentive translator terminalized inline"
+                                            }
+                                        }
+                                    ),
+                                );
                                 if barrier == OwnerActionBarrier::Skip {
                                     break 'action;
                                 }
