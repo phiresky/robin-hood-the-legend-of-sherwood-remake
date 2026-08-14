@@ -841,33 +841,24 @@ impl<'a> ShieldCommandContext<'a> {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let mut started = false;
-        if let Some(entity) = self.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-            && actor.action_state.is_shield()
-        {
-            // Don't set Waiting immediately — the animation tick
-            // will set it when the lowering animation completes (on
-            // MotionState::Done → SetStates(Upright, Waiting)).
-            // The sprite-anim fallback to TRANSITION_LOWERING_SWORD
-            // when the actor has no LOWERING_SHIELD anim is applied
-            // by the animation driver — the *order's* action stays
-            // LOWERING_SHIELD, only the played sprite differs.
-            actor.shield_face_point = None;
-            started = true;
-        }
-        if started {
-            // The order's animation field is `LOWERING_SHIELD`; the
-            // sprite-anim fallback to `TRANSITION_LOWERING_SWORD`
-            // happens at perform_action time only.  The shield-arm
-            // `dispatch_arm_completion` entry gates advance on
-            // TERMINATED only so Done fires the action-state flip
-            // without retiring the order.
-            self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
-        } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
-        }
+        let actor = self
+            .entities
+            .get_mut(owner)
+            .and_then(crate::element::Entity::actor_data_mut)
+            .unwrap_or_else(|| panic!("LowerShield owner {owner:?} is not a live actor"));
+        // Original Translate(LOWER_SHIELD) appends LOWERING_SHIELD
+        // unconditionally. In particular, an authored LowerShield that was
+        // postponed behind a hit can first finish its StandingUp transition;
+        // the resulting Waiting action state must not suppress the command.
+        // Don't set Waiting immediately — the animation tick owns that state
+        // change when the lowering animation completes.
+        actor.shield_face_point = None;
+
+        // The sprite-anim fallback to TRANSITION_LOWERING_SWORD when the
+        // actor has no LOWERING_SHIELD anim is applied by the animation
+        // driver. The order itself remains LOWERING_SHIELD.
+        self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 
     /// Dispatch a ParryShield command.
