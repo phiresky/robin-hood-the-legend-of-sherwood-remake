@@ -3671,8 +3671,17 @@ impl EngineInner {
             distance
         };
 
-        let mut seek_elem =
-            SequenceElement::new_movement(1, Command::Seek, Some(pc_id), OrderType::RunningUpright);
+        // RHEngine::PerformSwordfight authors this seek as
+        // RHNONANIMATION_RUNNING_WITH_SWORD.  FORCE_SWORD_MOVEMENT is a
+        // separate policy bit and must remain clear: if the opponent goes
+        // away before Execute, Human's ordinary orphan-sword guard still
+        // aborts the movement and quits swordfight.
+        let mut seek_elem = SequenceElement::new_movement(
+            1,
+            Command::Seek,
+            Some(pc_id),
+            OrderType::RunningWithSword,
+        );
         let mut post_seek = Sequence::new();
         post_seek.append_element(strike_elem);
         if let SequenceElementData::Movement {
@@ -5390,7 +5399,7 @@ mod tests {
     }
 
     #[test]
-    fn sword_strike_seek_uses_resolved_tolerance_and_ordinary_upright_movement() {
+    fn sword_strike_seek_uses_resolved_tolerance_and_authored_sword_movement() {
         let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
         {
             let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
@@ -5463,7 +5472,7 @@ mod tests {
         else {
             panic!("strike seek must be a movement element");
         };
-        assert_eq!(*action, crate::order::OrderType::RunningUpright);
+        assert_eq!(*action, crate::order::OrderType::RunningWithSword);
         assert_eq!(*element, Some(target_id));
         assert_eq!(*tolerance, 63.0);
         assert!(flags.contains(MoveFlags::SEEK));
