@@ -2590,10 +2590,14 @@ mod tests {
         {
             let target = engine.get_entity_mut(target_id).unwrap();
             target.element_data_mut().set_position_map(carried_position);
-            target
-                .human_data_mut()
-                .unwrap()
-                .last_is_lying_for_corpse_intersection = Some(false);
+            assert_eq!(
+                target
+                    .human_data()
+                    .unwrap()
+                    .last_is_lying_for_corpse_intersection,
+                None,
+                "freshly adopted carried bodies have no derived observer state"
+            );
         }
         let mut neighbour = make_pc(Posture::Tied);
         neighbour
@@ -3928,6 +3932,16 @@ impl EngineInner {
         });
 
         if let Some(target) = self.get_entity_mut(target_id) {
+            let was_lying = target.element_data().posture.is_lying();
+            if let Some(human) = target.human_data_mut()
+                && human.last_is_lying_for_corpse_intersection.is_none()
+            {
+                // A loaded carried body may reach DropCorpse before its
+                // first owner observation. Seed that derived tracker from
+                // the authoritative pre-SetPosture state so the synchronous
+                // post-mutation hook below still observes false -> true.
+                human.last_is_lying_for_corpse_intersection = Some(was_lying);
+            }
             target.set_posture(drop_posture);
             // RHElementActorPC::DropCorpse transfers the carrier's obstacle,
             // plane, layer, and sector before either the instant or delayed
