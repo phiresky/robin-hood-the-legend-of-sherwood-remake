@@ -689,24 +689,44 @@ impl EngineInner {
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
+            let collision_debug_identity =
+                crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
+                    crate::sight_obstacle::ProjectileCollisionDebugIdentity {
+                        frame: self.control.frame_counter,
+                        shooter: result.shooter.index(),
+                        projectile_creation_order: self.world.next_original_creation_order,
+                    }
+                });
+            let capture_collision_debug = collision_debug_identity
+                .is_some_and(crate::sight_obstacle::projectile_collision_debug_matches);
+            let compute_trajectory = || {
+                bow_shot::compute_trajectory_ballistic_with_terminal_impact(
+                    bow_point,
+                    velocity,
+                    mass,
+                    flat_shot,
+                    // Magic-bullet short-circuit: skip the obstacle check entirely.
+                    if magic_bullet {
+                        None
+                    } else {
+                        Some(&obstacle_check)
+                    },
+                )
+            };
             let (
                 trajectory,
                 terminal_obstacle,
                 terminal_impact,
                 terminal_lands_in_hole,
                 terminal_lands_in_water,
-            ) = bow_shot::compute_trajectory_ballistic_with_terminal_impact(
-                bow_point,
-                velocity,
-                mass,
-                flat_shot,
-                // Magic-bullet short-circuit: skip the obstacle check entirely.
-                if magic_bullet {
-                    None
-                } else {
-                    Some(&obstacle_check)
-                },
-            );
+            ) = if capture_collision_debug {
+                crate::sight_obstacle::with_projectile_collision_debug_identity(
+                    collision_debug_identity.expect("matched collision debug has no identity"),
+                    compute_trajectory,
+                )
+            } else {
+                compute_trajectory()
+            };
             let terminal_obstacle_plane =
                 bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
             let trajectory_end = trajectory.last().map(|tp| tp.position);
@@ -808,6 +828,12 @@ impl EngineInner {
             arrow_projectile.projectile.trajectory_origin_sector = trajectory_origin_sector;
             arrow_projectile.projectile.trajectory_origin_layer = layer;
             let arrow_id = self.add_entity(arrow);
+            if capture_collision_debug {
+                crate::sight_obstacle::validate_projectile_collision_debug_spawn(
+                    arrow_id,
+                    self.world.original_creation_order(arrow_id),
+                );
+            }
             let diagnostic_projectile_creation_order =
                 diagnostic_identity.map(|_| self.world.original_creation_order(arrow_id));
             if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
