@@ -726,14 +726,14 @@ impl EnemyAi {
         self.actual_seek_point = Some(next_id);
 
         // Check if locked or uninteresting — skip (recurse)
-        let (is_locked, interest) = {
+        let is_locked = {
             if let Some(sp) = resolve_seek_point_id(
                 next_id,
                 &self.personal_seek_point_1,
                 &self.personal_seek_point_2,
                 global,
             ) {
-                (sp.locked, sp.last_calculated_interest)
+                sp.locked
             } else {
                 // Invalid ID — skip
                 self.seek_next_point(sim, global, ctx, tick);
@@ -741,23 +741,25 @@ impl EnemyAi {
             }
         };
 
-        // Recalculate interest
-        let interest = {
-            if let Some(sp) = resolve_seek_point_mut(
-                next_id,
-                &mut self.personal_seek_point_1,
-                &mut self.personal_seek_point_2,
-                global,
-            ) {
-                sp.calculate_interest(current_frame)
-            } else {
-                interest
-            }
-        };
+        // Original short-circuits `IsLocked() || ...`: a locked candidate is
+        // skipped without recalculating its shared interest or consuming the
+        // acceptance draw. The recursive entry still unlocks it above.
+        if is_locked {
+            self.seek_next_point(sim, global, ctx, tick);
+            return;
+        }
 
-        if is_locked
-            || crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100)
-                >= interest
+        // Recalculate interest
+        let interest = resolve_seek_point_mut(
+            next_id,
+            &mut self.personal_seek_point_1,
+            &mut self.personal_seek_point_2,
+            global,
+        )
+        .unwrap_or_else(|| panic!("seek point {next_id} resolved immediately before mutation"))
+        .calculate_interest(current_frame);
+
+        if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100) >= interest
         {
             // Skip this point — try the next one
             self.seek_next_point(sim, global, ctx, tick);
@@ -1390,5 +1392,94 @@ mod tests {
 
         assert_eq!(ai.base.last_goto_destination, route_point);
         assert_eq!(ai.base.seek_position, search_center);
+    }
+
+    #[test]
+    fn locked_seek_point_skips_interest_recalculation_and_acceptance_draw() {
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(118);
+        ai.my_seek_points = vec![0, 1];
+        let locked_position = Position {
+            x: 100.0,
+            ..Position::default()
+        };
+        let accepted_position = Position {
+            x: 200.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points = vec![
+            SeekPoint {
+                position: locked_position,
+                frame_when_full_interest: 1_000,
+                directions: vec![2],
+                last_calculated_interest: 7,
+                locked: true,
+                id: 0,
+            },
+            SeekPoint {
+                position: accepted_position,
+                frame_when_full_interest: 0,
+                directions: vec![4],
+                last_calculated_interest: 3,
+                locked: false,
+                id: 1,
+            },
+        ];
+        let ctx = AiContext {
+            frame: 500,
+            ..AiContext::default()
+        };
+
+        let (_, draws) = with_draw_trace(|| {
+            ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+        });
+
+        assert_eq!(draws, [RngSite::SeekPointAcceptance]);
+        assert_eq!(global.seek_points[0].last_calculated_interest, 7);
+        assert!(!global.seek_points[0].locked);
+        assert_eq!(global.seek_points[1].last_calculated_interest, 100);
+        assert!(global.seek_points[1].locked);
+        assert_eq!(ai.actual_seek_point, Some(1));
+        assert_eq!(ai.base.last_goto_destination, accepted_position);
+    }
+
+    #[test]
+    fn unlocked_seek_point_recalculates_draws_subtracts_and_locks() {
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(118);
+        ai.my_seek_points.push(0);
+        let destination = Position {
+            x: 300.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points.push(SeekPoint {
+            position: destination,
+            frame_when_full_interest: 501,
+            directions: vec![6],
+            last_calculated_interest: 7,
+            locked: false,
+            id: 0,
+        });
+        let ctx = AiContext {
+            frame: 500,
+            ..AiContext::default()
+        };
+
+        let (_, draws) = with_draw_trace(|| {
+            ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+        });
+
+        assert_eq!(draws, [RngSite::SeekPointAcceptance]);
+        assert_eq!(global.seek_points[0].last_calculated_interest, 100);
+        assert_eq!(global.seek_points[0].frame_when_full_interest, 5_501);
+        assert!(global.seek_points[0].locked);
+        assert_eq!(ai.actual_seek_point, Some(0));
+        assert_eq!(ai.base.last_goto_destination, destination);
     }
 }
