@@ -875,8 +875,17 @@ pub fn is_in_bow_range(max_bow_range: u16, distance: f32) -> bool {
 /// Energy cost of performing a sword strike.
 /// Returns the tiredness increase from executing the strike.
 pub fn strike_energy_cost(profile: &HtHWeaponProfile, strike: SwordStrike) -> u16 {
-    let energy = profile.thrusts[strike as usize].energy;
-    if energy == 0 { 1 } else { energy }
+    profile.thrusts[strike as usize].energy
+}
+
+/// Apply a completed strike's energy to Original's serialized `UWORD`
+/// tiredness accumulator.
+///
+/// `muwTiredness += GetStrikeEnergy(...)` performs the addition after integer
+/// promotion and then narrows back to the unsigned 16-bit member. Preserve
+/// that modulo-2^16 assignment rather than saturating at the Rust type bound.
+pub fn add_strike_tiredness(current_tiredness: u16, strike_energy: u16) -> u16 {
+    current_tiredness.wrapping_add(strike_energy)
 }
 
 /// Tiredness recovery per frame when not fighting or moving.
@@ -2640,10 +2649,18 @@ mod tests {
     fn strike_energy() {
         let profile = make_hth_profile();
         assert_eq!(strike_energy_cost(&profile, SwordStrike::A), 3);
-        // Zero-energy strike falls back to 1
+        // RHSword::GetStrikeEnergy returns the authored value directly for a
+        // real strike, so zero remains zero.
         let mut p2 = profile.clone();
         p2.thrusts[2].energy = 0;
-        assert_eq!(strike_energy_cost(&p2, SwordStrike::C), 1);
+        assert_eq!(strike_energy_cost(&p2, SwordStrike::C), 0);
+    }
+
+    #[test]
+    fn completed_strike_tiredness_uses_uword_assignment() {
+        assert_eq!(add_strike_tiredness(11, 0), 11);
+        assert_eq!(add_strike_tiredness(11, 7), 18);
+        assert_eq!(add_strike_tiredness(u16::MAX - 2, 7), 4);
     }
 
     // ── Tiredness recovery ─────────────────────────────────────────

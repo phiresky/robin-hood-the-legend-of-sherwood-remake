@@ -787,7 +787,7 @@ impl EngineInner {
                 if let Some(entity) = self.get_entity_mut(actor_id)
                     && let Some(human) = entity.human_data_mut()
                 {
-                    human.tiredness = human.tiredness.saturating_add(energy);
+                    human.tiredness = combat::add_strike_tiredness(human.tiredness, energy);
                 }
             }
             None => tracing::warn!(
