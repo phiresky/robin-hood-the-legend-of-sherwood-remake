@@ -1494,7 +1494,10 @@ pub fn roll_hit_and_compute_bias(
     }
 
     // Miss — compute random bias, scaled by inverse skill.
-    let skill_factor = 1.0 - (bow_skill_capacity.min(100) as f32 / 100.0);
+    // Original uses the raw ULONG capacity here. Normal experience gain caps
+    // it at 100, but SetCapacity does not, so preserve negative factors for
+    // explicitly authored/scripted capacities above 100.
+    let skill_factor = bow_miss_skill_factor(bow_skill_capacity);
     // Original spells this as `SBGeoVector3D(rand(), rand(), rand())`.
     // The shipped/compiler-supported builds evaluate those constructor
     // arguments right-to-left: the first global-stream draw becomes Z and
@@ -1512,6 +1515,11 @@ pub fn roll_hit_and_compute_bias(
         y: by,
         z: bz,
     })
+}
+
+#[inline]
+fn bow_miss_skill_factor(bow_skill_capacity: u32) -> f32 {
+    1.0 - bow_skill_capacity as f32 / 100.0
 }
 
 /// Check if a precomputed trajectory will hit a target point.
@@ -7256,6 +7264,13 @@ mod tests {
                 assert!(bias.z.abs() < 1.0);
             }
         });
+    }
+
+    #[test]
+    fn bow_miss_skill_factor_uses_unclamped_capacity() {
+        assert_eq!(bow_miss_skill_factor(0), 1.0);
+        assert_eq!(bow_miss_skill_factor(100), 0.0);
+        assert_eq!(bow_miss_skill_factor(150), -0.5);
     }
 
     #[test]
