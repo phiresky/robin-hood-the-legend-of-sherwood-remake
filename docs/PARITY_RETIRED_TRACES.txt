@@ -89,10 +89,11 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_014/replay-002-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_017/replay-001-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_018/replay-001-session-0001.jsonl.zst
-# Task 244 extension: 16 additional LowerBow captures came from historical
+# Task 244 extension: 17 additional LowerBow captures came from historical
 # Original AimWithBowAt branching on an uninitialized ShootType after
 # CanShootWithBowAt returned OUT_OF_RANGE. Frozen e2 input diagnostics prove
 # every target out of range; current Original and Rust leave bow height unchanged.
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_018/replay-001-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_014/replay-002-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_034/replay-001-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_039/replay-001-session-0001.jsonl.zst
