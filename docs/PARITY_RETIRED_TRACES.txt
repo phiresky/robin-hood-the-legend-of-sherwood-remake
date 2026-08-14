@@ -214,3 +214,8 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-007-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-007-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_051/replay-003-session-0001.jsonl.zst
+# Historical schema-12 capture is internally incompatible with current
+# Original replay. With identical adopted state and no commands, raw frames
+# 33537-33539 keep PC180 waiting upright, while live Original starts the
+# DropCorpse transition after frame 33538; all disputed fields are recorded.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-012-session-0001.jsonl.zst
