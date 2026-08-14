@@ -1323,8 +1323,7 @@ impl EngineInner {
         ) {
             return;
         }
-        let signed_rotation = (thrust.rotation_angle as f32)
-            * (std::f32::consts::PI / 180.0)
+        let signed_rotation = strike_profile_angle(thrust.rotation_angle)
             * if thrust.direction == crate::profiles::WeaponThrustDirection::RightToLeft {
                 -1.0
             } else {
@@ -1381,9 +1380,11 @@ impl EngineInner {
         };
         let thrust = &profile.thrusts[strike as usize];
         let direction = thrust.direction;
-        let initial_angle_deg = thrust.initial_angle as f32;
-        let final_angle_deg = thrust.final_angle as f32;
-        let rotation_angle_deg = thrust.rotation_angle as f32;
+        // RHSword's GetStrike*Angle getters evaluate their authored-degree
+        // expression in double precision and narrow only at the FLOAT return.
+        let initial_angle = strike_profile_angle(thrust.initial_angle);
+        let final_angle = strike_profile_angle(thrust.final_angle);
+        let rotation_per_frame = strike_profile_angle(thrust.rotation_angle);
 
         let attacker_dir = self
             .get_entity(attacker_id)
@@ -1391,45 +1392,42 @@ impl EngineInner {
             .unwrap_or(0);
         let dir_angle = sector_to_angle(attacker_dir);
 
-        let deg_to_rad = std::f32::consts::PI / 180.0;
-        let rotation_per_frame = rotation_angle_deg * deg_to_rad;
-
         use crate::profiles::WeaponThrustDirection;
 
         let (initial, final_a, signed_rotation) = match strike_kind {
             WeaponThrustKind::Lateral => match direction {
                 WeaponThrustDirection::RightToLeft => {
-                    let init = dir_angle + initial_angle_deg * deg_to_rad;
-                    let fin = dir_angle - final_angle_deg * deg_to_rad;
+                    let init = dir_angle + initial_angle;
+                    let fin = dir_angle - final_angle;
                     (init, fin, -rotation_per_frame)
                 }
                 _ => {
-                    let init = dir_angle - initial_angle_deg * deg_to_rad;
-                    let fin = dir_angle + final_angle_deg * deg_to_rad;
+                    let init = dir_angle - initial_angle;
+                    let fin = dir_angle + final_angle;
                     (init, fin, rotation_per_frame)
                 }
             },
             WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => match direction
             {
                 WeaponThrustDirection::RightToLeft => {
-                    let init = dir_angle + initial_angle_deg * deg_to_rad;
+                    let init = dir_angle + initial_angle;
                     let fin = init - std::f32::consts::PI;
                     (init, fin, -rotation_per_frame)
                 }
                 _ => {
-                    let init = dir_angle - initial_angle_deg * deg_to_rad;
+                    let init = dir_angle - initial_angle;
                     let fin = init + std::f32::consts::PI;
                     (init, fin, rotation_per_frame)
                 }
             },
             WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => match direction {
                 WeaponThrustDirection::RightToLeft => {
-                    let init = dir_angle + initial_angle_deg * deg_to_rad;
+                    let init = dir_angle + initial_angle;
                     let fin = dir_angle - 2.0 * std::f32::consts::PI;
                     (init, fin, -rotation_per_frame)
                 }
                 _ => {
-                    let init = dir_angle - initial_angle_deg * deg_to_rad;
+                    let init = dir_angle - initial_angle;
                     let fin = dir_angle + 2.0 * std::f32::consts::PI;
                     (init, fin, rotation_per_frame)
                 }

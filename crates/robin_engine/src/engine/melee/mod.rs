@@ -2715,6 +2715,82 @@ mod tests {
     }
 
     #[test]
+    fn sweep_state_uses_angles_returned_by_original_sword_getters() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(WorldPoint3D::new(10.0, 0.0, 0.0), None));
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::D as usize];
+        thrust.initial_angle = 5;
+        thrust.final_angle = 5;
+        thrust.rotation_angle = 5;
+
+        engine.initialize_sweep(
+            &assets,
+            attacker,
+            SwordStrike::D,
+            Some(1),
+            crate::profiles::WeaponThrustKind::Lateral,
+            vec![victim],
+        );
+        let direction_angle = sector_to_angle(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .element_data()
+                .direction(),
+        );
+        let sweep = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .unwrap();
+        let five_degrees = f32::from_bits(0x3db2_b8c3);
+        assert_eq!(
+            sweep.initial_angle.to_bits(),
+            (direction_angle - five_degrees).to_bits()
+        );
+        assert_eq!(
+            sweep.final_angle.to_bits(),
+            (direction_angle + five_degrees).to_bits()
+        );
+        assert_eq!(sweep.rotation_per_frame.to_bits(), five_degrees.to_bits());
+
+        install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = None;
+        engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
+                .as_ref()
+                .unwrap()
+                .rotation_per_frame
+                .to_bits(),
+            five_degrees.to_bits(),
+            "loaded sweep reconstruction uses the same RHSword getter conversion"
+        );
+
+        // Keep a common authored angle as a control alongside the one-bit 5° case.
+        assert_eq!(strike_profile_angle(45).to_bits(), 0x3f49_0fdb);
+    }
+
+    #[test]
     fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
         // The profile stores 180 degrees, but RHSword::GetStrikeRotationAngle
         // returns PI radians. At relative sector 8 Original therefore extends
