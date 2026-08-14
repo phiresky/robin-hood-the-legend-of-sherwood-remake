@@ -6289,6 +6289,12 @@ impl EngineInner {
     pub(super) fn broadcast_body_detectable(&mut self, body_id: EntityId) {
         use crate::element::DetectableType;
 
+        let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
+        let mutation_target_creation_order = (mutation_debug_enabled
+            && detection::detectable_mutation_debug_target_slot_matches(body_id.index()))
+        .then(|| self.original_static_creation_order(body_id))
+        .unwrap_or(0);
+
         // Snapshot the body's position + `knocked_out_in_money_fight`
         // flag for the per-friend radius check below.
         let (body_pos, body_knocked_out_in_money_fight, body_is_soldier) = {
@@ -6315,6 +6321,10 @@ impl EngineInner {
             if friend_id == body_id {
                 continue;
             }
+            let mutation_owner_creation_order = (mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index()))
+            .then(|| self.original_static_creation_order(friend_id))
+            .unwrap_or(0);
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
@@ -6341,11 +6351,36 @@ impl EngineInner {
                     .iter()
                     .any(|d| d.element == Some(body_id));
                 if !already {
+                    let mutation_length_before =
+                        (detection::detectable_mutation_debug_owner_matches(
+                            friend_id.index(),
+                            mutation_owner_creation_order,
+                        ) && detection::detectable_mutation_debug_target_matches(
+                            body_id.index(),
+                            mutation_target_creation_order,
+                        ))
+                        .then(|| npc.detectable_lists[det_idx].len());
                     npc.detectable_lists[det_idx].push(crate::element::Detectable {
                         element: Some(body_id),
                         detectable_type: DetectableType::Body,
                         ..Default::default()
                     });
+                    if let Some(length_before) = mutation_length_before {
+                        detection::debug_detectable_mutation_event(
+                            "add",
+                            "broadcast_body_detectable",
+                            self.control.frame_counter,
+                            friend_id.index(),
+                            mutation_owner_creation_order,
+                            det_idx,
+                            body_id.index(),
+                            mutation_target_creation_order,
+                            false,
+                            true,
+                            length_before,
+                            npc.detectable_lists[det_idx].len(),
+                        );
+                    }
                 }
             }
 
