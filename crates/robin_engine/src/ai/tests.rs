@@ -150,13 +150,19 @@ fn outside_think_patrol_macro_finishes_after_reentrant_reach_point() {
 }
 
 #[test]
-fn ai_timers_preserve_zero_frame_and_ulong_wrapping_deadlines() {
+fn ai_timer_clamps_zero_while_macro_timer_preserves_raw_ulong_deadlines() {
     let mut ai = AiController::new(17);
     ai.current_substate = Substate::DefaultInMacro;
 
     ai.launch_timer(0, 123);
-    assert_eq!(ai.when_does_timer_ring, 123);
+    assert_eq!(ai.when_does_timer_ring, 124);
     assert_eq!(ai.substate_at_last_timer_launch, Substate::DefaultInMacro);
+
+    ai.launch_timer(1, 456);
+    assert_eq!(ai.when_does_timer_ring, 457);
+
+    ai.launch_timer(20, 456);
+    assert_eq!(ai.when_does_timer_ring, 476);
 
     ai.launch_macro_timer(0, 456);
     assert_eq!(ai.when_does_macro_timer_ring, 456);

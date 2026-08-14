@@ -785,8 +785,11 @@ impl AiController {
     /// Arm the stimulus timer to fire `frames` ticks from now.
     pub fn launch_timer(&mut self, frames: u32, current_frame: u32) {
         self.timer_is_running = true;
-        // Original stores the raw ULONG sum. In particular, a zero-frame
-        // timer is immediately due when a later phase polls it this frame.
+        // RHArtificialIntelligence::LaunchTimer clamps a zero-duration AI
+        // timer to one frame before forwarding it to RHElementActorNPC.
+        // Macro timers bypass this wrapper and intentionally retain their
+        // raw duration in `launch_macro_timer`.
+        let frames = frames.max(1);
         self.when_does_timer_ring = current_frame.wrapping_add(frames);
         self.substate_at_last_timer_launch = self.current_substate;
     }
