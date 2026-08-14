@@ -947,21 +947,27 @@ fn is_group_strike(strike: SwordStrike) -> bool {
 
 /// Convert a 0-15 direction sector to angle in radians.
 ///
-/// The trailing `+ 0.1` rad nudges the result a fraction past the sector's
-/// begin edge, so the floor-based `angle_to_sector` round-trips back to
-/// the same sector.
+/// Original's trailing `+ 0.1` nudges the beginning edge just inside the
+/// sector so `AngleToSector` round-trips it to the same sector.
 fn sector_to_angle(sector: i16) -> f32 {
-    (sector as f32) * PI * 2.0 / 16.0 + 0.1
+    // Original's unsuffixed literals promote the UBYTE sector and f32 PI
+    // constant to double for the whole expression, then narrow on return.
+    ((f64::from(sector) / 16.0) * 2.0 * f64::from(PI) + 0.1) as f32
 }
 
 /// Convert an angle in radians to a 0-15 sector.
 ///
-/// Floor binning where sector `k` covers `[k·2π/16, (k+1)·2π/16)`. Input
-/// is normalised into `[0, 2π)` first, so negative angles work naturally.
+/// Positive angles use Original's truncating ULONG conversion and modulo.
+/// Negative angles use its recursive mirror rule, including its asymmetric
+/// treatment of exact negative sector boundaries.
 fn angle_to_sector(angle: f32) -> u8 {
-    let two_pi = PI * 2.0;
-    let normalized = ((angle % two_pi) + two_pi) % two_pi;
-    ((normalized / two_pi * 16.0).floor() as u32 % 16) as u8
+    if angle >= 0.0 {
+        // As in Original, the unsuffixed constants keep this calculation in
+        // double until the truncating ULONG cast.
+        ((f64::from(angle) / (2.0 * f64::from(PI)) * 16.0) as u32 % 16) as u8
+    } else {
+        16 - angle_to_sector(-angle) - 1
+    }
 }
 
 /// Check if `sector` is between `begin` and `end` (inclusive, wrapping 0-15).
@@ -1148,7 +1154,9 @@ fn is_victim_in_strike_arc(
 
 /// Convert degrees to radians (profile stores integer degrees).
 fn degrees_to_radians(degrees: u16) -> f32 {
-    (degrees as f32) * PI / 180.0
+    // `degrees / 360.0 * 2.0 * PI` is double-promoted in Original and
+    // narrowed only by the FLOAT return value.
+    ((f64::from(degrees) / 360.0) * 2.0 * f64::from(PI)) as f32
 }
 
 /// Estimate damage of a single strike against a single victim.
@@ -2527,6 +2535,28 @@ mod tests {
             &victim,
             false
         ));
+    }
+
+    #[test]
+    fn strike_arc_angles_preserve_original_promotions_and_negative_sectors() {
+        let original_sector_angle =
+            ((6.0_f64 / 16.0) * 2.0 * f64::from(std::f32::consts::PI) + 0.1) as f32;
+        assert_eq!(
+            sector_to_angle(6).to_bits(),
+            original_sector_angle.to_bits()
+        );
+
+        let original_strike_angle =
+            ((7.0_f64 / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32;
+        assert_eq!(
+            degrees_to_radians(7).to_bits(),
+            original_strike_angle.to_bits()
+        );
+
+        // Original handles negative angles recursively instead of first
+        // normalizing them. Exactly -PI/8 therefore belongs to sector 14,
+        // not sector 15 from the normalized-floor formulation.
+        assert_eq!(angle_to_sector(-std::f32::consts::PI / 8.0), 14);
     }
 
     // ── Energy cost ────────────────────────────────────────────────
