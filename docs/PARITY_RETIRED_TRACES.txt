@@ -211,6 +211,7 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001
 # GetFramesFromNowTillActionDone then performs unchecked wait-time reads for
 # frame indices 2..65534 (RHsprite.cpp:706-718, 1237-1263, 4428-4432). Rust
 # intentionally fails safely instead of reproducing the out-of-bounds reads.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-007-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-007-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-007-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_051/replay-003-session-0001.jsonl.zst
