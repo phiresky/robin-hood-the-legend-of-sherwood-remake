@@ -2779,8 +2779,15 @@ impl EngineInner {
         let derived_tail_order = derived_tail_order_type
             .map(|order| order as u32)
             .map_or(-1_i64, i64::from);
+        let direction = entity.element_data().direction();
+        let view_direction = npc.view_direction;
+        let left_side = npc.view_left_side;
+        let right_side = npc.view_right_side;
+        let half_aperture = npc.real_half_aperture;
+        let angle = npc.view_angle;
+        let angle_step = npc.view_angle_step;
         eprintln!(
-            "RVLIFE {{\"engine\":\"rust\",\"seq\":{sequence},\"stage\":{stage:?},\"frame\":{},\"owner_slot\":{},\"creation_order\":{creation_order},\"eye_status\":{},\"alpha_start\":{},\"radius_goal\":{},\"radius_step\":{},\"radius\":{},\"active\":{},\"unconscious\":{},\"tied\":{},\"dead\":{},\"frozen_all\":{},\"installed_order\":{installed_order},\"derived_tail_order\":{derived_tail_order},\"motion_state\":{},\"execution_frozen\":{}}}",
+            "RVLIFE {{\"engine\":\"rust\",\"seq\":{sequence},\"stage\":{stage:?},\"frame\":{},\"owner_slot\":{},\"creation_order\":{creation_order},\"eye_status\":{},\"alpha_start\":{},\"radius_goal\":{},\"radius_step\":{},\"radius\":{},\"active\":{},\"unconscious\":{},\"tied\":{},\"dead\":{},\"frozen_all\":{},\"installed_order\":{installed_order},\"derived_tail_order\":{derived_tail_order},\"motion_state\":{},\"execution_frozen\":{},\"direction\":{direction},\"direction_old\":{},\"view_transition\":{},\"angle_bits\":{},\"angle_step_bits\":{},\"real_half_aperture_bits\":{},\"view_direction_bits\":[{},{}],\"left_side_bits\":[{},{}],\"right_side_bits\":[{},{}]}}",
             self.control.frame_counter,
             npc_id.index(),
             npc.eye_status as u8,
@@ -2795,6 +2802,17 @@ impl EngineInner {
             self.actors_frozen(),
             actor.continuation.motion_state as u8,
             actor.execution_frozen,
+            npc.direction_old,
+            npc.view_transition,
+            angle.to_bits(),
+            angle_step.to_bits(),
+            half_aperture.to_bits(),
+            view_direction[0].to_bits(),
+            view_direction[1].to_bits(),
+            left_side[0].to_bits(),
+            left_side[1].to_bits(),
+            right_side[0].to_bits(),
+            right_side[1].to_bits(),
         );
     }
 
