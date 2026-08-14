@@ -10,7 +10,22 @@ use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{Command, Entity, EntityId};
 use crate::order::OrderType;
-use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
+use crate::sequence::{
+    PendingCondolation, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
+};
+
+fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
+        return false;
+    }
+    let value = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME").unwrap_or_else(|_| {
+        panic!("PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME")
+    });
+    let expected = value
+        .parse::<u32>()
+        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME={value:?}: {error}"));
+    frame == expected
+}
 
 #[cfg(test)]
 thread_local! {
@@ -544,6 +559,9 @@ impl EngineInner {
             postponed_successor_pending,
             cancel_path_request_owner,
         } = card;
+        let frame = self.control.frame_counter;
+        let goal_owner_provenance = take_goal_owner_terminal_provenance(owner, seq_id, elem_idx)
+            .filter(|_| goal_owner_handoff_debug_frame_matches(frame));
 
         #[cfg(test)]
         observe_condolation_card(owner, command);
@@ -629,7 +647,28 @@ impl EngineInner {
             selected_element.is_some_and(|selected| selected != (seq_id, usize::from(elem_idx)));
         let detaches_selected_order = detaches_selected_goal && !successor_already_selected;
         let mut cleared_selected_goal = false;
-        let frame = self.control.frame_counter;
+        if let Some(provenance) = &goal_owner_provenance {
+            let actor_state = self.world.entities.get(owner).and_then(|entity| {
+                entity.actor_data().map(|actor| {
+                    (
+                        actor.action_state,
+                        actor.active_movement,
+                        actor.installed_order,
+                    )
+                })
+            });
+            let position_state = self.world.entities.get(owner).map(|entity| {
+                (
+                    entity.position_iface().map_goal(),
+                    entity.position_iface().is_moving(),
+                )
+            });
+            let translating = self.orders.sequence_manager.goal_owner_debug_translating();
+            eprintln!(
+                "[GOAL_OWNER frame={frame} owner={owner:?} stage=before_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} terminal_selected={:?} terminal_translating={:?} dispatch_selected={selected_element:?} dispatch_translating={translating:?} actor={actor_state:?} position={position_state:?}]",
+                provenance.site, provenance.selected, provenance.translating,
+            );
+        }
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
                 actor.active_movement.sequence_id == Some(seq_id)
@@ -733,6 +772,32 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .clear_retained_movement_goals_for_actor(owner);
+        }
+        if let Some(provenance) = &goal_owner_provenance {
+            let selected = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner);
+            let translating = self.orders.sequence_manager.goal_owner_debug_translating();
+            let actor_state = self.world.entities.get(owner).and_then(|entity| {
+                entity.actor_data().map(|actor| {
+                    (
+                        actor.action_state,
+                        actor.active_movement,
+                        actor.installed_order,
+                    )
+                })
+            });
+            let position_state = self.world.entities.get(owner).map(|entity| {
+                (
+                    entity.position_iface().map_goal(),
+                    entity.position_iface().is_moving(),
+                )
+            });
+            eprintln!(
+                "[GOAL_OWNER frame={frame} owner={owner:?} stage=after_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} selected={selected:?} translating={translating:?} actor={actor_state:?} position={position_state:?} cleared_goal={cleared_selected_goal}]",
+                provenance.site,
+            );
         }
 
         // When a movement element with the MAP flag terminates, toggle
