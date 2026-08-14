@@ -4,6 +4,11 @@
 
 use super::*;
 
+#[inline]
+fn provoke_roll_succeeds(roll: u32, fighting_ability: u16) -> bool {
+    (roll as f32) < 0.2_f32 * f32::from(fighting_ability)
+}
+
 fn good_strike_lifecycle_debug_enabled() -> bool {
     std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_some()
 }
@@ -829,7 +834,6 @@ impl EngineInner {
             // Original evaluates the random chance before its selected-PC
             // suppression clause.  A controlled attacker therefore still
             // owns one global draw even though it can never launch Provoke.
-            let provoke_chance = (0.2 * attacker_ctx.fighting_ability as f32) as u32;
             let provoke_roll =
                 crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeProvoke, 0..100);
 
@@ -840,7 +844,9 @@ impl EngineInner {
                 .kind()
                 .is_pc()
                 && self.selected_pc_ids().contains(&atk_id);
-            if provoke_roll < provoke_chance && !attacker_is_selected_pc {
+            if provoke_roll_succeeds(provoke_roll, attacker_ctx.fighting_ability)
+                && !attacker_is_selected_pc
+            {
                 self.launch_provoke(atk_id);
             }
         }
@@ -3159,5 +3165,22 @@ impl EngineInner {
         if set_lying_now && !victim.element_data().posture.is_lying() {
             victim.set_posture(Posture::Lying);
         }
+    }
+}
+
+#[cfg(test)]
+mod provoke_tests {
+    use super::provoke_roll_succeeds;
+
+    #[test]
+    fn fractional_provoke_threshold_is_not_truncated_before_comparison() {
+        assert!(provoke_roll_succeeds(10, 51));
+        assert!(provoke_roll_succeeds(0, 1));
+    }
+
+    #[test]
+    fn exact_provoke_threshold_remains_exclusive() {
+        assert!(provoke_roll_succeeds(9, 50));
+        assert!(!provoke_roll_succeeds(10, 50));
     }
 }
