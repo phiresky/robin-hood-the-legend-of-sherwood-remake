@@ -4273,21 +4273,44 @@ impl EngineInner {
                                 "owner_post_execute",
                             );
                         }
-                        let specialized_execute_motion = explicit_execute_motion.or_else(|| {
-                            (!validity_short_circuited)
-                                .then_some(selected_owner_family)
-                                .flatten()
-                                .filter(|family| *family != ExecuteOwnerFamily::GenericAnimation)
-                                .and_then(|_| {
-                                    specialized_execute_motion(
-                                        self.world.entities.get(entity_id).and_then(|entity| {
-                                            entity.element_data().sprite.last_motion_state
-                                        }),
-                                        beggar_selection.is_some(),
-                                        movement_entity_target_seek,
-                                    )
-                                })
-                        });
+                        let mut specialized_execute_motion =
+                            explicit_execute_motion.or_else(|| {
+                                (!validity_short_circuited)
+                                    .then_some(selected_owner_family)
+                                    .flatten()
+                                    .filter(|family| {
+                                        *family != ExecuteOwnerFamily::GenericAnimation
+                                    })
+                                    .and_then(|_| {
+                                        specialized_execute_motion(
+                                            self.world.entities.get(entity_id).and_then(|entity| {
+                                                entity.element_data().sprite.last_motion_state
+                                            }),
+                                            beggar_selection.is_some(),
+                                            movement_entity_target_seek,
+                                        )
+                                    })
+                            });
+                        let mut specialized_wait_modifier_terminated = false;
+                        if let (Some(motion), Some((entry_seq_id, entry_elem_idx, _))) =
+                            (specialized_execute_motion.as_mut(), selected_order)
+                        {
+                            // Actor::Hourglass applies WAIT_TIMER / WAIT_FREE_LIFT
+                            // after the complete virtual Execute call. Derived
+                            // movement, combat, ability, and beggar arms therefore
+                            // pass through the same base modifier as generic sprite
+                            // animation, exactly once.
+                            let motion_before_modifier = *motion;
+                            self.apply_actor_post_execute_wait_modifier_to_motion(
+                                entity_id,
+                                entry_seq_id,
+                                entry_elem_idx,
+                                motion,
+                            );
+                            specialized_wait_modifier_terminated = motion_before_modifier
+                                != crate::sprite::MotionState::Terminated
+                                && *motion == crate::sprite::MotionState::Terminated;
+                        }
                         let explicit_execute_in_progress = matches!(
                             explicit_execute_motion,
                             Some(crate::sprite::MotionState::InProgress)
@@ -4379,6 +4402,23 @@ impl EngineInner {
                             } else {
                                 self.tick_actor_animation_for(sim, assets, entity_id)
                             };
+                        if specialized_wait_modifier_terminated {
+                            let (entry_seq_id, entry_elem_idx, entry_order_id) = selected_order
+                                .expect("specialized wait modifier lost its entry order");
+                            self.stage_actor_execute_completion(
+                                entity_id,
+                                Some(entry_order_id),
+                                super::animation::ActorExecuteResult {
+                                    order_type: selected_order_type.expect(
+                                        "specialized wait modifier lost its entry order type",
+                                    ),
+                                    entry_seq_id,
+                                    entry_elem_idx,
+                                    motion: crate::sprite::MotionState::Terminated,
+                                },
+                                &mut outcomes,
+                            );
+                        }
                         if explicit_execute_terminated {
                             let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
                                 panic!(
@@ -5200,10 +5240,25 @@ impl EngineInner {
         owner: EntityId,
         execute_result: &mut super::animation::ActorExecuteResult,
     ) {
+        self.apply_actor_post_execute_wait_modifier_to_motion(
+            owner,
+            execute_result.entry_seq_id,
+            execute_result.entry_elem_idx,
+            &mut execute_result.motion,
+        );
+    }
+
+    fn apply_actor_post_execute_wait_modifier_to_motion(
+        &mut self,
+        owner: EntityId,
+        entry_seq_id: crate::sequence::SequenceId,
+        entry_elem_idx: usize,
+        motion: &mut crate::sprite::MotionState,
+    ) {
         let entry_command = self
             .orders
             .sequence_manager
-            .get_element(execute_result.entry_seq_id, execute_result.entry_elem_idx)
+            .get_element(entry_seq_id, entry_elem_idx)
             .map(|element| element.command);
         let live_element = self
             .orders
@@ -5238,7 +5293,7 @@ impl EngineInner {
                 });
             if actor.wait_time == 0 {
                 actor.seek_refresh_wait = 0;
-                execute_result.motion = crate::sprite::MotionState::Terminated;
+                *motion = crate::sprite::MotionState::Terminated;
             } else {
                 actor.wait_time -= 1;
                 actor.seek_refresh_wait = actor.wait_time;
@@ -5257,7 +5312,7 @@ impl EngineInner {
                 }
                 .authorize_and_reserve(owner, seq_id, elem_idx);
                 if authorized {
-                    execute_result.motion = crate::sprite::MotionState::Terminated;
+                    *motion = crate::sprite::MotionState::Terminated;
                 }
             }
         }
@@ -8065,6 +8120,83 @@ mod bow_command_body_parity_tests {
                 .expect("wait timer remains inspectable")
                 .state,
             SequenceState::Terminated
+        );
+    }
+
+    #[test]
+    fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
+        fn run_once(order_type: OrderType, wait_time: u32) -> (u32, SequenceState) {
+            let mut engine = EngineInner::new();
+            let assets = LevelAssets::new();
+            let mut owner_entity = make_aiming_pc(ActionState::Waiting);
+            let mut conversion =
+                vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+            conversion[order_type as usize] = 0;
+            owner_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+                std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                    action_id: order_type as u16,
+                    action_done: 0,
+                    frame_ids: vec![1],
+                    delays: vec![10],
+                    distances: vec![0],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                    sound_ids: vec![0],
+                    ..Default::default()
+                }]),
+                std::sync::Arc::new(conversion),
+            );
+            owner_entity.actor_data_mut().unwrap().wait_time = wait_time;
+            owner_entity.actor_data_mut().unwrap().seek_refresh_wait = wait_time;
+            let owner = engine.add_entity(owner_entity);
+
+            let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
+            wait.priority = crate::sequence::SequencePriority::Normal;
+            let seq_id = engine.orders.sequence_manager.launch_element(wait);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(seq_id, 0);
+            let order_id = engine.orders.allocate_order_id();
+            engine.orders.sequence_manager.push_order_on(
+                seq_id,
+                0,
+                crate::order::Order::new(order_type, 0.0, 0.0, order_id),
+            );
+
+            engine
+                .tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+            let remaining = engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .wait_time;
+            let state = engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .expect("WAIT_TIMER remains inspectable")
+                .state;
+            (remaining, state)
+        }
+
+        // Savegame_linux2/Profile_002/Savegame_032 replay-008 frame
+        // 17705 enters with WAIT_TIMER=23 and SIMULATING_BEGGAR selected.
+        // Original's base Actor::Hourglass decrements it after the PC
+        // override returns; the specialized Rust arm used to skip that base
+        // modifier and retain 23.
+        assert_eq!(run_once(OrderType::SimulatingBeggar, 23).0, 22);
+        assert_eq!(
+            run_once(OrderType::WaitingUpright, 23).0,
+            22,
+            "the generic Execute path must retain its single decrement"
+        );
+        assert_eq!(
+            run_once(OrderType::SimulatingBeggar, 0).1,
+            SequenceState::Terminated,
+            "the specialized Execute result must carry WAIT_TIMER termination into base completion"
         );
     }
 
