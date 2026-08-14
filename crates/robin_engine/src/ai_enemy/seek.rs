@@ -23,6 +23,11 @@ fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) ->
             .is_none_or(|expected| creation_order == Some(expected))
 }
 
+#[inline]
+fn accumulate_seek_point_interest(current: f32, interest: u8) -> f32 {
+    (f64::from(current) + f64::from(interest) * 0.01_f64) as f32
+}
+
 use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, task_priority};
 
@@ -393,7 +398,7 @@ impl EnemyAi {
                         .flatten();
                     insertion_index = Some(insert_pos);
                     selected_random.insert(insert_pos, idx);
-                    count_f += interest as f32 * 0.01;
+                    count_f = accumulate_seek_point_interest(count_f, interest);
                 }
 
                 if debug_selection {
@@ -1296,6 +1301,40 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seek_point_interest_accumulator_narrows_once_after_double_arithmetic() {
+        let accumulated = accumulate_seek_point_interest(0.0, 10);
+        let all_f32 = 10.0_f32 * 0.01_f32;
+
+        assert_eq!(accumulated.to_bits(), 0x3dcc_cccd);
+        assert_eq!(all_f32.to_bits(), 0x3dcc_cccc);
+    }
+
+    #[test]
+    fn seek_point_interest_accumulator_preserves_original_threshold_crossing() {
+        let interests = [55, 19, 32, 44, 1, 44, 27, 97, 56, 15, 83, 26, 14, 0, 56, 31];
+        let accumulated = interests
+            .into_iter()
+            .fold(0.0, accumulate_seek_point_interest);
+        let all_f32 = interests.into_iter().fold(0.0_f32, |current, interest| {
+            current + f32::from(interest) * 0.01_f32
+        });
+
+        assert_eq!(accumulated.to_bits(), 0x40c0_0001);
+        assert_eq!(all_f32.to_bits(), 0x40bf_ffff);
+        assert!(accumulated >= 6.0);
+        assert!(all_f32 < 6.0);
+    }
+
+    #[test]
+    fn seek_point_interest_accumulator_keeps_exact_threshold_control() {
+        let accumulated = [50, 50]
+            .into_iter()
+            .fold(0.0, accumulate_seek_point_interest);
+
+        assert_eq!(accumulated, 1.0);
+    }
 
     #[test]
     fn seek_area_obligatory_selection_respects_original_finite_sentinel() {
