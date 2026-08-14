@@ -981,6 +981,36 @@ fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
 
 // ─── Multi-victim strike estimation ────────────────────────────────
 
+/// Build the separately normalized forward and side axes used by Original's
+/// push-strike rectangle.
+///
+/// The side axis is a copied direction vector rotated through
+/// `SBGeoVector2D::Rotate(PI / 2.0)`. That method receives a FLOAT angle but
+/// evaluates `sin`/`cos` and its component expressions in double precision,
+/// so it is not bit-identical to the `(-forward.y, forward.x)` shortcut.
+pub(crate) fn push_strike_basis(direction: i16) -> ((f32, f32), (f32, f32)) {
+    let (forward_x, base_y) = crate::element_kinds::direction_vector_16(direction);
+    let forward_y =
+        base_y * ASPECT_RATIO * crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO;
+
+    let angle = (f64::from(PI) / 2.0) as f32;
+    let sine = f64::from(angle).sin();
+    let cosine = f64::from(angle).cos();
+    let side_x = (f64::from(forward_x) * cosine - f64::from(forward_y) * sine) as f32;
+    let side_y = (f64::from(forward_x) * sine + f64::from(forward_y) * cosine) as f32;
+
+    let forward_square_norm = forward_x * forward_x + forward_y * forward_y;
+    let forward_norm = f64::from(forward_square_norm).sqrt() as f32;
+    let side_square_norm = side_x * side_x + side_y * side_y;
+    let side_norm = f64::from(side_square_norm).sqrt() as f32;
+    assert!(forward_norm != 0.0 && side_norm != 0.0);
+
+    (
+        (forward_x / forward_norm, forward_y / forward_norm),
+        (side_x / side_norm, side_y / side_norm),
+    )
+}
+
 /// A nearby entity that might be hit by a sword strike, pre-collected
 /// by the caller from the entity list. Positions are relative to the
 /// attacker, with Y stretched by `INVERSE_SWORDFIGHT_ASPECT_RATIO`.
@@ -1087,17 +1117,7 @@ fn is_victim_in_strike_arc(
             if max_norm >= 150.0 {
                 return false;
             }
-            let (fx_raw, fy_raw) = crate::element_kinds::direction_vector_16(attacker_direction);
-            let fy_raw =
-                fy_raw * ASPECT_RATIO * crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO;
-            let len = (fx_raw * fx_raw + fy_raw * fy_raw).sqrt();
-            let (fx, fy) = if len > 1e-3 {
-                (fx_raw / len, fy_raw / len)
-            } else {
-                (fx_raw, fy_raw)
-            };
-            let sx = -fy;
-            let sy = fx;
+            let ((fx, fy), (sx, sy)) = push_strike_basis(attacker_direction);
             let front_dist = victim.dx * fx + victim.dy_stretched * fy;
             let side_dist = (victim.dx * sx + victim.dy_stretched * sy).abs();
             // Original stores this in an ULONG and divides before comparing
@@ -2533,6 +2553,61 @@ mod tests {
             SwordStrike::A,
             0,
             &victim,
+            false
+        ));
+    }
+
+    #[test]
+    fn push_strike_side_axis_keeps_original_float_rotate_residual() {
+        let ((forward_x, forward_y), (side_x, side_y)) = push_strike_basis(0);
+        assert_eq!((forward_x.to_bits(), forward_y.to_bits()), (0, 0xbf80_0000));
+        assert_eq!(
+            (side_x.to_bits(), side_y.to_bits()),
+            (0x3f80_0000, 0x333b_bd2e)
+        );
+
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::PushAside,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            repulsion: 20,
+            ..Default::default()
+        };
+        let victim = |dx| NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx,
+            dy_stretched: -100.0,
+            distance: 101.0,
+            direction_sector: 0,
+            camp: Camp::Royalists,
+            facing_direction: 0,
+            elevation: 0.0,
+            life_points: 10,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim(-10.0),
+            false
+        ));
+        assert!(is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim(10.0),
+            false
+        ));
+        assert!(is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim(9.0),
             false
         ));
     }

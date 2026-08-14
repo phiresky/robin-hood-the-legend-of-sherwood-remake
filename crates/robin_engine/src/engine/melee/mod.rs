@@ -2258,8 +2258,7 @@ struct PushStrikeParams {
     attacker_pos: (f32, f32),
     attacker_elevation: f32,
     position_space: PushStrikePositionSpace,
-    dir_x: f32,
-    dir_y: f32,
+    attacker_direction: i16,
     min_distance: f32,
     max_distance: f32,
     half_width: f32,
@@ -2287,23 +2286,12 @@ fn collect_push_victims(
         attacker_pos,
         attacker_elevation,
         position_space,
-        dir_x,
-        dir_y,
+        attacker_direction,
         min_distance,
         max_distance,
         half_width,
     } = *params;
-    // Direction vector (stretched Y for isometric)
-    let dir_sy = dir_y * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-    let len = (dir_x * dir_x + dir_sy * dir_sy).sqrt();
-    if len < 0.001 {
-        return Vec::new();
-    }
-    let fx = dir_x / len;
-    let fy = dir_sy / len;
-    // Side vector (perpendicular)
-    let sx = -fy;
-    let sy = fx;
+    let ((fx, fy), (sx, sy)) = crate::combat::push_strike_basis(attacker_direction);
 
     let mut victims = Vec::new();
     for (target_id, entity) in entities.humans() {

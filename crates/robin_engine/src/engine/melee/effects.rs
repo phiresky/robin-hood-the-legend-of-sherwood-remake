@@ -211,27 +211,22 @@ impl EngineInner {
                     end_sector,
                 )
             }
-            WeaponThrustKind::PushAside => {
-                let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
-                let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
-                collect_push_victims(
-                    &self.world.entities,
-                    &PushStrikeParams {
-                        attacker_id,
-                        attacker_pos: (attacker_pos.x, attacker_pos.y),
-                        attacker_elevation: attacker.position_iface().get_elevation(),
-                        position_space: PushStrikePositionSpace::Map,
-                        dir_x,
-                        dir_y,
-                        min_distance: min_dist,
-                        max_distance: max_dist,
-                        half_width: push_strike_half_width(thrust.repulsion),
-                    },
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                )
-            }
+            WeaponThrustKind::PushAside => collect_push_victims(
+                &self.world.entities,
+                &PushStrikeParams {
+                    attacker_id,
+                    attacker_pos: (attacker_pos.x, attacker_pos.y),
+                    attacker_elevation: attacker.position_iface().get_elevation(),
+                    position_space: PushStrikePositionSpace::Map,
+                    attacker_direction: attacker_dir,
+                    min_distance: min_dist,
+                    max_distance: max_dist,
+                    half_width: push_strike_half_width(thrust.repulsion),
+                },
+                &assets.profile_manager,
+                &self.world.fast_grid,
+                obstacles,
+            ),
             WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
                 let dir_angle = sector_to_angle(attacker_dir);
                 let (begin_sector, end_sector) = match thrust.direction {
@@ -1472,8 +1467,6 @@ impl EngineInner {
                 // Using the ordinary unit-circle helper here rotates the
                 // narrow push rectangle in map space and can reject actors
                 // that Original includes near a side boundary.
-                let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
-                let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
                 let half_width = push_strike_half_width(thrust.repulsion);
                 let attacker = self
                     .get_entity(attacker_id)
@@ -1487,8 +1480,7 @@ impl EngineInner {
                         attacker_pos: (attacker_ground.x, attacker_ground.y),
                         attacker_elevation,
                         position_space: PushStrikePositionSpace::Ground,
-                        dir_x,
-                        dir_y,
+                        attacker_direction: attacker_dir,
                         min_distance: min_dist,
                         max_distance: max_dist,
                         half_width,
