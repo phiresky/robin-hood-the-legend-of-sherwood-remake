@@ -2627,8 +2627,8 @@ mod tests {
         assert_eq!(target.element_data().direction(), 0);
         assert_eq!(
             i16::from(target.position_iface().get_direction_goal()),
-            0,
-            "SetDirectionInstantly must leave both corpse direction latches at carrier + 12"
+            4,
+            "SetCarrier(NULL) must restore the carrier's facing as the dropped corpse's goal"
         );
     }
 
@@ -3904,6 +3904,10 @@ impl EngineInner {
                 }
             }
             elem.set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
+            // Original DropCorpse unlinks through SetCarrier(NULL), whose
+            // release path restores the carrier's facing as the corpse's
+            // direction goal after setting its current direction to +12.
+            elem.set_direction_goal(carrier_direction as i16);
             if let Some(human) = target.human_data_mut() {
                 human.carrier = None;
             }
