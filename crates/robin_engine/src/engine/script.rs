@@ -3371,40 +3371,6 @@ impl EngineInner {
         })
     }
 
-    fn dispatch_state_change_attentive_mode(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
-        owner: crate::element::EntityId,
-        request: Option<crate::ai::AttentiveModeEffect>,
-    ) {
-        let Some(request) = request else {
-            return;
-        };
-        // Original SetAttentiveMode launches the sequence and immediately
-        // writes mbWillBeAttentive, but ordinary attentive commands only
-        // register with RHSequenceManager. Their Go/Instruct happens in the
-        // manager Hourglass after every actor's Hourglass has completed
-        // (RHelementactorsoldier.cpp:2082-2114,
-        // RHsequence.cpp:235-287, RHengine.cpp:3737-3746).
-        self.set_soldier_attentive_mode_from(
-            owner,
-            request.target,
-            request.fast_officer_variant,
-            crate::engine::soldier_helpers::AttentiveModeCaller::StateChangeCallback,
-        );
-        if request.forget_after
-            && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(owner)
-            && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
-        {
-            // ForgetAttentiveMode is the statement immediately after
-            // SetAttentiveMode. It resets the flags after registration while
-            // preserving the still-deferred launched element.
-            enemy.attentive = false;
-            enemy.will_be_attentive = false;
-        }
-    }
-
     /// Drain one AI owner's queued `SetState` callbacks in FIFO order.
     ///
     /// Every queue entry is consumed even when scripts are disabled, no
@@ -4361,7 +4327,7 @@ impl EngineInner {
                 is_scripted,
                 caller_tail_state,
                 later_work,
-                mut later_actor_effects,
+                later_actor_effects,
                 later_self_stimuli,
                 later_cross_npc_actions,
             ) = {
@@ -4429,10 +4395,6 @@ impl EngineInner {
                     later_cross_npc_actions,
                 )
             };
-
-            let state_change_attentive = later_actor_effects
-                .as_mut()
-                .and_then(|effects| effects.set_attentive_mode.take());
 
             let mut caller_tail_completion_flags = None;
 
@@ -4526,12 +4488,6 @@ impl EngineInner {
                 // direct state mutation after SetState returned (Original's
                 // one-point macro completion does this before re-entering
                 // EVENT_REACHPOINT).
-                self.dispatch_state_change_attentive_mode(
-                    sim,
-                    assets,
-                    owner,
-                    state_change_attentive,
-                );
                 let ai = self
                     .world
                     .entities
@@ -4705,8 +4661,6 @@ impl EngineInner {
                 ai.set_ai_state(caller_tail_state.0);
                 ai.current_substate = caller_tail_state.1;
             }
-
-            self.dispatch_state_change_attentive_mode(sim, assets, owner, state_change_attentive);
 
             let ai = self
                 .world

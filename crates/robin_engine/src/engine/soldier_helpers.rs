@@ -44,7 +44,6 @@ fn damage_parry_handoff_debug_config() -> Option<&'static DamageParryHandoffDebu
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AttentiveModeCaller {
     AiOwnerEffect,
-    StateChangeCallback,
     ConsoleCheat,
     Unclassified,
 }

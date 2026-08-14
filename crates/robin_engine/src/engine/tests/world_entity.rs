@@ -445,6 +445,62 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
 }
 
 #[test]
+fn consecutive_set_states_preserve_attentive_request_fifo() {
+    use crate::ai::{AiState, Substate};
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier_entity = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = true;
+    enemy.base.current_state = AiState::Seeking;
+    enemy.base.current_substate = Substate::SeekingSeekpoint;
+    enemy.base.stop_all();
+    enemy.set_state(AiState::Attacking, Substate::AttackingReactiontime);
+    enemy.set_state(
+        AiState::Attacking,
+        Substate::AttackingTooProudToAttackApproach,
+    );
+    let owner = engine.add_entity(soldier_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    let owned: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| (element.command, element.state))
+        .collect();
+    assert_eq!(
+        owned,
+        [(Command::LeaveAttentiveMode, SequenceState::Todo)],
+        "Reactiontime's attentive=true observes the already-true will-be gate, then the immediately following TooProudApproach attentive=false launches the sole transition"
+    );
+    let enemy = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("Enemy test AI remains live");
+    assert!(enemy.attentive);
+    assert!(!enemy.will_be_attentive);
+    assert_eq!(enemy.base.current_state, AiState::Attacking);
+    assert_eq!(
+        enemy.base.current_substate,
+        Substate::AttackingTooProudToAttackApproach
+    );
+}
+
+#[test]
 fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     use crate::ai::{LogLineType, Remark};
 
