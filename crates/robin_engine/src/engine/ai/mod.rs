@@ -942,6 +942,24 @@ fn installed_animation_has_reached_action_done(
                 && sprite.frame_count >= sprite.action_done_counter))
 }
 
+/// Recreate the still-live `EVENT_DONE` Think frame around the deferred tail
+/// of `TowerGuardCallAlert`. Original calls `BattleDecisions` before that
+/// handler reaches `EndThink`; Rust releases the AI borrow while the alert's
+/// recipient Think calls run and resumes the tail afterward.
+fn begin_suspended_tower_guard_alert_think(ai: &mut crate::ai::AiController) {
+    ai.think_recursion_depth = ai
+        .think_recursion_depth
+        .checked_add(1)
+        .expect("tower-guard alert suspended Think depth overflow");
+}
+
+fn end_suspended_tower_guard_alert_think(ai: &mut crate::ai::AiController) {
+    assert!(
+        ai.end_think_completion_events(),
+        "tower-guard alert suspended Think unexpectedly hit the typed recursion fallback"
+    );
+}
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -1007,6 +1025,75 @@ mod parity_tests {
             .and_then(Entity::ai_controller)
             .expect("test soldier retains AI");
         assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
+    fn suspended_tower_guard_alert_tail_owns_deferred_route_rejection() {
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier has AI");
+
+        begin_suspended_tower_guard_alert_think(ai);
+        ai.go_to(
+            crate::ai::Position {
+                x: 100.0,
+                y: 200.0,
+                ..Default::default()
+            },
+            crate::ai::GotoFlags::RUN,
+            &crate::ai::AiContext::default(),
+        );
+        assert_eq!(ai.think_recursion_depth, 1);
+        assert!(ai.completion_latch_inside_think);
+
+        // Path construction is engine-owned and can reject only after the
+        // resumed BattleDecisions borrow has ended. The suspended outer
+        // Think must still own and surface that result.
+        ai.couldnt_reachpoint = true;
+        engine.surface_synchronous_completion_events_for_owner(owner);
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier retains AI");
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli,
+            [crate::ai::StimulusType::EventCouldntReachPoint]
+        );
+        end_suspended_tower_guard_alert_think(ai);
+        assert_eq!(ai.think_recursion_depth, 0);
+
+        // Ordinary direct BattleDecisions calls do not gain completion
+        // ownership merely because this specific tower-guard tail does.
+        ai.outbox.reentrant.self_stimuli.clear();
+        ai.go_to(
+            crate::ai::Position {
+                x: 300.0,
+                y: 400.0,
+                ..Default::default()
+            },
+            crate::ai::GotoFlags::RUN,
+            &crate::ai::AiContext::default(),
+        );
+        assert!(!ai.completion_latch_inside_think);
     }
 
     #[test]
@@ -12720,6 +12807,13 @@ impl EngineInner {
             caller,
             "tower-guard battle continuation caller must be its owner"
         );
+        begin_suspended_tower_guard_alert_think(
+            self.world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its AI")),
+        );
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self
             .world
@@ -12758,6 +12852,17 @@ impl EngineInner {
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its EnemyAi"))
             .battle_decisions(sim, global, &ctx, &tick, Some(grid));
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
+        end_suspended_tower_guard_alert_think(
+            self.world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its AI")),
+        );
+        // EndThink can itself publish a completion event. Close that final
+        // piece of the resumed Original call stack before returning to the
+        // cross-NPC action dispatcher.
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
