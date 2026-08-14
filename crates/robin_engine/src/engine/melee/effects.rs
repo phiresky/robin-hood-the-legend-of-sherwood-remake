@@ -264,8 +264,12 @@ impl EngineInner {
                     attacker_id,
                     (attacker_pos.x, attacker_pos.y),
                     attacker_dir,
-                    max_dist,
+                    thrust.maximal_distance,
                     thrust.rotation_angle,
+                    |target_id| {
+                        self.live_actor_animation(target_id)
+                            == Some(crate::order::OrderType::WalkingWithSword)
+                    },
                     &assets.profile_manager,
                     &self.world.fast_grid,
                     obstacles,

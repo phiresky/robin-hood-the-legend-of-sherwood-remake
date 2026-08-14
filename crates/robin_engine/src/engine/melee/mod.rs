@@ -2328,8 +2328,9 @@ fn collect_circle_warn_victims(
     attacker_id: EntityId,
     attacker_pos: (f32, f32),
     attacker_direction: i16,
-    base_max_distance: f32,
+    base_max_distance: u16,
     rotation_angle_deg: u16,
+    is_walking_with_sword: impl Fn(EntityId) -> bool,
     profile_manager: &crate::profiles::ProfileManager,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
@@ -2362,19 +2363,18 @@ fn collect_circle_warn_victims(
         // so the warn covers actors about to enter the arc during the
         // strike's rotation.
         let mut max_dist = base_max_distance;
-        let walking_with_sword = entity
-            .actor_data()
-            .map(|a| a.action_state == ActionState::MovingSword)
-            .unwrap_or(false);
-        if walking_with_sword {
+        if is_walking_with_sword(target_id.into()) {
             let enemy_sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
             let relative = ((enemy_sector + 16 - attacker_direction) % 16) as u16;
-            max_dist += f32::from(circle_warning_walking_tolerance(
+            // Original stores both the authored range and this tolerance in
+            // UWORD, so the compound assignment wraps before promotion for
+            // the floating-point distance comparison.
+            max_dist = max_dist.wrapping_add(circle_warning_walking_tolerance(
                 relative,
                 rotation_angle_deg,
             ));
         }
-        if distance <= max_dist {
+        if distance <= f32::from(max_dist) {
             victims.push(target_id.into());
         }
     }
@@ -3041,15 +3041,15 @@ mod tests {
         let tolerance = circle_warning_walking_tolerance(8, 180);
         assert_eq!(tolerance, 15);
 
-        let base_max_distance = 60.0;
+        let base_max_distance = 60_u16;
         let walking_target_distance = 74.0;
-        assert!(walking_target_distance <= base_max_distance + f32::from(tolerance));
+        assert!(walking_target_distance <= f32::from(base_max_distance + tolerance));
 
         // Dividing by the raw profile degrees, as the old port did, would
         // reject this moving defender and suppress its WarnForStrike callback.
         let raw_degrees_tolerance = 10.0 + (8.0 * 5.0 * std::f32::consts::PI) / (8.0 * 180.0);
-        assert!(walking_target_distance > base_max_distance + raw_degrees_tolerance);
-        assert!(walking_target_distance > base_max_distance);
+        assert!(walking_target_distance > f32::from(base_max_distance) + raw_degrees_tolerance);
+        assert!(walking_target_distance > f32::from(base_max_distance));
 
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
@@ -3060,21 +3060,30 @@ mod tests {
             },
             None,
         ));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .action_state = ActionState::MovingSword;
-        let assets = assets_with_sword_profile(0, base_max_distance as u16);
-        let collect = |engine: &EngineInner| {
+        {
+            let actor = engine
+                .get_entity_mut(target)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.action_state = ActionState::MovingSword;
+            actor.installed_order = Some(crate::element::InstalledActorOrder {
+                order_id: std::num::NonZeroU32::new(1).unwrap(),
+                order_type: OrderType::WalkingWithSword,
+            });
+        }
+        let assets = assets_with_sword_profile(0, base_max_distance);
+        let collect = |engine: &EngineInner, max_distance| {
             collect_circle_warn_victims(
                 &engine.world.entities,
                 attacker,
                 (0.0, 0.0),
                 0,
-                base_max_distance,
+                max_distance,
                 180,
+                |target_id| {
+                    engine.live_actor_animation(target_id) == Some(OrderType::WalkingWithSword)
+                },
                 &assets.profile_manager,
                 &engine.world.fast_grid,
                 crate::sight_obstacle::ObstacleList {
@@ -3084,15 +3093,45 @@ mod tests {
                 },
             )
         };
-        assert_eq!(collect(&engine), vec![target]);
+        assert_eq!(collect(&engine, base_max_distance), vec![target]);
+
+        // Running shares the port's coarse MovingSword state with walking,
+        // but Original's exact GetAnimation predicate does not extend it.
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order
+            .as_mut()
+            .unwrap()
+            .order_type = OrderType::RunningWithSword;
+        assert!(collect(&engine, base_max_distance).is_empty());
 
         engine
             .get_entity_mut(target)
             .unwrap()
             .actor_data_mut()
             .unwrap()
-            .action_state = ActionState::WaitingSword;
-        assert!(collect(&engine).is_empty());
+            .installed_order
+            .as_mut()
+            .unwrap()
+            .order_type = OrderType::WaitingSword;
+        assert!(collect(&engine, base_max_distance).is_empty());
+
+        // The ordinary case above admits at 60 + 15 = 75. UWORD compound
+        // assignment instead wraps 65530 + 15 to 9, excluding the same
+        // target rather than comparing against an unbounded float sum.
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order
+            .as_mut()
+            .unwrap()
+            .order_type = OrderType::WalkingWithSword;
+        assert!(collect(&engine, u16::MAX - 5).is_empty());
     }
 
     #[test]
