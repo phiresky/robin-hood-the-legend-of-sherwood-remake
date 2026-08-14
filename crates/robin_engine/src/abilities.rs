@@ -439,7 +439,6 @@ pub fn begin_carry(
         strangle_initialized: false,
     };
     actor.clear_path();
-    actor.action_state = ActionState::Waiting;
 
     let mut order = Order::new(
         OrderType::TransitionWaitingUprightCarryingCorpse,
@@ -3966,6 +3965,71 @@ mod tests {
             "the live lift animation must not continuously restamp the corpse"
         );
         assert_eq!(target_entity.element_data().direction(), 5);
+    }
+
+    #[test]
+    fn carry_initialization_preserves_action_state_until_the_lift_finishes() {
+        for initial_action_state in [ActionState::Moving, ActionState::Waiting] {
+            let mut entities = Entities::new();
+            entities.push(Some(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    posture: Posture::Upright,
+                    ..Default::default()
+                },
+                actor: crate::element::ActorData {
+                    action_state: initial_action_state,
+                    ..Default::default()
+                },
+                human: HumanData::default(),
+                pc: PcData {
+                    life_points: 100,
+                    ..Default::default()
+                },
+            })));
+            entities.push(Some(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    posture: Posture::Dead,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: HumanData::default(),
+                pc: PcData {
+                    life_points: 0,
+                    ..Default::default()
+                },
+            })));
+            let carrier = entities.id_at_legacy_slot(0).unwrap();
+            let target = entities.id_at_legacy_slot(1).unwrap();
+            let mut manager = SequenceManager::new();
+            let seq_id =
+                launch_ability_element(&mut manager, crate::element::Command::TakeCorpse, carrier);
+            let mut next_id = 300;
+
+            assert_eq!(
+                begin_carry(
+                    &mut entities,
+                    &mut manager,
+                    carrier,
+                    target,
+                    seq_id,
+                    0,
+                    &mut next_id,
+                ),
+                BeginResult::Started
+            );
+            assert_eq!(
+                entities
+                    .get(carrier)
+                    .unwrap()
+                    .actor_data()
+                    .unwrap()
+                    .action_state,
+                initial_action_state,
+                "TakeCorpse translation must not publish its terminal Waiting state early"
+            );
+        }
     }
 
     #[test]
