@@ -5687,14 +5687,21 @@ impl EngineInner {
         // `target_x <= 0 || target_y <= 0` before pushing the intent;
         // the engine drain owns the `>= GetLevelSize()` half because
         // `level_size` lives on the shared cutscene camera, not on
-        // `AiContext`.
-        let level_w = self.feedback.cutscene_camera.level_size.x;
-        let level_h = self.feedback.cutscene_camera.level_size.y;
-        if level_w > 0.0 && intent.target_x >= level_w
-            || level_h > 0.0 && intent.target_y >= level_h
-        {
-            self.set_ai_couldnt_reachpoint(entity_id);
-            return false;
+        // `AiContext`. Direct RHMOVE_MAP elements are the exception: the
+        // merry-man exit path intentionally targets a reinforcement door's
+        // PointOut beyond the playable map and Actor::Instruct admits MAP
+        // movement without the ordinary reachable-position gate.
+        let move_flags =
+            crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
+        if !move_flags.contains(crate::sequence::MoveFlags::MAP) {
+            let level_w = self.feedback.cutscene_camera.level_size.x;
+            let level_h = self.feedback.cutscene_camera.level_size.y;
+            if level_w > 0.0 && intent.target_x >= level_w
+                || level_h > 0.0 && intent.target_y >= level_h
+            {
+                self.set_ai_couldnt_reachpoint(entity_id);
+                return false;
+            }
         }
 
         if !intent.find_accessible && !intent.ask_obstacle {
@@ -14548,6 +14555,109 @@ mod movement_transition_state_tests {
         MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    #[test]
+    fn map_exit_move_bypasses_ordinary_level_bounds_preflight() {
+        fn make_owner(engine: &mut EngineInner) -> EntityId {
+            let mut element = ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            };
+            element.set_position_map(MapPoint::new(90.0, 90.0));
+            let mut npc = NpcData::default();
+            npc.ai_brain = AiBrain::Enemy(Box::default());
+            engine.add_entity(Entity::Soldier(ActorSoldier {
+                element,
+                actor: ActorData::default(),
+                human: HumanData::default(),
+                npc,
+                soldier: SoldierData::default(),
+            }))
+        }
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let destination = crate::ai::Position {
+            x: 100.0,
+            y: 130.0,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        };
+
+        let mut map_exit = EngineInner::new();
+        map_exit.feedback.cutscene_camera.level_size =
+            crate::coordinates::MapSize::new(100.0, 100.0);
+        let map_owner = make_owner(&mut map_exit);
+        map_exit
+            .get_entity_mut(map_owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap()
+            .run_to_map_exit(destination);
+        map_exit.launch_pending_orders_for_npc_mode(&sim, &assets, map_owner, false);
+        let launched = map_exit.drain_pending_move_requests_for_owner(&sim, map_owner);
+        assert_eq!(launched.len(), 1, "RHMOVE_MAP must launch through PointOut");
+        let element = map_exit
+            .orders
+            .sequence_manager
+            .get_element(launched[0], 0)
+            .expect("map-exit movement must remain registered for manager Hourglass");
+        let SequenceElementData::Movement {
+            destination: actual,
+            flags,
+            ..
+        } = &element.data
+        else {
+            panic!("map-exit sequence must contain movement")
+        };
+        assert_eq!(*actual, MapPoint::new(destination.x, destination.y));
+        assert!(flags.contains(MoveFlags::MAP));
+        assert!(
+            !map_exit
+                .get_entity(map_owner)
+                .unwrap()
+                .ai_controller()
+                .unwrap()
+                .couldnt_reachpoint
+        );
+
+        for ordinary_destination in [MapPoint::new(100.0, 90.0), MapPoint::new(90.0, 130.0)] {
+            let mut ordinary = EngineInner::new();
+            ordinary.feedback.cutscene_camera.level_size =
+                crate::coordinates::MapSize::new(100.0, 100.0);
+            let ordinary_owner = make_owner(&mut ordinary);
+            ordinary
+                .get_entity_mut(ordinary_owner)
+                .unwrap()
+                .ai_controller_mut()
+                .unwrap()
+                .outbox
+                .actor
+                .orders
+                .push(AiOrderIntent::new(
+                    OrderType::RunningUpright,
+                    ordinary_destination.x,
+                    ordinary_destination.y,
+                ));
+            ordinary.launch_pending_orders_for_npc_mode(&sim, &assets, ordinary_owner, false);
+            assert!(
+                ordinary
+                    .drain_pending_move_requests_for_owner(&sim, ordinary_owner)
+                    .is_empty(),
+                "ordinary GoTo at or outside the level must retain the existing rejection"
+            );
+            assert!(
+                ordinary
+                    .get_entity(ordinary_owner)
+                    .unwrap()
+                    .ai_controller()
+                    .unwrap()
+                    .couldnt_reachpoint
+            );
+        }
+    }
 
     fn run_stale_sword_crenel_transition() -> (u8, u8) {
         use crate::fast_find_grid::GridSector;
