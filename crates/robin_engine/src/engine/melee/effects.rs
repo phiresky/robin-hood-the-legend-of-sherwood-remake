@@ -1397,13 +1397,6 @@ impl EngineInner {
             None => return Vec::new(),
         };
 
-        let attacker_pos = self
-            .get_entity(attacker_id)
-            .map(|e| {
-                let p = e.element_data().position_map();
-                (p.x, p.y)
-            })
-            .unwrap_or((0.0, 0.0));
         let attacker_dir = self
             .get_entity(attacker_id)
             .map(|e| e.element_data().direction())
@@ -1506,10 +1499,16 @@ impl EngineInner {
                         (angle_to_sector(initial), angle_to_sector(final_a))
                     }
                 };
-                collect_arc_victims(
+                let attacker_position = self
+                    .get_entity(attacker_id)
+                    .map(|entity| entity.element_data().position())
+                    .unwrap_or_else(|| {
+                        panic!("half-circle strike attacker {attacker_id:?} is missing")
+                    });
+                collect_half_circle_strike_victims(
                     &self.world.entities,
                     attacker_id,
-                    attacker_pos,
+                    attacker_position,
                     min_dist,
                     max_dist,
                     begin_sector,

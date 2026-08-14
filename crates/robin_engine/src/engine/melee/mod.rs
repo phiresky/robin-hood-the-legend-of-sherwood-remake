@@ -2186,6 +2186,50 @@ fn collect_full_circle_strike_victims(
     victims
 }
 
+/// Original half-circle DONE-time victim admission: 3D range combined with
+/// an unprojected ground-space angular sector.
+#[allow(clippy::too_many_arguments)]
+fn collect_half_circle_strike_victims(
+    entities: &Entities,
+    attacker_id: EntityId,
+    attacker_position: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+    begin_sector: u8,
+    end_sector: u8,
+    profile_manager: &crate::profiles::ProfileManager,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> Vec<EntityId> {
+    let mut victims = Vec::new();
+    for (target_id, entity) in entities.humans() {
+        if !is_possible_sword_strike_victim(
+            entities,
+            attacker_id,
+            entity,
+            target_id,
+            profile_manager,
+            fast_grid,
+            obstacles,
+        ) {
+            continue;
+        }
+
+        let target_position = entity.element_data().position();
+        if half_circle_strike_seed_allows(
+            attacker_position,
+            target_position,
+            min_distance,
+            max_distance,
+            begin_sector,
+            end_sector,
+        ) {
+            victims.push(target_id.into());
+        }
+    }
+    victims
+}
+
 /// `SBGeoVector3D::Norm`: GEOTYPE products and additions, followed by the
 /// double-precision square root and a narrowing store back to GEOTYPE.
 fn full_circle_strike_distance(
@@ -2207,6 +2251,24 @@ fn full_circle_strike_distance_is_in_range(
 ) -> bool {
     let distance = full_circle_strike_distance(attacker, victim);
     distance >= min_distance && distance <= max_distance
+}
+
+fn half_circle_strike_seed_allows(
+    attacker: crate::coordinates::WorldPoint3D,
+    victim: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+    begin_sector: u8,
+    end_sector: u8,
+) -> bool {
+    if !full_circle_strike_distance_is_in_range(attacker, victim, min_distance, max_distance) {
+        return false;
+    }
+
+    let dx = victim.x - attacker.x;
+    let dy = (victim.y - attacker.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+    let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+    is_sector_between(sector, begin_sector, end_sector)
 }
 
 /// Original lateral warning admission is intentionally looser than the hit
@@ -2833,6 +2895,40 @@ mod tests {
         ));
         assert!(!full_circle_strike_distance_is_in_range(
             attacker, ordinary, 13.01, 20.0,
+        ));
+    }
+
+    #[test]
+    fn half_circle_done_seed_combines_3d_range_with_ground_space_sector() {
+        let attacker = WorldPoint3D::ZERO;
+        let elevated_same_map = WorldPoint3D::new(0.0, 10.0, 10.0);
+
+        assert_eq!(attacker.to_map(), elevated_same_map.to_map());
+        assert!(half_circle_strike_seed_allows(
+            attacker,
+            elevated_same_map,
+            0.0,
+            20.0,
+            8,
+            8,
+        ));
+        assert!(!half_circle_strike_seed_allows(
+            attacker,
+            elevated_same_map,
+            0.0,
+            10.0,
+            8,
+            8,
+        ));
+
+        let exact_boundary = WorldPoint3D::new(3.0, 4.0, 12.0);
+        assert!(half_circle_strike_seed_allows(
+            attacker,
+            exact_boundary,
+            13.0,
+            13.0,
+            0,
+            15,
         ));
     }
 
