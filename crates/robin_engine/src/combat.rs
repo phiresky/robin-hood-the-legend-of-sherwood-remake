@@ -1094,7 +1094,9 @@ fn is_victim_in_strike_arc(
             let sy = fx;
             let front_dist = victim.dx * fx + victim.dy_stretched * fy;
             let side_dist = (victim.dx * sx + victim.dy_stretched * sy).abs();
-            let half_width = thrust.repulsion as f32 / 2.0;
+            // Original stores this in an ULONG and divides before comparing
+            // against the floating-point side distance, so odd widths truncate.
+            let half_width = (thrust.repulsion / 2) as f32;
             front_dist >= min_d && front_dist <= max_d && side_dist <= half_width
         }
 
@@ -2478,6 +2480,53 @@ mod tests {
         let profile = make_hth_profile();
         assert!(!strike_has_push_effect(&profile, SwordStrike::A)); // Straight
         assert!(strike_has_push_effect(&profile, SwordStrike::Charge)); // Always push
+    }
+
+    #[test]
+    fn push_strike_width_uses_original_integer_half_width() {
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::PushAside,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            repulsion: 5,
+            ..Default::default()
+        };
+        // Direction 0 points along -Y, making X the side distance. A width
+        // of 5 therefore has Original's ULONG half-width 2, not 2.5.
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: 2.25,
+            dy_stretched: -10.0,
+            distance: 10.25,
+            direction_sector: 0,
+            camp: Camp::Royalists,
+            facing_direction: 0,
+            elevation: 0.0,
+            life_points: 10,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim,
+            false
+        ));
+
+        // Even widths are unchanged: width 6 has half-width 3 and admits
+        // the same victim.
+        profile.thrusts[SwordStrike::A as usize].repulsion = 6;
+        assert!(is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim,
+            false
+        ));
     }
 
     // ── Energy cost ────────────────────────────────────────────────
