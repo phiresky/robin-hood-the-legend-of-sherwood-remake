@@ -1206,6 +1206,12 @@ fn convert_npc(
                 .collect::<Result<Vec<_>, LegacyElementAdoptError>>()?,
         );
     }
+    crate::engine::ai::debug_detectable_mutation_load_snapshot(
+        entity_id,
+        creation_order,
+        &detectable_lists,
+        |target_id| entities.creation_order_by_entity.get(&target_id).copied(),
+    );
     Ok(ConvertedNpc {
         life: saved.life,
         arrows: saved.arrows,

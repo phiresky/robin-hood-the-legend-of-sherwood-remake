@@ -7,6 +7,7 @@
 //!  - [`post_detection`] — phases P4..P6d: alert dispatch, pursuit, drains.
 
 mod detection;
+pub(crate) use detection::debug_detectable_mutation_load_snapshot;
 #[cfg(test)]
 pub(crate) use detection::set_heard_callback_observer;
 mod post_detection;
@@ -6374,8 +6375,17 @@ impl EngineInner {
     pub(super) fn delete_beggar_detectable_for_all_npc(&mut self, beggar_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Beggar as usize;
+        let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
+        let mutation_target_creation_order = (mutation_debug_enabled
+            && detection::detectable_mutation_debug_target_slot_matches(beggar_id.index()))
+        .then(|| self.original_static_creation_order(beggar_id))
+        .unwrap_or(0);
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for friend_id in npc_ids {
+            let mutation_owner_creation_order = (mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index()))
+            .then(|| self.original_static_creation_order(friend_id))
+            .unwrap_or(0);
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
@@ -6383,7 +6393,41 @@ impl EngineInner {
                 continue;
             };
             if det_idx < npc.detectable_lists.len() {
+                let mutation_before = (detection::detectable_mutation_debug_owner_matches(
+                    friend_id.index(),
+                    mutation_owner_creation_order,
+                ) && detection::detectable_mutation_debug_target_matches(
+                    beggar_id.index(),
+                    mutation_target_creation_order,
+                ))
+                .then(|| {
+                    (
+                        npc.detectable_lists[det_idx].len(),
+                        npc.detectable_lists[det_idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(beggar_id)),
+                    )
+                });
                 npc.detectable_lists[det_idx].retain(|d| d.element != Some(beggar_id));
+                if let Some((before, present_before)) = mutation_before {
+                    let present_after = npc.detectable_lists[det_idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(beggar_id));
+                    detection::debug_detectable_mutation_event(
+                        "delete",
+                        "delete_beggar_detectable_for_all_npc",
+                        self.control.frame_counter,
+                        friend_id.index(),
+                        mutation_owner_creation_order,
+                        det_idx,
+                        beggar_id.index(),
+                        mutation_target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[det_idx].len(),
+                    );
+                }
             }
         }
     }
@@ -8852,6 +8896,54 @@ impl EngineInner {
                     effects.delete_detectable_entities,
                 );
             }
+            let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
+            let mutation_owner_creation_order = (mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(npc_id.index()))
+            .then(|| self.original_static_creation_order(npc_id))
+            .unwrap_or(0);
+            let mutation_targets = if mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_matches(
+                    npc_id.index(),
+                    mutation_owner_creation_order,
+                ) {
+                let target_ids = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .and_then(Entity::npc_data)
+                    .expect("DETMUT pending-effect owner lost NPC data")
+                    .detectable_lists
+                    .iter()
+                    .flatten()
+                    .filter_map(|detectable| detectable.element)
+                    .chain(effects.add_detectables.iter().map(|(target, _)| *target))
+                    .chain(effects.append_detectables.iter().map(|(target, _)| *target))
+                    .chain(
+                        effects
+                            .delete_detectable_entities
+                            .iter()
+                            .map(|(target, _)| *target),
+                    )
+                    .collect::<std::collections::BTreeSet<_>>();
+                target_ids
+                    .into_iter()
+                    .filter_map(|target_id| {
+                        if !detection::detectable_mutation_debug_target_slot_matches(
+                            target_id.index(),
+                        ) {
+                            return None;
+                        }
+                        let target_creation_order = self.original_static_creation_order(target_id);
+                        detection::detectable_mutation_debug_target_matches(
+                            target_id.index(),
+                            target_creation_order,
+                        )
+                        .then_some((target_id, target_creation_order))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             // Resolve target classification for each ENEMY-arm push
             // so the `add_detectable` filter can run.  Resolved
             // up-front to avoid borrowing `self.world.entities` mutably
@@ -8902,7 +8994,44 @@ impl EngineInner {
                     npc_id.index(),
                     det_type
                 );
+                let (mutation_length_before, presence_before) = if mutation_targets.is_empty() {
+                    (0, Vec::new())
+                } else {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        mutation_targets
+                            .iter()
+                            .map(|(target_id, target_creation_order)| {
+                                (
+                                    *target_id,
+                                    *target_creation_order,
+                                    npc.detectable_lists[idx]
+                                        .iter()
+                                        .any(|detectable| detectable.element == Some(*target_id)),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                };
                 npc.detectable_lists[idx].clear();
+                for (target_id, target_creation_order, present_before) in presence_before {
+                    if present_before {
+                        detection::debug_detectable_mutation_event(
+                            "delete_all",
+                            "pending_effects.delete_detectables",
+                            self.control.frame_counter,
+                            npc_id.index(),
+                            mutation_owner_creation_order,
+                            idx,
+                            target_id.index(),
+                            target_creation_order,
+                            true,
+                            false,
+                            mutation_length_before,
+                            0,
+                        );
+                    }
+                }
             }
             // Per-entity deletes: `delete_detectable(entity, type)`
             // drops a single (element, type) entry, leaving
@@ -8915,7 +9044,40 @@ impl EngineInner {
                     npc_id.index(),
                     det_type
                 );
+                let mutation_target_creation_order = mutation_targets
+                    .iter()
+                    .find(|(target_id, _)| target_id == entity_id)
+                    .map(|(_, target_creation_order)| *target_creation_order);
+                let mutation_before = mutation_target_creation_order.map(|_| {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        npc.detectable_lists[idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(*entity_id)),
+                    )
+                });
                 npc.detectable_lists[idx].retain(|d| d.element != Some(*entity_id));
+                if let (Some(target_creation_order), Some((before, present_before))) =
+                    (mutation_target_creation_order, mutation_before)
+                {
+                    let present_after = npc.detectable_lists[idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(*entity_id));
+                    detection::debug_detectable_mutation_event(
+                        "delete",
+                        "pending_effects.delete_detectable_entities",
+                        self.control.frame_counter,
+                        npc_id.index(),
+                        mutation_owner_creation_order,
+                        idx,
+                        entity_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[idx].len(),
+                    );
+                }
             }
             if debug_consider_report {
                 let body_ids = npc.detectable_lists[DetectableType::Body as usize]
@@ -8961,7 +9123,40 @@ impl EngineInner {
                         continue;
                     }
                 }
+                let mutation_target_creation_order = mutation_targets
+                    .iter()
+                    .find(|(target_id, _)| target_id == entity_id)
+                    .map(|(_, target_creation_order)| *target_creation_order);
+                let mutation_before = mutation_target_creation_order.map(|_| {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        npc.detectable_lists[idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(*entity_id)),
+                    )
+                });
                 append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, false);
+                if let (Some(target_creation_order), Some((before, present_before))) =
+                    (mutation_target_creation_order, mutation_before)
+                {
+                    let present_after = npc.detectable_lists[idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(*entity_id));
+                    detection::debug_detectable_mutation_event(
+                        "add",
+                        "pending_effects.add_detectables",
+                        self.control.frame_counter,
+                        npc_id.index(),
+                        mutation_owner_creation_order,
+                        idx,
+                        entity_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[idx].len(),
+                    );
+                }
             }
             // Preserve the release-build behavior of selected direct
             // AddDetectable calls. Original's uniqueness check is an assert,
@@ -8975,7 +9170,40 @@ impl EngineInner {
                     npc_id.index(),
                     det_type
                 );
+                let mutation_target_creation_order = mutation_targets
+                    .iter()
+                    .find(|(target_id, _)| target_id == entity_id)
+                    .map(|(_, target_creation_order)| *target_creation_order);
+                let mutation_before = mutation_target_creation_order.map(|_| {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        npc.detectable_lists[idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(*entity_id)),
+                    )
+                });
                 append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, true);
+                if let (Some(target_creation_order), Some((before, present_before))) =
+                    (mutation_target_creation_order, mutation_before)
+                {
+                    let present_after = npc.detectable_lists[idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(*entity_id));
+                    detection::debug_detectable_mutation_event(
+                        "append",
+                        "pending_effects.append_detectables",
+                        self.control.frame_counter,
+                        npc_id.index(),
+                        mutation_owner_creation_order,
+                        idx,
+                        entity_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[idx].len(),
+                    );
+                }
             }
         }
 

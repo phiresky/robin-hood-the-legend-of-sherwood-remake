@@ -157,6 +157,184 @@ fn debug_all_detectable_list_buckets(
 }
 
 #[derive(Clone, Copy)]
+struct DetectableMutationDebugTarget {
+    slot: u32,
+    creation_order: u32,
+}
+
+#[derive(Clone, Copy)]
+struct DetectableMutationDebugConfig {
+    enabled: bool,
+    owner_slot: u32,
+    owner_creation_order: u32,
+    targets: [DetectableMutationDebugTarget; 3],
+}
+
+fn detectable_mutation_debug_config() -> &'static DetectableMutationDebugConfig {
+    static CONFIG: std::sync::OnceLock<DetectableMutationDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_DETECTABLE_MUTATION").is_some();
+        if !enabled {
+            return DetectableMutationDebugConfig {
+                enabled,
+                owner_slot: 0,
+                owner_creation_order: 0,
+                targets: [DetectableMutationDebugTarget {
+                    slot: 0,
+                    creation_order: 0,
+                }; 3],
+            };
+        }
+        let parse_required = |name: &str| {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| panic!("missing required environment variable {name}"));
+            value
+                .parse::<u32>()
+                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
+        };
+        let target = |index: usize| DetectableMutationDebugTarget {
+            slot: parse_required(&format!(
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_{index}_SLOT"
+            )),
+            creation_order: parse_required(&format!(
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_{index}_CREATION_ORDER"
+            )),
+        };
+        DetectableMutationDebugConfig {
+            enabled,
+            owner_slot: parse_required("PARITY_DEBUG_DETECTABLE_MUTATION_OWNER_SLOT"),
+            owner_creation_order: parse_required(
+                "PARITY_DEBUG_DETECTABLE_MUTATION_OWNER_CREATION_ORDER",
+            ),
+            targets: [target(0), target(1), target(2)],
+        }
+    })
+}
+
+pub(super) fn detectable_mutation_debug_enabled() -> bool {
+    detectable_mutation_debug_config().enabled
+}
+
+pub(super) fn detectable_mutation_debug_owner_slot_matches(owner_slot: u32) -> bool {
+    let config = detectable_mutation_debug_config();
+    config.enabled && config.owner_slot == owner_slot
+}
+
+pub(super) fn detectable_mutation_debug_target_slot_matches(target_slot: u32) -> bool {
+    let config = detectable_mutation_debug_config();
+    config.enabled
+        && config
+            .targets
+            .iter()
+            .any(|target| target.slot == target_slot)
+}
+
+pub(super) fn detectable_mutation_debug_owner_matches(
+    owner_slot: u32,
+    owner_creation_order: u32,
+) -> bool {
+    let config = detectable_mutation_debug_config();
+    config.enabled
+        && config.owner_slot == owner_slot
+        && config.owner_creation_order == owner_creation_order
+}
+
+pub(super) fn detectable_mutation_debug_target_matches(
+    target_slot: u32,
+    target_creation_order: u32,
+) -> bool {
+    let config = detectable_mutation_debug_config();
+    config.enabled
+        && config.targets.iter().any(|target| {
+            target.slot == target_slot && target.creation_order == target_creation_order
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn debug_detectable_mutation_event(
+    stage: &str,
+    caller: &str,
+    frame: u32,
+    owner_slot: u32,
+    owner_creation_order: u32,
+    bucket: usize,
+    target_slot: u32,
+    target_creation_order: u32,
+    present_before: bool,
+    present_after: bool,
+    length_before: usize,
+    length_after: usize,
+) {
+    if !detectable_mutation_debug_owner_matches(owner_slot, owner_creation_order)
+        || !detectable_mutation_debug_target_matches(target_slot, target_creation_order)
+    {
+        return;
+    }
+    eprintln!(
+        "DETMUT {{\"engine\":\"rust\",\"stage\":\"{stage}\",\"caller\":\"{caller}\",\"frame\":{frame},\"owner_slot\":{owner_slot},\"owner_creation_order\":{owner_creation_order},\"bucket\":{bucket},\"target_slot\":{target_slot},\"target_creation_order\":{target_creation_order},\"present_before\":{present_before},\"present_after\":{present_after},\"length_before\":{length_before},\"length_after\":{length_after}}}"
+    );
+}
+
+fn debug_detectable_mutation_snapshot(
+    stage: &str,
+    caller: &str,
+    frame: u32,
+    owner_id: EntityId,
+    owner_creation_order: u32,
+    detectable_lists: &[Vec<Detectable>],
+    creation_order_for: impl Fn(EntityId) -> Option<u32>,
+) {
+    if !detectable_mutation_debug_owner_matches(owner_id.index(), owner_creation_order) {
+        return;
+    }
+    for target in detectable_mutation_debug_config().targets {
+        let matching = detectable_lists
+            .iter()
+            .enumerate()
+            .find_map(|(bucket, entries)| {
+                entries.iter().find_map(|detectable| {
+                    let entity_id = detectable.element?;
+                    (entity_id.index() == target.slot
+                        && creation_order_for(entity_id) == Some(target.creation_order))
+                    .then_some((bucket, entries.len()))
+                })
+            });
+        let (bucket, length) = matching.unwrap_or((usize::MAX, 0));
+        debug_detectable_mutation_event(
+            stage,
+            caller,
+            frame,
+            owner_id.index(),
+            owner_creation_order,
+            bucket,
+            target.slot,
+            target.creation_order,
+            matching.is_some(),
+            matching.is_some(),
+            length,
+            length,
+        );
+    }
+}
+
+pub(crate) fn debug_detectable_mutation_load_snapshot(
+    owner_id: EntityId,
+    owner_creation_order: u32,
+    detectable_lists: &[Vec<Detectable>],
+    creation_order_for: impl Fn(EntityId) -> Option<u32>,
+) {
+    debug_detectable_mutation_snapshot(
+        "deserialize_snapshot",
+        "legacy_save_adopt",
+        0,
+        owner_id,
+        owner_creation_order,
+        detectable_lists,
+        creation_order_for,
+    );
+}
+
+#[derive(Clone, Copy)]
 struct VisibilityStageDebugConfig {
     enabled: bool,
     frame: Option<u32>,
@@ -1683,6 +1861,26 @@ impl EngineInner {
                 (config.enabled && universal_frame == config.frame)
                     .then(|| self.original_static_creation_order(npc_id))
             };
+            if detectable_mutation_debug_owner_slot_matches(npc_id.index()) {
+                let owner_creation_order = self.original_static_creation_order(npc_id);
+                if detectable_mutation_debug_owner_matches(npc_id.index(), owner_creation_order) {
+                    let npc = self
+                        .world
+                        .entities
+                        .get(npc_id)
+                        .and_then(Entity::npc_data)
+                        .expect("DETMUT owner lost NPC data before RefreshDetection");
+                    debug_detectable_mutation_snapshot(
+                        "refresh_entry_snapshot",
+                        "tick_enemy_ai_refresh_detection",
+                        universal_frame,
+                        npc_id,
+                        owner_creation_order,
+                        &npc.detectable_lists,
+                        |target_id| Some(self.original_static_creation_order(target_id)),
+                    );
+                }
+            }
             if let Some(creation_order) = detectable_list_debug_creation_order
                 && let Some(npc) = self.world.entities.get(npc_id).and_then(Entity::npc_data)
             {
@@ -2082,6 +2280,25 @@ impl EngineInner {
         // detection on the same tick. The Original keys this with the
         // entity's creation order, not its current marrayElements slot.
         let original_creation_order = self.original_static_creation_order(npc_id);
+        let mutation_debug_enemy_targets =
+            if detectable_mutation_debug_owner_matches(npc_id.index(), original_creation_order) {
+                enemy_targets
+                    .iter()
+                    .filter_map(|target| {
+                        if !detectable_mutation_debug_target_slot_matches(target.id.index()) {
+                            return None;
+                        }
+                        let target_creation_order = self.original_static_creation_order(target.id);
+                        detectable_mutation_debug_target_matches(
+                            target.id.index(),
+                            target_creation_order,
+                        )
+                        .then_some((target.id, target_creation_order))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
         let modified_frame =
             refresh_detection_modified_frame(universal_frame, original_creation_order);
         let alert_status = viewer.alert_status;
@@ -2163,6 +2380,18 @@ impl EngineInner {
             // Missing or non-human targets still indicate corrupted NPC
             // state and must fail with observer/target context.
             let before = detectables.len();
+            let mutation_presence_before = mutation_debug_enemy_targets
+                .iter()
+                .map(|(target_id, target_creation_order)| {
+                    (
+                        *target_id,
+                        *target_creation_order,
+                        detectables
+                            .iter()
+                            .any(|detectable| detectable.element == Some(*target_id)),
+                    )
+                })
+                .collect::<Vec<_>>();
             detectables.retain(|d| {
                 let target_id = d.element.unwrap_or_else(|| {
                     panic!(
@@ -2182,6 +2411,27 @@ impl EngineInner {
                     });
                 !target.dead
             });
+            for (target_id, target_creation_order, present_before) in mutation_presence_before {
+                let present_after = detectables
+                    .iter()
+                    .any(|detectable| detectable.element == Some(target_id));
+                if present_before || present_after {
+                    debug_detectable_mutation_event(
+                        "cleanup",
+                        "CleanUpDetectables(Enemy)",
+                        universal_frame,
+                        npc_id.index(),
+                        original_creation_order,
+                        enemy_idx,
+                        target_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        detectables.len(),
+                    );
+                }
+            }
             debug_detectable_list_entries(
                 "post_cleanup",
                 enemy_idx,
@@ -4117,6 +4367,25 @@ impl EngineInner {
         );
         // Per-NPC frame phase offset.
         let original_creation_order = self.original_static_creation_order(npc_id);
+        let mutation_debug_human_targets =
+            if detectable_mutation_debug_owner_matches(npc_id.index(), original_creation_order) {
+                human_targets
+                    .keys()
+                    .filter_map(|target_id| {
+                        if !detectable_mutation_debug_target_slot_matches(target_id.index()) {
+                            return None;
+                        }
+                        let target_creation_order = self.original_static_creation_order(*target_id);
+                        detectable_mutation_debug_target_matches(
+                            target_id.index(),
+                            target_creation_order,
+                        )
+                        .then_some((*target_id, target_creation_order))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
         let modified_frame =
             refresh_detection_modified_frame(universal_frame, original_creation_order);
 
@@ -4365,6 +4634,26 @@ impl EngineInner {
         // compute visibility for stale entries.
         {
             let beggar_idx = DetectableType::Beggar as usize;
+            let (mutation_length_before, mutation_presence_before) =
+                if mutation_debug_human_targets.is_empty() {
+                    (0, Vec::new())
+                } else {
+                    (
+                        npc.detectable_lists[beggar_idx].len(),
+                        mutation_debug_human_targets
+                            .iter()
+                            .map(|(target_id, target_creation_order)| {
+                                (
+                                    *target_id,
+                                    *target_creation_order,
+                                    npc.detectable_lists[beggar_idx]
+                                        .iter()
+                                        .any(|detectable| detectable.element == Some(*target_id)),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                };
             npc.detectable_lists[beggar_idx].retain(|det| {
                 let Some(target_id) = det.element else {
                     return false;
@@ -4374,6 +4663,27 @@ impl EngineInner {
                     .map(|t| t.is_true_or_false_beggar)
                     .unwrap_or(false)
             });
+            for (target_id, target_creation_order, present_before) in mutation_presence_before {
+                let present_after = npc.detectable_lists[beggar_idx]
+                    .iter()
+                    .any(|detectable| detectable.element == Some(target_id));
+                if present_before || present_after {
+                    debug_detectable_mutation_event(
+                        "cleanup",
+                        "CleanUpDetectables(Beggar)",
+                        universal_frame,
+                        npc_id.index(),
+                        original_creation_order,
+                        beggar_idx,
+                        target_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        mutation_length_before,
+                        npc.detectable_lists[beggar_idx].len(),
+                    );
+                }
+            }
             debug_detectable_list_bucket(
                 "post_cleanup",
                 beggar_idx,
