@@ -14,6 +14,33 @@ use crate::sequence::{
     PendingCondolation, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
 };
 
+struct DamageParryHandoffDebugConfig {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn damage_parry_handoff_debug_config() -> Option<&'static DamageParryHandoffDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<DamageParryHandoffDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when damage-parry handoff debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for damage-parry handoff diagnostic: {error}")
+                })
+            };
+            Some(DamageParryHandoffDebugConfig {
+                frame: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_FRAME"),
+                creation_order: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_CREATION_ORDER"),
+            })
+        })
+        .as_ref()
+}
+
 fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
     if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
         return false;
@@ -171,6 +198,78 @@ fn take_condolation_nested_termination(
 }
 
 impl EngineInner {
+    fn trace_damage_parry_handoff(
+        &self,
+        phase: &str,
+        card: PendingCondolation,
+        cross_postponed: Option<(SequenceId, usize)>,
+    ) {
+        let Some(config) = damage_parry_handoff_debug_config() else {
+            return;
+        };
+        if card.command != Command::ReceiveSwordDamage || config.frame != self.control.frame_counter
+        {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(card.owner);
+        if creation_order != config.creation_order {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let selected = manager.current_element_for_actor(card.owner);
+        let deferred = manager
+            .deferred_elements_to_go()
+            .into_iter()
+            .filter(|(seq_id, elem_idx)| {
+                manager
+                    .get_element(*seq_id, *elem_idx)
+                    .is_some_and(|element| element.owner == Some(card.owner))
+            })
+            .collect::<Vec<_>>();
+        eprintln!(
+            "PARITY_DAMAGE_PARRY_HANDOFF frame={} phase={} owner={} owner_co={} terminal_seq={} terminal_elem={} terminal_state={:?} selected={selected:?} cross_postponed={cross_postponed:?} deferred={deferred:?}",
+            self.control.frame_counter,
+            phase,
+            card.owner.index(),
+            creation_order,
+            card.seq_id.0,
+            card.elem_idx,
+            card.terminal_state,
+        );
+        for sequence in manager.sequences_iter() {
+            for (elem_idx, element) in sequence.elements.iter().enumerate() {
+                if element.owner != Some(card.owner) {
+                    continue;
+                }
+                eprintln!(
+                    "PARITY_DAMAGE_PARRY_HANDOFF frame={} phase=element owner={} owner_co={} seq={} elem={} id={} command={:?} level={} state={:?} priority={:?} legacy_v48={} postponed={:?} cross_postponed={:?} first_order={:?} last_order={:?}",
+                    self.control.frame_counter,
+                    card.owner.index(),
+                    creation_order,
+                    sequence.id.0,
+                    elem_idx,
+                    element.id,
+                    element.command,
+                    element.command_level,
+                    element.state,
+                    element.priority,
+                    element.legacy_v48.is_some(),
+                    element.postponed_element_index,
+                    element.cross_postponed,
+                    element
+                        .orders
+                        .front()
+                        .map(|order| (order.order_type, order.done)),
+                    element
+                        .orders
+                        .back()
+                        .map(|order| (order.order_type, order.done)),
+                );
+            }
+        }
+    }
+
     /// Request a soldier enter or leave attentive mode, launching the
     /// appropriate transition-animation sequence element.
     ///
@@ -362,6 +461,11 @@ impl EngineInner {
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
             let from_halt = dispatch.card.from_halt;
+            let diagnostic = damage_parry_handoff_debug_config()
+                .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
+            if let Some((card, cross)) = diagnostic {
+                self.trace_damage_parry_handoff("before_card", card, cross);
+            }
             self.send_condolation_card(sim, dispatch.card, assets);
             // A Halt card performs actor/human cleanup, but the NPC override
             // returns before Think. It cannot causally produce any of these
@@ -378,6 +482,9 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .finish_pending_condolation(dispatch);
+            if let Some((card, cross)) = diagnostic {
+                self.trace_damage_parry_handoff("after_finish", card, cross);
+            }
             // Original `RHSequenceElement::SetState` resumes directly after
             // `SendCondolationCard`: `Ready()` can advance the sequence and
             // `RegisterSequenceElementToGo` immediately calls
@@ -385,6 +492,9 @@ impl EngineInner {
             // inside this exact SetState stack frame, before another
             // condolence card or NPC Hourglass slot can run.
             self.drain_script_synchronous_actions(sim, assets, active_scripts)?;
+            if let Some((card, cross)) = diagnostic {
+                self.trace_damage_parry_handoff("after_sync_drain", card, cross);
+            }
 
             for nested in self
                 .orders
@@ -445,6 +555,11 @@ impl EngineInner {
     ) {
         let card_owner = dispatch.card.owner;
         let from_halt = dispatch.card.from_halt;
+        let diagnostic = damage_parry_handoff_debug_config()
+            .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
+        if let Some((card, cross)) = diagnostic {
+            self.trace_damage_parry_handoff("owner_boundary_before_card", card, cross);
+        }
         self.send_condolation_card(sim, dispatch.card, assets);
         if !from_halt {
             self.drain_self_stimuli_for_npc_without_forecast(sim, card_owner, assets);
@@ -484,6 +599,9 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .finish_pending_condolation(dispatch);
+        if let Some((card, cross)) = diagnostic {
+            self.trace_damage_parry_handoff("owner_boundary_after_finish", card, cross);
+        }
 
         // `StartPostponedSequenceElement` only calls
         // `RegisterSequenceElementToGo`. Ordinary released work therefore
@@ -496,6 +614,9 @@ impl EngineInner {
                     card_owner.index()
                 )
             });
+        if let Some((card, cross)) = diagnostic {
+            self.trace_damage_parry_handoff("owner_boundary_after_sync_drain", card, cross);
+        }
 
         for nested in self.orders.sequence_manager.drain_pending_condolations() {
             self.close_owner_boundary_condolation(sim, assets, nested, resumed_cross_successors);
