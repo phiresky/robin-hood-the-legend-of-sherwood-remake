@@ -42,7 +42,11 @@ fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
 /// Opt-in trace for the event-driven swordfight reposition decision. Keep the
 /// gate process-local and evaluate it before touching any proposal data so the
 /// disabled path cannot add lookups, RNG draws, or simulation state.
-fn reconsider_position_debug_matches(frame: u32, creation_order: Option<u32>, owner: u32) -> bool {
+fn reconsider_position_debug_matches(
+    frame: impl FnOnce() -> u32,
+    creation_order: impl FnOnce() -> Option<u32>,
+    owner: impl FnOnce() -> u32,
+) -> bool {
     if std::env::var_os("PARITY_DEBUG_RECONSIDER_POSITION").is_none() {
         return false;
     }
@@ -53,6 +57,9 @@ fn reconsider_position_debug_matches(frame: u32, creation_order: Option<u32>, ow
             })
         })
     };
+    let frame = frame();
+    let creation_order = creation_order();
+    let owner = owner();
     parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_FRAME").is_none_or(|expected| frame == expected)
         && parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_CREATION_ORDER")
             .is_none_or(|expected| creation_order == Some(expected))
@@ -2621,12 +2628,15 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
-        let reconsider_debug =
-            reconsider_position_debug_matches(ctx.frame, ctx.original_creation_order, self.base.me);
+        let reconsider_debug = reconsider_position_debug_matches(
+            || ctx.frame,
+            || ctx.original_creation_order,
+            || self.base.me,
+        );
         if reconsider_debug {
             let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
             eprintln!(
-                "[RECONSIDER_ENTRY] frame={} owner={} creation_order={:?} phase=entry rng={:?} substate={:?} primary={} swordfighting={} enter_pending={} position=({:?},{:?},{:?}) direction={}",
+                "[RECONSIDER_ENTRY] frame={} owner={} creation_order={:?} phase=entry rng={:?} substate={:?} primary={} swordfighting={} enter_pending={} position=({:?},{:?},{:?}) direction={} blood={} cheat={} trainer={}",
                 ctx.frame,
                 self.base.me,
                 ctx.original_creation_order,
@@ -2639,6 +2649,9 @@ impl EnemyAi {
                 ctx.position.y.to_bits(),
                 ctx.elevation.to_bits(),
                 ctx.direction,
+                self.base.blood_alcohol,
+                global.stupid_soldiers_cheat,
+                self.combat_trainer,
             );
         }
         // Keep ourselves on a heartbeat while in swordfight.
@@ -2979,6 +2992,13 @@ impl EnemyAi {
                 );
             }
             return;
+        }
+        if reconsider_debug {
+            let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=after_drunk blood={} rng={:?}",
+                ctx.frame, self.base.me, self.base.blood_alcohol, rng_cursor,
+            );
         }
 
         // Refresh primary snapshot in case it changed above.
