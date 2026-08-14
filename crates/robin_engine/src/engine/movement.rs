@@ -9,6 +9,72 @@ use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
+#[derive(Debug, Clone, Copy)]
+enum MovementPopGoalOwnerKind {
+    Pc,
+    Soldier,
+    Civilian,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MovementPopGoalOwnerDebugConfig {
+    frame: u32,
+    kind: MovementPopGoalOwnerKind,
+    index: u32,
+}
+
+fn movement_pop_goal_owner_debug_config() -> Option<&'static MovementPopGoalOwnerDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<MovementPopGoalOwnerDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF")?;
+            let frame = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME").unwrap_or_else(|_| {
+                panic!(
+                    "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME"
+                )
+            });
+            let frame = frame.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME={frame:?}: {error}")
+            });
+            let owner = std::env::var("PARITY_DEBUG_GOAL_OWNER").unwrap_or_else(|_| {
+                panic!(
+                    "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER=pc|soldier|civilian:INDEX"
+                )
+            });
+            let (kind, index) = owner.split_once(':').unwrap_or_else(|| {
+                panic!("PARITY_DEBUG_GOAL_OWNER must look like pc|soldier|civilian:INDEX")
+            });
+            let kind = match kind {
+                "pc" => MovementPopGoalOwnerKind::Pc,
+                "soldier" => MovementPopGoalOwnerKind::Soldier,
+                "civilian" => MovementPopGoalOwnerKind::Civilian,
+                unsupported => {
+                    panic!("PARITY_DEBUG_GOAL_OWNER has unsupported kind {unsupported:?}")
+                }
+            };
+            let index = index.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid PARITY_DEBUG_GOAL_OWNER={owner:?}: {error}")
+            });
+            Some(MovementPopGoalOwnerDebugConfig { frame, kind, index })
+        })
+        .as_ref()
+}
+
+fn movement_pop_goal_owner_debug_matches(frame: u32, owner: EntityId) -> bool {
+    let Some(config) = movement_pop_goal_owner_debug_config() else {
+        return false;
+    };
+    config.frame == frame
+        && config.index == owner.index()
+        && matches!(
+            (config.kind, owner),
+            (MovementPopGoalOwnerKind::Pc, EntityId::Pc(_))
+                | (MovementPopGoalOwnerKind::Soldier, EntityId::Soldier(_))
+                | (MovementPopGoalOwnerKind::Civilian, EntityId::Civilian(_))
+        )
+}
+
 /// Per-owner lift translation snapshot consumed by movement Execute's live
 /// animation derivation. Covers the lift cases of
 /// `DetermineMovementAnimation`.
@@ -13384,27 +13450,114 @@ impl EngineInner {
 }
 
 impl EngineInner {
+    fn trace_selected_movement_order_pop(
+        &self,
+        stage: &'static str,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        result: &'static str,
+    ) {
+        let frame = self.control.frame_counter;
+        if !movement_pop_goal_owner_debug_matches(frame, owner) {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let captured = manager.get_element(seq_id, elem_idx).map(|element| {
+            (
+                element.command,
+                element.state,
+                element.data.is_movement(),
+                element.orders.len(),
+                element.current_order().map(|order| {
+                    (
+                        order.order_type,
+                        order.order_id,
+                        order.done,
+                        order.target_x.to_bits(),
+                        order.target_y.to_bits(),
+                    )
+                }),
+            )
+        });
+        let live_selected = manager.current_element_for_actor(owner);
+        let live_order =
+            manager
+                .current_order_for_actor(owner)
+                .map(|(live_seq, live_idx, order)| {
+                    (
+                        live_seq,
+                        live_idx,
+                        order.order_type,
+                        order.order_id,
+                        order.done,
+                        order.target_x.to_bits(),
+                        order.target_y.to_bits(),
+                    )
+                });
+        let translating = manager.goal_owner_debug_translating();
+        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+            panic!("movement-pop diagnostic owner {owner:?} disappeared at frame {frame}")
+        });
+        let actor = entity.actor_data().unwrap_or_else(|| {
+            panic!("movement-pop diagnostic owner {owner:?} is not an actor at frame {frame}")
+        });
+        let position = entity.position_iface();
+        eprintln!(
+            "[GOAL_OWNER frame={frame} owner={owner:?} stage=movement_pop_{stage} result={result} captured_seq={seq_id:?} captured_elem={elem_idx} captured={captured:?} live_selected={live_selected:?} live_order={live_order:?} translating={translating:?} active_movement={:?} installed_order={:?} action_state={:?} goal={:?} position={:?} moving={} moving_map={}]",
+            actor.active_movement,
+            actor.installed_order,
+            actor.action_state,
+            position.map_goal(),
+            position.map_position(),
+            position.is_moving(),
+            position.is_moving_map(),
+        );
+    }
+
     fn pop_selected_movement_order(
         &mut self,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let selected = self
+        let selection = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| {
                 let owner = element.owner?;
-                (element.state == crate::sequence::SequenceState::InProgress
+                let selected = (element.state == crate::sequence::SequenceState::InProgress
                     && element.data.is_movement()
                     && self
                         .orders
                         .sequence_manager
                         .current_element_for_actor(owner)
                         == Some((seq_id, elem_idx)))
-                .then_some((owner, element.orders.len() == 1))
+                .then_some((owner, element.orders.len() == 1));
+                Some((owner, selected))
             });
+        let diagnostic_owner = selection.map(|(owner, _)| owner);
+        if let Some(owner) = diagnostic_owner {
+            self.trace_selected_movement_order_pop("entry", owner, seq_id, elem_idx, "pending");
+        }
+        let selected = selection.and_then(|(_, selected)| selected);
         let Some((owner, final_order_will_exhaust)) = selected else {
+            if let Some(owner) = diagnostic_owner {
+                let manager = &self.orders.sequence_manager;
+                let result = match manager.get_element(seq_id, elem_idx) {
+                    None => "rejected_missing_element",
+                    Some(element) if element.owner.is_none() => "rejected_missing_owner",
+                    Some(element)
+                        if element.state != crate::sequence::SequenceState::InProgress =>
+                    {
+                        "rejected_not_in_progress"
+                    }
+                    Some(element) if !element.data.is_movement() => "rejected_not_movement",
+                    Some(_) => "rejected_live_selection_mismatch",
+                };
+                self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, result);
+            }
             // The pop was collected before a synchronous callback selected a
             // replacement. It no longer owns either the actor order or its
             // sprite goal, so applying it now would mutate the replacement.
@@ -13425,6 +13578,7 @@ impl EngineInner {
                 .clear_retained_movement_goals_for_actor(owner);
         }
         self.do_next_order(seq_id, elem_idx);
+        self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, "accepted");
     }
 }
 
