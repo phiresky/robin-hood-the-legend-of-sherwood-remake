@@ -2973,15 +2973,21 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
                     Some(OrderType::BeingCarriedPeasantC)
                 }
             }
-            // Waiting with corpse (default / idle carry pose) — synced
-            // with carrier's sprite.
-            _ => {
+            // Waiting with corpse — synced with carrier's sprite.
+            OrderType::WaitingWithCorpse => {
                 if snap.little_john_style {
                     Some(OrderType::BeingCarriedLittleJohn)
                 } else {
                     Some(OrderType::BeingCarriedPeasantC)
                 }
             }
+            // `pc.carried` is latched while TakeCorpse is translated, before
+            // the transition order reaches Execute. Original does not set
+            // `mpCarried` or publish a carried-body animation until that
+            // transition initializes (RHelementactorpc.cpp:4842-4909).
+            // Unrelated/pre-transition carrier actions therefore leave the
+            // body's existing animation untouched.
+            _ => None,
         };
 
         if let Some(anim) = carried_anim {
@@ -3203,17 +3209,79 @@ mod tests {
     fn unrelated_carrier_action_preserves_corpse_transform_and_facing_row() {
         let (mut entities, _carrier, body) =
             corpse_carry_fixture(OrderType::TransitionWaitingUprightHelpingClimbing);
-        let before = entities.get(body).unwrap();
-        let position = before.element_data().position_map();
-        let direction = before.element_data().direction();
-        let sprite_row = before.element_data().sprite.current_row;
+        {
+            let sprite = &mut entities.get_mut(body).unwrap().element_data_mut().sprite;
+            sprite.force_sprite_row_raw(777);
+            sprite.last_action = OrderType::BeingTied;
+            sprite.current_frame = 3;
+            sprite.frame_count = 9;
+        }
+        let before = entities.get(body).unwrap().element_data();
+        let position = before.position_map();
+        let direction = before.direction();
+        let sprite = (
+            before.sprite.current_row,
+            before.sprite.last_action,
+            before.sprite.current_frame,
+            before.sprite.frame_count,
+        );
 
         sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
 
         let body = entities.get(body).unwrap();
         assert_eq!(body.element_data().position_map(), position);
         assert_eq!(body.element_data().direction(), direction);
-        assert_eq!(body.element_data().sprite.current_row, sprite_row);
+        assert_eq!(
+            (
+                body.element_data().sprite.current_row,
+                body.element_data().sprite.last_action,
+                body.element_data().sprite.current_frame,
+                body.element_data().sprite.frame_count,
+            ),
+            sprite,
+            "a latched carry link must not publish a carried visual before the lift executes"
+        );
+    }
+
+    #[test]
+    fn waiting_with_corpse_publishes_idle_carried_visual() {
+        let (mut entities, carrier, body) = corpse_carry_fixture(OrderType::WaitingWithCorpse);
+        {
+            let carrier_sprite = &mut entities.get_mut(carrier).unwrap().element_data_mut().sprite;
+            carrier_sprite.current_frame = 2;
+            carrier_sprite.frame_count = 7;
+        }
+
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+
+        let sprite = &entities.get(body).unwrap().element_data().sprite;
+        assert_eq!(sprite.last_action, OrderType::BeingCarriedPeasantC);
+        assert_eq!((sprite.current_frame, sprite.frame_count), (2, 7));
+    }
+
+    #[test]
+    fn lift_transition_publishes_being_lifted_visual() {
+        let (mut entities, carrier, body) =
+            corpse_carry_fixture(OrderType::TransitionWaitingUprightCarryingCorpse);
+        {
+            let carrier_sprite = &mut entities.get_mut(carrier).unwrap().element_data_mut().sprite;
+            carrier_sprite.current_frame = 1;
+            carrier_sprite.frame_count = 6;
+        }
+        {
+            let sprite = &mut entities.get_mut(body).unwrap().element_data_mut().sprite;
+            let mut conversion = (*sprite.conversion).clone();
+            conversion[OrderType::BeingLiftedPeasantC as usize] = 200;
+            sprite.conversion = std::sync::Arc::new(conversion);
+            sprite.scripts =
+                std::sync::Arc::new(vec![crate::sprite_script::SpriteScript::default(); 216]);
+        }
+
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+
+        let sprite = &entities.get(body).unwrap().element_data().sprite;
+        assert_eq!(sprite.last_action, OrderType::BeingLiftedPeasantC);
+        assert_eq!((sprite.current_frame, sprite.frame_count), (1, 6));
     }
 
     #[test]
