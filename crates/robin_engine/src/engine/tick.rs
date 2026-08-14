@@ -1381,6 +1381,33 @@ fn project_post_completion_motion(
     }
 }
 
+#[derive(Debug)]
+struct MotionLatchDebugConfig {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn motion_latch_debug_config() -> Option<&'static MotionLatchDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<MotionLatchDebugConfig>> = std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_MOTION_LATCH")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when motion-latch debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for motion-latch diagnostic: {error}")
+                })
+            };
+            Some(MotionLatchDebugConfig {
+                frame: parse("PARITY_DEBUG_MOTION_LATCH_FRAME"),
+                creation_order: parse("PARITY_DEBUG_MOTION_LATCH_CREATION_ORDER"),
+            })
+        })
+        .as_ref()
+}
+
 fn specialized_order_advanced_after_execute(
     execute_motion: Option<crate::sprite::MotionState>,
     selected_order_rewritten_by_stop: bool,
@@ -4666,6 +4693,18 @@ impl EngineInner {
                                     selected_element_retired && installed.order_id == entry_order
                                 })
                             });
+                        let motion_latch_debug = motion_latch_debug_config().filter(|config| {
+                            config.frame == self.control.frame_counter
+                                && config.creation_order
+                                    == self.world.original_creation_order(entity_id)
+                        });
+                        let installed_order = motion_latch_debug.and_then(|_| {
+                            self.world
+                                .entities
+                                .get(entity_id)
+                                .and_then(Entity::actor_data)
+                                .and_then(|actor| actor.installed_order)
+                        });
                         if let Some(actor) = self
                             .world
                             .entities
@@ -4685,12 +4724,33 @@ impl EngineInner {
                             // Impossible condolence may install Wait and
                             // overwrite the sprite's last edge, but it cannot
                             // rewrite the Execute return already held by Actor.
+                            let motion_before_projection = actor.continuation.motion_state;
                             actor.continuation.motion_state = project_post_completion_motion(
-                                actor.continuation.motion_state,
+                                motion_before_projection,
                                 selected_element_impossible && !explicit_execute_in_progress,
                                 installed_successor_exists,
                                 selected_specialized_order_advanced,
                             );
+                            if let Some(config) = motion_latch_debug {
+                                eprintln!(
+                                    "[MOTION_LATCH frame={} co={} owner={} entry_order={:?} entry_state={:?} specialized_motion={:?} explicit_in_progress={} retired={} interrupted={} impossible={} specialized_advanced={} installed_order={:?} installed_successor={} motion_before={:?} motion_after={:?}]",
+                                    config.frame,
+                                    config.creation_order,
+                                    entity_id.index(),
+                                    selected_order,
+                                    selected_element_state,
+                                    specialized_execute_motion,
+                                    explicit_execute_in_progress,
+                                    selected_element_retired,
+                                    selected_element_interrupted,
+                                    selected_element_impossible,
+                                    selected_specialized_order_advanced,
+                                    installed_order,
+                                    installed_successor_exists,
+                                    motion_before_projection,
+                                    actor.continuation.motion_state,
+                                );
+                            }
                             tracing::trace!(
                                 target: "parity_motion_state",
                                 entity = ?entity_id,
