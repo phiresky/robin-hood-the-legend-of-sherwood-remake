@@ -38,6 +38,27 @@ fn is_within_smalltalk_strike_range(maximal_range: u16, squared_distance: f32) -
     maximal_range * maximal_range >= squared_distance as u32
 }
 
+#[derive(Clone, Copy)]
+struct ReactiveStepBackDebug {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn reactive_step_back_debug_config() -> Option<ReactiveStepBackDebug> {
+    std::env::var_os("PARITY_DEBUG_REACTIVE_STEP_BACK")?;
+    let parse_required = |name: &str| {
+        let value = std::env::var(name)
+            .unwrap_or_else(|_| panic!("{name} is required for reactive step-back diagnostic"));
+        value.parse::<u32>().unwrap_or_else(|error| {
+            panic!("invalid {name}={value:?} for reactive step-back diagnostic: {error}")
+        })
+    };
+    Some(ReactiveStepBackDebug {
+        frame: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_FRAME"),
+        creation_order: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_CREATION_ORDER"),
+    })
+}
+
 pub(super) fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
     if std::env::var_os("PARITY_DEBUG_REACTIVE_SWORD").is_none() {
         return false;
@@ -2070,6 +2091,9 @@ impl EngineInner {
         attacker_command_strike: Option<SwordStrike>,
         animation_strike: SwordStrike,
     ) {
+        // Keep the disabled diagnostic path ahead of every new simulation
+        // read. Both filters are required and parsed eagerly when enabled.
+        let step_back_debug = reactive_step_back_debug_config();
         // ── 1. Check if the victim recognizes this strike ────────────
         // Original compares pHitter->GetCommand() with the three command-valued
         // memory slots. It does not use the animation-derived strike here.
@@ -2426,6 +2450,44 @@ impl EngineInner {
             Some(crate::combat::ProposedCombatAction::Parry) => {
                 const MIN_CAPACITY_AVOID_PUSH_BACK: u16 = 50;
 
+                let step_back_debug = step_back_debug.filter(|debug| {
+                    debug.frame == self.control.frame_counter
+                        && debug.creation_order == self.world.original_creation_order(victim_id)
+                });
+                if let Some(debug) = step_back_debug {
+                    let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
+                        panic!("reactive step-back diagnostic victim {victim_id:?} disappeared")
+                    });
+                    let ai = victim.ai_controller().unwrap_or_else(|| {
+                        panic!("reactive step-back diagnostic victim {victim_id:?} lost AI")
+                    });
+                    eprintln!(
+                        "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} inside_think={} owner_work={:?}",
+                        debug.frame,
+                        debug.creation_order,
+                        victim_id.index(),
+                        attacker_id.index(),
+                        victim_fighting_ability,
+                        push_back_distance,
+                        ai.current_state,
+                        ai.current_substate,
+                        victim.element_data().position_map().x.to_bits(),
+                        victim.element_data().position_map().y.to_bits(),
+                        victim.element_data().sector(),
+                        victim.element_data().layer(),
+                        victim
+                            .actor_data()
+                            .and_then(|actor| actor.installed_order)
+                            .map(|order| order.order_type)
+                            .unwrap_or(crate::order::OrderType::NonanimationEnd),
+                        self.actor_command(victim_id),
+                        ai.couldnt_reachpoint,
+                        ai.already_on_point,
+                        ai.completion_latch_inside_think,
+                        ai.outbox.reentrant.owner_work,
+                    );
+                }
+
                 // StopAll interrupts the selected element, but Original does
                 // not install an idle sprite order before this method's
                 // following GoTo reads GetAnimation/GetActionState. Rust's
@@ -2528,7 +2590,7 @@ impl EngineInner {
                     // un-isometric sword-fight space, so pass
                     // `SWORDFIGHT_ASPECT_RATIO` (= 1.0) instead of
                     // the default `ASPECT_RATIO` (0.5735).
-                    if let Some(step_back_goal) = crate::ai_enemy::propose_good_step_back_goal(
+                    let step_back_goal = crate::ai_enemy::propose_good_step_back_goal(
                         victim_ai_pos,
                         &victim_move_box,
                         attacker_ai_pos,
@@ -2536,7 +2598,26 @@ impl EngineInner {
                         min_dist,
                         Some(&self.world.fast_grid),
                         crate::position_interface::SWORDFIGHT_ASPECT_RATIO,
-                    ) {
+                    );
+                    if let Some(debug) = step_back_debug {
+                        eprintln!(
+                            "REACTIVE_STEP_BACK frame={} co={} phase=goal_result victim={} attacker={} victim_position=({:08x},{:08x},sector={:?},level={}) attacker_position=({:08x},{:08x}) good_distance={} min_distance={} result={:?}",
+                            debug.frame,
+                            debug.creation_order,
+                            victim_id.index(),
+                            attacker_id.index(),
+                            victim_ai_pos.x.to_bits(),
+                            victim_ai_pos.y.to_bits(),
+                            victim_ai_pos.sector,
+                            victim_ai_pos.level,
+                            attacker_ai_pos.x.to_bits(),
+                            attacker_ai_pos.y.to_bits(),
+                            good_dist,
+                            min_dist,
+                            step_back_goal,
+                        );
+                    }
+                    if let Some(step_back_goal) = step_back_goal {
                         let ctx = step_back_ctx.take().unwrap_or_else(|| {
                             panic!(
                                 "ConsiderToBeginParade step-back victim {} has no retained GoTo context",
@@ -2560,12 +2641,63 @@ impl EngineInner {
                                 flags,
                                 &ctx,
                             );
+                            if let Some(debug) = step_back_debug {
+                                eprintln!(
+                                    "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",
+                                    debug.frame,
+                                    debug.creation_order,
+                                    victim_id.index(),
+                                    ai.base.current_state,
+                                    ai.base.current_substate,
+                                    step_back_goal.x.to_bits(),
+                                    step_back_goal.y.to_bits(),
+                                    step_back_goal.sector,
+                                    step_back_goal.level,
+                                    flags,
+                                    ai.base.couldnt_reachpoint,
+                                    ai.base.already_on_point,
+                                    ai.base.completion_latch_inside_think,
+                                    ai.base.outbox.actor.orders.len(),
+                                    ai.base.outbox.reentrant.owner_work,
+                                );
+                            }
                         }
                         // This branch returns immediately after GoTo; close the
                         // owner-local callback boundary before the caller resumes.
                         self.drain_direct_ai_owner_boundary_without_forecast(
                             sim, victim_id, assets,
                         );
+                        if let Some(debug) = step_back_debug {
+                            let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
+                                panic!(
+                                    "reactive step-back diagnostic victim {victim_id:?} disappeared after drain"
+                                )
+                            });
+                            let ai = victim.ai_controller().unwrap_or_else(|| {
+                                panic!(
+                                    "reactive step-back diagnostic victim {victim_id:?} lost AI after drain"
+                                )
+                            });
+                            eprintln!(
+                                "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} inside_think={} self_stimuli={:?} owner_work={:?}",
+                                debug.frame,
+                                debug.creation_order,
+                                victim_id.index(),
+                                ai.current_state,
+                                ai.current_substate,
+                                victim
+                                    .actor_data()
+                                    .and_then(|actor| actor.installed_order)
+                                    .map(|order| order.order_type)
+                                    .unwrap_or(crate::order::OrderType::NonanimationEnd),
+                                self.actor_command(victim_id),
+                                ai.couldnt_reachpoint,
+                                ai.already_on_point,
+                                ai.completion_latch_inside_think,
+                                ai.outbox.reentrant.self_stimuli,
+                                ai.outbox.reentrant.owner_work,
+                            );
+                        }
                         tracing::debug!(
                             ?victim_id,
                             ?attacker_id,
