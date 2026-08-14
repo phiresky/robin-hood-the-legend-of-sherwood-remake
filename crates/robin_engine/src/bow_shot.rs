@@ -3339,12 +3339,10 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
         && flight_at_endpoint
         && !world_position_is_moving;
     if trajectory_empty && (retire_stopped || retire_live_flying) {
-        // The endpoint frame itself is still presented once. Falling arrows
-        // therefore consume their final tumble draw before the settled cache
-        // retires them; an already-stopped loaded arrow retires immediately.
-        if proj.projectile.flying && proj.projectile.falling {
-            apply_arrow_falling_sprite_visual(sim, proj);
-        }
+        // Original tests the empty-trajectory/settled-position retirement
+        // condition before its falling-arrow visual branch. Preserve the
+        // already-published endpoint sprite and retire without another tumble
+        // draw.
         // Refresh retires the arrow before another Projectile::Hourglass can
         // call NewMove. Settle the exposed movement snapshot at the endpoint
         // as Original's retired sprite state records it.
@@ -9030,18 +9028,30 @@ mod tests {
     }
 
     #[test]
-    fn flying_endpoint_renders_final_falling_frame_before_retirement() {
+    fn settled_flying_endpoint_retires_without_another_falling_frame() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.trajectory.clear();
         arrow.projectile.trajectory_frame_count = 0;
         arrow.projectile.falling = true;
+        let published_sprite = (
+            arrow.element.sprite.current_row,
+            arrow.element.sprite.current_frame,
+        );
 
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
         });
 
         assert!(!arrow.element.active);
-        assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
+        assert!(draws.is_empty());
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame,
+            ),
+            published_sprite,
+            "settled retirement preserves the endpoint sprite published by the preceding Refresh"
+        );
         assert!(!arrow.element.sprite.position_iface.is_moving());
         assert!(!arrow.element.sprite.position_iface.is_moving_map());
     }
@@ -9061,10 +9071,13 @@ mod tests {
         // RHElementArrow::Refresh compares GetOldPosition/GetPosition, which
         // are the 3D position-interface values. The separately serialized
         // sprite-space cache is not part of its retirement decision.
-        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
+        });
 
         assert!(arrow.element.active);
         assert!(arrow.element.sprite.position_iface.is_moving());
+        assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
     }
 
     #[test]
