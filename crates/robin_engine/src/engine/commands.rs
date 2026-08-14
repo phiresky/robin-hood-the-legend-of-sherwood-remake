@@ -1869,7 +1869,7 @@ impl EngineInner {
             // into one Original-shaped action/post-seek sequence.  Those
             // variants currently dispatch through heterogeneous builders
             // with command-specific side effects, so only the source-proven
-            // final TakeCorpse shape is embedded here.
+            // final TakeCorpse and DropAle shapes are embedded here.
             if step_index + 1 == step_count
                 && let PlayerCommand::LaunchInteraction {
                     actor,
@@ -1886,6 +1886,15 @@ impl EngineInner {
                     *running,
                     true,
                 );
+                posture_recovery_embedded = true;
+            } else if step_index + 1 == step_count
+                && let PlayerCommand::DropAleAt {
+                    actor,
+                    target_pos,
+                    running,
+                } = &cmd
+            {
+                self.apply_drop_ale_at_with_recovery(*actor, *target_pos, *running, true);
                 posture_recovery_embedded = true;
             } else {
                 self.apply_command(sim, display, input, assets, &cmd);
@@ -3698,6 +3707,18 @@ impl EngineInner {
         target_pos: crate::coordinates::MapPoint,
         running: bool,
     ) {
+        self.apply_drop_ale_at_with_recovery(actor, target_pos, running, false);
+    }
+
+    /// Build the ordinary DropAle route, optionally retaining quick-action
+    /// posture recovery in its post-seek sequence.
+    fn apply_drop_ale_at_with_recovery(
+        &mut self,
+        actor: EntityId,
+        target_pos: crate::coordinates::MapPoint,
+        running: bool,
+        append_posture_recovery: bool,
+    ) {
         use crate::order::OrderType;
 
         let (posture, layer, move_box, action_distance) = match self.get_entity(actor) {
@@ -3841,6 +3862,9 @@ impl EngineInner {
             *elem_layer = goal_layer;
             let mut post_seek = Sequence::new();
             post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(actor)));
+            if append_posture_recovery {
+                self.append_posture_recovery(actor, &mut post_seek);
+            }
             *post_seek_sequence = Some(Box::new(post_seek));
         }
 
@@ -4955,6 +4979,101 @@ mod tests {
             .expect("ordinary interaction launches one route");
         assert_eq!(sequence.len(), 1);
         assert_eq!(sequence.get(0).unwrap().command, Command::TakeCorpse);
+    }
+
+    fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
+        {
+            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc.element_data_mut().posture = Posture::HelpingToClimb;
+            pc.element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(20.0, 30.0));
+        }
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::DroppingAle,
+            crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+
+        let target_pos = crate::coordinates::MapPoint::new(80.0, 90.0);
+        let state = engine.players.macro_store.get_or_insert(pc_id);
+        state.begin_recording(0);
+        state.append_if_recording(QuickActionStep {
+            action: Action::Ale,
+            position: target_pos,
+            replay: QaReplayCommand::DropAle {
+                target_pos,
+                running: false,
+            },
+        });
+        state.stop_recording();
+
+        (engine, assets, pc_id)
+    }
+
+    fn drop_ale_post_seek_commands(engine: &EngineInner) -> Vec<Command> {
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("DropAle launches one seek route");
+        let seek = sequence.get(0).expect("DropAle route begins with Seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            post_seek_sequence, ..
+        } = &seek.data
+        else {
+            panic!("DropAle route must begin with movement");
+        };
+        post_seek_sequence
+            .as_deref()
+            .expect("DropAle remains attached to Seek")
+            .elements
+            .iter()
+            .map(|element| element.command)
+            .collect()
+    }
+
+    #[test]
+    fn drop_ale_macro_embeds_helping_recovery_in_post_seek() {
+        let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
+
+        start_macro(&mut engine, &assets, pc_id);
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        assert_eq!(
+            drop_ale_post_seek_commands(&engine),
+            [Command::DropAle, Command::EnterHelpingClimb]
+        );
+    }
+
+    #[test]
+    fn ordinary_drop_ale_does_not_add_macro_posture_recovery() {
+        let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
+        engine
+            .players
+            .macro_store
+            .get_or_insert(pc_id)
+            .clear_slot(0);
+        let target_pos = crate::coordinates::MapPoint::new(80.0, 90.0);
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::DropAleAt {
+                actor: pc_id,
+                target_pos,
+                running: false,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        assert_eq!(drop_ale_post_seek_commands(&engine), [Command::DropAle]);
     }
 
     fn setup_strangle_command_scene() -> (EngineInner, LevelAssets, EntityId, EntityId) {
