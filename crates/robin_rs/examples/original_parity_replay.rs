@@ -1653,14 +1653,22 @@ struct TraceFailedPathRequest {
     time: u32,
 }
 
+fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
+    match schema {
+        12 | 14 => frame.campaign.is_none() && frame.engine_state.is_none(),
+        13 => frame.campaign.is_some() && frame.engine_state.is_some(),
+        _ => unreachable!("trace schema was validated before frame parsing"),
+    }
+}
+
 fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     match schema {
         12 | 14 => assert!(
-            frame.campaign.is_none() && frame.engine_state.is_none(),
+            trace_frame_envelope_matches(schema, frame),
             "schema-{schema} frame unexpectedly contains schema-13 authoritative state"
         ),
         13 => assert!(
-            frame.campaign.is_some() && frame.engine_state.is_some(),
+            trace_frame_envelope_matches(schema, frame),
             "schema-13 frame is missing campaign or engine_state"
         ),
         _ => unreachable!("trace schema was validated before frame parsing"),
@@ -7282,10 +7290,8 @@ mod tests {
     #[test]
     fn schema_twelve_and_thirteen_frame_envelopes_are_distinct() {
         let schema_twelve: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
-        validate_trace_frame_envelope(12, &schema_twelve);
-        assert!(
-            std::panic::catch_unwind(|| validate_trace_frame_envelope(13, &schema_twelve)).is_err()
-        );
+        assert!(trace_frame_envelope_matches(12, &schema_twelve));
+        assert!(!trace_frame_envelope_matches(13, &schema_twelve));
 
         let mut schema_thirteen_json = minimal_frame_json();
         schema_thirteen_json["campaign"] = serde_json::json!({
@@ -7397,11 +7403,8 @@ mod tests {
             "failed_path_requests": []
         });
         let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();
-        validate_trace_frame_envelope(13, &schema_thirteen);
-        assert!(
-            std::panic::catch_unwind(|| validate_trace_frame_envelope(12, &schema_thirteen))
-                .is_err()
-        );
+        assert!(trace_frame_envelope_matches(13, &schema_thirteen));
+        assert!(!trace_frame_envelope_matches(12, &schema_thirteen));
     }
 
     #[test]
