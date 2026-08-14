@@ -1202,6 +1202,51 @@ pub fn is_reachable_impact_3d(
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
+    struct ProjectileCollisionDebugConfig {
+        origin: [f32; 3],
+        destination: [f32; 3],
+    }
+
+    fn projectile_collision_debug_config() -> Option<&'static ProjectileCollisionDebugConfig> {
+        static CONFIG: std::sync::OnceLock<Option<ProjectileCollisionDebugConfig>> =
+            std::sync::OnceLock::new();
+        CONFIG
+            .get_or_init(|| {
+                std::env::var_os("PARITY_DEBUG_PROJECTILE_COLLISION_CANDIDATES")?;
+                let parse = |name: &str| {
+                    let raw = std::env::var(name)
+                        .unwrap_or_else(|_| panic!("{name} is required when projectile collision candidate debugging is enabled"));
+                    let value = raw
+                        .parse::<f32>()
+                        .unwrap_or_else(|_| panic!("invalid finite f32 {name}: {raw}"));
+                    assert!(value.is_finite(), "invalid finite f32 {name}: {raw}");
+                    value
+                };
+                Some(ProjectileCollisionDebugConfig {
+                    origin: [
+                        parse("PARITY_DEBUG_PROJECTILE_COLLISION_ORIGIN_X"),
+                        parse("PARITY_DEBUG_PROJECTILE_COLLISION_ORIGIN_Y"),
+                        parse("PARITY_DEBUG_PROJECTILE_COLLISION_ORIGIN_Z"),
+                    ],
+                    destination: [
+                        parse("PARITY_DEBUG_PROJECTILE_COLLISION_DESTINATION_X"),
+                        parse("PARITY_DEBUG_PROJECTILE_COLLISION_DESTINATION_Y"),
+                        parse("PARITY_DEBUG_PROJECTILE_COLLISION_DESTINATION_Z"),
+                    ],
+                })
+            })
+            .as_ref()
+    }
+
+    let collision_debug = projectile_collision_debug_config().is_some_and(|config| {
+        origin.x.to_bits() == config.origin[0].to_bits()
+            && origin.y.to_bits() == config.origin[1].to_bits()
+            && origin.z.to_bits() == config.origin[2].to_bits()
+            && destination.x.to_bits() == config.destination[0].to_bits()
+            && destination.y.to_bits() == config.destination[1].to_bits()
+            && destination.z.to_bits() == config.destination[2].to_bits()
+    });
+
     // Vertical-segment short-circuit.
     if origin.x == destination.x && origin.y == destination.y {
         return if origin.z > destination.z {
@@ -1220,19 +1265,172 @@ pub fn is_reachable_impact_3d(
     let mut best_obstacle_impact = None;
     let mut ground_impact = None;
 
+    #[derive(Clone, Copy)]
+    struct DebugGroup {
+        creation_order: usize,
+        x_min: f32,
+        y_min: f32,
+        x_max: f32,
+        y_max: f32,
+    }
+    let mut debug_groups = collision_debug.then(Vec::<DebugGroup>::new);
+
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
-        if !obstacles.is_active(idx) {
+        let active = obstacles.is_active(idx);
+        if !active {
+            if collision_debug {
+                eprintln!(
+                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=false type_match={} shield={} segment_candidate={:?} group=None bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
+                    obs.id,
+                    obs.is_of_type(type_filter),
+                    obs.is_shield(),
+                    !obs.box_ground.trivially_rejects_segment(segment(
+                        pt(origin.x, origin.y),
+                        pt(destination.x, destination.y),
+                    )),
+                    obs.box_ground.x_min(),
+                    obs.box_ground.y_min(),
+                    obs.box_ground.x_max(),
+                    obs.box_ground.y_max(),
+                );
+            }
             continue;
         }
-        if !obs.is_of_type(type_filter) || obs.is_shield() {
+        let type_match = obs.is_of_type(type_filter);
+        if !type_match {
+            if collision_debug {
+                eprintln!(
+                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=true type_match=false shield={} segment_candidate={:?} group=None bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
+                    obs.id,
+                    obs.is_shield(),
+                    !obs.box_ground.trivially_rejects_segment(segment(
+                        pt(origin.x, origin.y),
+                        pt(destination.x, destination.y),
+                    )),
+                    obs.box_ground.x_min(),
+                    obs.box_ground.y_min(),
+                    obs.box_ground.x_max(),
+                    obs.box_ground.y_max(),
+                );
+            }
             continue;
         }
-        if let Some(impact) = obs.blocking_ray_3d_impact(origin_arr, dest_arr)
+        let shield = obs.is_shield();
+        let segment_candidate = collision_debug.then(|| {
+            !obs.box_ground.trivially_rejects_segment(segment(
+                pt(origin.x, origin.y),
+                pt(destination.x, destination.y),
+            ))
+        });
+        let mut debug_group = None;
+        if collision_debug && !shield && segment_candidate == Some(true) {
+            let groups = debug_groups
+                .as_mut()
+                .expect("enabled collision diagnostic requires group storage");
+            for (group_index, group) in groups.iter_mut().enumerate() {
+                let intersects = group.x_min <= obs.box_ground.x_max()
+                    && group.x_max >= obs.box_ground.x_min()
+                    && group.y_min <= obs.box_ground.y_max()
+                    && group.y_max >= obs.box_ground.y_min();
+                if intersects {
+                    group.x_min = group.x_min.min(obs.box_ground.x_min());
+                    group.y_min = group.y_min.min(obs.box_ground.y_min());
+                    group.x_max = group.x_max.max(obs.box_ground.x_max());
+                    group.y_max = group.y_max.max(obs.box_ground.y_max());
+                    debug_group = Some(group_index);
+                    break;
+                }
+            }
+            if debug_group.is_none() {
+                let group_creation_order = groups.len();
+                debug_group = Some(group_creation_order);
+                groups.push(DebugGroup {
+                    creation_order: group_creation_order,
+                    x_min: obs.box_ground.x_min(),
+                    y_min: obs.box_ground.y_min(),
+                    x_max: obs.box_ground.x_max(),
+                    y_max: obs.box_ground.y_max(),
+                });
+            }
+        }
+        if shield {
+            if collision_debug {
+                eprintln!(
+                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active={active} type_match={type_match} shield={shield} segment_candidate={segment_candidate:?} group={debug_group:?} bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
+                    obs.id,
+                    obs.box_ground.x_min(),
+                    obs.box_ground.y_min(),
+                    obs.box_ground.x_max(),
+                    obs.box_ground.y_max(),
+                );
+            }
+            continue;
+        }
+        let candidate_impact = obs.blocking_ray_3d_impact(origin_arr, dest_arr);
+        if collision_debug {
+            eprintln!(
+                "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active={active} type_match={type_match} shield={shield} segment_candidate={segment_candidate:?} group={debug_group:?} bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit={:?}",
+                obs.id,
+                obs.box_ground.x_min(),
+                obs.box_ground.y_min(),
+                obs.box_ground.x_max(),
+                obs.box_ground.y_max(),
+                candidate_impact
+                    .as_ref()
+                    .map(|impact| (impact.t, impact.point)),
+            );
+        }
+        if let Some(impact) = candidate_impact
             && impact.t < best_t
         {
             best_t = impact.t;
             best_obstacle = Some(idx as u32);
             best_obstacle_impact = Some(impact.point);
+        }
+    }
+
+    if let Some(groups) = debug_groups.as_mut() {
+        let dx = destination.x - origin.x;
+        let dy = destination.y - origin.y;
+        let quadrant = if dx > 0.0 {
+            if dy > 0.0 {
+                if dx > dy { "right" } else { "up" }
+            } else if dx > -dy {
+                "right"
+            } else {
+                "down"
+            }
+        } else if dy > 0.0 {
+            if -dx > dy { "left" } else { "up" }
+        } else if dx < dy {
+            "left"
+        } else {
+            "down"
+        };
+        for unsorted_end in (1..groups.len()).rev() {
+            let mut done = true;
+            for index in 0..unsorted_end {
+                let swap = match quadrant {
+                    "right" => groups[index].x_min > groups[index + 1].x_max,
+                    "left" => groups[index].x_min < groups[index + 1].x_max,
+                    "up" => groups[index].y_min > groups[index + 1].y_max,
+                    "down" => groups[index].y_min < groups[index + 1].y_max,
+                    _ => unreachable!(),
+                };
+                if swap {
+                    groups.swap(index, index + 1);
+                    done = false;
+                }
+            }
+            if done {
+                break;
+            }
+        }
+        for (sorted_order, group) in groups.iter().enumerate() {
+            eprintln!(
+                "PARITY_PROJECTILE_COLLISION phase=group quadrant={quadrant} sorted_order={sorted_order} creation_order={} bbox=[{:#.9},{:#.9},{:#.9},{:#.9}]",
+                group.creation_order, group.x_min, group.y_min, group.x_max, group.y_max,
+            );
         }
     }
 
@@ -1282,6 +1480,12 @@ pub fn is_reachable_impact_3d(
         let impact = ground_impact
             .or(best_obstacle_impact)
             .unwrap_or_else(|| panic!("finite projectile impact has no resolved point"));
+        if collision_debug {
+            eprintln!(
+                "PARITY_PROJECTILE_COLLISION phase=selected obstacle={best_obstacle:?} t={best_t:#.9} impact={impact:?} groups={}",
+                debug_groups.as_ref().map_or(0, Vec::len),
+            );
+        }
         Some(ImpactResult3D {
             impact,
             obstacle_index: best_obstacle,
