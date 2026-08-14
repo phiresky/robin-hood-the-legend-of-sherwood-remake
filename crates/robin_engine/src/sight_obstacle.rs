@@ -1193,7 +1193,7 @@ pub struct ImpactResult3D {
 /// Degenerate vertical segments (origin and destination share the same
 /// `(x, y)`) short-circuit through [`is_reachable_impact_fall_3d`] or
 /// [`is_reachable_impact_up_3d`] depending on direction.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectileCollisionDebugIdentity {
     pub frame: u32,
     pub shooter: u32,
@@ -1256,7 +1256,7 @@ pub(crate) fn with_projectile_collision_debug_identity<R>(
     identity: ProjectileCollisionDebugIdentity,
     f: impl FnOnce() -> R,
 ) -> R {
-    let config = projectile_collision_debug_config()
+    projectile_collision_debug_config()
         .expect("projectile collision debug identity installed without enabled diagnostic");
     assert!(
         projectile_collision_debug_matches(identity),
@@ -1453,9 +1453,9 @@ pub fn is_reachable_impact_3d(
                 (
                     impact.t.to_bits(),
                     [
-                        impact.point[0].to_bits(),
-                        impact.point[1].to_bits(),
-                        impact.point[2].to_bits(),
+                        impact.point.x.to_bits(),
+                        impact.point.y.to_bits(),
+                        impact.point.z.to_bits(),
                     ],
                 )
             });
