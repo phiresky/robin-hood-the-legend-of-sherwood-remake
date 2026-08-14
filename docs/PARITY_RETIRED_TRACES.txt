@@ -220,3 +220,21 @@ parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame
 # 33537-33539 keep PC180 waiting upright, while live Original starts the
 # DropCorpse transition after frame 33538; all disputed fields are recorded.
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-012-session-0001.jsonl.zst
+# Original renderer-only night-radius rays. Consolidated VISOWNER captures map
+# the Original-only query prefixes to RHShadowPolygon::ComputeNightRadius
+# (caller RVA 719902), while parity recording deliberately excludes presentation
+# work. Rust must not emit these renderer rays as simulation visibility queries.
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_033/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_033/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_035/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_035/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_035/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_024/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_024/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_024/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_036/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_036/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_036/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-003-session-0001.jsonl.zst
