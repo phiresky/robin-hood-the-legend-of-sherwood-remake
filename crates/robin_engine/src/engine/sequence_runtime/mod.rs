@@ -1639,12 +1639,14 @@ impl NpcAttentionCommandContext<'_> {
             return false;
         };
         let currently_attentive = entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
+        // RHElementActorSoldier::Translate has deliberately asymmetric arms:
+        // ENTER checks `mbAttentive == false`, while LEAVE checks only the
+        // stamped post-transition posture.  A corrective LEAVE can therefore
+        // still carry its alerted-to-upright animation after an earlier
+        // officer transition has already cleared `mbAttentive`.
         let needs_change = currently_attentive != target_attentive;
-        // RHElementActorSoldier::Translate checks only posture and the current
-        // attentive flag. In particular, a higher-priority attentive element
-        // that postponed a live Move must still play this transition; when it
-        // completes, the movement is translated and path-found again.
-        let can_play_transition = posture_upright_after && needs_change;
+        let can_play_transition =
+            posture_upright_after && (command == Command::LeaveAttentiveMode || needs_change);
         tracing::trace!(
             owner = owner.index(),
             ?command,

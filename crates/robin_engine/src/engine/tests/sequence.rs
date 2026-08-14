@@ -2911,6 +2911,141 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
 }
 
 #[test]
+fn leave_attentive_translation_keeps_transition_after_attentive_was_already_cleared() {
+    use crate::element::{Camp, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine
+        .get_entity_mut(soldier_id)
+        .unwrap()
+        .set_posture(Posture::Upright);
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::LeaveAttentiveMode,
+            Some(soldier_id),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("leave element remains registered")
+        .posture_after_transition = Posture::Upright;
+
+    let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+    }
+    .dispatch(soldier_id, Command::LeaveAttentiveMode, sequence, 0);
+
+    assert_eq!(
+        barrier,
+        crate::engine::sequence_runtime::OwnerActionBarrier::Reach
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("leave element remains registered");
+    assert_eq!(element.state, SequenceState::InProgress);
+    assert_eq!(element.orders.len(), 1);
+    assert_eq!(
+        element.orders.front().unwrap().order_type,
+        OrderType::TransitionWaitingAlertedWaitingUpright
+    );
+
+    let non_upright = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::LeaveAttentiveMode,
+            Some(soldier_id),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(non_upright, 0)
+        .expect("non-upright leave remains registered")
+        .posture_after_transition = Posture::Crouched;
+    let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+    }
+    .dispatch(soldier_id, Command::LeaveAttentiveMode, non_upright, 0);
+    assert_eq!(
+        barrier,
+        crate::engine::sequence_runtime::OwnerActionBarrier::Skip
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(non_upright, 0)
+        .expect("non-upright leave remains registered");
+    assert_eq!(element.state, SequenceState::Terminated);
+    assert!(element.orders.is_empty());
+}
+
+#[test]
+fn enter_attentive_translation_still_suppresses_an_already_satisfied_enter() {
+    use crate::element::{Camp, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine
+        .get_entity_mut(soldier_id)
+        .unwrap()
+        .set_posture(Posture::Upright);
+    engine
+        .get_entity_mut(soldier_id)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .attentive = true;
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::EnterAttentiveMode,
+            Some(soldier_id),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("enter element remains registered")
+        .posture_after_transition = Posture::Upright;
+
+    let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+    }
+    .dispatch(soldier_id, Command::EnterAttentiveMode, sequence, 0);
+
+    assert_eq!(
+        barrier,
+        crate::engine::sequence_runtime::OwnerActionBarrier::Skip
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("enter element remains registered");
+    assert_eq!(element.state, SequenceState::Terminated);
+    assert!(element.orders.is_empty());
+}
+
+#[test]
 fn arbitration_ignores_serialized_order_ai_lock_like_original() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
