@@ -193,20 +193,12 @@ impl EngineInner {
                 let dir_angle = sector_to_angle(attacker_dir);
                 let (begin_sector, end_sector) = match thrust.direction {
                     crate::profiles::WeaponThrustDirection::RightToLeft => (
-                        angle_to_sector(
-                            dir_angle - thrust.final_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
-                        angle_to_sector(
-                            dir_angle + thrust.initial_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
+                        angle_to_sector(dir_angle - strike_profile_angle(thrust.final_angle)),
+                        angle_to_sector(dir_angle + strike_profile_angle(thrust.initial_angle)),
                     ),
                     _ => (
-                        angle_to_sector(
-                            dir_angle - thrust.initial_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
-                        angle_to_sector(
-                            dir_angle + thrust.final_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
+                        angle_to_sector(dir_angle - strike_profile_angle(thrust.initial_angle)),
+                        angle_to_sector(dir_angle + strike_profile_angle(thrust.final_angle)),
                     ),
                 };
                 collect_lateral_warning_victims(
@@ -233,7 +225,7 @@ impl EngineInner {
                         dir_y,
                         min_distance: min_dist,
                         max_distance: max_dist,
-                        half_width: thrust.repulsion as f32 / 2.0,
+                        half_width: push_strike_half_width(thrust.repulsion),
                     },
                     &assets.profile_manager,
                     &self.world.fast_grid,
@@ -244,16 +236,14 @@ impl EngineInner {
                 let dir_angle = sector_to_angle(attacker_dir);
                 let (begin_sector, end_sector) = match thrust.direction {
                     crate::profiles::WeaponThrustDirection::RightToLeft => {
-                        let initial =
-                            dir_angle + thrust.initial_angle as f32 * std::f32::consts::PI / 180.0;
+                        let initial = dir_angle + strike_profile_angle(thrust.initial_angle);
                         (
                             angle_to_sector(initial - std::f32::consts::PI),
                             angle_to_sector(initial),
                         )
                     }
                     _ => {
-                        let initial =
-                            dir_angle - thrust.initial_angle as f32 * std::f32::consts::PI / 180.0;
+                        let initial = dir_angle - strike_profile_angle(thrust.initial_angle);
                         (
                             angle_to_sector(initial),
                             angle_to_sector(initial + std::f32::consts::PI),
@@ -1446,25 +1436,13 @@ impl EngineInner {
                 let strike_dir = thrust.direction;
                 let (begin_sector, end_sector) = match strike_dir {
                     crate::profiles::WeaponThrustDirection::RightToLeft => {
-                        let initial = dir_angle
-                            + profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
-                        let final_a = dir_angle
-                            - profile.thrusts[strike as usize].final_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle + strike_profile_angle(thrust.initial_angle);
+                        let final_a = dir_angle - strike_profile_angle(thrust.final_angle);
                         (angle_to_sector(final_a), angle_to_sector(initial))
                     }
                     _ => {
-                        let initial = dir_angle
-                            - profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
-                        let final_a = dir_angle
-                            + profile.thrusts[strike as usize].final_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle - strike_profile_angle(thrust.initial_angle);
+                        let final_a = dir_angle + strike_profile_angle(thrust.final_angle);
                         (angle_to_sector(initial), angle_to_sector(final_a))
                     }
                 };
@@ -1496,7 +1474,7 @@ impl EngineInner {
                 // that Original includes near a side boundary.
                 let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
                 let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
-                let half_width = thrust.repulsion as f32 / 2.0;
+                let half_width = push_strike_half_width(thrust.repulsion);
                 let attacker = self
                     .get_entity(attacker_id)
                     .unwrap_or_else(|| panic!("push-strike attacker {attacker_id:?} is missing"));
@@ -1526,18 +1504,12 @@ impl EngineInner {
                 let strike_dir = thrust.direction;
                 let (begin_sector, end_sector) = match strike_dir {
                     crate::profiles::WeaponThrustDirection::RightToLeft => {
-                        let initial = dir_angle
-                            + profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle + strike_profile_angle(thrust.initial_angle);
                         let final_a = initial - std::f32::consts::PI;
                         (angle_to_sector(final_a), angle_to_sector(initial))
                     }
                     _ => {
-                        let initial = dir_angle
-                            - profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle - strike_profile_angle(thrust.initial_angle);
                         let final_a = initial + std::f32::consts::PI;
                         (angle_to_sector(initial), angle_to_sector(final_a))
                     }

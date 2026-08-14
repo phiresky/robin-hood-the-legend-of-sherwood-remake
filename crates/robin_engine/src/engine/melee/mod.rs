@@ -2365,8 +2365,7 @@ fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
 /// Convert a 0-15 direction sector to an angle in radians.
 /// Sector 0 = north (negative Y), increasing clockwise.
 /// The trailing `+ 0.1` rad nudges the result a fraction past the
-/// sector's begin edge, so the floor-based `angle_to_sector`
-/// round-trips back to the same sector.
+/// sector's begin edge so `angle_to_sector` round-trips to the same sector.
 fn sector_to_angle(sector: i16) -> f32 {
     // Original's `(sector / 16.0) * 2.0 * PI + 0.1` uses double
     // intermediates because its decimal literals are unsuffixed, then
@@ -2420,13 +2419,28 @@ pub(crate) fn sword_strike_from_animation(
 
 /// Convert an angle in radians to a 0-15 sector.
 ///
-/// Floor binning where sector `k` covers `[k·2π/16, (k+1)·2π/16)`.
-/// The negative-angle case is handled by normalising the input into
-/// `[0, 2π)` first instead of by recursion.
+/// Positive angles use Original's truncating ULONG conversion and modulo;
+/// negative angles use its recursive mirror rule.
 fn angle_to_sector(angle: f32) -> u8 {
-    let two_pi = std::f32::consts::PI * 2.0;
-    let normalized = ((angle % two_pi) + two_pi) % two_pi;
-    ((normalized / two_pi * 16.0).floor() as u32 % 16) as u8
+    if angle >= 0.0 {
+        ((f64::from(angle) / (2.0 * f64::from(std::f32::consts::PI)) * 16.0) as u32 % 16) as u8
+    } else {
+        // SBGeoVector2D::AngleToSector mirrors negative angles recursively;
+        // this differs from normalization at exact negative boundaries.
+        16 - angle_to_sector(-angle) - 1
+    }
+}
+
+/// `RHSword::GetStrike*Angle` keeps its unsuffixed-literal expression in
+/// double precision and narrows only at the FLOAT return boundary.
+fn strike_profile_angle(degrees: u16) -> f32 {
+    ((f64::from(degrees) / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32
+}
+
+/// Push collectors halve an authored UWORD width with integer division
+/// before promoting the result for the GEOTYPE side-distance comparison.
+fn push_strike_half_width(repulsion: u16) -> f32 {
+    f32::from(repulsion / 2)
 }
 
 // ─── Animation selection ────────────────────────────────────────────
@@ -2689,6 +2703,15 @@ mod tests {
 
         assert_eq!(after_three_ticks.to_bits(), final_angle.to_bits());
         assert_eq!(final_angle.to_bits(), 0x40bf_b210);
+    }
+
+    #[test]
+    fn strike_collector_angles_and_push_width_keep_original_conversions() {
+        let expected_angle = ((7.0_f64 / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32;
+        assert_eq!(strike_profile_angle(7).to_bits(), expected_angle.to_bits());
+        assert_eq!(angle_to_sector(-std::f32::consts::PI / 8.0), 14);
+        assert_eq!(push_strike_half_width(5), 2.0);
+        assert_eq!(push_strike_half_width(6), 3.0);
     }
 
     #[test]
