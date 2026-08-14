@@ -890,6 +890,13 @@ impl EngineInner {
                         self.orders
                             .sequence_manager
                             .end_instruct_callback(owner, seq_id, elem_idx);
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                "after_instruct_callback",
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         // Skip elements whose state moved to terminal /
                         // interrupted while an earlier action in this batch
                         // arbitrated against them. Without this, the loop
