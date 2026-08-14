@@ -6292,12 +6292,42 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=reactiontime_running_event stimulus={stimulus_type:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} owner_work_before={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.self_is_rider,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         if stimulus_type == StimulusType::EventTimer
             || stimulus_type == StimulusType::EventReachPoint
         {
             self.base.stop_all();
             self.i_am_in_trouble(self.base.primary_target);
             self.battle_decisions(sim, global, ctx, tick, grid);
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reactiontime_running_done state={:?}/{:?} primary={} couldnt={} already={} owner_work_after={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.current_state,
+                    self.base.current_substate,
+                    self.base.primary_target,
+                    self.base.couldnt_reachpoint,
+                    self.base.already_on_point,
+                    self.base.outbox.reentrant.owner_work,
+                );
+            }
         }
         false
     }

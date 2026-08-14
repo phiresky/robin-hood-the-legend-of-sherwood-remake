@@ -12317,6 +12317,11 @@ impl EngineInner {
     /// the typed Think call. Surface all three `EndThink` latches before a
     /// sibling synchronous event can enter `StartThink` and clear them.
     pub(super) fn surface_synchronous_completion_events_for_owner(&mut self, npc_id: EntityId) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                npc_id.index(),
+            );
         let ai = self
             .world
             .entities
@@ -12344,6 +12349,20 @@ impl EngineInner {
             || ai.outbox.reentrant.alert_soldier_completion_pending;
         let retain_couldnt_reachpoint =
             ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} owner_work={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                ai.completion_latch_inside_think,
+                ai.couldnt_reachpoint,
+                ai.already_on_point,
+                ai.already_turned,
+                typed_tail_pending,
+                retain_couldnt_reachpoint,
+                ai.outbox.reentrant.owner_work,
+            );
+        }
         let event = if !ai.completion_latch_inside_think {
             None
         } else if retain_couldnt_reachpoint {
@@ -12364,6 +12383,18 @@ impl EngineInner {
         ai.already_turned = false;
         if let Some(event) = event {
             ai.outbox.reentrant.self_stimuli.push(event);
+        }
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=surface_completion_result event={event:?} couldnt={} already_on_point={} already_turned={} self_stimuli={:?} owner_work={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                ai.couldnt_reachpoint,
+                ai.already_on_point,
+                ai.already_turned,
+                ai.outbox.reentrant.self_stimuli,
+                ai.outbox.reentrant.owner_work,
+            );
         }
     }
 

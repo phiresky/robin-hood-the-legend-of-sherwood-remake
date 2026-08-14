@@ -25,6 +25,38 @@ use crate::ai::*;
 use crate::entity_id::PcId;
 use crate::parameters_ai;
 
+/// Master switch for the opt-in AI decision/path diagnostic used by the
+/// Save020/Save055 substate-only parity cohort. Keep this check separate so
+/// disabled runs return before reading frame, owner, AI, or geometry state.
+pub(crate) fn decision_path_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_AI_DECISION_PATH").is_some()
+}
+
+/// Exact frame/owner gate for the AI decision/path diagnostic. Enabling the
+/// master switch without both filters is an operator error: broad traces make
+/// same-frame re-entrant state ownership impossible to attribute reliably.
+pub(crate) fn decision_path_debug_matches(frame: u32, owner: HumanHandle) -> bool {
+    decision_path_debug_matches_raw(frame, u32::from(owner))
+}
+
+pub(crate) fn decision_path_debug_matches_raw(frame: u32, owner: u32) -> bool {
+    static FILTER: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+    let &(expected_frame, expected_owner) = FILTER.get_or_init(|| {
+        let parse_required = |name: &str| {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| panic!("{name} is required for AI_DECISION_PATH diagnostic"));
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for AI_DECISION_PATH diagnostic: {error}")
+            })
+        };
+        (
+            parse_required("PARITY_DEBUG_AI_DECISION_PATH_FRAME"),
+            parse_required("PARITY_DEBUG_AI_DECISION_PATH_OWNER"),
+        )
+    });
+    frame == expected_frame && owner == expected_owner
+}
+
 /// Opt-in, process-local tracing for the Save018 Them-list lifecycle cohort.
 /// Environment reads and stderr output deliberately stay outside serialized AI
 /// state and do not consume simulation RNG.
@@ -2981,7 +3013,23 @@ impl EnemyAi {
         });
     }
 
+    #[track_caller]
     pub fn set_state(&mut self, state: AiState, substate: Substate) {
+        let debug_decision_path = decision_path_debug_enabled()
+            && decision_path_debug_matches(self.base.cached_frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=set_state caller={} from={:?}/{:?} to={state:?}/{substate:?} couldnt={} already={} owner_work_before={:?}",
+                self.base.cached_frame,
+                self.base.me,
+                std::panic::Location::caller(),
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         debug_assert_eq!(
             substate.ai_state_family(),
             Some(state),
@@ -3341,6 +3389,19 @@ impl EnemyAi {
         };
         self.set_alert_status(alert);
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=set_state_done now={:?}/{:?} couldnt={} already={} owner_work_after={:?}",
+                self.base.cached_frame,
+                self.base.me,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
+
         self.finish_set_state(substate)
     }
 
@@ -3443,6 +3504,7 @@ impl EnemyAi {
 
     /// Transition to `(state, substate)` and queue a movement to `destination`.
     /// See the section comment above for why state+substate are required.
+    #[track_caller]
     pub fn go_to(
         &mut self,
         state: AiState,
@@ -3456,6 +3518,7 @@ impl EnemyAi {
     }
 
     /// Like [`EnemyAi::go_to`] but with a speed modifier.
+    #[track_caller]
     pub fn go_to_speed(
         &mut self,
         state: AiState,
@@ -3471,6 +3534,7 @@ impl EnemyAi {
 
     /// Transition to `(state, substate)` and queue a "go near" movement
     /// (stops within `distance` of the destination).
+    #[track_caller]
     pub fn go_near(
         &mut self,
         state: AiState,
@@ -3570,6 +3634,26 @@ impl EnemyAi {
         // Cache engine state for say() / forbidden remarks
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
+
+        let debug_decision_path =
+            decision_path_debug_enabled() && decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=think_enter stimulus={:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} list_them={:?} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                stimulus.stimulus_type,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.self_is_rider,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.list_them,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
 
         let stimulus_type = stimulus.stimulus_type;
         self.base

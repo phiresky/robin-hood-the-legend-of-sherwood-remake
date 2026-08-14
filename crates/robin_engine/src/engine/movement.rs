@@ -5683,6 +5683,28 @@ impl EngineInner {
         entity_id: EntityId,
         intent: &mut crate::order::AiOrderIntent,
     ) -> bool {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                entity_id.index(),
+            );
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=preflight_enter order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} find_accessible={} ask_obstacle={} compute_direction={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                intent.order_type,
+                intent.target_x.to_bits(),
+                intent.target_y.to_bits(),
+                intent.move_flags,
+                intent.tolerance.to_bits(),
+                intent.no_halt,
+                intent.reverse,
+                intent.find_accessible,
+                intent.ask_obstacle,
+                intent.compute_direction,
+            );
+        }
         // Upper-bound check.  `AiController::go_to` already rejects
         // `target_x <= 0 || target_y <= 0` before pushing the intent;
         // the engine drain owns the `>= GetLevelSize()` half because
@@ -5700,11 +5722,29 @@ impl EngineInner {
                 || level_h > 0.0 && intent.target_y >= level_h
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_upper_bound level=({:08x},{:08x}) target=({:08x},{:08x})",
+                        self.control.frame_counter,
+                        entity_id.index(),
+                        level_w.to_bits(),
+                        level_h.to_bits(),
+                        intent.target_x.to_bits(),
+                        intent.target_y.to_bits(),
+                    );
+                }
                 return false;
             }
         }
 
         if !intent.find_accessible && !intent.ask_obstacle {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=preflight_result result=accepted_no_checks",
+                    self.control.frame_counter,
+                    entity_id.index(),
+                );
+            }
             return true;
         }
 
@@ -5737,6 +5777,17 @@ impl EngineInner {
                 .find_authorized_position(&mut bbox, layer)
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_find_accessible target=({:08x},{:08x}) layer={} move_box={:?}",
+                        self.control.frame_counter,
+                        entity_id.index(),
+                        intent.target_x.to_bits(),
+                        intent.target_y.to_bits(),
+                        layer,
+                        move_box,
+                    );
+                }
                 return false;
             }
             let centre = bbox.center();
@@ -5756,17 +5807,53 @@ impl EngineInner {
                 .is_straight_movement_authorized(position, dest, layer, &move_box)
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_straight from=({:08x},{:08x}) target=({:08x},{:08x}) layer={} move_box={:?}",
+                        self.control.frame_counter,
+                        entity_id.index(),
+                        position.x.to_bits(),
+                        position.y.to_bits(),
+                        intent.target_x.to_bits(),
+                        intent.target_y.to_bits(),
+                        layer,
+                        move_box,
+                    );
+                }
                 return false;
             }
         }
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=preflight_result result=accepted target=({:08x},{:08x})",
+                self.control.frame_counter,
+                entity_id.index(),
+                intent.target_x.to_bits(),
+                intent.target_y.to_bits(),
+            );
+        }
         true
     }
 
     /// Set `AiController::couldnt_reachpoint = true` on the entity, used
     /// by the GoTo pre-flight gates to surface a same-frame failure to
     /// the AI's stuck-retry / fallback logic.
+    #[track_caller]
     fn set_ai_couldnt_reachpoint(&mut self, entity_id: EntityId) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                entity_id.index(),
+            );
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=set_couldnt_reachpoint caller={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                std::panic::Location::caller(),
+            );
+        }
         let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;
         };
@@ -11382,6 +11469,11 @@ impl EngineInner {
         _defer_turn_instruction: bool,
         halt_already_applied: bool,
     ) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                entity_id.index(),
+            );
         // `StopAll` halts the actor inline before subsequent work,
         // and `FaceTo` / `GoTo` do the same on their own.  The Halt
         // is deferred to this drain (via `pending_halt`) so it runs
@@ -11421,6 +11513,32 @@ impl EngineInner {
             };
             ai.take_pending_orders()
         };
+        if debug_decision_path {
+            let (couldnt_reachpoint, already_on_point, owner_work) = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::ai_controller)
+                .map(|ai| {
+                    (
+                        ai.couldnt_reachpoint,
+                        ai.already_on_point,
+                        format!("{:?}", ai.outbox.reentrant.owner_work),
+                    )
+                })
+                .unwrap_or_else(|| panic!("diagnostic owner {} lost AI", entity_id.index()));
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=drain_intents count={} take_halt={} halt_already_applied={} couldnt={} already={} owner_work={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                intents.len(),
+                take_halt,
+                halt_already_applied,
+                couldnt_reachpoint,
+                already_on_point,
+                owner_work,
+            );
+        }
         for intent in intents {
             match intent.order_type {
                 OrderType::WalkingUpright
@@ -11486,6 +11604,31 @@ impl EngineInner {
                     // StopAll/Halt effects at their own call sites instead of
                     // "fixing" the legacy bug.
                     self.launch_ai_move(entity_id, &intent);
+                    if debug_decision_path {
+                        let ai = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .and_then(Entity::ai_controller)
+                            .unwrap_or_else(|| {
+                                panic!("diagnostic owner {} lost AI", entity_id.index())
+                            });
+                        eprintln!(
+                            "AIDECISION frame={} owner={} stage=launch_move_done order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} couldnt={} already={} owner_work={:?}",
+                            self.control.frame_counter,
+                            entity_id.index(),
+                            intent.order_type,
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                            intent.move_flags,
+                            intent.tolerance.to_bits(),
+                            intent.no_halt,
+                            intent.reverse,
+                            ai.couldnt_reachpoint,
+                            ai.already_on_point,
+                            ai.outbox.reentrant.owner_work,
+                        );
+                    }
 
                     // GoTo has a separate, effective tail check after
                     // launching its sequence: an actor whose old movement is

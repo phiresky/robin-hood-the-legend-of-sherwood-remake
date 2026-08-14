@@ -2391,6 +2391,29 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=reconsider_enter reachpoint={} distance_arg_bits={:08x} state={:?}/{:?} primary={} seek=({:08x},{:08x},sector={:?},level={}) rider={} couldnt={} already={} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                reachpoint,
+                _distance_arg.to_bits(),
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                self.base.seek_position.x.to_bits(),
+                self.base.seek_position.y.to_bits(),
+                self.base.seek_position.sector,
+                self.base.seek_position.level,
+                ctx.self_is_rider,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         let standard_sword_range = self.sword_range as f32;
         // sword_range = standard sword range + 10.
         let sword_range: f32 = standard_sword_range + 10.0;
@@ -2942,6 +2965,23 @@ impl EnemyAi {
                     target_position: working_target_pos,
                 },
             );
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reconsider_deferred state={:?}/{:?} primary={} target_position=({:08x},{:08x},sector={:?},level={}) couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.current_state,
+                    self.base.current_substate,
+                    self.base.primary_target,
+                    working_target_pos.x.to_bits(),
+                    working_target_pos.y.to_bits(),
+                    working_target_pos.sector,
+                    working_target_pos.level,
+                    self.base.couldnt_reachpoint,
+                    self.base.already_on_point,
+                    self.base.outbox.reentrant.owner_work,
+                );
+            }
         }
     }
 
@@ -2951,12 +2991,44 @@ impl EnemyAi {
         avenger_wait_position: Option<Position>,
         ctx: &AiContext,
     ) {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=reconsider_resume_enter state={:?}/{:?} couldnt={} already={} target_position=({:08x},{:08x},sector={:?},level={}) avenger_wait={:?} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                target_position.x.to_bits(),
+                target_position.y.to_bits(),
+                target_position.sector,
+                target_position.level,
+                avenger_wait_position,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         if !self.base.couldnt_reachpoint {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reconsider_resume_result result=route_ok state={:?}/{:?}",
+                    ctx.frame, self.base.me, self.base.current_state, self.base.current_substate,
+                );
+            }
             return;
         }
         let Some(wait_pos) = avenger_wait_position else {
             // Original returns without clearing mbCouldntReachpoint when the
             // reverse gate walk cannot find a blocking gate.
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reconsider_resume_result result=failed_without_wait_position couldnt=true",
+                    ctx.frame, self.base.me,
+                );
+            }
             return;
         };
 
@@ -2972,6 +3044,18 @@ impl EnemyAi {
         // The wait position is only the reachable staging point. Original
         // keeps the actual avenger position for the later face/wait behavior.
         self.base.seek_position = target_position;
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=reconsider_resume_result result=avenger_fallback state={:?}/{:?} couldnt={} already={} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
     }
 
     /// Compute the approach point on `line_idx` closest to the victim.
@@ -3026,6 +3110,27 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=rider_attack_enter state={:?}/{:?} primary={} rider={} position=({:08x},{:08x},sector={:?},level={}) direction={} list_them={:?} fighters={}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.self_is_rider,
+                ctx.position.x.to_bits(),
+                ctx.position.y.to_bits(),
+                ctx.position.sector,
+                ctx.position.level,
+                ctx.direction,
+                self.list_them,
+                tick.nearby_fighters.len(),
+            );
+        }
         assert!(ctx.self_is_rider);
 
         let my_pos = ctx.position;
@@ -3061,6 +3166,7 @@ impl EnemyAi {
 
             if target_alive
                 && let Some((d, bc)) = self.get_good_rider_attack_destination(
+                    target,
                     my_pos,
                     my_dir,
                     tpos,
@@ -3091,6 +3197,7 @@ impl EnemyAi {
                     None => continue,
                 };
                 if let Some((d, bc)) = self.get_good_rider_attack_destination(
+                    *enemy,
                     my_pos,
                     my_dir,
                     epos,
@@ -3118,6 +3225,17 @@ impl EnemyAi {
             "RiderCharge: destination search"
         );
         if !ok {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=rider_attack_result result=no_destination final_primary={} couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.primary_target,
+                    self.base.couldnt_reachpoint,
+                    self.base.already_on_point,
+                    self.base.outbox.reentrant.owner_work,
+                );
+            }
             return false;
         }
 
@@ -3161,6 +3279,25 @@ impl EnemyAi {
             );
         }
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=rider_attack_result result=accepted target={} destination=({:08x},{:08x},sector={:?},level={}) begin_charge={} state={:?}/{:?} couldnt={} already={} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                target,
+                dest.x.to_bits(),
+                dest.y.to_bits(),
+                dest.sector,
+                dest.level,
+                begin_charge,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
+
         true
     }
 
@@ -3170,6 +3307,7 @@ impl EnemyAi {
     /// polygon sweeps across the enemy. Returns `(destination, begin_charge_anim)`.
     fn get_good_rider_attack_destination(
         &self,
+        candidate: HumanHandle,
         my_pos: Position,
         my_dir: u16,
         enemy_pos: Position,
@@ -3177,6 +3315,24 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         nearby_fighters: &[FighterSnapshot],
     ) -> Option<(Position, bool)> {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=rider_candidate_enter candidate={} me=({:08x},{:08x},level={}) enemy=({:08x},{:08x},level={}) direction={} move_box={:?}",
+                ctx.frame,
+                self.base.me,
+                candidate,
+                my_pos.x.to_bits(),
+                my_pos.y.to_bits(),
+                my_pos.level,
+                enemy_pos.x.to_bits(),
+                enemy_pos.y.to_bits(),
+                enemy_pos.level,
+                my_dir,
+                ctx.move_box,
+            );
+        }
         // Get vectors
         let nose = sector_to_vector_iso(my_dir, ASPECT_RATIO);
 
@@ -3188,7 +3344,17 @@ impl EnemyAi {
 
         // Is the enemy in front of us?
         let nose_sy = (nose.0, nose.1 * INVERSE_ASPECT_RATIO);
-        if dot2(nose_sy, me_to_enemy_sy) < 0.0 {
+        let forward_dot = dot2(nose_sy, me_to_enemy_sy);
+        if forward_dot < 0.0 {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_behind forward_dot_bits={:08x}",
+                    ctx.frame,
+                    self.base.me,
+                    candidate,
+                    forward_dot.to_bits(),
+                );
+            }
             return None;
         }
 
@@ -3197,6 +3363,16 @@ impl EnemyAi {
         let norm = sq_norm.sqrt();
 
         if norm < Self::RIDER_CHARGE_LATERAL_DISTANCE {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_too_near norm_bits={:08x} sq_norm_bits={:08x}",
+                    ctx.frame,
+                    self.base.me,
+                    candidate,
+                    norm.to_bits(),
+                    sq_norm.to_bits(),
+                );
+            }
             return None;
         }
 
@@ -3208,6 +3384,15 @@ impl EnemyAi {
         let ortho = (me_to_enemy_sy.1, -me_to_enemy_sy.0);
         let ortho_len = (ortho.0 * ortho.0 + ortho.1 * ortho.1).sqrt();
         if ortho_len < f32::EPSILON {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_orthogonal ortho_len_bits={:08x}",
+                    ctx.frame,
+                    self.base.me,
+                    candidate,
+                    ortho_len.to_bits(),
+                );
+            }
             return None;
         }
         let ortho_norm = (ortho.0 / ortho_len, ortho.1 / ortho_len);
@@ -3223,6 +3408,15 @@ impl EnemyAi {
         );
         let hp_len = (hit_point_sy.0 * hit_point_sy.0 + hit_point_sy.1 * hit_point_sy.1).sqrt();
         if hp_len < f32::EPSILON {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_vector hp_len_bits={:08x}",
+                    ctx.frame,
+                    self.base.me,
+                    candidate,
+                    hp_len.to_bits(),
+                );
+            }
             return None;
         }
         let hp_norm = (hit_point_sy.0 / hp_len, hit_point_sy.1 / hp_len);
@@ -3234,6 +3428,15 @@ impl EnemyAi {
         // Compute goal = hit point + LOOP_DISTANCE forward.
         let hit_norm_len = (me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1).sqrt();
         if hit_norm_len < f32::EPSILON {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_norm hit_norm_bits={:08x}",
+                    ctx.frame,
+                    self.base.me,
+                    candidate,
+                    hit_norm_len.to_bits(),
+                );
+            }
             return None;
         }
         let hit_dir = (me_to_hit.0 / hit_norm_len, me_to_hit.1 / hit_norm_len);
@@ -3245,6 +3448,19 @@ impl EnemyAi {
             let pt_me = crate::coordinates::MapPoint::new(my_pos.x, my_pos.y);
             let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
             if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_straight goal=({:08x},{:08x}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x}",
+                        ctx.frame,
+                        self.base.me,
+                        candidate,
+                        goal_x.to_bits(),
+                        goal_y.to_bits(),
+                        forward_dot.to_bits(),
+                        sq_norm.to_bits(),
+                        cos_alpha.to_bits(),
+                    );
+                }
                 return None;
             }
         }
@@ -3319,6 +3535,20 @@ impl EnemyAi {
                     }
                     let fp = geo::Point::new(f.position.x as f64, f.position.y as f64);
                     if poly.contains(&fp) {
+                        if debug_decision_path {
+                            eprintln!(
+                                "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_friendly friendly={} friendly_position=({:08x},{:08x},level={}) goal=({:08x},{:08x})",
+                                ctx.frame,
+                                self.base.me,
+                                candidate,
+                                f.handle,
+                                f.position.x.to_bits(),
+                                f.position.y.to_bits(),
+                                f.position.level,
+                                goal_x.to_bits(),
+                                goal_y.to_bits(),
+                            );
+                        }
                         return None;
                     }
                 }
@@ -3335,6 +3565,24 @@ impl EnemyAi {
         // Near enough to begin strike?
         let sq_hit_dist = me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1;
         let begin_charge_anim = sq_hit_dist < Self::RIDER_CHARGE_SQR_LOOP_DISTANCE;
+
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=accepted goal=({:08x},{:08x},sector={:?},level={}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x} sq_hit_bits={:08x} begin_charge={}",
+                ctx.frame,
+                self.base.me,
+                candidate,
+                destination.x.to_bits(),
+                destination.y.to_bits(),
+                destination.sector,
+                destination.level,
+                forward_dot.to_bits(),
+                sq_norm.to_bits(),
+                cos_alpha.to_bits(),
+                sq_hit_dist.to_bits(),
+                begin_charge_anim,
+            );
+        }
 
         Some((destination, begin_charge_anim))
     }

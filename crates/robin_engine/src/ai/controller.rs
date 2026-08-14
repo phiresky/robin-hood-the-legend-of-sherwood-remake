@@ -3445,6 +3445,27 @@ impl AiController {
     /// in a "waiting" substate). Calling this directly via
     /// `ai.base.go_to(...)` bypasses that contract and risks wedge bugs.
     pub fn go_to(&mut self, destination: Position, flags: GotoFlags, ctx: &AiContext) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=goto_enter destination=({:08x},{:08x},sector={:?},level={}) flags={flags:?} position=({:08x},{:08x},sector={:?},level={}) couldnt_before={} already_before={} owner_work_before={:?}",
+                ctx.frame,
+                self.me,
+                ctx.original_creation_order,
+                destination.x.to_bits(),
+                destination.y.to_bits(),
+                destination.sector,
+                destination.level,
+                ctx.position.x.to_bits(),
+                ctx.position.y.to_bits(),
+                ctx.position.sector,
+                ctx.position.level,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+                self.outbox.reentrant.owner_work,
+            );
+        }
         // Record the latest destination / flags so stuck-retry replays,
         // cancellation, and the EventReachPoint re-entry path can see
         // what was most recently requested.
@@ -3511,6 +3532,16 @@ impl AiController {
         );
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.finish_already_on_point();
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=already_on_point couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.me,
+                    self.couldnt_reachpoint,
+                    self.already_on_point,
+                    self.outbox.reentrant.owner_work,
+                );
+            }
             return;
         }
 
@@ -3530,6 +3561,17 @@ impl AiController {
             && self.check_already_near(&destination, near_tolerance, ctx)
         {
             self.finish_already_on_point();
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=already_near tolerance_bits={:08x} couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.me,
+                    near_tolerance.to_bits(),
+                    self.couldnt_reachpoint,
+                    self.already_on_point,
+                    self.outbox.reentrant.owner_work,
+                );
+            }
             return;
         }
 
@@ -3540,6 +3582,12 @@ impl AiController {
         // shared cutscene camera's level size.
         if destination.x <= 0.0 || destination.y <= 0.0 {
             self.couldnt_reachpoint = true;
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=reject_nonpositive couldnt=true",
+                    ctx.frame, self.me,
+                );
+            }
             return;
         }
 
@@ -3549,6 +3597,12 @@ impl AiController {
         // unless a caller stuffs `u16::MAX` in deliberately.
         if destination.sector.is_none() {
             self.couldnt_reachpoint = true;
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=reject_null_sector couldnt=true",
+                    ctx.frame, self.me,
+                );
+            }
             return;
         }
 
@@ -3578,6 +3632,17 @@ impl AiController {
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=goto_result result=queued couldnt={} already={} pending_orders={} owner_work={:?}",
+                ctx.frame,
+                self.me,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+                self.outbox.actor.orders.len(),
+                self.outbox.reentrant.owner_work,
+            );
+        }
     }
 
     /// Prepend the action-state teardown for a launching GoTo / GoNear /
@@ -3718,6 +3783,24 @@ impl AiController {
         flags: GotoFlags,
         ctx: &AiContext,
     ) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=go_near_enter destination=({:08x},{:08x},sector={:?},level={}) distance={} flags={flags:?} recursion_depth={} couldnt_before={} already_before={}",
+                ctx.frame,
+                self.me,
+                ctx.original_creation_order,
+                destination.x.to_bits(),
+                destination.y.to_bits(),
+                destination.sector,
+                destination.level,
+                distance,
+                self.think_recursion_depth,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+            );
+        }
         // Deep recursion shrinks the stop-distance toward zero so the
         // actor doesn't loop on Think() recursion. Always applied — a
         // mitigation, not a behaviour knob.
@@ -3744,6 +3827,16 @@ impl AiController {
         let same_layer = destination.level == ctx.position.level;
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
             self.finish_already_on_point();
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=go_near_result result=already_near effective_distance={} couldnt={} already={}",
+                    ctx.frame,
+                    self.me,
+                    effective_distance,
+                    self.couldnt_reachpoint,
+                    self.already_on_point,
+                );
+            }
             return;
         }
 
@@ -3755,6 +3848,18 @@ impl AiController {
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=go_near_result result=queued effective_distance={} couldnt={} already={} pending_orders={} owner_work={:?}",
+                ctx.frame,
+                self.me,
+                effective_distance,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+                self.outbox.actor.orders.len(),
+                self.outbox.reentrant.owner_work,
+            );
+        }
     }
 
     // -- Facing commands --

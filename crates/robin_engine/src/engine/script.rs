@@ -3963,6 +3963,11 @@ impl EngineInner {
                     target,
                     target_position,
                 } => {
+                    let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+                        && crate::ai_enemy::decision_path_debug_matches_raw(
+                            self.control.frame_counter,
+                            owner.index(),
+                        );
                     let couldnt_reachpoint = self
                         .world
                         .entities
@@ -3976,6 +3981,29 @@ impl EngineInner {
                         })
                         .base
                         .couldnt_reachpoint;
+                    if debug_decision_path {
+                        let owner_work = self
+                            .world
+                            .entities
+                            .get(owner)
+                            .and_then(Entity::ai_controller)
+                            .map(|ai| format!("{:?}", ai.outbox.reentrant.owner_work))
+                            .unwrap_or_else(|| {
+                                panic!("diagnostic owner {} lost AI", owner.index())
+                            });
+                        eprintln!(
+                            "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider target={} target_position=({:08x},{:08x},sector={:?},level={}) couldnt={} remaining_owner_work={}",
+                            self.control.frame_counter,
+                            owner.index(),
+                            target,
+                            target_position.x.to_bits(),
+                            target_position.y.to_bits(),
+                            target_position.sector,
+                            target_position.level,
+                            couldnt_reachpoint,
+                            owner_work,
+                        );
+                    }
                     let avenger_wait_position = if couldnt_reachpoint {
                         assert!(
                             self.scripts.mission.is_some(),
@@ -4000,6 +4028,13 @@ impl EngineInner {
                     } else {
                         None
                     };
+                    if debug_decision_path {
+                        eprintln!(
+                            "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider_wait_position value={avenger_wait_position:?}",
+                            self.control.frame_counter,
+                            owner.index(),
+                        );
+                    }
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
