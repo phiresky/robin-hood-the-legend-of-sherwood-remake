@@ -347,6 +347,68 @@ impl EngineInner {
         .then_some((seq_id, elem_idx, order.order_id))
     }
 
+    /// Deliver Original `ShootWithBowAt`'s shield warning at the release
+    /// callsite. `RHArtificialIntelligence::Think(EVENT_ARROW_LAUNCHED)` is
+    /// synchronous there, before both the hit roll and arrow insertion.
+    fn warn_shield_target_of_arrow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        shooter: EntityId,
+        target: EntityId,
+    ) {
+        // Shield-bearer admission is two-gated: the HtH weapon must be a
+        // shield weapon *and* the soldier's sprite profile must carry a
+        // `WaitingShield` animation row.
+        let target_is_shield_soldier = match self.get_entity(target) {
+            Some(Entity::Soldier(s)) => {
+                let soldier_profile = assets
+                    .profile_manager
+                    .get_soldier(s.soldier.soldier_profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bow target {} requires missing soldier profile {}",
+                            target.index(),
+                            s.soldier.soldier_profile_index
+                        )
+                    });
+                let weapon = assets
+                    .profile_manager
+                    .get_hth_weapon(soldier_profile.hth_weapon_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bow target {} soldier profile {} requires missing HtH weapon {}",
+                            target.index(),
+                            s.soldier.soldier_profile_index,
+                            soldier_profile.hth_weapon_id
+                        )
+                    });
+                weapon.shield
+                    && s.element
+                        .sprite
+                        .has_animation(crate::order::OrderType::WaitingShield)
+            }
+            _ => false,
+        };
+        if !target_is_shield_soldier {
+            return;
+        }
+
+        // This is a live cone + LOS query, not the detection cadence's stale
+        // `seen_now` snapshot, matching Original's direct IsDetecting call.
+        if self.npc_is_detecting_human(assets, target, shooter, self.control.frame_counter) {
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                target,
+                assets,
+                crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventArrowLaunched,
+                    shooter.index(),
+                ),
+            );
+        }
+    }
+
     /// Advance one exact selected bow arm without detaching or restoring any
     /// other actor state.
     pub(super) fn tick_bow_shot_for(
@@ -500,58 +562,7 @@ impl EngineInner {
                 target_movement,
             );
 
-            // Warn shield-bearing target soldiers that they're being shot
-            // at before the hit roll and projectile insertion, matching
-            // C++ `ShootWithBowAt`.
-            // Shield-bearer admission is two-gated: the HtH weapon must be a
-            // shield weapon *and* the soldier's sprite profile must carry a
-            // `WaitingShield` animation row. A shield-flagged weapon on a
-            // profile that never learned the shield stance is not a bearer.
-            let target_is_shield_soldier = match self.get_entity(result.target) {
-                Some(Entity::Soldier(s)) => {
-                    let weapon_is_shield = match assets
-                        .profile_manager
-                        .get_soldier(s.soldier.soldier_profile_index)
-                        .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
-                    {
-                        Some(w) => w.shield,
-                        None => {
-                            tracing::warn!(
-                                target = ?result.target,
-                                "Bow shot shield warning skipped: missing soldier HtH weapon profile"
-                            );
-                            false
-                        }
-                    };
-                    weapon_is_shield
-                        && s.element
-                            .sprite
-                            .has_animation(crate::order::OrderType::WaitingShield)
-                }
-                _ => false,
-            };
-            if target_is_shield_soldier {
-                // The shield bearer runs its own cone + LOS query here rather
-                // than reading the detection pass's `seen_now` flag: that flag
-                // only refreshes on the bearer's detection cadence, so an
-                // archer who stepped out from behind a wall this frame would
-                // otherwise go unnoticed until the next cadence tick.
-                let target_detects_shooter = self.npc_is_detecting_human(
-                    assets,
-                    result.target,
-                    result.shooter,
-                    self.control.frame_counter,
-                );
-                if target_detects_shooter {
-                    self.dispatch_ai_stimulus(
-                        result.target,
-                        crate::ai::Stimulus::with_human(
-                            crate::ai::StimulusType::EventArrowLaunched,
-                            result.shooter.index(),
-                        ),
-                    );
-                }
-            }
+            self.warn_shield_target_of_arrow(sim, assets, result.shooter, result.target);
 
             // ── Hit chance roll ──────────────────────────────────
             // C++ only applies `mpBow->GetHitChance(...)` in the
@@ -2015,7 +2026,7 @@ mod tests {
     };
     use crate::element::{
         ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
-        HumanData, ObjectData, Posture, ProjectileData,
+        EntityId, HumanData, ObjectData, Posture, ProjectileData,
     };
     use crate::engine::{EngineInner, LevelAssets};
     use crate::order::OrderType;
@@ -2038,6 +2049,237 @@ mod tests {
             human: HumanData::default(),
             pc: Default::default(),
         })
+    }
+
+    fn make_arrow_warning_soldier() -> Entity {
+        let mut soldier = crate::element::ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        soldier.npc.life_points = 100;
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        Entity::Soldier(soldier)
+    }
+
+    fn bind_arrow_warning_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WaitingShield as usize] = 0;
+        conversion[OrderType::LoweringShield as usize] = 0;
+        let script = SpriteScript {
+            action_id: OrderType::WaitingShield as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![0, 0],
+            distances: vec![0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0, 0],
+        };
+        entity.element_data_mut().sprite =
+            crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    }
+
+    fn arrow_warning_fixture(
+        shield_weapon: bool,
+        shooter_x: f32,
+    ) -> (
+        EngineInner,
+        LevelAssets,
+        EntityId,
+        EntityId,
+        crate::sequence::SequenceId,
+    ) {
+        use crate::ai::{AiState, Substate};
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{Command, EyeStatus};
+        use crate::sequence::SequenceElement;
+
+        let mut engine = EngineInner::new();
+        // Legacy human handles reserve zero as NULL; production has a hidden
+        // pre-level prefix, so keep the test shooter on a nonzero handle too.
+        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..Default::default()
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let mut shooter = make_pc(Posture::Upright);
+        shooter.element_data_mut().active = true;
+        shooter
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(shooter_x, 0.0, 0.0));
+        shooter
+            .element_data_mut()
+            .set_position_map(MapPoint::new(shooter_x, 0.0));
+        shooter.pc_data_mut().unwrap().life_points = 100;
+        let shooter_id = engine.add_entity(shooter);
+
+        let mut target = make_arrow_warning_soldier();
+        bind_arrow_warning_sprite(&mut target);
+        target
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
+        target
+            .element_data_mut()
+            .set_position_map(MapPoint::new(0.0, 0.0));
+        target.element_data_mut().set_direction_instantly(4);
+        let target_id = engine.add_entity(target);
+        assert!(shooter_id.index() < target_id.index());
+
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profiles = Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers[0].hth_weapon_id = 1;
+        profiles.hth_weapons[0].shield = shield_weapon;
+
+        let Entity::Soldier(target) = engine.get_entity_mut(target_id).unwrap() else {
+            unreachable!()
+        };
+        target.actor.action_state = ActionState::HoldingShield;
+        target.npc.view_direction = [1.0, 0.0];
+        target.npc.view_radius = 135;
+        target.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        target.npc.eye_status = EyeStatus::Stare;
+        let ai = target.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.me = target_id.index();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingProtectingWithShield;
+
+        let lower = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(
+                1,
+                Command::LowerShield,
+                Some(target_id),
+            ));
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(target_id, Command::LowerShield, lower, 0);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(target_id)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::LoweringShield)
+        );
+
+        (engine, assets, shooter_id, target_id, lower)
+    }
+
+    #[test]
+    fn arrow_warning_synchronously_interrupts_later_shield_target_and_preserves_fifo() {
+        use crate::ai::{Stimulus, StimulusType};
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, lower) = arrow_warning_fixture(true, 55.0);
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli
+            .push(Stimulus::new(StimulusType::EventTimer));
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(lower, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "the release-site Think must interrupt LowerShield before the later target slot animates"
+        );
+        assert_eq!(
+            engine
+                .get_entity(target)
+                .and_then(Entity::enemy_ai)
+                .unwrap()
+                .base
+                .primary_target,
+            shooter.index(),
+            "the arrow reaction must run now, not remain queued for the target's later slot"
+        );
+        let queued = &engine
+            .get_entity(target)
+            .and_then(Entity::ai_controller)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli;
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].stimulus_type, StimulusType::EventTimer);
+    }
+
+    #[test]
+    fn arrow_warning_skips_nonshield_and_nonseeing_targets() {
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        for (shield_weapon, shooter_x) in [(false, 55.0), (true, 500.0)] {
+            let (mut engine, assets, shooter, target, lower) =
+                arrow_warning_fixture(shield_weapon, shooter_x);
+
+            engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(lower, 0)
+                    .unwrap()
+                    .state,
+                SequenceState::InProgress
+            );
+            assert!(
+                engine
+                    .get_entity(target)
+                    .and_then(Entity::ai_controller)
+                    .unwrap()
+                    .outbox
+                    .detection
+                    .stimuli
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "bow target 2 requires missing soldier profile 9")]
+    fn arrow_warning_rejects_missing_authoritative_soldier_profile() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, _) = arrow_warning_fixture(true, 55.0);
+        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+            unreachable!()
+        };
+        soldier.soldier.soldier_profile_index = SoldierProfileIdx(9);
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
     }
 
     fn attach_drop_test_sprite(entity: &mut Entity) {
