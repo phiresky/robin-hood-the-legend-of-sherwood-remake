@@ -2672,6 +2672,7 @@ struct MovementDeferred {
 /// be borrowed as a whole.
 #[allow(clippy::too_many_arguments)]
 fn apply_prepared_anti_collision_step(
+    frame: u32,
     mover_snap: &super::anti_collision::ActorSnapshot,
     anti_snapshots: &EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
     static_repulsive_points: &[crate::ai::RepulsivePoint],
@@ -2683,32 +2684,61 @@ fn apply_prepared_anti_collision_step(
     speed: f32,
     anti_on: bool,
 ) -> (f32, f32) {
-    super::anti_collision::apply_anti_collision_step(
-        mover_snap,
-        anti_snapshots.as_slice(),
-        static_repulsive_points,
-        prepared
-            .mobile_points_by_layer
-            .get(&mover_snap.layer)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        prepared
-            .mobile_lines_by_layer
-            .get(&mover_snap.layer)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        prepared
-            .mobile_polygons_by_layer
-            .get(&mover_snap.layer)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        Some(fast_grid),
-        Some(state),
-        nx,
-        ny,
-        speed,
-        anti_on,
-    )
+    super::anti_collision::with_goal_owner_anti_frame(frame, || {
+        let trace = super::anti_collision::goal_owner_anti_debug_frame(mover_snap.id).is_some();
+        let before = trace.then(|| {
+            (
+                state.pi.map_position(),
+                state.pi.map_goal(),
+                state.pi.is_deviated(),
+                state.pi.blocked_count,
+                state.pi.radius,
+            )
+        });
+        let result = super::anti_collision::apply_anti_collision_step(
+            mover_snap,
+            anti_snapshots.as_slice(),
+            static_repulsive_points,
+            prepared
+                .mobile_points_by_layer
+                .get(&mover_snap.layer)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            prepared
+                .mobile_lines_by_layer
+                .get(&mover_snap.layer)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            prepared
+                .mobile_polygons_by_layer
+                .get(&mover_snap.layer)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            Some(fast_grid),
+            Some(&mut *state),
+            nx,
+            ny,
+            speed,
+            anti_on,
+        );
+        if trace {
+            eprintln!(
+                "[GOAL_OWNER frame={frame} owner={:?} stage=anti_result requested_bits={:08x},{:08x},{:08x} result_bits={:08x},{:08x} before={before:?} after=({:?},{:?},{},{},{})]",
+                mover_snap.id,
+                nx.to_bits(),
+                ny.to_bits(),
+                speed.to_bits(),
+                result.0.to_bits(),
+                result.1.to_bits(),
+                state.pi.map_position(),
+                state.pi.map_goal(),
+                state.pi.is_deviated(),
+                state.pi.blocked_count,
+                state.pi.radius,
+            );
+        }
+        result
+    })
 }
 
 impl EngineInner {
@@ -2757,6 +2787,11 @@ impl EngineInner {
                         order.order_type,
                         order.order_id,
                         order.done,
+                        order.target_x.to_bits(),
+                        order.target_y.to_bits(),
+                        order.tolerance.to_bits(),
+                        order.move_flags,
+                        order.antagonist,
                     )
                 });
         let graph = manager
@@ -2776,6 +2811,18 @@ impl EngineInner {
                             element.priority,
                             element.cross_postponed,
                             manager.is_registered_to_go(sequence.id, element_index),
+                            element.current_order().map(|order| {
+                                (
+                                    order.order_type,
+                                    order.order_id,
+                                    order.done,
+                                    order.target_x.to_bits(),
+                                    order.target_y.to_bits(),
+                                    order.tolerance.to_bits(),
+                                    order.move_flags,
+                                    order.antagonist,
+                                )
+                            }),
                         )
                     })
             })
@@ -2791,12 +2838,25 @@ impl EngineInner {
                 )
             })
         });
+        let position = self.get_entity(owner).map(|entity| {
+            (
+                entity.position_iface().map_position(),
+                entity.position_iface().old_map_position(),
+                entity.position_iface().map_goal(),
+                entity
+                    .position_iface()
+                    .is_increment_map_computed()
+                    .then(|| entity.position_iface().get_increment_map()),
+                entity.position_iface().is_moving(),
+                entity.position_iface().is_deviated(),
+            )
+        });
         let pending_paths = self
             .orders
             .pending_path_requests
             .parity_state(&self.world.fast_grid);
         eprintln!(
-            "[PATH_OWNER frame={frame} co={creation_order} owner={} stage={stage} focus={focus:?} selected={selected:?} current_order={current_order:?} actor={actor:?} pending={pending_paths:?} graph={graph:?}]",
+            "[PATH_OWNER frame={frame} co={creation_order} owner={} stage={stage} focus={focus:?} selected={selected:?} current_order={current_order:?} actor={actor:?} position={position:?} pending={pending_paths:?} graph={graph:?}]",
             owner.index(),
         );
     }
@@ -3023,6 +3083,7 @@ impl EngineInner {
         use crate::element::{ActionState, ActiveRiderCharge, Posture};
         use crate::weapons::SwordStrike;
 
+        let provenance_frame = self.control.frame_counter;
         let selected = self
             .orders
             .sequence_manager
@@ -3237,6 +3298,7 @@ impl EngineInner {
                             goal_map: goal,
                         };
                         let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                            provenance_frame,
                             &mover_snapshot,
                             anti_snapshots,
                             &self.ai.global.repulsive_points,
@@ -8995,6 +9057,7 @@ impl EngineInner {
                         goal_map: goal,
                     };
                     let (dx, dy) = apply_prepared_anti_collision_step(
+                        provenance_frame,
                         &mover_snapshot,
                         anti_snapshots,
                         &self.ai.global.repulsive_points,
@@ -9483,6 +9546,7 @@ impl EngineInner {
                             goal_map,
                         };
                         let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                            provenance_frame,
                             mover_snap,
                             anti_snapshots,
                             &self.ai.global.repulsive_points,
@@ -10622,6 +10686,7 @@ impl EngineInner {
                             goal_map,
                         };
                         let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                            provenance_frame,
                             mover_snap,
                             anti_snapshots,
                             &self.ai.global.repulsive_points,

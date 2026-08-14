@@ -30,6 +30,64 @@ const RADIUS_SWORDFIGHTING_GUY: f32 = 4.0;
 /// to pre-filter neighbours.
 pub const MAX_REPULSIVE_DISTANCE: f32 = 60.0;
 
+thread_local! {
+    /// Current engine frame for the opt-in goal-owner anti-collision trace.
+    /// This is process-local diagnostic context, never serialized game state.
+    static GOAL_OWNER_ANTI_FRAME: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn with_goal_owner_anti_frame<T>(frame: u32, f: impl FnOnce() -> T) -> T {
+    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
+        return f();
+    }
+    GOAL_OWNER_ANTI_FRAME.with(|slot| {
+        let previous = slot.replace(Some(frame));
+        let result = f();
+        slot.set(previous);
+        result
+    })
+}
+
+pub(super) fn goal_owner_anti_debug_frame(mover: EntityId) -> Option<u32> {
+    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
+        return None;
+    }
+    let frame = GOAL_OWNER_ANTI_FRAME.with(std::cell::Cell::get)?;
+    let expected_frame = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME")
+        .unwrap_or_else(|_| {
+            panic!("PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME")
+        })
+        .parse::<u32>()
+        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME: {error}"));
+    if frame != expected_frame {
+        return None;
+    }
+    let filter = std::env::var("PARITY_DEBUG_GOAL_OWNER").unwrap_or_else(|_| {
+        panic!(
+            "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER=pc|soldier|civilian:INDEX"
+        )
+    });
+    let (kind, index) = filter.split_once(':').unwrap_or_else(|| {
+        panic!("PARITY_DEBUG_GOAL_OWNER must look like pc|soldier|civilian:INDEX")
+    });
+    let index = index
+        .parse::<u32>()
+        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER={filter:?}: {error}"));
+    let kind_matches = matches!(
+        (kind, mover),
+        ("pc", EntityId::Pc(_))
+            | ("soldier", EntityId::Soldier(_))
+            | ("civilian", EntityId::Civilian(_))
+    );
+    if kind_matches && mover.index() == index {
+        Some(frame)
+    } else if matches!(kind, "pc" | "soldier" | "civilian") {
+        None
+    } else {
+        panic!("PARITY_DEBUG_GOAL_OWNER has unsupported kind {kind:?}")
+    }
+}
+
 /// Snapshot of everything the anti-collision pre-pass needs from a
 /// neighbour actor.  Captured once per tick — neighbour positions are
 /// not re-read as the mutable loop walks entities, matching the
@@ -644,6 +702,32 @@ pub fn apply_anti_collision_step(
                 }
             }
         }
+    }
+
+    if let Some(frame) = goal_owner_anti_debug_frame(mover.id) {
+        let relevant_neighbours = neighbours
+            .iter()
+            .flatten()
+            .filter(|candidate| box_future.contains_point(candidate.position_map))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "[GOAL_OWNER frame={frame} owner={:?} stage=anti_gather origin_bits={:08x},{:08x} increment_bits={:08x},{:08x} speed_bits={:08x} future_bits={:08x},{:08x} goal_bits={:08x},{:08x} layer={} radius_bits={:08x} was_deviated={} blocked_count={} mobile_interferes={} neighbours={relevant_neighbours:?} points={points:?} lines={lines:?}]",
+            mover.id,
+            mover.position_map.x.to_bits(),
+            mover.position_map.y.to_bits(),
+            nx.to_bits(),
+            ny.to_bits(),
+            speed.to_bits(),
+            future.x.to_bits(),
+            future.y.to_bits(),
+            state.as_deref().map_or(0, |s| s.goal_map.x.to_bits()),
+            state.as_deref().map_or(0, |s| s.goal_map.y.to_bits()),
+            mover.layer,
+            actor_radius.to_bits(),
+            state.as_deref().is_some_and(|s| s.pi.deviated),
+            state.as_deref().map_or(0, |s| s.pi.blocked_count),
+            mobile_interferes,
+        );
     }
 
     let was_deviated = state.as_deref().is_some_and(|s| s.pi.deviated);
