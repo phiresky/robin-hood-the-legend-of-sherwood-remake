@@ -32,6 +32,252 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
+fn completed_step_back_publishes_history_at_motion_terminal() {
+    use crate::element::{ActionState, Camp};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+    let mut engine = EngineInner::new();
+    let start = MapPoint::new(100.0, 100.0);
+    let destination = MapPoint::new(107.2, 100.0);
+    let mut mover = make_test_ai_soldier(Camp::Royalists);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().set_position_map(start);
+    let mover_id = engine.add_entity(mover);
+    let mut opponent = make_test_pc(crate::element::Posture::Upright);
+    opponent.element_data_mut().active = true;
+    opponent
+        .element_data_mut()
+        .set_position_map(MapPoint::new(200.0, 100.0));
+    let opponent_id = engine.add_entity(opponent);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(opponent_id);
+    engine
+        .get_entity_mut(opponent_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(mover_id);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let action = OrderType::WalkingWithSword;
+    let script = SpriteScript {
+        action_id: OrderType::WalkingBackwardsSword as u16,
+        action_done: 0,
+        average_speed: 12.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 12,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![12],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let conversion = vec![0; NONANIMATION_END];
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    sprite.position_iface.set_anti_collision_on(false);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(start);
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut movement = SequenceElement::new_movement(1, Command::MoveOk, Some(mover_id), action);
+    movement
+        .orders
+        .push_back(Order::new(action, destination.x, destination.y, order_id));
+    let SequenceElementData::Movement {
+        destination: stored_destination,
+        flags,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!()
+    };
+    *stored_destination = destination;
+    *flags = MoveFlags::STEP_BACK_IN_COMBAT;
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    let actor = engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.action_state = ActionState::MovingSword;
+    actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
+    let sim = crate::sim_rng::test_context();
+    for _ in 0..8 {
+        engine.tick_entity_movement(&sim, &assets);
+    }
+
+    assert_eq!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        destination,
+        "the step-back fixture must reach its terminal movement goal"
+    );
+    assert!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .last_motion_was_step_back_in_combat,
+        "a genuinely terminated step-back must publish completed-step history"
+    );
+}
+
+#[test]
+fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history() {
+    use crate::element::{ActionState, Camp};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+    let mut engine = EngineInner::new();
+    let start = MapPoint::new(100.0, 100.0);
+    let destination = MapPoint::new(112.0, 100.0);
+    let mut mover = make_test_ai_soldier(Camp::Royalists);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().set_position_map(start);
+    let mover_id = engine.add_entity(mover);
+    let mut opponent = make_test_pc(crate::element::Posture::Upright);
+    opponent.element_data_mut().active = true;
+    opponent
+        .element_data_mut()
+        .set_position_map(MapPoint::new(200.0, 100.0));
+    let opponent_id = engine.add_entity(opponent);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(opponent_id);
+    engine
+        .get_entity_mut(opponent_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(mover_id);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let action = OrderType::WalkingWithSword;
+    let script = SpriteScript {
+        action_id: OrderType::WalkingBackwardsSword as u16,
+        action_done: 0,
+        average_speed: 12.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 12,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![12],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let conversion = vec![0; NONANIMATION_END];
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    sprite.position_iface.set_anti_collision_on(false);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(start);
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut movement = SequenceElement::new_movement(1, Command::MoveOk, Some(mover_id), action);
+    movement
+        .orders
+        .push_back(Order::new(action, destination.x, destination.y, order_id));
+    let SequenceElementData::Movement {
+        destination: stored_destination,
+        flags,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!()
+    };
+    *stored_destination = destination;
+    *flags = MoveFlags::STEP_BACK_IN_COMBAT;
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    let actor = engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.action_state = ActionState::MovingSword;
+    actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
+    let sim = crate::sim_rng::test_context();
+    for _ in 0..8 {
+        engine.tick_entity_movement(&sim, &assets);
+    }
+
+    assert_eq!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        MapPoint::new(107.2, 100.0),
+        "the final-waypoint transition must terminate before reaching the movement goal"
+    );
+    engine
+        .orders
+        .sequence_manager
+        .element_impossible(sequence_id, 0);
+    assert!(
+        !engine
+            .get_entity(mover_id)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .last_motion_was_step_back_in_combat,
+        "a final-waypoint transition that is aborted before movement termination must not publish completed-step history"
+    );
+}
+
+#[test]
 fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
     use crate::coordinates::{MapPoint, SpriteFrameOffset};
     use crate::element::{

@@ -1008,33 +1008,12 @@ impl EngineInner {
                 })
                 .element_data()
                 .layer();
-            self.get_entity_mut(entity_id)
-                .and_then(Entity::human_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("EvaluateSwordfight step-back owner {entity_id:?} is not human")
-                })
-                .last_motion_was_step_back_in_combat = true;
-            let mut element = crate::sequence::SequenceElement::new_movement(
-                1,
-                Command::Move,
-                Some(entity_id),
-                crate::order::OrderType::WalkingUpright,
-            );
-            element.data = crate::sequence::SequenceElementData::Movement {
-                destination,
-                layer,
-                sector: None,
-                gate_id: None,
-                line_id: None,
-                element: None,
-                flags: crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT,
-                tolerance: 0.0,
-                direction: 0,
-                action: crate::order::OrderType::WalkingUpright,
-                speed_factor: 1.0,
-                post_seek_sequence: None,
-            };
-            self.launch_element(element);
+            // Do not publish `last_motion_was_step_back_in_combat` merely
+            // because the movement was requested. Original changes that
+            // member only from Human::Execute's RHMOTION_TERMINATED arm. A
+            // parry or injury can abort this Move before it reaches that arm,
+            // in which case the preceding value must survive.
+            self.launch_evaluated_step_back(entity_id, destination, layer);
             return;
         }
 
@@ -1051,6 +1030,35 @@ impl EngineInner {
             Some(principal_id),
         ));
         self.receive_smalltalk_hint(entity_id, principal_id, is_left);
+    }
+
+    pub(super) fn launch_evaluated_step_back(
+        &mut self,
+        entity_id: EntityId,
+        destination: crate::coordinates::MapPoint,
+        layer: u16,
+    ) {
+        let mut element = crate::sequence::SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(entity_id),
+            crate::order::OrderType::WalkingUpright,
+        );
+        element.data = crate::sequence::SequenceElementData::Movement {
+            destination,
+            layer,
+            sector: None,
+            gate_id: None,
+            line_id: None,
+            element: None,
+            flags: crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT,
+            tolerance: 0.0,
+            direction: 0,
+            action: crate::order::OrderType::WalkingUpright,
+            speed_factor: 1.0,
+            post_seek_sequence: None,
+        };
+        self.launch_element(element);
     }
     /// Build the strike
     /// selection context for a non-selected PC, query

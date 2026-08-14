@@ -9826,13 +9826,6 @@ impl EngineInner {
                     }
                 }
                 let eid = entity_id;
-                if is_final_waypoint
-                    && is_sword_motion
-                    && let Some(human) = entity.human_data_mut()
-                {
-                    human.last_motion_was_step_back_in_combat =
-                        active_move_flags.contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT);
-                }
                 // PerformSeek wraps the transition animation too. When
                 // the last stop transition terminates, Original checks
                 // the live target before retiring the movement: an

@@ -11491,6 +11491,43 @@ mod tests {
     }
 
     #[test]
+    fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
+        let mut engine = make_engine();
+        let owner = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .last_motion_was_step_back_in_combat = false;
+
+        engine.launch_evaluated_step_back(owner, crate::coordinates::MapPoint::new(12.0, 0.0), 0);
+        let (sequence_id, element_index) = engine
+            .orders
+            .sequence_manager
+            .live_element_for_actor_matching(owner, |element| {
+                element.movement_flags_for_test().is_some_and(|flags| {
+                    flags.contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT)
+                })
+            })
+            .expect("evaluated step-back movement must be registered");
+
+        engine
+            .orders
+            .sequence_manager
+            .element_impossible(sequence_id, element_index);
+        assert!(
+            !engine
+                .get_entity(owner)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .last_motion_was_step_back_in_combat,
+            "requesting and then aborting a step-back before RHMOTION_TERMINATED must not publish completed-step history"
+        );
+    }
+
+    #[test]
     fn swordfight_distance_keeps_original_strict_maximum_and_step_back_guards() {
         use super::evaluate::{
             SwordfightDistanceAdjustment as Adjustment, swordfight_distance_adjustment,
