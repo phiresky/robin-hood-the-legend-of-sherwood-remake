@@ -3067,7 +3067,7 @@ pub(crate) fn sync_terminal_corpse_drop_animation(
     profiles: &crate::profiles::ProfileManager,
     carrier_id: EntityId,
 ) {
-    let (target_id, profile_index, carrier_dir, carrier_frame, carrier_frame_count) = {
+    let (target_id, profile_index, carrier_frame, carrier_frame_count) = {
         let carrier = entities
             .get(carrier_id)
             .unwrap_or_else(|| panic!("terminal corpse-drop carrier {carrier_id:?} disappeared"));
@@ -3081,7 +3081,6 @@ pub(crate) fn sync_terminal_corpse_drop_animation(
         (
             target_id,
             pc.profile_index,
-            carrier.element_data().direction(),
             sprite.current_frame,
             sprite.frame_count,
         )
@@ -3100,9 +3099,14 @@ pub(crate) fn sync_terminal_corpse_drop_animation(
     } else {
         OrderType::BeingDroppedPeasantC
     };
-    let carried_direction = (carrier_dir.wrapping_sub(4) & 15) as u16;
     let target = entities.get_mut(target_id).unwrap_or_else(|| {
         panic!("terminal corpse-drop carrier {carrier_id:?} lost body {target_id:?}")
+    });
+    // RHElement::SynchronizeAnim(anim, other) forces `anim` with the carried
+    // element's current direction. DropCorpse rotates the body relative to the
+    // carrier only afterward (RHelementactorpc.cpp:4946-4962, 6475).
+    let carried_direction = u16::try_from(target.element_data().direction()).unwrap_or_else(|_| {
+        panic!("terminal corpse-drop body {target_id:?} has negative direction")
     });
     let sprite = &mut target.element_data_mut().sprite;
     sprite.force_sprite_row(animation, carried_direction);
@@ -3233,6 +3237,36 @@ mod tests {
         assert_eq!(
             body.element_data().sprite.last_action,
             OrderType::BeingCarriedPeasantC
+        );
+    }
+
+    #[test]
+    fn terminal_corpse_drop_sync_uses_body_facing_before_drop_rotation() {
+        let (mut entities, carrier, body) =
+            corpse_carry_fixture(OrderType::TransitionCarryingCorpseWaitingUpright);
+        {
+            let sprite = &mut entities.get_mut(body).unwrap().element_data_mut().sprite;
+            let mut conversion = (*sprite.conversion).clone();
+            conversion[OrderType::BeingDroppedPeasantC as usize] = 200;
+            sprite.conversion = std::sync::Arc::new(conversion);
+            sprite.scripts =
+                std::sync::Arc::new(vec![crate::sprite_script::SpriteScript::default(); 216]);
+        }
+
+        // The body still faces 4 while the carrier faces 9. Original selects
+        // the drop row with 4 here; DropCorpse changes the body to 5 later.
+        sync_terminal_corpse_drop_animation(
+            &mut entities,
+            &crate::profiles::ProfileManager::default(),
+            carrier,
+        );
+
+        let body = entities.get(body).unwrap();
+        assert_eq!(body.element_data().direction(), 4);
+        assert_eq!(body.element_data().sprite.current_row, 204);
+        assert_eq!(
+            body.element_data().sprite.last_action,
+            OrderType::BeingDroppedPeasantC
         );
     }
 
