@@ -1036,6 +1036,21 @@ fn apply_bounce_reflection(
     }
 }
 
+fn projectile_impact_ratio(
+    position: WorldPoint3D,
+    new_position: WorldPoint3D,
+    impact: WorldPoint3D,
+) -> f32 {
+    let seg_dx = new_position.x - position.x;
+    let seg_dy = new_position.y - position.y;
+    let seg_dz = new_position.z - position.z;
+    let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy + seg_dz * seg_dz;
+    let ix = impact.x - position.x;
+    let iy = impact.y - position.y;
+    let iz = impact.z - position.z;
+    ((ix * ix + iy * iy + iz * iz) / seg_len_sq).sqrt()
+}
+
 fn compute_trajectory_ballistic_impl(
     start: WorldPoint3D,
     initial_velocity: WorldVec3D,
@@ -1174,19 +1189,17 @@ fn compute_trajectory_ballistic_impl(
             // `RHFastFindGrid::IsReachableImpact` over sight obstacles;
             // it does not collide with pathfinding/motion-line
             // geometry.  Keep this path sight-obstacle-only.
+            // RHElementProjectile::ComputeTrajectory uses the ratio of
+            // Euclidean lengths, not a projection of the impact onto the
+            // intended segment.  The distinction matters when collision
+            // geometry returns a point slightly off the segment: it can
+            // change the rounded flight time.
             let ratio_3d = impact_3d.as_ref().map(|r| {
-                let seg_dx = new_position.x - position.x;
-                let seg_dy = new_position.y - position.y;
-                let seg_dz = new_position.z - position.z;
-                let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy + seg_dz * seg_dz;
-                if seg_len_sq <= 1e-9 {
-                    0.0
-                } else {
-                    let ix = r.impact.x - position.x;
-                    let iy = r.impact.y - position.y;
-                    let iz = r.impact.z - position.z;
-                    ((ix * seg_dx + iy * seg_dy + iz * seg_dz) / seg_len_sq).clamp(0.0, 1.0)
-                }
+                projectile_impact_ratio(
+                    position,
+                    new_position,
+                    WorldPoint3D::new(r.impact.x, r.impact.y, r.impact.z),
+                )
             });
 
             let Some(ratio) = ratio_3d else {
@@ -5752,6 +5765,34 @@ mod tests {
         }
         // First point should be ahead of start in X.
         assert!(traj[0].position.x > start.x);
+    }
+
+    #[test]
+    fn projectile_impact_time_uses_euclidean_distance_ratio() {
+        let position = WorldPoint3D::new(0.0, 0.0, 0.0);
+        let new_position = WorldPoint3D::new(4.0, 0.0, 0.0);
+        // Collision geometry can return a point off the intended segment.
+        // Original measures the full 3D distance to that point: sqrt(8) / 4
+        // rounds a four-frame segment to three frames.  The old dot
+        // projection measured only 2 / 4 and incorrectly produced two.
+        let impact = WorldPoint3D::new(2.0, 2.0, 0.0);
+        let ratio = projectile_impact_ratio(position, new_position, impact);
+        let impact_time = ((TIME_FLYSEGMENT as f32 * ratio + 0.5) as u16).max(1);
+        let projected_time = ((TIME_FLYSEGMENT as f32 * 0.5 + 0.5) as u16).max(1);
+
+        assert_eq!(impact_time, 3);
+        assert_eq!(projected_time, 2);
+    }
+
+    #[test]
+    fn projectile_near_impact_still_uses_one_frame_minimum() {
+        let ratio = projectile_impact_ratio(
+            WorldPoint3D::new(0.0, 0.0, 0.0),
+            WorldPoint3D::new(4.0, 0.0, 0.0),
+            WorldPoint3D::new(0.01, 0.0, 0.0),
+        );
+        let impact_time = ((TIME_FLYSEGMENT as f32 * ratio + 0.5) as u16).max(1);
+        assert_eq!(impact_time, 1);
     }
 
     #[test]
