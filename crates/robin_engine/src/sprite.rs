@@ -198,9 +198,12 @@ pub(crate) fn sprite_row_diagnostic_creation_order(
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SpriteRowDiagnosticPre {
     last_action: OrderType,
+    last_processed_order_id: u32,
     row: u16,
     frame: u16,
     frame_count: u16,
+    num_frames: u16,
+    wait_time: u16,
 }
 
 impl FrameProgression {
@@ -472,11 +475,16 @@ struct SpriteSnapshot {
 
 impl Sprite {
     pub(crate) fn sprite_row_diagnostic_pre(&self) -> SpriteRowDiagnosticPre {
+        let num_frames = self.num_frames_for_row(self.current_row);
+        let current_frame = self.current_frame.min(num_frames.saturating_sub(1));
         SpriteRowDiagnosticPre {
             last_action: self.last_action,
+            last_processed_order_id: self.last_processed_order_id,
             row: self.current_row,
             frame: self.current_frame,
             frame_count: self.frame_count,
+            num_frames,
+            wait_time: self.wait_time(self.current_row, current_frame),
         }
     }
 
@@ -503,15 +511,19 @@ impl Sprite {
             (base, row, frames, current, self.wait_time(row, current))
         });
         eprintln!(
-            "[SPRITE_ROW frame={frame} co={creation_order} owner={owner_index} stage={stage} profile={:?} cache={:?} alternate={} requested={requested:?} played={played:?} resolved={resolved:?} direction={played_direction} progression={progression:?} row_meta={row_meta:?} pre=({:?},{},{},{}) post=({:?},{},{},{}) raw={raw_motion:?}]",
+            "[SPRITE_ROW frame={frame} co={creation_order} owner={owner_index} stage={stage} profile={:?} cache={:?} alternate={} requested={requested:?} played={played:?} resolved={resolved:?} direction={played_direction} progression={progression:?} row_meta={row_meta:?} pre=({:?},{},{},{},{},{},{}) post=({:?},{},{},{},{}) raw={raw_motion:?}]",
             self.frame_profile_name,
             self.profile_cache_key,
             self.use_alternate_profile,
             pre.last_action,
+            pre.last_processed_order_id,
             pre.row,
             pre.frame,
             pre.frame_count,
+            pre.num_frames,
+            pre.wait_time,
             self.last_action,
+            self.last_processed_order_id,
             self.current_row,
             self.current_frame,
             self.frame_count,
