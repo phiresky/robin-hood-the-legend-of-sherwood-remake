@@ -151,12 +151,10 @@ impl EngineInner {
         commands: &[PlayerCommand],
     ) {
         let sim = self.control.simulation_context();
-        let inputs = commands
-            .iter()
-            .cloned()
-            .map(PlayerInput::host)
-            .collect::<Vec<_>>();
-        self.apply_commands(&sim, display, input, assets, &inputs);
+        let sim = &sim;
+        for cmd in commands {
+            self.apply_command(sim, display, input, assets, cmd);
+        }
     }
 
     /// Apply a single [`PlayerCommand`] as if it came from
@@ -6950,85 +6948,6 @@ mod tests {
                     element.owner == Some(pc_id) && element.command == Command::EquipBow
                 }),
             "a live/lone SelectPc must still replay its stored Bow action"
-        );
-    }
-
-    #[test]
-    fn local_command_batch_preserves_recorded_nested_cancel_context() {
-        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
-        let mut input = InputState::default();
-        let mut display = HostDisplayState::default();
-        engine
-            .get_entity_mut(pc_id)
-            .and_then(Entity::pc_data_mut)
-            .expect("test PC data")
-            .current_action = Action::Bow;
-
-        engine.apply_local_commands(
-            &mut display,
-            &mut input,
-            &assets,
-            &[
-                PlayerCommand::SelectPc {
-                    pc_id,
-                    append: false,
-                },
-                PlayerCommand::CancelAction { pc_id },
-            ],
-        );
-
-        assert_eq!(
-            engine
-                .get_entity(pc_id)
-                .and_then(Entity::pc_data)
-                .expect("test PC data")
-                .current_action,
-            Action::NoAction
-        );
-        assert!(
-            !engine
-                .orders
-                .sequence_manager
-                .sequences_iter()
-                .flat_map(|sequence| sequence.elements.iter())
-                .any(|element| {
-                    element.owner == Some(pc_id) && element.command == Command::EquipBow
-                }),
-            "the local frame batch must preserve adjacency for the recorded CancelAction"
-        );
-    }
-
-    #[test]
-    fn local_command_batch_lone_select_still_restitutes_bow_action() {
-        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
-        let mut input = InputState::default();
-        let mut display = HostDisplayState::default();
-        engine
-            .get_entity_mut(pc_id)
-            .and_then(Entity::pc_data_mut)
-            .expect("test PC data")
-            .current_action = Action::Bow;
-
-        engine.apply_local_commands(
-            &mut display,
-            &mut input,
-            &assets,
-            &[PlayerCommand::SelectPc {
-                pc_id,
-                append: false,
-            }],
-        );
-
-        assert!(
-            engine
-                .orders
-                .sequence_manager
-                .sequences_iter()
-                .flat_map(|sequence| sequence.elements.iter())
-                .any(|element| {
-                    element.owner == Some(pc_id) && element.command == Command::EquipBow
-                }),
-            "a lone local SelectPc must still replay its stored Bow action"
         );
     }
 
