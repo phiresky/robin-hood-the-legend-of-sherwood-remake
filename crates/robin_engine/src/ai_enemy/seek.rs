@@ -23,6 +23,25 @@ fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) ->
             .is_none_or(|expected| creation_order == Some(expected))
 }
 
+fn seek_area_phase6_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
+    if std::env::var_os("PARITY_DEBUG_SEEK_AREA_PHASE6").is_none() {
+        return false;
+    }
+    let parse_required = |name: &str| {
+        let value = std::env::var(name)
+            .unwrap_or_else(|_| panic!("PARITY_DEBUG_SEEK_AREA_PHASE6 requires {name}"));
+        if value.is_empty() {
+            panic!("PARITY_DEBUG_SEEK_AREA_PHASE6 requires non-empty {name}");
+        }
+        value.parse::<u32>().unwrap_or_else(|error| {
+            panic!("invalid {name}={value:?} for SEEKAREA phase6 diagnostic: {error}")
+        })
+    };
+    let expected_frame = parse_required("PARITY_DEBUG_SEEK_AREA_FRAME");
+    let expected_owner = parse_required("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER");
+    frame == expected_frame && creation_order == Some(expected_owner)
+}
+
 #[inline]
 fn accumulate_seek_point_interest(current: f32, interest: u8) -> f32 {
     (f64::from(current) + f64::from(interest) * 0.01_f64) as f32
@@ -478,6 +497,30 @@ impl EnemyAi {
 
         // ── Phase 6: personal seek points (postprocessing) ──
 
+        let debug_phase6 = seek_area_phase6_debug_matches(ctx.frame, ctx.original_creation_order);
+        if debug_phase6 {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"phase6_before\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"flags\":{},\"seek_direction\":{},\"list_size\":{},\"list_empty\":{},\"location_first\":{},\"location_end\":{},\"personal1_constructor\":\"{}\"}}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order
+                    .expect("phase6 diagnostic matched an owner without creation order"),
+                flags.bits(),
+                seek_direction,
+                self.my_seek_points.len(),
+                self.my_seek_points.is_empty(),
+                flags.contains(SeekFlags::LOCATION_FIRST),
+                flags.contains(SeekFlags::LOCATION_END),
+                if !flags.contains(SeekFlags::LOCATION_FIRST) {
+                    "none"
+                } else if seek_direction == UNDEFINED_DIRECTION {
+                    "position"
+                } else {
+                    "direction"
+                },
+            );
+        }
+
         if flags.contains(SeekFlags::LOCATION_FIRST) {
             // FindDoorEnemyCouldBeBehind mutates seek_center in place.
             // Mirror that by copying the field out, mutating, then
@@ -511,15 +554,42 @@ impl EnemyAi {
             };
             self.personal_seek_point_1 = Some(sp);
             self.my_seek_points.insert(0, 1111);
+            if debug_phase6 {
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"phase6_personal1\",\"frame\":{},\"owner_creation_order\":{},\"constructor\":\"{}\",\"inserted_id\":1111,\"list_size\":{}}}",
+                    ctx.frame,
+                    ctx.original_creation_order
+                        .expect("phase6 diagnostic matched an owner without creation order"),
+                    if seek_direction == UNDEFINED_DIRECTION {
+                        "position"
+                    } else {
+                        "direction"
+                    },
+                    self.my_seek_points.len(),
+                );
+            }
         }
 
-        if flags.contains(SeekFlags::LOCATION_END) || self.my_seek_points.is_empty() {
+        let insert_personal2 =
+            flags.contains(SeekFlags::LOCATION_END) || self.my_seek_points.is_empty();
+        if insert_personal2 {
             // Create personal_seek_point_2 from the (possibly
             // door-adjusted) seek_center, not the original parameter.
             let mut sp = SeekPoint::from_position(sim, self.seek_center);
             sp.id = 2222;
             self.personal_seek_point_2 = Some(sp);
             self.my_seek_points.push(2222);
+        }
+        if debug_phase6 {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"phase6_after\",\"frame\":{},\"owner_creation_order\":{},\"personal2_inserted\":{},\"personal2_constructor\":\"{}\",\"list_size\":{}}}",
+                ctx.frame,
+                ctx.original_creation_order
+                    .expect("phase6 diagnostic matched an owner without creation order"),
+                insert_personal2,
+                if insert_personal2 { "position" } else { "none" },
+                self.my_seek_points.len(),
+            );
         }
 
         tracing::trace!(
