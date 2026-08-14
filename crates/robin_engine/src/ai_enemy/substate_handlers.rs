@@ -5520,7 +5520,12 @@ impl EnemyAi {
 
     fn seeking_charly_get_lecture_by_officer(&mut self, stimulus_type: StimulusType) -> bool {
         if stimulus_type == StimulusType::CallYourTalk1 {
-            self.base.say(Remark::CharlyDefendsHimself);
+            // Original tags Charly's defence as MYTALK_1. Its sound-finished
+            // callback must therefore emit EventMyTalk1, which stage 2 relays
+            // to the officer so the officer can speak the lecture's final
+            // line (OfficerRebukesCharlyEnd).
+            self.base
+                .say_with_flags(Remark::CharlyDefendsHimself, SpeechFlags::MYTALK_1);
             self.set_state(
                 AiState::Seeking,
                 Substate::SeekingCharlyGetLectureByOfficer2,
@@ -10536,6 +10541,73 @@ mod tests {
             &AiContext::default(),
             &AiPerTickData::stub(),
             None,
+        );
+    }
+
+    #[test]
+    fn charly_defence_completion_relays_talk_to_officer() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(55);
+        ai.base.antagonist = 90;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingCharlyGetLectureByOfficer;
+
+        ai.seeking_charly_get_lecture_by_officer(StimulusType::CallYourTalk1);
+
+        let speech_attempts = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .filter_map(|work| match work {
+                AiOwnerWork::Speech(attempt) => Some(attempt),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [attempt] = speech_attempts.as_slice() else {
+            panic!("Charly must queue exactly one defence line");
+        };
+        assert_eq!(attempt.remark, Remark::CharlyDefendsHimself);
+        assert_eq!(
+            SpeechFlags::from_bits_truncate(attempt.flags),
+            SpeechFlags::MYTALK_1
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingCharlyGetLectureByOfficer2
+        );
+
+        ai.seeking_charly_get_lecture_by_officer2(
+            &sim,
+            StimulusType::EventMyTalk1,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [CrossNpcAction::SendStimulus {
+                target: 90,
+                stimulus_type: StimulusType::CallYourTalk1,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn charly_lecture_ignores_unrelated_stimulus() {
+        let mut ai = EnemyAi::new(55);
+        ai.base.antagonist = 90;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingCharlyGetLectureByOfficer;
+
+        ai.seeking_charly_get_lecture_by_officer(StimulusType::EventTimer);
+
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingCharlyGetLectureByOfficer
         );
     }
 }
