@@ -3441,6 +3441,8 @@ impl EngineInner {
     /// seek element, and launches the stored sequence at info priority.
     pub(crate) fn start_post_seek_sequence(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seek_element: Option<(crate::sequence::SequenceId, usize)>,
     ) -> bool {
@@ -3487,6 +3489,16 @@ impl EngineInner {
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
         }
+
+        // Original SetState(TERMINATED) closes SendCondolationCard and then
+        // Ready() synchronously before StartPostSeekSequence calls
+        // LaunchSequence (`RHsequenceelement.cpp:281-389`,
+        // `RHelementactor.cpp:7510-7524`). Ready can register the parent's
+        // next command level on the manager FIFO; the post-seek sequence must
+        // be registered after that successor. Rust defers condolence cards to
+        // avoid re-entrant borrows, so explicitly close this owner's terminal
+        // stack before launching the post-seek tail.
+        self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         self.launch_sequence(*post_seek);
         true
     }

@@ -218,7 +218,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_terminated(sequence_id, element_index);
-            self.start_post_seek_sequence(owner, None);
+            self.start_post_seek_sequence(sim, assets, owner, None);
             return OwnerActionBarrier::Skip;
         }
 
@@ -313,6 +313,8 @@ impl EngineInner {
                         actor.seek_refresh_wait = 25;
                     }
                     if self.try_handle_same_sector_actor_seek_wait(
+                        sim,
+                        assets,
                         owner,
                         sequence_id,
                         element_index,
@@ -480,7 +482,12 @@ impl EngineInner {
                 .and_then(|entity| entity.actor_data())
                 .is_some_and(|actor| actor.post_seek_sequence.is_some());
             if has_post_seek && target_element.is_none() {
-                self.start_post_seek_sequence(owner, Some((sequence_id, element_index)));
+                self.start_post_seek_sequence(
+                    sim,
+                    assets,
+                    owner,
+                    Some((sequence_id, element_index)),
+                );
                 return OwnerActionBarrier::Skip;
             }
 

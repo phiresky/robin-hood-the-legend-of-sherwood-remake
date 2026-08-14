@@ -1622,7 +1622,12 @@ fn post_seek_handoff_clears_selected_movement_goal() {
         .sequence_manager
         .element_in_progress(seek_sequence, 0);
 
-    assert!(engine.start_post_seek_sequence(owner, Some((seek_sequence, 0))));
+    assert!(engine.start_post_seek_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        owner,
+        Some((seek_sequence, 0)),
+    ));
     assert_eq!(
         engine
             .get_entity(owner)
@@ -1631,6 +1636,77 @@ fn post_seek_handoff_clears_selected_movement_goal() {
             .map_goal(),
         crate::coordinates::MapPoint::ZERO,
         "SendCondolationCard clears the selected seek goal before post-seek launch"
+    );
+}
+
+#[test]
+fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
+    use crate::element::{Camp, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let corpse = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+    let mut parent = Sequence::new();
+    parent.append_element(SequenceElement::new_movement(
+        1,
+        Command::MoveOk,
+        Some(owner),
+        OrderType::WalkingUpright,
+    ));
+    parent.append_element(SequenceElement::new_generic(
+        2,
+        Command::EnterHelpingClimb,
+        Some(owner),
+    ));
+    let parent_id = engine.orders.sequence_manager.launch_sequence(parent);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(parent_id, 0);
+
+    let mut post_seek = Sequence::new();
+    post_seek.append_element(SequenceElement::new_interaction(
+        1,
+        Command::TakeCorpse,
+        Some(owner),
+        Some(corpse),
+    ));
+    engine
+        .get_entity_mut(owner)
+        .expect("post-seek owner remains live")
+        .actor_data_mut()
+        .expect("PC has actor state")
+        .post_seek_sequence = Some(Box::new(post_seek));
+
+    assert!(engine.start_post_seek_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        owner,
+        Some((parent_id, 0)),
+    ));
+
+    let queued_commands: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .deferred_elements_to_go()
+        .into_iter()
+        .map(|(sequence_id, element_index)| {
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .expect("deferred element remains registered")
+                .command
+        })
+        .collect();
+    assert_eq!(
+        queued_commands,
+        [Command::EnterHelpingClimb, Command::TakeCorpse],
+        "Original Ready() registers the parent successor before StartPostSeekSequence launches its tail"
     );
 }
 

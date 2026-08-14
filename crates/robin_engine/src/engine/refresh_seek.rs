@@ -530,7 +530,9 @@ impl crate::engine::EngineInner {
                     "entity-target RefreshSeek owner {owner:?} has no positive base seek distance"
                 )
             });
-        if self.try_handle_same_sector_actor_seek_wait(owner, seq_id, elem_idx, target, flags) {
+        if self.try_handle_same_sector_actor_seek_wait(
+            sim, assets, owner, seq_id, elem_idx, target, flags,
+        ) {
             return;
         }
 
@@ -608,6 +610,8 @@ impl crate::engine::EngineInner {
     /// re-resolution.
     pub(super) fn try_handle_same_sector_actor_seek_wait(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -640,7 +644,7 @@ impl crate::engine::EngineInner {
                 && let Some(owner_e) = self.get_entity_mut(owner)
             {
                 owner_e.position_iface_mut().set_map_position(pos);
-                self.start_post_seek_sequence(owner, Some((seq_id, elem_idx)));
+                self.start_post_seek_sequence(sim, assets, owner, Some((seq_id, elem_idx)));
             }
             return true;
         }

@@ -6382,6 +6382,8 @@ impl EngineInner {
 
     fn execute_globally_frozen_pre_motion_owner(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         selected: MovementOwnerSelection,
     ) -> OrderType {
@@ -6486,6 +6488,8 @@ impl EngineInner {
             if in_tolerance {
                 if has_post_seek {
                     self.start_post_seek_sequence(
+                        sim,
+                        assets,
                         owner,
                         Some((selected.seq_id, selected.elem_idx)),
                     );
@@ -6802,7 +6806,8 @@ impl EngineInner {
                 entity.element_data_mut().sprite.last_motion_state =
                     Some(crate::sprite::MotionState::InProgress);
             }
-            let frozen_order = self.execute_globally_frozen_pre_motion_owner(owner, selected);
+            let frozen_order =
+                self.execute_globally_frozen_pre_motion_owner(sim, assets, owner, selected);
             // RunningUpright is exceptional among the ordinary movement
             // Execute arms: it calls SetStates(MOVING_FAST) unconditionally
             // after PerformMotion, not only for RHMOTION_START. Therefore the
@@ -7676,7 +7681,7 @@ impl EngineInner {
         }
 
         for (entity_id, seq_id, elem_idx) in post_seek_arrivals {
-            self.start_post_seek_sequence(entity_id, Some((seq_id, elem_idx)));
+            self.start_post_seek_sequence(sim, assets, entity_id, Some((seq_id, elem_idx)));
         }
 
         // These are derived Execute-arm tails in Original, so they close
