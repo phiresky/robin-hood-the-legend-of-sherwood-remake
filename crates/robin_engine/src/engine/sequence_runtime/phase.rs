@@ -2916,6 +2916,13 @@ impl EngineInner {
                         // dispatch boundary rather than inferring it later from
                         // whichever element happens to be selected.
                         self.publish_selected_order_for_instruct_owner(owner);
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                "after_instruct_translation",
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         if self
                             .world
                             .entities
