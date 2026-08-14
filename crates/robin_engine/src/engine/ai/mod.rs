@@ -1660,9 +1660,10 @@ pub(super) fn extract_forecast_input(
     })
 }
 
-/// Map position returned by Original AI `Position(friend)` during SeekArea's
-/// nearby-friend scan. A PassDoor sequence reports its committed destination
-/// side even while the sprite is still interpolating along the door rail.
+/// Map the position returned by Original AI `Position(actor)` during
+/// SeekArea's nearby-friend scan. A PassDoor sequence reports its committed
+/// destination side even while the sprite is still interpolating along the
+/// door rail.
 fn seek_area_friend_position_map(
     raw_position: MapPoint,
     door_pass: Option<(crate::gate::DoorIndex, bool)>,
@@ -1682,18 +1683,22 @@ fn seek_area_friend_position_map(
 }
 
 /// Resolve one soldier's contribution to Original `SeekArea`'s nearby-NPC
-/// scan. The friend-side `Position(...)` call is owned by the currently
-/// selected PassDoor movement element, not the sprite's runtime door-pass
-/// choreography latch. The owner position is supplied explicitly because the
-/// caller observes it at the surrounding Think boundary.
+/// scan. Both `Position(...)` calls are owned by their currently selected
+/// PassDoor movement elements, not the sprites' runtime door-pass choreography
+/// latches.
 fn seek_area_friend_contribution(
     sequence_manager: &crate::sequence::SequenceManager,
     friend_id: EntityId,
-    owner_position: MapPoint,
+    owner_id: EntityId,
+    owner_raw_position: MapPoint,
     friend_raw_position: MapPoint,
     doors: &[crate::gate::Door],
     friend_seeks_with_help: bool,
 ) -> Option<bool> {
+    let owner_selected_door = selected_pass_door_movement(sequence_manager, owner_id)
+        .map(|(door_index, direction)| (door_index, direction != 0));
+    let owner_position =
+        seek_area_friend_position_map(owner_raw_position, owner_selected_door, doors);
     let selected_door_pass = selected_pass_door_movement(sequence_manager, friend_id)
         .map(|(door_index, direction)| (door_index, direction != 0));
     let friend_position =
@@ -1777,7 +1782,15 @@ mod seek_area_friend_position_tests {
         // indirect PassDoor destination is outside. Pre-fix production used
         // the absent runtime ActiveDoorPass latch and returned `Some(true)`.
         assert_eq!(
-            seek_area_friend_contribution(&sequences, friend, owner, raw_friend, &doors, true,),
+            seek_area_friend_contribution(
+                &sequences,
+                friend,
+                EntityId::new(1, EntityIdKind::Soldier),
+                owner,
+                raw_friend,
+                &doors,
+                true,
+            ),
             None
         );
 
@@ -1790,7 +1803,15 @@ mod seek_area_friend_position_tests {
         };
         *direction = 1;
         assert_eq!(
-            seek_area_friend_contribution(&sequences, friend, owner, raw_friend, &doors, true,),
+            seek_area_friend_contribution(
+                &sequences,
+                friend,
+                EntityId::new(1, EntityIdKind::Soldier),
+                owner,
+                raw_friend,
+                &doors,
+                true,
+            ),
             Some(true)
         );
 
@@ -1798,12 +1819,65 @@ mod seek_area_friend_position_tests {
         // and the raw nearby position contributes to both aggregate outputs.
         sequences.element_terminated(sequence_id, 0);
         let contributions = [seek_area_friend_contribution(
-            &sequences, friend, owner, raw_friend, &doors, true,
+            &sequences,
+            friend,
+            EntityId::new(1, EntityIdKind::Soldier),
+            owner,
+            raw_friend,
+            &doors,
+            true,
         )];
         let visible_seeking_friends = contributions.iter().flatten().count();
         let friend_seek_clears_help_flag = contributions.into_iter().flatten().any(|help| help);
         assert_eq!(visible_seeking_friends, 1);
         assert!(friend_seek_clears_help_flag);
+    }
+
+    #[test]
+    fn selected_pass_door_controls_seek_area_owner_radius_position() {
+        let owner = EntityId::new(1, EntityIdKind::Soldier);
+        let friend = EntityId::new(2, EntityIdKind::Soldier);
+        let raw_owner = MapPoint::new(0.0, 0.0);
+        let raw_friend = MapPoint::new(100.0, 0.0);
+        let doors = [crate::gate::Door {
+            point_out: MapPoint::new(1_000.0, 0.0),
+            point_in: MapPoint::new(1_000.0, 0.0),
+            ..Default::default()
+        }];
+        let mut sequences = SequenceManager::new();
+
+        assert_eq!(
+            seek_area_friend_contribution(
+                &sequences, friend, owner, raw_owner, raw_friend, &doors, false,
+            ),
+            Some(false),
+            "raw owner position keeps the friend inside the 500-unit radius"
+        );
+
+        let mut pass = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        let SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut pass.data
+        else {
+            panic!("PassDoor test element changed kind")
+        };
+        *gate_id = Some(crate::gate::DoorIndex(0));
+        *direction = 1;
+        let sequence_id = sequences.launch_element(pass);
+        sequences.element_in_progress(sequence_id, 0);
+
+        assert_eq!(
+            seek_area_friend_contribution(
+                &sequences, friend, owner, raw_owner, raw_friend, &doors, false,
+            ),
+            None,
+            "Original Position(owner) publishes the committed PassDoor side"
+        );
     }
 }
 
@@ -3215,6 +3289,7 @@ impl EngineInner {
             let contribution = seek_area_friend_contribution(
                 &self.orders.sequence_manager,
                 EntityId::Soldier(other_id),
+                npc_id,
                 me_pos,
                 friend_raw_position,
                 doors,
@@ -12608,6 +12683,32 @@ impl EngineInner {
                                 )
                             });
                         enemy_ai.right_combat_neighbour = neighbour;
+                    }
+                    crate::ai::CrossNpcAction::SetPrimaryTarget {
+                        target,
+                        primary_target,
+                    } => {
+                        // `PhalanxReinitializeThemList` assigns every member's
+                        // `mpPrimaryTarget` inline while its recursion unwinds.
+                        // Apply that direct setter before a later recursive
+                        // `BreakPhalanx` lets the member choose its own target.
+                        let target_id = EntityId::Soldier(SoldierId(target));
+                        let enemy_ai = self
+                            .world
+                            .entities
+                            .get_mut(target_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous primary-target setter target {target} is missing"
+                                )
+                            })
+                            .enemy_ai_mut()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous primary-target setter target {target} has no EnemyAi"
+                                )
+                            });
+                        enemy_ai.base.primary_target = primary_target;
                     }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());

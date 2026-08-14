@@ -6764,6 +6764,54 @@ fn review2_instruct_gather_position_closes_at_owner_boundary() {
 }
 
 #[test]
+fn phalanx_primary_target_propagation_precedes_later_member_assignment() {
+    use crate::ai::CrossNpcAction;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, source_id, member_id, assets) = setup_review2_officer_and_soldier();
+    let propagated_target = 89;
+    let member_target = 90;
+    let source = engine
+        .get_entity_mut(source_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("phalanx propagation source has AI");
+    source.outbox.reentrant.cross_npc_actions.extend([
+        CrossNpcAction::SetPrimaryTarget {
+            target: member_id.index(),
+            primary_target: propagated_target,
+        },
+        CrossNpcAction::SetPhalanxThemList {
+            target: member_id.index(),
+            them: vec![member_target],
+            primary_target: member_target,
+        },
+    ]);
+
+    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
+
+    let member = engine
+        .get_entity(member_id)
+        .and_then(Entity::enemy_ai)
+        .expect("phalanx member retains EnemyAi");
+    assert_eq!(member.list_them, vec![member_target]);
+    assert_eq!(
+        member.base.primary_target, member_target,
+        "the later inline member decision must win over propagated phalanx target"
+    );
+    assert!(
+        engine
+            .get_entity(source_id)
+            .and_then(Entity::ai_controller)
+            .expect("phalanx propagation source retains AI")
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .is_empty(),
+        "the direct target setter must not escape to the next-frame global batch"
+    );
+}
+
+#[test]
 fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
     use crate::ai::{CrossNpcAction, Position};
 

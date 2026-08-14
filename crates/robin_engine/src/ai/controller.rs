@@ -1327,6 +1327,7 @@ impl AiController {
                     | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                     | CrossNpcAction::SetLeftCombatNeighbour { .. }
                     | CrossNpcAction::SetRightCombatNeighbour { .. }
+                    | CrossNpcAction::SetPrimaryTarget { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);
@@ -1362,6 +1363,7 @@ impl AiController {
                         | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                         | CrossNpcAction::SetLeftCombatNeighbour { .. }
                         | CrossNpcAction::SetRightCombatNeighbour { .. }
+                        | CrossNpcAction::SetPrimaryTarget { .. }
                         | CrossNpcAction::Say { .. }
                 )
             })
