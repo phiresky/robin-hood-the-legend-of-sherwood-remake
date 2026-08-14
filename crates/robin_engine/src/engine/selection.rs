@@ -117,6 +117,18 @@ impl EngineInner {
         multi_select: bool,
         speak: bool,
     ) {
+        self.select_pc_with_action_fanout(assets, seat, id, multi_select, speak, true);
+    }
+
+    pub(super) fn select_pc_with_action_fanout(
+        &mut self,
+        assets: &LevelAssets,
+        seat: usize,
+        id: EntityId,
+        multi_select: bool,
+        speak: bool,
+        synthesize_action_fanout: bool,
+    ) {
         if !self.is_pc_selectable(assets, id) {
             return;
         }
@@ -155,7 +167,9 @@ impl EngineInner {
         if speak {
             self.hero_speaking(assets, id, crate::engine::melee::HERO_SELECT);
         }
-        self.apply_post_select_action_fanout(assets, seat);
+        if synthesize_action_fanout {
+            self.apply_post_select_action_fanout(assets, seat);
+        }
     }
 
     /// Post-selection bookkeeping. With >1 PCs selected, each PC's current

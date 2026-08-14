@@ -99,9 +99,39 @@ impl EngineInner {
         assets: &LevelAssets,
         commands: &[PlayerInput],
     ) {
-        for inp in commands {
+        for (index, inp) in commands.iter().enumerate() {
             let seat = self.ensure_seat(inp.player_id);
-            self.apply_command_for_seat(sim, display, input, assets, seat, &inp.command);
+            // Original RHMessenger::ForwardMessage is recursive. The parity
+            // recorder therefore retains both the root SelectPC message and
+            // its depth-2 SelectAction restitution as adjacent commands (see
+            // RHParity::ShouldRecordNestedSelection). During replay the
+            // recorded child is authoritative; synthesizing it again inside
+            // SelectPC can launch work from stale hidden action state before
+            // the recorded child corrects that state.
+            let recorded_nested_selection_action = matches!(
+                (&inp.command, commands.get(index + 1)),
+                (
+                    PlayerCommand::SelectPc {
+                        pc_id: selected,
+                        append: false,
+                    },
+                    Some(PlayerInput {
+                        player_id,
+                        command:
+                            PlayerCommand::SelectResolvedAction { pc_id: nested, .. }
+                            | PlayerCommand::CancelAction { pc_id: nested },
+                    }),
+                ) if *player_id == inp.player_id && selected == nested
+            );
+            self.apply_command_for_seat_with_replay_context(
+                sim,
+                display,
+                input,
+                assets,
+                seat,
+                &inp.command,
+                recorded_nested_selection_action,
+            );
         }
     }
 
@@ -156,6 +186,21 @@ impl EngineInner {
         assets: &LevelAssets,
         seat: usize,
         cmd: &PlayerCommand,
+    ) {
+        self.apply_command_for_seat_with_replay_context(
+            sim, display, input, assets, seat, cmd, false,
+        );
+    }
+
+    fn apply_command_for_seat_with_replay_context(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        seat: usize,
+        cmd: &PlayerCommand,
+        recorded_nested_selection_action: bool,
     ) {
         use PlayerCommand::*;
 
@@ -692,7 +737,22 @@ impl EngineInner {
 
             // ── Selection ───────────────────────────────────────
             SelectPc { pc_id, append } => {
-                self.select_pc(assets, seat, *pc_id, *append, true);
+                if recorded_nested_selection_action {
+                    assert!(
+                        self.get_entity(*pc_id)
+                            .and_then(crate::element::Entity::pc_data)
+                            .is_some(),
+                        "recorded nested selection action targets missing or non-PC {pc_id:?}"
+                    );
+                }
+                self.select_pc_with_action_fanout(
+                    assets,
+                    seat,
+                    *pc_id,
+                    *append,
+                    true,
+                    !recorded_nested_selection_action,
+                );
                 self.update_recording_after_selection_change();
             }
             TogglePcSelection { pc_id } => {
@@ -6456,6 +6516,93 @@ mod tests {
         // Seat 1 was lazy-grown to fill the gap but is inactive.
         let seat1 = engine.seat(PlayerId(1)).expect("seat 1 was filled");
         assert!(!seat1.is_active(1));
+    }
+
+    #[test]
+    fn recorded_nested_cancel_is_the_only_select_pc_action_fanout() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        use crate::player_command::{PlayerCommand, PlayerInput};
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
+        let mut input = InputState::default();
+        let mut display = HostDisplayState::default();
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .current_action = Action::Bow;
+
+        engine.apply_commands(
+            sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[
+                PlayerInput::host(PlayerCommand::SelectPc {
+                    pc_id,
+                    append: false,
+                }),
+                PlayerInput::host(PlayerCommand::CancelAction { pc_id }),
+            ],
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::pc_data)
+                .expect("test PC data")
+                .current_action,
+            Action::NoAction
+        );
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| {
+                    element.owner == Some(pc_id) && element.command == Command::EquipBow
+                }),
+            "the root SelectPc must not synthesize stale EquipBow before its recorded nested CancelAction"
+        );
+    }
+
+    #[test]
+    fn lone_select_pc_still_restitutes_bow_action() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        use crate::player_command::{PlayerCommand, PlayerInput};
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
+        let mut input = InputState::default();
+        let mut display = HostDisplayState::default();
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .current_action = Action::Bow;
+
+        engine.apply_commands(
+            sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[PlayerInput::host(PlayerCommand::SelectPc {
+                pc_id,
+                append: false,
+            })],
+        );
+
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| {
+                    element.owner == Some(pc_id) && element.command == Command::EquipBow
+                }),
+            "a live/lone SelectPc must still replay its stored Bow action"
+        );
     }
 
     #[test]
