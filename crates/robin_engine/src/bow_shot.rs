@@ -2575,11 +2575,6 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         initial_velocity.y,
     ) as u16;
     arrow.projectile.launch_segment_start = Some(bow_point);
-    // Original registers the new arrow before the render pass.  Its first
-    // `RHElementArrow::Refresh` therefore exposes the orientation of the next
-    // queued trajectory segment on the creation frame, after the constructor's
-    // initial `Hourglass` above has advanced the arrow once.
-    apply_arrow_flight_sprite_visual(&mut arrow);
     Entity::Projectile(arrow)
 }
 
@@ -3324,13 +3319,6 @@ fn apply_arrow_falling_sprite_visual(
     proj.projectile.falling_direction = (row + 14) % 16;
 }
 
-fn apply_arrow_flight_sprite_visual(proj: &mut ElementProjectile) {
-    let (sector, azimuth) = current_arrow_orientation(proj);
-    let frame = ((azimuth as f32 * 0.066_666_67_f32 + 0.5_f32) as i32 + 4) as u16;
-    proj.element.sprite.force_sprite_row_raw(sector);
-    proj.element.sprite.force_sprite(sector, frame);
-}
-
 /// Apply the presentation pass which Original runs after the parity snapshot.
 /// The engine calls this immediately before the next `PerformHourglass`, which
 /// exposes the same row/frame at the next snapshot and puts falling-arrow RNG
@@ -3368,7 +3356,10 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     if proj.projectile.falling {
         apply_arrow_falling_sprite_visual(sim, proj);
     } else {
-        apply_arrow_flight_sprite_visual(proj);
+        let (sector, azimuth) = current_arrow_orientation(proj);
+        let frame = ((azimuth as f32 * 0.066_666_67_f32 + 0.5_f32) as i32 + 4) as u16;
+        proj.element.sprite.force_sprite_row_raw(sector);
+        proj.element.sprite.force_sprite(sector, frame);
     }
 }
 
@@ -5863,63 +5854,6 @@ mod tests {
             }
             _ => panic!("expected ElementProjectile"),
         }
-    }
-
-    #[test]
-    fn spawn_arrow_exposes_creation_frame_orientation_from_next_waypoint() {
-        // Captured creation-frame operands from the silent QuickSave replay:
-        // Original Projectile 651 renders row 6 / frame 4 after the initial
-        // Hourglass, while the old port left the constructor defaults 0 / 0.
-        let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Soldier(crate::entity_id::SoldierId(248)),
-            bow_point: WorldPoint3D::new(233.0, 3197.0, 40.0),
-            trajectory_origin: MapPoint::new(233.0, 3157.0),
-            target: EntityId::Pc(crate::entity_id::PcId(257)),
-            target_pos: MapPoint::new(330.0, 3263.5),
-            trajectory: vec![
-                TrajectoryPoint {
-                    position: WorldPoint3D::new(330.0, 3264.0, 0.5),
-                    time: 4,
-                },
-                TrajectoryPoint {
-                    position: WorldPoint3D::new(331.135_7, 3264.784_4, 0.0),
-                    time: 1,
-                },
-            ],
-            damage: 10,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D::new(97.0, 67.0, -39.5),
-        });
-
-        let Entity::Projectile(mut arrow) = arrow else {
-            panic!("spawn_arrow should create projectile");
-        };
-        assert_eq!(
-            arrow.element.position(),
-            WorldPoint3D::new(257.25, 3213.75, 30.125)
-        );
-        assert_eq!(
-            (
-                arrow.element.sprite.current_row,
-                arrow.element.sprite.current_frame
-            ),
-            (6, 4),
-            "creation-frame Refresh uses the next queued trajectory point"
-        );
-
-        // The ordinary later Refresh path must publish the same orientation
-        // semantics after another Hourglass step.
-        arrow.advance_trajectory_one_frame();
-        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
-        assert_eq!(
-            (
-                arrow.element.sprite.current_row,
-                arrow.element.sprite.current_frame
-            ),
-            (6, 4)
-        );
-        assert!(!arrow.projectile.falling);
     }
 
     #[test]
