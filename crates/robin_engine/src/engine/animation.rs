@@ -2242,6 +2242,11 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
 /// etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct ExecuteSideOutcomes {
+    /// Soldiers executing WAITING_ALERTED while their requested attentive
+    /// state is false. Original launches LEAVE_ATTENTIVE_MODE from inside
+    /// that Execute arm unless an equivalent element is already waiting in
+    /// the sequence-manager launch queue.
+    pub waiting_alerted_leave: Vec<EntityId>,
     /// PCs whose DROPPING_ALE animation reached DONE. Original creates the
     /// bottle and consumes one ale at this action point, before the order's
     /// later TERMINATED edge advances the sequence.
@@ -5910,6 +5915,19 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
+                        if anim_type == OrderType::WaitingAlerted
+                            && let Entity::Soldier(soldier) = entity
+                        {
+                            let enemy = soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                                panic!("WaitingAlerted soldier {entity_id:?} has no enemy AI state")
+                            });
+                            if !enemy.will_be_attentive {
+                                completion_outcomes
+                                    .execute_sides
+                                    .waiting_alerted_leave
+                                    .push(entity_id);
+                            }
+                        }
                         if entity.is_pc()
                             && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
                             && motion_state == MotionState::Terminated

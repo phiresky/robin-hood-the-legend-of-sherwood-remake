@@ -11,6 +11,135 @@ fn assets_with_test_pc_profile() -> LevelAssets {
     }
 }
 
+#[test]
+fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_nonattentive() {
+    use crate::element::{ActionState, Camp, Command};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let enemy = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test soldier has enemy AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = false;
+    engine
+        .get_entity_mut(owner)
+        .expect("test soldier remains live")
+        .actor_data_mut()
+        .expect("test soldier has actor state")
+        .action_state = ActionState::Waiting;
+    bind_test_action_point(
+        &mut engine,
+        owner,
+        OrderType::WaitingAlerted,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+    let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+    wait.orders
+        .push_back(Order::test_new(OrderType::WaitingAlerted, 0.0, 0.0));
+    let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(wait_sequence, 0);
+
+    let (_, mut outcomes, executed) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+    assert_eq!(
+        executed.map(|result| result.order_type),
+        Some(OrderType::WaitingAlerted),
+        "the regression must enter the actual soldier WaitingAlerted Execute arm"
+    );
+    assert_eq!(outcomes.execute_sides.waiting_alerted_leave, [owner]);
+    engine.drain_waiting_alerted_leave(std::mem::take(
+        &mut outcomes.execute_sides.waiting_alerted_leave,
+    ));
+
+    let matching: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| {
+            element.owner == Some(owner) && element.command == Command::LeaveAttentiveMode
+        })
+        .map(|element| element.state)
+        .collect();
+    assert_eq!(matching, [SequenceState::Todo]);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(owner, Command::LeaveAttentiveMode)
+    );
+}
+
+#[test]
+fn waiting_alerted_execute_does_not_duplicate_a_leave_already_waiting_to_launch() {
+    use crate::element::{Camp, Command};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test soldier has enemy AI")
+        .will_be_attentive = false;
+    engine.launch_element(SequenceElement::new(
+        1,
+        Command::LeaveAttentiveMode,
+        Some(owner),
+    ));
+
+    engine.drain_waiting_alerted_leave(vec![owner]);
+
+    let matching = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| {
+            element.owner == Some(owner) && element.command == Command::LeaveAttentiveMode
+        })
+        .count();
+    assert_eq!(matching, 1);
+}
+
+#[test]
+fn waiting_alerted_execute_preserves_attentive_requested_state() {
+    use crate::element::{Camp, Command};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let enemy = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test soldier has enemy AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = true;
+
+    engine.drain_waiting_alerted_leave(vec![owner]);
+
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(owner) && element.command == Command::LeaveAttentiveMode
+            })
+    );
+}
+
 pub(super) fn bind_test_action_point(
     engine: &mut EngineInner,
     id: EntityId,
