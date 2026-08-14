@@ -983,7 +983,18 @@ impl EngineInner {
             let posture = victim.element_data().posture;
             let is_dead_rider =
                 matches!(victim, Entity::Soldier(s) if s.soldier.rider) && victim_died;
-            matches!(
+            // RHElementActorPC overrides TranslateSwordDamage and routes all
+            // shoulder-lifecycle postures directly through
+            // TranslateShoulderDamage. It therefore never reaches the base
+            // human implementation's EventGoodStrike dispatch. Non-PC
+            // humans inherit the base implementation, whose posture switch
+            // does admit the carrier-side postures.
+            let pc_uses_shoulder_translation = matches!(victim, Entity::Pc(_))
+                && matches!(
+                    posture,
+                    Posture::HelpingToClimb | Posture::CarryingOnShoulders
+                );
+            (matches!(
                 posture,
                 Posture::Upright
                     | Posture::Spy
@@ -998,7 +1009,8 @@ impl EngineInner {
                     | Posture::Crouched
                     | Posture::Tree
                     | Posture::SimulatingBeggar
-            ) || is_dead_rider
+            ) && !pc_uses_shoulder_translation)
+                || is_dead_rider
         };
         let soldier_attacker = attacker_id.is_some_and(|id| {
             matches!(

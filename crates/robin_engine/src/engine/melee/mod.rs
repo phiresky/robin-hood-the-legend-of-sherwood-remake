@@ -7228,6 +7228,204 @@ mod tests {
     }
 
     #[test]
+    fn pc_shoulder_sword_damage_skips_good_strike_but_keeps_fall_translation() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+        use crate::sequence::SequencePriority;
+
+        for posture in [
+            Posture::HelpingToClimb,
+            Posture::CarryingOnShoulders,
+            Posture::OnShoulders,
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+            let victim = engine.add_entity(make_pc(
+                WorldPoint3D {
+                    x: 10.0,
+                    ..WorldPoint3D::default()
+                },
+                None,
+            ));
+            let partner = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+            {
+                let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                    unreachable!()
+                };
+                soldier.human.opponents.push(victim);
+                let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+                ai.base.me = attacker.index();
+                ai.base.current_state = AiState::Attacking;
+                ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+                ai.hth_weapon_id = 1;
+            }
+            engine
+                .get_entity_mut(victim)
+                .unwrap()
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+            engine.get_entity_mut(victim).unwrap().set_posture(posture);
+            if posture == Posture::OnShoulders {
+                engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .human_data_mut()
+                    .unwrap()
+                    .carrier = Some(partner);
+                let partner_entity = engine.get_entity_mut(partner).unwrap();
+                partner_entity.set_posture(Posture::CarryingOnShoulders);
+                partner_entity.pc_data_mut().unwrap().carried = Some(victim);
+            } else {
+                engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .pc_data_mut()
+                    .unwrap()
+                    .carried = Some(partner);
+                let partner_entity = engine.get_entity_mut(partner).unwrap();
+                partner_entity.set_posture(Posture::OnShoulders);
+                partner_entity.human_data_mut().unwrap().carrier = Some(victim);
+            }
+
+            let assets = assets_with_sword_profile(1, 50);
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence_id, 0);
+
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence_id, 0),
+            );
+
+            let attacker_ai = engine
+                .get_entity(attacker)
+                .unwrap()
+                .ai_controller()
+                .unwrap();
+            assert!(
+                !attacker_ai.ai_log.iter().any(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventGoodStrike as u16
+                }),
+                "PC posture {posture:?} must use the PC shoulder override without EventGoodStrike"
+            );
+            assert_eq!(
+                attacker_ai.current_substate,
+                Substate::AttackingSwordfightSpecialStrike,
+                "suppressed EventGoodStrike must not advance the attacker AI"
+            );
+
+            let damage = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("shoulder damage command remains registered");
+            let expected_fall = if posture == Posture::OnShoulders {
+                assert_eq!(damage.priority, SequencePriority::NonInterruptable);
+                OrderType::FallingShoulders
+            } else {
+                OrderType::FallingBackUpright
+            };
+            assert!(
+                damage
+                    .orders
+                    .iter()
+                    .any(|order| order.order_type == expected_fall),
+                "PC posture {posture:?} must retain its shoulder fall translation"
+            );
+            assert!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .sequences_iter()
+                    .flat_map(|sequence| sequence.elements.iter())
+                    .any(|element| element.command == Command::Fall
+                        && element.owner == Some(partner)),
+                "PC posture {posture:?} must still dispatch Fall to its shoulder partner"
+            );
+        }
+    }
+
+    #[test]
+    fn non_pc_helping_to_climb_still_informs_soldier_of_good_strike() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = attacker.index();
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+            ai.hth_weapon_id = 1;
+        }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .set_posture(Posture::HelpingToClimb);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        let assets = assets_with_sword_profile(1, 50);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence_id, 0),
+        );
+
+        let attacker_ai = engine
+            .get_entity(attacker)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert!(attacker_ai.ai_log.iter().any(|entry| {
+            entry.line_type == LogLineType::Event
+                && entry.info == StimulusType::EventGoodStrike as u16
+        }));
+    }
+
+    #[test]
     fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
         use crate::ai::{AiState, LogLineType, Remark, StimulusType, Substate};
 
