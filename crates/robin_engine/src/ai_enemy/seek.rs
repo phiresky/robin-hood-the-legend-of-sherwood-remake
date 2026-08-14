@@ -23,8 +23,12 @@ fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) ->
             .is_none_or(|expected| creation_order == Some(expected))
 }
 
+fn seek_area_phase6_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_SEEK_AREA_PHASE6").is_some()
+}
+
 fn seek_area_phase6_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
-    if std::env::var_os("PARITY_DEBUG_SEEK_AREA_PHASE6").is_none() {
+    if !seek_area_phase6_debug_enabled() {
         return false;
     }
     let parse_required = |name: &str| {
@@ -51,6 +55,17 @@ use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, v
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, task_priority};
 
 impl EnemyAi {
+    pub(crate) fn seek_area_phase6_caller_debug_enabled() -> bool {
+        seek_area_phase6_debug_enabled()
+    }
+
+    pub(crate) fn seek_area_phase6_caller_debug_matches(
+        frame: u32,
+        creation_order: Option<u32>,
+    ) -> bool {
+        seek_area_phase6_debug_matches(frame, creation_order)
+    }
+
     // -----------------------------------------------------------------------
     // Flee
     // -----------------------------------------------------------------------

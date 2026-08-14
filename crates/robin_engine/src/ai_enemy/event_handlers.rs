@@ -2839,6 +2839,21 @@ impl EnemyAi {
             }
             // Dead-body sweep around the actor.
             AiState::Seeking => {
+                if Self::seek_area_phase6_caller_debug_enabled()
+                    && Self::seek_area_phase6_caller_debug_matches(
+                        ctx.frame,
+                        ctx.original_creation_order,
+                    )
+                {
+                    eprintln!(
+                        "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"couldnt_reach_emergency\",\"stimulus\":\"event_couldnt_reach_point\"}}",
+                        ctx.frame,
+                        self.base.me,
+                        ctx.original_creation_order.expect(
+                            "phase6 caller diagnostic matched an owner without creation order"
+                        ),
+                    );
+                }
                 self.seek_area(
                     sim,
                     ctx.position,

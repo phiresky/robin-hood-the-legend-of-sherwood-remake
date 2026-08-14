@@ -10544,6 +10544,20 @@ impl EngineInner {
                 npc_id.index()
             )
         });
+        if crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_enabled()
+            && crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_matches(
+                ctx.frame,
+                ctx.original_creation_order,
+            )
+        {
+            eprintln!(
+                "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"script_set_ai_state\",\"stimulus\":\"no_event\"}}",
+                ctx.frame,
+                npc_id.index(),
+                ctx.original_creation_order
+                    .expect("phase6 caller diagnostic matched an owner without creation order"),
+            );
+        }
         enemy_ai.seek_area(
             sim,
             request.center,
