@@ -1206,7 +1206,7 @@ fn convert_npc(
                 .collect::<Result<Vec<_>, LegacyElementAdoptError>>()?,
         );
     }
-    crate::engine::ai::debug_detectable_mutation_load_snapshot(
+    crate::engine::debug_detectable_mutation_load_snapshot(
         entity_id,
         creation_order,
         &detectable_lists,

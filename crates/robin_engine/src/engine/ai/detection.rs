@@ -834,7 +834,7 @@ fn cool_detection_suspect(sum_of_sharpnesses: u16, suspect: u16, universal_frame
 impl EngineInner {
     /// Return the exact `RHElement::mulCreationOrder` assigned by the
     /// Original-compatible construction stream.
-    fn original_static_creation_order(&self, entity_id: EntityId) -> u32 {
+    pub(super) fn original_static_creation_order(&self, entity_id: EntityId) -> u32 {
         self.world.original_creation_order(entity_id)
     }
 

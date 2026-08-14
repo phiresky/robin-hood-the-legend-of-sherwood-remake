@@ -9,6 +9,7 @@
 //! flow, and state transitions.
 
 mod ai;
+pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod ale;
 mod animation;
 pub(crate) mod anti_collision;
