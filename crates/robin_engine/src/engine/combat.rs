@@ -6,6 +6,71 @@ use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
 
+fn arrow_publication_debug_filter(
+    frame_after: u32,
+    shooter_creation_order: u32,
+    projectile_creation_order: Option<u32>,
+) -> bool {
+    if std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for arrow publication diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")
+        .is_none_or(|value| value == frame_after)
+        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER")
+            .is_none_or(|value| value == shooter_creation_order)
+        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER")
+            .is_none_or(|value| projectile_creation_order.is_none_or(|actual| value == actual))
+}
+
+fn record_arrow_publication_debug(
+    stage: &str,
+    frame_after: u32,
+    shooter_creation_order: u32,
+    projectile_creation_order: Option<u32>,
+    entity: &Entity,
+) {
+    if !arrow_publication_debug_filter(
+        frame_after,
+        shooter_creation_order,
+        projectile_creation_order,
+    ) {
+        return;
+    }
+    let Entity::Projectile(arrow) = entity else {
+        panic!("arrow publication diagnostic received a non-projectile entity");
+    };
+    let sprite = &arrow.element.sprite;
+    let position = sprite.position_iface.get_position();
+    let old_position = sprite.position_iface.v48_serialized_state().old_position;
+    eprintln!(
+        "PARITY_ARROW_PUBLICATION_RUST stage={stage} frame_after={frame_after} \
+         projectile_creation_order={projectile_creation_order:?} \
+         shooter_creation_order={shooter_creation_order} active={} flying={} falling={} \
+         trajectory_size={} row={} frame={} frame_count={} \
+         position_bits=[{:08x},{:08x},{:08x}] old_position_bits=[{:08x},{:08x},{:08x}]",
+        arrow.element.active,
+        arrow.projectile.flying,
+        arrow.projectile.falling,
+        arrow.projectile.trajectory.len(),
+        sprite.current_row,
+        sprite.current_frame,
+        sprite.frame_count,
+        position.x.to_bits(),
+        position.y.to_bits(),
+        position.z.to_bits(),
+        old_position.x.to_bits(),
+        old_position.y.to_bits(),
+        old_position.z.to_bits(),
+    );
+}
+
 fn projectile_landing_debug_matches(frame: u32, shooter: EntityId, projectile: EntityId) -> bool {
     if std::env::var_os("PARITY_DEBUG_PROJECTILE_LANDING").is_none() {
         return false;
@@ -715,6 +780,24 @@ impl EngineInner {
                 lands_in_hole: terminal_lands_in_hole,
                 initial_velocity: velocity,
             });
+            let diagnostic_identity =
+                std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").map(|_| {
+                    (
+                        self.control.frame_counter.checked_add(1).expect(
+                            "frame counter overflow while recording arrow publication diagnostic",
+                        ),
+                        self.world.original_creation_order(result.shooter),
+                    )
+                });
+            if let Some((frame_after, shooter_creation_order)) = diagnostic_identity {
+                record_arrow_publication_debug(
+                    "after_spawn_arrow",
+                    frame_after,
+                    shooter_creation_order,
+                    None,
+                    &arrow,
+                );
+            }
             let Entity::Projectile(arrow_projectile) = &mut arrow else {
                 panic!("spawn_arrow returned a non-projectile entity");
             };
@@ -725,6 +808,22 @@ impl EngineInner {
             arrow_projectile.projectile.trajectory_origin_sector = trajectory_origin_sector;
             arrow_projectile.projectile.trajectory_origin_layer = layer;
             let arrow_id = self.add_entity(arrow);
+            let diagnostic_projectile_creation_order =
+                diagnostic_identity.map(|_| self.world.original_creation_order(arrow_id));
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_add_entity",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing immediately after add_entity"),
+                );
+            }
             if let Some(resolution) = initial_landing_resolution {
                 if projectile_landing_debug_matches(
                     self.control.frame_counter,
@@ -875,7 +974,35 @@ impl EngineInner {
             // the flying arrow renders its proper sprite instead of the
             // colored-rect fallback.
             self.attach_accessory_sprite(assets, arrow_id);
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_attach_accessory_sprite",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing after accessory sprite attachment"),
+                );
+            }
             self.tick_new_projectile_once(sim, assets, arrow_id);
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_first_hourglass",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing after its first hourglass"),
+                );
+            }
             spawned_projectiles.push(arrow_id);
 
             tracing::debug!(
