@@ -2270,6 +2270,26 @@ enum PushStrikePositionSpace {
     Ground,
 }
 
+/// Whether PushAside's current collector applies its elevation admission.
+///
+/// Original's warning-time `GetPossibleVictimsOfPushSwordStrike` works only
+/// in map space and has no elevation gate. The DONE-time
+/// `ExecutePushSwordStrike` collector uses ground space and first truncates
+/// the absolute elevation difference to `ULONG` before comparing it with
+/// `MAX_ELEVATION_SWORDFIGHT`.
+fn push_strike_elevation_allows(
+    position_space: PushStrikePositionSpace,
+    attacker_elevation: f32,
+    victim_elevation: f32,
+) -> bool {
+    match position_space {
+        PushStrikePositionSpace::Map => true,
+        PushStrikePositionSpace::Ground => {
+            (attacker_elevation - victim_elevation).abs() as u32 <= MAX_ELEVATION_SWORDFIGHT as u32
+        }
+    }
+}
+
 /// Collect possible victims for a push (rectangle) sword strike.
 ///
 /// The hit area is a rectangle in front of the attacker: `[min_dist, max_dist]` deep
@@ -2306,11 +2326,8 @@ fn collect_push_victims(
         ) {
             continue;
         }
-        // Reject victims whose elevation differs from the attacker by
-        // more than MAX_ELEVATION_SWORDFIGHT (prevents push strikes
-        // across catwalks / stairs).
         let victim_elev = entity.position_iface().get_elevation();
-        if (attacker_elevation - victim_elev).abs() > MAX_ELEVATION_SWORDFIGHT {
+        if !push_strike_elevation_allows(position_space, attacker_elevation, victim_elev) {
             continue;
         }
         let (pos_x, pos_y) = match position_space {
@@ -2700,6 +2717,33 @@ mod tests {
         assert_eq!(angle_to_sector(-std::f32::consts::PI / 8.0), 14);
         assert_eq!(push_strike_half_width(5), 2.0);
         assert_eq!(push_strike_half_width(6), 3.0);
+    }
+
+    #[test]
+    fn push_warning_ignores_elevation_but_done_effect_uses_truncated_difference() {
+        assert!(push_strike_elevation_allows(
+            PushStrikePositionSpace::Map,
+            0.0,
+            80.0,
+        ));
+        assert!(!push_strike_elevation_allows(
+            PushStrikePositionSpace::Ground,
+            0.0,
+            80.0,
+        ));
+
+        // ExecutePushSwordStrike stores fabs(elevation difference) in ULONG,
+        // so the fractional part is discarded before the <= 40.f gate.
+        assert!(push_strike_elevation_allows(
+            PushStrikePositionSpace::Ground,
+            0.0,
+            40.75,
+        ));
+        assert!(!push_strike_elevation_allows(
+            PushStrikePositionSpace::Ground,
+            0.0,
+            41.0,
+        ));
     }
 
     #[test]
