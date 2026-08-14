@@ -129,8 +129,8 @@ fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle:
 #[derive(Debug)]
 struct CivilianRandomSpeechDebugConfig {
     enabled: bool,
-    frame: Option<u32>,
-    creation_order: Option<u32>,
+    frame: u32,
+    creation_order: u32,
 }
 
 fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugConfig {
@@ -141,15 +141,16 @@ fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugCo
         if !enabled {
             return CivilianRandomSpeechDebugConfig {
                 enabled: false,
-                frame: None,
-                creation_order: None,
+                frame: 0,
+                creation_order: 0,
             };
         }
         let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for CIVRANDSPEECH diagnostic: {error}")
-                })
+            let value = std::env::var(name).unwrap_or_else(|error| {
+                panic!("CIVRANDSPEECH diagnostic requires {name}: {error}")
+            });
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for CIVRANDSPEECH diagnostic: {error}")
             })
         };
         CivilianRandomSpeechDebugConfig {
@@ -15458,18 +15459,11 @@ impl EngineInner {
         let frame_phase = npc_hourglass_frame_phase(current_frame, u32::from(register_number));
         let debug_creation_order = {
             let config = civilian_random_speech_debug_config();
-            if !config.enabled
-                || config
-                    .frame
-                    .is_some_and(|expected| expected != current_frame)
-            {
+            if !config.enabled || config.frame != current_frame {
                 None
             } else {
                 let creation_order = self.world.original_creation_order(npc_id);
-                config
-                    .creation_order
-                    .is_none_or(|expected| expected == creation_order)
-                    .then_some(creation_order)
+                (config.creation_order == creation_order).then_some(creation_order)
             }
         };
         if let Some(creation_order) = debug_creation_order {
@@ -15525,6 +15519,28 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        if let Some(creation_order) = debug_creation_order {
+            let Entity::Civilian(civilian) = &*entity else {
+                panic!(
+                    "random-speech civilian {} changed entity kind before call",
+                    npc_id.index()
+                )
+            };
+            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+                panic!("random-speech civilian {} changed AI kind", npc_id.index())
+            };
+            let source_animation = ctx
+                .entity_view(ai.base.me)
+                .map(|view| view.current_animation);
+            eprintln!(
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+                npc_id.index(),
+                source_animation == Some(crate::order::OrderType::Weeping),
+                civilian.element.sprite.last_action,
+                ai.base.outbox.reentrant.owner_work.len(),
+                ai.base.outbox.reentrant.owner_work,
+            );
+        }
         {
             entity
                 .friendly_ai_mut()
@@ -15546,12 +15562,14 @@ impl EngineInner {
                 panic!("random-speech civilian {} changed AI kind", npc_id.index())
             };
             eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after dont_talk={} current_remark={:?} remark_flags={} queued_owner_work={}]",
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
                 npc_id.index(),
                 ai.beggar_dont_talk_counter,
                 ai.base.current_remark,
                 ai.base.current_remark_flags,
+                civilian.element.sprite.last_action,
                 ai.base.outbox.reentrant.owner_work.len(),
+                ai.base.outbox.reentrant.owner_work,
             );
         }
         // Original RandomSpeech calls Say synchronously before the following
@@ -15559,6 +15577,31 @@ impl EngineInner {
         // that same owner-local boundary here even when the lock gate will
         // short-circuit the remainder of Hourglass.
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+        if let Some(creation_order) = debug_creation_order {
+            let Entity::Civilian(civilian) = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "random-speech civilian {} disappeared after drain",
+                    npc_id.index()
+                )
+            }) else {
+                panic!(
+                    "random-speech civilian {} changed entity kind after drain",
+                    npc_id.index()
+                )
+            };
+            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+                panic!("random-speech civilian {} changed AI kind", npc_id.index())
+            };
+            eprintln!(
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+                npc_id.index(),
+                ai.base.current_remark,
+                ai.base.current_remark_flags,
+                civilian.element.sprite.last_action,
+                ai.base.outbox.reentrant.owner_work.len(),
+                ai.base.outbox.reentrant.owner_work,
+            );
+        }
     }
 
     // ── RefreshAmbushPoints — per-frame ambush peek scan ─────────
