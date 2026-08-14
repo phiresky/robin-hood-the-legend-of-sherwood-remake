@@ -2142,6 +2142,73 @@ fn collect_lateral_strike_victims(
     victims
 }
 
+/// Original full-circle DONE-time victim admission in unprojected 3D space.
+///
+/// This is deliberately separate from the circle warning collector: warning
+/// admission uses map-space distance and different range rules, while
+/// `ExecuteFullCircleSwordStrikeEffect` seeds its retained victim list from
+/// `GetPosition()` and the inclusive authored strike range.
+#[allow(clippy::too_many_arguments)]
+fn collect_full_circle_strike_victims(
+    entities: &Entities,
+    attacker_id: EntityId,
+    attacker_position: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+    profile_manager: &crate::profiles::ProfileManager,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> Vec<EntityId> {
+    let mut victims = Vec::new();
+    for (target_id, entity) in entities.humans() {
+        if !is_possible_sword_strike_victim(
+            entities,
+            attacker_id,
+            entity,
+            target_id,
+            profile_manager,
+            fast_grid,
+            obstacles,
+        ) {
+            continue;
+        }
+
+        let target_position = entity.element_data().position();
+        if full_circle_strike_distance_is_in_range(
+            attacker_position,
+            target_position,
+            min_distance,
+            max_distance,
+        ) {
+            victims.push(target_id.into());
+        }
+    }
+    victims
+}
+
+/// `SBGeoVector3D::Norm`: GEOTYPE products and additions, followed by the
+/// double-precision square root and a narrowing store back to GEOTYPE.
+fn full_circle_strike_distance(
+    attacker: crate::coordinates::WorldPoint3D,
+    victim: crate::coordinates::WorldPoint3D,
+) -> f32 {
+    let dx = attacker.x - victim.x;
+    let dy = attacker.y - victim.y;
+    let dz = attacker.z - victim.z;
+    let squared_norm = dx * dx + dy * dy + dz * dz;
+    f64::from(squared_norm).sqrt() as f32
+}
+
+fn full_circle_strike_distance_is_in_range(
+    attacker: crate::coordinates::WorldPoint3D,
+    victim: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+) -> bool {
+    let distance = full_circle_strike_distance(attacker, victim);
+    distance >= min_distance && distance <= max_distance
+}
+
 /// Original lateral warning admission is intentionally looser than the hit
 /// collector: active human, not self, geometry only.
 fn collect_lateral_warning_victims(
@@ -2743,6 +2810,29 @@ mod tests {
             PushStrikePositionSpace::Ground,
             0.0,
             41.0,
+        ));
+    }
+
+    #[test]
+    fn full_circle_done_seed_uses_inclusive_unprojected_3d_range() {
+        let attacker = WorldPoint3D::ZERO;
+        let elevated_same_map = WorldPoint3D::new(0.0, 50.0, 50.0);
+
+        assert_eq!(attacker.to_map(), elevated_same_map.to_map());
+        assert!(!full_circle_strike_distance_is_in_range(
+            attacker,
+            elevated_same_map,
+            0.0,
+            60.0,
+        ));
+
+        let ordinary = WorldPoint3D::new(3.0, 4.0, 12.0);
+        assert_eq!(full_circle_strike_distance(attacker, ordinary), 13.0);
+        assert!(full_circle_strike_distance_is_in_range(
+            attacker, ordinary, 13.0, 13.0,
+        ));
+        assert!(!full_circle_strike_distance_is_in_range(
+            attacker, ordinary, 13.01, 20.0,
         ));
     }
 

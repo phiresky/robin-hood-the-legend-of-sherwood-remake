@@ -1519,18 +1519,24 @@ impl EngineInner {
                     obstacles,
                 )
             }
-            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => collect_arc_victims(
-                &self.world.entities,
-                attacker_id,
-                attacker_pos,
-                min_dist,
-                max_dist,
-                0,
-                15,
-                &assets.profile_manager,
-                &self.world.fast_grid,
-                obstacles,
-            ),
+            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
+                let attacker_position = self
+                    .get_entity(attacker_id)
+                    .map(|entity| entity.element_data().position())
+                    .unwrap_or_else(|| {
+                        panic!("full-circle strike attacker {attacker_id:?} is missing")
+                    });
+                collect_full_circle_strike_victims(
+                    &self.world.entities,
+                    attacker_id,
+                    attacker_position,
+                    min_dist,
+                    max_dist,
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                )
+            }
         };
 
         // Original seeds every multi-target strike by walking
