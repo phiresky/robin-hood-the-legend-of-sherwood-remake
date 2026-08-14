@@ -62,6 +62,101 @@ fn hearing_gate_debug_config() -> &'static HearingGateDebugConfig {
 }
 
 #[derive(Clone, Copy)]
+struct DetectableListDebugConfig {
+    enabled: bool,
+    frame: u32,
+    creation_order: u32,
+}
+
+fn detectable_list_debug_config() -> &'static DetectableListDebugConfig {
+    static CONFIG: std::sync::OnceLock<DetectableListDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_DETECTABLE_LIST").is_some();
+        if !enabled {
+            return DetectableListDebugConfig {
+                enabled,
+                frame: 0,
+                creation_order: 0,
+            };
+        }
+        let parse_required = |name: &str| {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| panic!("missing required environment variable {name}"));
+            value
+                .parse::<u32>()
+                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
+        };
+        DetectableListDebugConfig {
+            enabled,
+            frame: parse_required("PARITY_DEBUG_DETECTABLE_LIST_FRAME"),
+            creation_order: parse_required("PARITY_DEBUG_DETECTABLE_LIST_CREATION_ORDER"),
+        }
+    })
+}
+
+fn debug_detectable_list_bucket(
+    stage: &str,
+    bucket: usize,
+    npc_id: EntityId,
+    npc: &crate::element::NpcData,
+    frame: u32,
+    creation_order: u32,
+) {
+    debug_detectable_list_entries(
+        stage,
+        bucket,
+        npc_id,
+        &npc.detectable_lists[bucket],
+        frame,
+        creation_order,
+    );
+}
+
+fn debug_detectable_list_entries(
+    stage: &str,
+    bucket: usize,
+    npc_id: EntityId,
+    entries: &[Detectable],
+    frame: u32,
+    creation_order: u32,
+) {
+    let config = detectable_list_debug_config();
+    if !config.enabled || frame != config.frame || creation_order != config.creation_order {
+        return;
+    }
+    eprintln!(
+        "DETLIST {{\"engine\":\"rust\",\"stage\":\"{stage}\",\"frame\":{frame},\"owner_slot\":{},\"owner_creation_order\":{creation_order},\"bucket\":{bucket},\"length\":{}}}",
+        npc_id.index(),
+        entries.len(),
+    );
+    for (index, detectable) in entries.iter().enumerate() {
+        let target_slot = detectable.element.map(EntityId::index).unwrap_or(u32::MAX);
+        eprintln!(
+            "DETLIST {{\"engine\":\"rust\",\"stage\":\"{stage}_entry\",\"frame\":{frame},\"owner_slot\":{},\"owner_creation_order\":{creation_order},\"bucket\":{bucket},\"index\":{index},\"target_slot\":{target_slot},\"seen_now\":{},\"seen_last\":{},\"heard_last\":{},\"shadow_now\":{},\"shadow_last\":{},\"last_visibility_bits\":{}}}",
+            npc_id.index(),
+            detectable.seen_now,
+            detectable.seen_last_frame,
+            detectable.heard_last_frame,
+            detectable.shadow_seen_now,
+            detectable.shadow_seen_last_frame,
+            detectable.last_visibility.to_bits(),
+        );
+    }
+}
+
+fn debug_all_detectable_list_buckets(
+    stage: &str,
+    npc_id: EntityId,
+    npc: &crate::element::NpcData,
+    frame: u32,
+    creation_order: u32,
+) {
+    for bucket in 0..DetectableType::COUNT {
+        debug_detectable_list_bucket(stage, bucket, npc_id, npc, frame, creation_order);
+    }
+}
+
+#[derive(Clone, Copy)]
 struct VisibilityStageDebugConfig {
     enabled: bool,
     frame: Option<u32>,
@@ -1583,6 +1678,23 @@ impl EngineInner {
                 }
             }
 
+            let detectable_list_debug_creation_order = {
+                let config = detectable_list_debug_config();
+                (config.enabled && universal_frame == config.frame)
+                    .then(|| self.original_static_creation_order(npc_id))
+            };
+            if let Some(creation_order) = detectable_list_debug_creation_order
+                && let Some(npc) = self.world.entities.get(npc_id).and_then(Entity::npc_data)
+            {
+                debug_all_detectable_list_buckets(
+                    "optical_entry",
+                    npc_id,
+                    npc,
+                    universal_frame,
+                    creation_order,
+                );
+            }
+
             // Original CleanUpDetectables/ComputeVisibility dereference live
             // human pointers. Rebuild the target records at this creation
             // slot, but let the NPC's detectable list dictate scan order.
@@ -1662,6 +1774,17 @@ impl EngineInner {
                 golden_eye,
                 &view_radius_cache,
             );
+            if let Some(creation_order) = detectable_list_debug_creation_order
+                && let Some(npc) = self.world.entities.get(npc_id).and_then(Entity::npc_data)
+            {
+                debug_all_detectable_list_buckets(
+                    "optical_exit",
+                    npc_id,
+                    npc,
+                    universal_frame,
+                    creation_order,
+                );
+            }
             // No other viewer can run inside this contiguous
             // RefreshDetection scan. Commit at its boundary before the first
             // queued Think, where synchronous IsDetecting may consume it.
@@ -2059,6 +2182,14 @@ impl EngineInner {
                     });
                 !target.dead
             });
+            debug_detectable_list_entries(
+                "post_cleanup",
+                enemy_idx,
+                npc_id,
+                detectables,
+                universal_frame,
+                original_creation_order,
+            );
             if before != detectables.len() {
                 tracing::trace!(
                     npc = ?npc_id,
@@ -3985,10 +4116,9 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         // Per-NPC frame phase offset.
-        let modified_frame = refresh_detection_modified_frame(
-            universal_frame,
-            self.original_static_creation_order(npc_id),
-        );
+        let original_creation_order = self.original_static_creation_order(npc_id);
+        let modified_frame =
+            refresh_detection_modified_frame(universal_frame, original_creation_order);
 
         const BODY_DETECTION_FACTOR: f32 = 3.0;
 
@@ -4018,6 +4148,14 @@ impl EngineInner {
         };
 
         // ── BODY pass ───────────────────────────────────────
+        debug_detectable_list_bucket(
+            "post_cleanup",
+            DetectableType::Body as usize,
+            npc_id,
+            npc,
+            universal_frame,
+            original_creation_order,
+        );
         Self::run_human_detectable_pass(
             npc,
             npc_id,
@@ -4064,6 +4202,7 @@ impl EngineInner {
                 view_speed,
                 modified_frame,
                 universal_frame,
+                original_creation_order,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
                 fast_grid: &self.world.fast_grid,
@@ -4103,6 +4242,7 @@ impl EngineInner {
                 view_speed,
                 modified_frame,
                 universal_frame,
+                original_creation_order,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
                 fast_grid: &self.world.fast_grid,
@@ -4110,6 +4250,14 @@ impl EngineInner {
         );
 
         // ── FRIEND pass ─────────────────────────────────────
+        debug_detectable_list_bucket(
+            "post_cleanup",
+            DetectableType::Friend as usize,
+            npc_id,
+            npc,
+            universal_frame,
+            original_creation_order,
+        );
         Self::run_human_detectable_pass(
             npc,
             npc_id,
@@ -4150,6 +4298,7 @@ impl EngineInner {
                 view_speed,
                 modified_frame,
                 universal_frame,
+                original_creation_order,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
                 fast_grid: &self.world.fast_grid,
@@ -4157,6 +4306,14 @@ impl EngineInner {
         );
 
         // ── MISSED_FRIEND pass ──────────────────────────────
+        debug_detectable_list_bucket(
+            "post_cleanup",
+            DetectableType::MissedFriend as usize,
+            npc_id,
+            npc,
+            universal_frame,
+            original_creation_order,
+        );
         Self::run_human_detectable_pass(
             npc,
             npc_id,
@@ -4194,6 +4351,7 @@ impl EngineInner {
                 view_speed,
                 modified_frame,
                 universal_frame,
+                original_creation_order,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
                 fast_grid: &self.world.fast_grid,
@@ -4216,6 +4374,14 @@ impl EngineInner {
                     .map(|t| t.is_true_or_false_beggar)
                     .unwrap_or(false)
             });
+            debug_detectable_list_bucket(
+                "post_cleanup",
+                beggar_idx,
+                npc_id,
+                npc,
+                universal_frame,
+                original_creation_order,
+            );
         }
         Self::run_human_detectable_pass(
             npc,
@@ -4251,6 +4417,7 @@ impl EngineInner {
                 view_speed,
                 modified_frame,
                 universal_frame,
+                original_creation_order,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
                 fast_grid: &self.world.fast_grid,
@@ -4691,6 +4858,14 @@ impl EngineInner {
             };
             targets.get(&target_id).map(|o| o.active).unwrap_or(false)
         });
+        debug_detectable_list_entries(
+            "post_cleanup",
+            obj_idx,
+            npc_id,
+            &npc.detectable_lists[obj_idx],
+            ctx.universal_frame,
+            ctx.original_creation_order,
+        );
 
         let mut sum_of_sharpnesses: u16 = 0;
         let mut max_sharpness: u32 = 0;
@@ -4995,6 +5170,7 @@ struct ViewContext<'a> {
     view_speed: u16,
     modified_frame: u32,
     universal_frame: u32,
+    original_creation_order: u32,
     golden_eye: bool,
     sight_obstacles: &'a crate::sight_obstacle::ObstacleList<'a>,
     fast_grid: &'a crate::fast_find_grid::FastFindGrid,
