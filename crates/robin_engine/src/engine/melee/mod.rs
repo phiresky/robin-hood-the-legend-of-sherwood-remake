@@ -2419,6 +2419,15 @@ fn push_strike_elevation_allows(
     }
 }
 
+/// Warning-time push collection has Original's `< 150` MaxNorm shortcut;
+/// DONE-time push effects do not.
+fn push_strike_max_norm_allows(position_space: PushStrikePositionSpace, dx: f32, dy: f32) -> bool {
+    match position_space {
+        PushStrikePositionSpace::Map => dx.abs().max(dy.abs()) < 150.0,
+        PushStrikePositionSpace::Ground => true,
+    }
+}
+
 /// Collect possible victims for a push (rectangle) sword strike.
 ///
 /// The hit area is a rectangle in front of the attacker: `[min_dist, max_dist]` deep
@@ -2474,7 +2483,7 @@ fn collect_push_victims(
         };
         let dx = pos_x - attacker_pos.0;
         let dy = (pos_y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        if dx.abs().max(dy.abs()) >= 150.0 {
+        if !push_strike_max_norm_allows(position_space, dx, dy) {
             continue;
         }
         let front_dist = dx * fx + dy * fy;
@@ -2849,7 +2858,7 @@ mod tests {
     }
 
     #[test]
-    fn push_warning_ignores_elevation_but_done_effect_uses_truncated_difference() {
+    fn push_warning_and_done_effect_keep_distinct_elevation_and_max_norm_gates() {
         assert!(push_strike_elevation_allows(
             PushStrikePositionSpace::Map,
             0.0,
@@ -2872,6 +2881,22 @@ mod tests {
             PushStrikePositionSpace::Ground,
             0.0,
             41.0,
+        ));
+
+        assert!(push_strike_max_norm_allows(
+            PushStrikePositionSpace::Map,
+            149.999,
+            0.0,
+        ));
+        assert!(!push_strike_max_norm_allows(
+            PushStrikePositionSpace::Map,
+            150.0,
+            0.0,
+        ));
+        assert!(push_strike_max_norm_allows(
+            PushStrikePositionSpace::Ground,
+            160.0,
+            0.0,
         ));
     }
 
