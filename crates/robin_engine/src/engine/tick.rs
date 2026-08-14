@@ -2134,42 +2134,6 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn apply_newborn_arrow_refresh(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        newborn_arrows: &[EntityId],
-    ) {
-        if newborn_arrows.is_empty() {
-            return;
-        }
-
-        // Refresh is virtual work performed by the display walk. Keep the
-        // newborn subset in the complete SortForDisplay order rather than the
-        // shooters' Execute order: a falling-arrow Refresh consumes one global
-        // RNG draw, so those orders are observably different.
-        let mut remaining = newborn_arrows.to_vec();
-        for id in self.compute_display_order().ids {
-            let Some(index) = remaining.iter().position(|&newborn| newborn == id) else {
-                continue;
-            };
-            remaining.swap_remove(index);
-            let Some(Entity::Projectile(projectile)) = self.world.entities.get_mut(id) else {
-                panic!("newborn arrow {id:?} vanished or changed kind before its first Refresh");
-            };
-            assert_eq!(
-                projectile.object.object_type,
-                crate::element::ObjectType::Arrow,
-                "newborn projectile {id:?} is not an arrow at its first Refresh"
-            );
-            crate::bow_shot::refresh_arrow_after_previous_hourglass(sim, projectile);
-        }
-
-        assert!(
-            remaining.is_empty(),
-            "newborn arrows missing from SortForDisplay before their first Refresh: {remaining:?}"
-        );
-    }
-
     /// Run the one-shot mission-script `PostInitialize` stage.
     ///
     /// The original `RHGame::GameLoop` calls this after the first
@@ -4906,7 +4870,6 @@ impl EngineInner {
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
         let prepared = self.prepare_npc_owner_pass(sim, assets);
-        let mut newborn_arrows = Vec::new();
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
@@ -5023,9 +4986,7 @@ impl EngineInner {
                     }
                 }
                 if let Some((_, _, order_id)) = bow {
-                    newborn_arrows.extend(engine.tick_bow_shot_for(
-                        sim, assets, owner, order_id,
-                    ));
+                    engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
                 if ability.is_some() {
                     let listen_phase = engine
@@ -5111,14 +5072,6 @@ impl EngineInner {
             },
         );
         self.finish_npc_owner_pass();
-        // ShootWithBowAt constructs and primes the projectile from the
-        // shooter's Execute arm. Original's following screen Refresh then
-        // walks every newborn in SortForDisplay order before the next parity
-        // snapshot can observe it. Rust closes that presentation boundary at
-        // the end of the fused live owner walk: doing it per shooter would
-        // reorder the global RNG draws when several newborn arrows are already
-        // falling.
-        self.apply_newborn_arrow_refresh(sim, &newborn_arrows);
     }
 
     #[cfg(test)]
