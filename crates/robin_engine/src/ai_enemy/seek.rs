@@ -500,11 +500,13 @@ impl EnemyAi {
         let debug_phase6 = seek_area_phase6_debug_matches(ctx.frame, ctx.original_creation_order);
         if debug_phase6 {
             eprintln!(
-                "SEEKAREA {{\"event\":\"phase6_before\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"flags\":{},\"seek_direction\":{},\"list_size\":{},\"list_empty\":{},\"location_first\":{},\"location_end\":{},\"personal1_constructor\":\"{}\"}}",
+                "SEEKAREA {{\"event\":\"phase6_before\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"state\":{},\"substate\":{},\"flags\":{},\"seek_direction\":{},\"list_size\":{},\"list_empty\":{},\"location_first\":{},\"location_end\":{},\"personal1_constructor\":\"{}\"}}",
                 ctx.frame,
                 self.base.me,
                 ctx.original_creation_order
                     .expect("phase6 diagnostic matched an owner without creation order"),
+                self.base.current_state as u32,
+                self.base.current_substate as u32,
                 flags.bits(),
                 seek_direction,
                 self.my_seek_points.len(),
