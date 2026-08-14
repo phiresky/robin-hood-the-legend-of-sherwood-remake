@@ -8,6 +8,33 @@ use crate::engine::sequence_runtime::OwnerActionBarrier;
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
 
+struct OpponentCallerDebugConfig {
+    frame: u32,
+    participant: u32,
+}
+
+fn opponent_caller_debug_config() -> Option<&'static OpponentCallerDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<OpponentCallerDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_OPPONENT_CALLER")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when opponent-caller debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for opponent-caller diagnostic: {error}")
+                })
+            };
+            Some(OpponentCallerDebugConfig {
+                frame: parse("PARITY_DEBUG_OPPONENT_CALLER_FRAME"),
+                participant: parse("PARITY_DEBUG_OPPONENT_CALLER_PARTICIPANT"),
+            })
+        })
+        .as_ref()
+}
+
 impl EngineInner {
     // ─── Sword strike dispatch (sequence-driven) ────────────────────
 
@@ -133,6 +160,55 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
+        let caller_debug = opponent_caller_debug_config().is_some_and(|config| {
+            config.frame == self.control.frame_counter
+                && (config.participant == owner.index()
+                    || opponent.is_some_and(|id| config.participant == id.index()))
+        });
+        if caller_debug {
+            let selected_owner = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner);
+            let selected_opponent =
+                opponent.and_then(|id| self.orders.sequence_manager.current_element_for_actor(id));
+            let sequence = self
+                .orders
+                .sequence_manager
+                .get_sequence(seq_id)
+                .unwrap_or_else(|| {
+                    panic!("diagnosed EnterSwordfight sequence {seq_id:?} vanished")
+                });
+            let counters = sequence.parity_counters();
+            eprintln!(
+                "PARITY_OPPONENT_CALLER frame={} phase=dispatch owner={} opponent={:?} seq={} elem={} selected_owner={selected_owner:?} selected_opponent={selected_opponent:?} counters={counters:?} elements={}",
+                self.control.frame_counter,
+                owner.index(),
+                opponent.map(|id| id.index()),
+                seq_id.0,
+                elem_idx,
+                sequence.elements.len(),
+            );
+            for (index, element) in sequence.elements.iter().enumerate() {
+                eprintln!(
+                    "PARITY_OPPONENT_CALLER frame={} phase=element seq={} index={} id={} owner={:?} command={:?} level={} state={:?} priority={:?} script_driven={} legacy_v48={} postponed={:?} cross_postponed={:?} data={:?}",
+                    self.control.frame_counter,
+                    seq_id.0,
+                    index,
+                    element.id,
+                    element.owner.map(|id| id.index()),
+                    element.command,
+                    element.command_level,
+                    element.state,
+                    element.priority,
+                    element.script_driven,
+                    element.legacy_v48.is_some(),
+                    element.postponed_element_index,
+                    element.cross_postponed,
+                    element.data,
+                );
+            }
+        }
         {
             let Some(entity) = self.world.entities.get_mut(owner) else {
                 self.orders
