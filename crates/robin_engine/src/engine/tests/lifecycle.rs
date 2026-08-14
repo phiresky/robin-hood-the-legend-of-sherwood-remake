@@ -1483,8 +1483,9 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
 
 fn corpse_exit_initialization_fixture(
     active_drop: bool,
+    command: crate::element::Command,
 ) -> (EngineInner, EntityId, EntityId, crate::sequence::SequenceId) {
-    use crate::element::{Command, Posture};
+    use crate::element::Posture;
     use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -1496,6 +1497,10 @@ fn corpse_exit_initialization_fixture(
     {
         let carrier_entity = engine.get_entity_mut(carrier).unwrap();
         carrier_entity.pc_data_mut().unwrap().carried = Some(body);
+        carrier_entity
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Lying);
         carrier_entity
             .element_data_mut()
             .set_direction_instantly(13);
@@ -1537,10 +1542,19 @@ fn corpse_exit_initialization_fixture(
         .set_direction_instantly(13);
 
     let order_id = engine.orders.allocate_order_id();
-    let mut element = SequenceElement::new(1, Command::WhistleCmd, Some(carrier));
+    let mut element = SequenceElement::new(1, command, Some(carrier));
     let mut transition_order = Order::new(transition, 0.0, 0.0, order_id);
     transition_order.compute_direction = false;
     element.orders.push_back(transition_order);
+    if command == crate::element::Command::EnterSwordfight {
+        let raising_id = engine.orders.allocate_order_id();
+        element.orders.push_back(Order::new(
+            OrderType::TransitionRaisingSword,
+            0.0,
+            0.0,
+            raising_id,
+        ));
+    }
     let sequence = engine.orders.sequence_manager.launch_element(element);
     engine
         .orders
@@ -1566,11 +1580,67 @@ fn corpse_exit_initialization_fixture(
 }
 
 #[test]
+fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+
+    let (mut engine, carrier, body, _) =
+        corpse_exit_initialization_fixture(false, Command::EnterSwordfight);
+
+    assert_eq!(
+        engine.get_entity(carrier).unwrap().posture(),
+        Posture::CarryingCorpse
+    );
+    assert_eq!(engine.get_entity(body).unwrap().posture(), Posture::Carried);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(carrier)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionCarryingCorpseWaitingUpright),
+        "translation frame must retain the registered corpse-exit owner"
+    );
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+
+    let carrier_entity = engine.get_entity(carrier).unwrap();
+    assert_eq!(carrier_entity.posture(), Posture::Upright);
+    assert_eq!(carrier_entity.pc_data().unwrap().carried, None);
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.posture(), Posture::Lying);
+    assert_eq!(body_entity.human_data().unwrap().carrier, None);
+    assert!(!body_entity.actor_data().unwrap().execution_frozen);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(carrier)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionRaisingSword),
+        "first Execute must terminate the corpse-exit prefix and expose the sword order"
+    );
+    assert_eq!(
+        carrier_entity
+            .actor_data()
+            .unwrap()
+            .installed_order
+            .map(|order| order.order_type),
+        Some(OrderType::TransitionRaisingSword),
+        "DoNextOrder must publish the successor in the same owner boundary"
+    );
+}
+
+#[test]
 fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
     use crate::movement::AbilityKind;
     use crate::order::OrderType;
 
-    let (mut engine, carrier, body, _) = corpse_exit_initialization_fixture(false);
+    let (mut engine, carrier, body, _) =
+        corpse_exit_initialization_fixture(false, crate::element::Command::WhistleCmd);
     let body_position = engine
         .get_entity(body)
         .unwrap()
@@ -1630,7 +1700,8 @@ fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
 fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
     use crate::movement::AbilityKind;
 
-    let (mut engine, carrier, body, _) = corpse_exit_initialization_fixture(true);
+    let (mut engine, carrier, body, _) =
+        corpse_exit_initialization_fixture(true, crate::element::Command::WhistleCmd);
     assert_eq!(
         engine
             .get_entity(carrier)

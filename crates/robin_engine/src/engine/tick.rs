@@ -4032,14 +4032,40 @@ impl EngineInner {
                             entity_id,
                             selected_order,
                         );
+                        // PC::Execute handles the carrying-corpse exit for an
+                        // ENTER_SWORDFIGHT before the default validity arm: on
+                        // the transition's first Execute it drops immediately
+                        // and returns TERMINATED (RHelementactorpc.cpp:
+                        // 4905-4917). Translation still has to register the
+                        // transition, so key this to the entry-latched order
+                        // rather than consuming it during GenerateTransition.
+                        let enter_swordfight_corpse_exit = selected_order_type
+                            == Some(
+                                crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
+                            )
+                            && self.world.entities.get(entity_id).is_some_and(|entity| {
+                                entity.is_pc()
+                                    && entity.actor_data().is_some_and(|actor| {
+                                        actor.execute_order_initialising && !actor.execution_frozen
+                                    })
+                            })
+                            && selected_order.is_some_and(|(seq_id, elem_idx, _)| {
+                                self.orders
+                                    .sequence_manager
+                                    .get_element(seq_id, elem_idx)
+                                    .is_some_and(|element| {
+                                        element.command == crate::element::Command::EnterSwordfight
+                                    })
+                            });
                         // Human/PC validity belongs to the live Execute entry,
                         // after Actor::Hourglass has established mbNewOrder for
                         // this exact selected order. Earlier actor callbacks may
                         // replace the selected order in the same owner walk, so
                         // sampling in a global pre-pass would validate stale work.
-                        let validity_short_circuited =
-                            self.pre_tick_human_execute_validity_for(assets, entity_id);
+                        let validity_short_circuited = !enter_swordfight_corpse_exit
+                            && self.pre_tick_human_execute_validity_for(assets, entity_id);
                         if !validity_short_circuited
+                            && !enter_swordfight_corpse_exit
                             && selected_order_type
                                 == Some(
                                     crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
@@ -4320,6 +4346,33 @@ impl EngineInner {
                                 || beggar_selection.is_some()
                             {
                                 (Vec::new(), Default::default(), None)
+                            } else if enter_swordfight_corpse_exit {
+                                let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
+                                    panic!(
+                                        "ENTER_SWORDFIGHT corpse-exit Execute lost its entry order"
+                                    )
+                                });
+                                self.world
+                                    .entities
+                                    .get(entity_id)
+                                    .and_then(Entity::pc_data)
+                                    .and_then(|pc| pc.carried)
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "ENTER_SWORDFIGHT corpse-exit Execute owner {entity_id:?} has no carried body"
+                                        )
+                                    });
+                                self.force_drop_carried_corpse_instant(entity_id);
+                                (
+                                    Vec::new(),
+                                    Default::default(),
+                                    Some(super::animation::ActorExecuteResult {
+                                        order_type: crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
+                                        entry_seq_id: seq_id,
+                                        entry_elem_idx: elem_idx,
+                                        motion: crate::sprite::MotionState::Terminated,
+                                    }),
+                                )
                             } else if selected_order_type == Some(crate::order::OrderType::Rolling)
                             {
                                 self.tick_rolling_owner(sim, assets, entity_id)
