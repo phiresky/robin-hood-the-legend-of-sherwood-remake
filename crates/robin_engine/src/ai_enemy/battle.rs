@@ -4852,7 +4852,7 @@ mod tests {
         // target can lie just outside that 500-unit decision snapshot.
         let tick = AiPerTickData::stub();
 
-        assert!(ai.execute_battle_decision(
+        assert!(!ai.execute_battle_decision(
             &sim,
             Decision::Observe,
             Substate::AttackingReactiontimeRunning,
@@ -4864,26 +4864,32 @@ mod tests {
             None,
         ));
 
-        let prefix = ai
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .find_map(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => {
-                    notification.actor_effects_before_callback.as_ref()
-                }
-                _ => None,
-            })
-            .expect("Observe SetState must capture StopAll and GoNear");
-        assert!(prefix.halt);
-        assert_eq!(prefix.orders.len(), 1);
+        let [
+            crate::ai::AiOwnerWork::ActorEffects(route),
+            crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                target,
+                target_position: queued_target_position,
+            },
+        ] = ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!(
+                "routed Observe must settle movement before resuming its source-ordered tail: {:?}",
+                ai.base.outbox.reentrant.owner_work
+            );
+        };
+        assert!(route.halt);
+        assert_eq!(route.orders.len(), 1);
         assert_eq!(
-            prefix.orders[0].order_type,
+            route.orders[0].order_type,
             crate::order::OrderType::WalkingUpright
         );
+        assert_eq!(*target, 198);
+        assert_eq!(*queued_target_position, target_position);
+        assert!(ai.base.outbox.reentrant.battle_observe_completion_pending);
         assert!(ai.base.outbox.actor.orders.is_empty());
+        // `battle_observe_route_settles_before_source_ordered_tail` exercises
+        // the engine drain that consumes this continuation and performs the
+        // following SetState callback at Original's synchronous boundary.
     }
 
     fn proud_decision_speech(
