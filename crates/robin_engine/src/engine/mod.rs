@@ -361,6 +361,7 @@ impl EngineInner {
     /// an unresolved entry exists only in `pending_exclamations`.  Later
     /// requests for the same actor must retain their list order.
     pub(super) fn cancel_exclamation_callbacks(&mut self, actor_id: u32) {
+        self.debug_speech_lifecycle(actor_id, "cancel_callbacks_enter", "StopExclamation");
         let sound = &mut self.feedback.sound_sim;
         if let Some(index) = sound
             .playing_exclamations
@@ -368,6 +369,11 @@ impl EngineInner {
             .position(|playing| playing.actor_id == actor_id)
         {
             sound.playing_exclamations.remove(index);
+            self.debug_speech_lifecycle(
+                actor_id,
+                "cancel_callbacks_playing_removed",
+                "StopExclamation",
+            );
             return;
         }
 
@@ -376,6 +382,7 @@ impl EngineInner {
             .iter()
             .position(|pending| pending.actor_id == actor_id)
         else {
+            self.debug_speech_lifecycle(actor_id, "cancel_callbacks_no_pending", "StopExclamation");
             return;
         };
         let pending = sound.pending_exclamations.remove(index);
@@ -391,6 +398,11 @@ impl EngineInner {
         }) {
             sound.resolved_exclamations.remove(index);
         }
+        self.debug_speech_lifecycle(
+            actor_id,
+            "cancel_callbacks_pending_removed",
+            "StopExclamation",
+        );
     }
 
     pub(crate) fn engine_locked(&self) -> bool {

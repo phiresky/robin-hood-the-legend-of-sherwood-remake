@@ -161,6 +161,39 @@ fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugCo
 }
 
 #[derive(Debug)]
+struct SpeechLifecycleDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    actor: Option<u32>,
+}
+
+fn speech_lifecycle_debug_config() -> &'static SpeechLifecycleDebugConfig {
+    static CONFIG: std::sync::OnceLock<SpeechLifecycleDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_SPEECH_LIFECYCLE").is_some();
+        if !enabled {
+            return SpeechLifecycleDebugConfig {
+                enabled: false,
+                frame: None,
+                actor: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for SPEECHLIFE diagnostic: {error}")
+                })
+            })
+        };
+        SpeechLifecycleDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_FRAME"),
+            actor: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_ACTOR"),
+        }
+    })
+}
+
+#[derive(Debug)]
 struct PatrolTurnLifecycleDebugConfig {
     enabled: bool,
     frame: Option<u32>,
@@ -6434,6 +6467,46 @@ impl EngineInner {
 
     // ─── Owner-local NPC speech ─────────────────────────────────
 
+    pub(super) fn debug_speech_lifecycle(
+        &self,
+        actor_id: u32,
+        phase: &str,
+        detail: impl std::fmt::Debug,
+    ) {
+        let config = speech_lifecycle_debug_config();
+        if !config.enabled {
+            return;
+        }
+        let frame = self.control.frame_counter;
+        if !config.frame.is_none_or(|expected| expected == frame)
+            || !config.actor.is_none_or(|expected| expected == actor_id)
+        {
+            return;
+        }
+        let sound = &self.feedback.sound_sim;
+        let pending = sound
+            .pending_exclamations
+            .iter()
+            .filter(|item| item.actor_id == actor_id)
+            .map(|item| (item.exclamation_id, item.profile_id, item.variant))
+            .collect::<Vec<_>>();
+        let playing = sound
+            .playing_exclamations
+            .iter()
+            .filter(|item| item.actor_id == actor_id)
+            .map(|item| (item.exclamation_id, item.finish_frame))
+            .collect::<Vec<_>>();
+        let resolved = sound
+            .resolved_exclamations
+            .iter()
+            .filter(|item| item.actor_id == actor_id)
+            .map(|item| (item.exclamation_id, item.identifier, item.duration_frames))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "SPEECHLIFE frame={frame} actor={actor_id} phase={phase} detail={detail:?} pending={pending:?} playing={playing:?} resolved={resolved:?}"
+        );
+    }
+
     fn speech_finished_stimulus(flags: crate::ai::SpeechFlags) -> Option<StimulusType> {
         use crate::ai::SpeechFlags;
         if flags.contains(SpeechFlags::MYTALK_1) {
@@ -6488,6 +6561,11 @@ impl EngineInner {
         } else {
             false
         };
+        self.debug_speech_lifecycle(
+            owner.index(),
+            "attempt_rejected",
+            (reason, flags.bits(), invoke_finished_callback),
+        );
         NpcSpeechSettlement {
             invoke_finished_callback,
             category_rejection: None,
@@ -6512,6 +6590,11 @@ impl EngineInner {
         use crate::sound::ExclamationGroup;
 
         let flags = SpeechFlags::from_bits_truncate(attempt.flags);
+        self.debug_speech_lifecycle(
+            owner.index(),
+            "attempt_enter",
+            (attempt.remark, attempt.flags),
+        );
         #[derive(Clone, Copy)]
         enum OwnerProfile {
             Soldier(crate::profiles::SoldierProfileIdx),
@@ -6689,6 +6772,11 @@ impl EngineInner {
 
         if active_remark != Remark::TheSoundOfSilence {
             if flags.contains(SpeechFlags::EMERGENCY) {
+                self.debug_speech_lifecycle(
+                    owner.index(),
+                    "emergency_cancel_before",
+                    (attempt.remark, attempt.flags),
+                );
                 self.feedback
                     .pending_side_effects
                     .sounds
@@ -6696,6 +6784,11 @@ impl EngineInner {
                 // StopExclamation removes the old pending/playing line without
                 // calling SoundIsFinished, so its MYTALK callback is discarded.
                 self.cancel_exclamation_callbacks(owner.index());
+                self.debug_speech_lifecycle(
+                    owner.index(),
+                    "emergency_cancel_after",
+                    (attempt.remark, attempt.flags),
+                );
             } else {
                 return self.reject_npc_speech_attempt(owner, flags, 4);
             }
@@ -6821,6 +6914,16 @@ impl EngineInner {
                     } else {
                         false
                     };
+                self.debug_speech_lifecycle(
+                    owner.index(),
+                    "attempt_category_rejected",
+                    (
+                        reason,
+                        attempt.remark,
+                        attempt.flags,
+                        invoke_finished_callback,
+                    ),
+                );
                 return NpcSpeechSettlement {
                     invoke_finished_callback,
                     category_rejection: Some(CategorySpeechRejectionFinalization {
@@ -6850,6 +6953,17 @@ impl EngineInner {
                     exclamation_id,
                     variant,
                 });
+            self.debug_speech_lifecycle(
+                owner.index(),
+                "attempt_accepted",
+                (
+                    attempt.remark,
+                    attempt.flags,
+                    exclamation_id,
+                    speech_id,
+                    variant,
+                ),
+            );
         }
 
         self.ai.global.screen_remarks.push(crate::ai::ScreenRemark {

@@ -2279,6 +2279,15 @@ impl EngineInner {
         self.settle_npc_speech_completions(sim, assets);
         let resolutions = std::mem::take(&mut self.feedback.sound_sim.resolved_exclamations);
         for resolution in resolutions {
+            self.debug_speech_lifecycle(
+                resolution.actor_id,
+                "resolution_enter",
+                (
+                    resolution.exclamation_id,
+                    resolution.identifier,
+                    resolution.duration_frames,
+                ),
+            );
             let pending = self
                 .feedback
                 .sound_sim

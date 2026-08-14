@@ -105,6 +105,11 @@ impl EngineInner {
                         base.current_remark != crate::ai::Remark::TheSoundOfSilence
                     });
                 if was_speaking {
+                    self.debug_speech_lifecycle(
+                        entity_id.index(),
+                        "unconscious_cancel_before",
+                        "say_ouch",
+                    );
                     self.feedback.pending_side_effects.sounds.push(
                         super::SoundCommand::StopExclamation {
                             actor_id: entity_id,
@@ -121,6 +126,11 @@ impl EngineInner {
                     base.current_remark = crate::ai::Remark::TheSoundOfSilence;
                     base.current_remark_flags = 0;
                     self.cancel_exclamation_callbacks(entity_id.index());
+                    self.debug_speech_lifecycle(
+                        entity_id.index(),
+                        "unconscious_cancel_after",
+                        "say_ouch",
+                    );
                 }
             }
             return;
