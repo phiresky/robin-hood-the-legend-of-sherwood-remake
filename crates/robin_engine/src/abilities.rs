@@ -3182,8 +3182,9 @@ mod tests {
             vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
         conversion[OrderType::BeingCarriedPeasantC as usize] = 100;
         body.element.sprite.conversion = std::sync::Arc::new(conversion);
-        body.element.sprite.scripts =
-            std::sync::Arc::new(vec![crate::sprite_script::SpriteScript::default(); 116]);
+        let mut scripts = vec![crate::sprite_script::SpriteScript::default(); 116];
+        scripts[104].frame_ids = vec![0, 1, 2, 3];
+        body.element.sprite.scripts = std::sync::Arc::new(scripts);
         body.element.sprite.force_sprite_row_raw(104);
         body.element.sprite.last_action = OrderType::BeingCarriedPeasantC;
         entities.push(Some(Entity::Pc(carrier)));
@@ -3273,8 +3274,9 @@ mod tests {
             let mut conversion = (*sprite.conversion).clone();
             conversion[OrderType::BeingLiftedPeasantC as usize] = 200;
             sprite.conversion = std::sync::Arc::new(conversion);
-            sprite.scripts =
-                std::sync::Arc::new(vec![crate::sprite_script::SpriteScript::default(); 216]);
+            let mut scripts = vec![crate::sprite_script::SpriteScript::default(); 216];
+            scripts[204].frame_ids = vec![0, 1, 2, 3];
+            sprite.scripts = std::sync::Arc::new(scripts);
         }
 
         sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
