@@ -204,3 +204,10 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_
 # Corpus integrity: capture ends at ordinary frame 85815 with no rng_suffix
 # terminator despite a completion marker; retire pending clean recapture.
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/ExQuickSave/replay-006-session-0001.jsonl.zst
+# Original sprite timing UB: these captures reach a live two-frame strike row
+# whose initialized action-done frame is UWORD_MAX. Original
+# GetFramesFromNowTillActionDone then performs unchecked wait-time reads for
+# frame indices 2..65534 (RHsprite.cpp:706-718, 1237-1263, 4428-4432). Rust
+# intentionally fails safely instead of reproducing the out-of-bounds reads.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-007-session-0001.jsonl.zst
