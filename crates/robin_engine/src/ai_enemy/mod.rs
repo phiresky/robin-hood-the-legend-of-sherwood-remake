@@ -2461,16 +2461,16 @@ fn detects_180_degrees(viewer: &Viewer180, target: HumanHandle, ctx: &AiContext)
     let viewer_eye_z = viewer.eye_z;
     // ComputeDetectionPoint starts from the raw element position. The
     // AI-facing `view.position` may be a substituted door endpoint/carrier.
-    let target_detection_xy = crate::stealth::detection_point_xy(
-        view.detection_position,
+    let target_detection_world = crate::stealth::detection_point_world(
+        view.detection_position_world,
         view.posture,
         view.direction as i16,
+        view.is_rider,
     );
-    let target_detection_z =
-        view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+    let target_detection_z = target_detection_world.z;
     let viewer_eye_ground = viewer.eye_ground;
     let target_detection_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
+        crate::coordinates::GroundPoint::new(target_detection_world.x, target_detection_world.y);
 
     // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
     // on the Y component), from viewer eye to target detection point.
@@ -5080,6 +5080,59 @@ mod tests {
         };
 
         assert!(ai.is_detecting_180_degrees(2, &ctx));
+    }
+
+    #[test]
+    fn detection_180_los_uses_stored_world_point_without_projection_round_trip() {
+        let ai = EnemyAi::new(1);
+        let mut viewer = soldier_view(test_position(1373.0, 595.0));
+        viewer.direction = 4;
+
+        // These are representative moving-actor coordinates where
+        // `(world_y - z) + z` rounds one ULP away from the stored world Y.
+        // Original passes ComputeDetectionPoint's stored 3D point verbatim
+        // to FastFindGrid::IsReachable.
+        let raw = crate::coordinates::WorldPoint3D::new(
+            1555.961_5,
+            f32::from_bits(1_143_810_793),
+            46.786_65,
+        );
+        let mut target = soldier_view(test_position(raw.x, raw.y - raw.z));
+        target.detection_position = MapPoint::from_world_xyz(raw.x, raw.y, raw.z);
+        target.detection_position_world = raw;
+        target.elevation = raw.z;
+        assert_ne!(
+            (target.detection_position.y + target.elevation).to_bits(),
+            raw.y.to_bits(),
+            "fixture must distinguish projection round-trip Y from stored world Y"
+        );
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, viewer);
+        views.insert(2, target);
+        let ctx = AiContext {
+            direction: 4,
+            self_eye_position: MapPoint::new(1373.0, 595.0),
+            self_eye_z: 45.0,
+            elevation: 45.0,
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            self_view_direction: [1.0, 0.0],
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(ai.is_detecting_180_degrees(2, &ctx));
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].destination[0].to_bits(), raw.x.to_bits());
+        assert_eq!(queries[0].destination[1].to_bits(), raw.y.to_bits());
+        assert_eq!(
+            queries[0].destination[2].to_bits(),
+            (raw.z + crate::stealth::detection_z_for_posture(Posture::Upright, false)).to_bits()
+        );
     }
 
     #[test]
