@@ -4,6 +4,23 @@
 
 use super::*;
 
+fn good_strike_lifecycle_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_some()
+}
+
+fn good_strike_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool {
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for GOOD_STRIKE diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_GOOD_STRIKE_FRAME").is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER")
+            .is_none_or(|expected| expected == creation_order)
+}
+
 /// Match `SBGeoVector2D::operator*=(30.0 / vtFlight.Norm())` for FallingHit's
 /// sector vectors and live antagonist deltas. The vector's squared sum is
 /// stored as `GEOTYPE` (`f32`), while `sqrt` and the unsuffixed `30.0`
@@ -1012,6 +1029,41 @@ impl EngineInner {
             if soldier_attacker
                 && let (Some(atk_id), Some(stimulus_type)) = (attacker_id, stimulus_type)
             {
+                if stimulus_type == crate::ai::StimulusType::EventGoodStrike
+                    && good_strike_lifecycle_debug_enabled()
+                {
+                    let creation_order = self.world.original_creation_order(atk_id);
+                    if good_strike_lifecycle_debug_matches(
+                        self.control.frame_counter,
+                        creation_order,
+                    ) {
+                        let attacker = self
+                            .get_entity(atk_id)
+                            .unwrap_or_else(|| panic!("GOOD_STRIKE attacker {atk_id:?} vanished"));
+                        let enemy = attacker.enemy_ai().unwrap_or_else(|| {
+                            panic!("GOOD_STRIKE attacker {atk_id:?} has no enemy AI")
+                        });
+                        let victim = self
+                            .get_entity(victim_id)
+                            .unwrap_or_else(|| panic!("GOOD_STRIKE victim {victim_id:?} vanished"));
+                        eprintln!(
+                            "[GOOD_STRIKE frame={} owner={} owner_co={} phase=translate_before_dispatch victim={} result={:?} victim_dead={} victim_unconscious={} victim_posture={:?} owner_state={:?} owner_substate={:?} owner_installed_order={:?}]",
+                            self.control.frame_counter,
+                            atk_id.index(),
+                            creation_order,
+                            victim_id.index(),
+                            result,
+                            victim_died,
+                            victim.human_data().is_some_and(|human| human.unconscious),
+                            victim.element_data().posture,
+                            enemy.base.current_state,
+                            enemy.base.current_substate,
+                            attacker
+                                .actor_data()
+                                .and_then(|actor| actor.installed_order),
+                        );
+                    }
+                }
                 self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
                 self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets, None, None);
             }

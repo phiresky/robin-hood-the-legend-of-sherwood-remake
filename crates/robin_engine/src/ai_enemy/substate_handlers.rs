@@ -7043,6 +7043,16 @@ impl EnemyAi {
             }
             StimulusType::EventTimer => {
                 // Re-evaluate: normally shoot at primary target.
+                if super::them_lifecycle_debug_matches(ctx) {
+                    eprintln!(
+                        "[THEM frame={} co={:?} me={} phase=timer_entry state={:?} substate={:?} route=bow_behind_shield]",
+                        ctx.frame,
+                        ctx.original_creation_order,
+                        self.base.me,
+                        self.base.current_state,
+                        self.base.current_substate,
+                    );
+                }
                 self.reinitialize_them_list(ctx, tick);
                 self.battle_decisions(sim, global, ctx, tick, grid);
             }
@@ -7102,6 +7112,16 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
+            if super::them_lifecycle_debug_matches(ctx) {
+                eprintln!(
+                    "[THEM frame={} co={:?} me={} phase=timer_entry state={:?} substate={:?} route=officer_orders_waiting]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    self.base.current_state,
+                    self.base.current_substate,
+                );
+            }
             self.reinitialize_them_list(ctx, tick);
             self.battle_decisions(sim, global, ctx, tick, grid);
         }

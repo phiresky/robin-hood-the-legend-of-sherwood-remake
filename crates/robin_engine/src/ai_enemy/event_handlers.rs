@@ -12,6 +12,22 @@ use crate::parameters_ai;
 use super::util::{ai_max_norm_distance, ai_square_distance, enemy_is_below_me};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
+fn good_strike_lifecycle_debug_matches(ctx: &AiContext) -> bool {
+    if std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for GOOD_STRIKE diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_GOOD_STRIKE_FRAME").is_none_or(|expected| expected == ctx.frame)
+        && parse_filter("PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER")
+            .is_none_or(|expected| ctx.original_creation_order == Some(expected))
+}
+
 impl EnemyAi {
     /// Standard "I see the friend I was looking for" reaction.
     ///
@@ -926,13 +942,34 @@ impl EnemyAi {
             // Special-strike gloating remark. Original guards on the
             // observable special-strike substate.
             StimulusType::EventGoodStrike => {
-                if self.base.current_substate == Substate::AttackingSwordfightSpecialStrike {
+                let will_say =
+                    self.base.current_substate == Substate::AttackingSwordfightSpecialStrike;
+                let debug = good_strike_lifecycle_debug_matches(ctx);
+                if debug {
+                    eprintln!(
+                        "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=think_entry state={:?} substate={:?} will_say={} vip={}]",
+                        ctx.frame,
+                        self.base.me,
+                        ctx.original_creation_order,
+                        self.base.current_state,
+                        self.base.current_substate,
+                        will_say,
+                        self.is_vip,
+                    );
+                }
+                if will_say {
                     let remark = if self.is_vip {
                         Remark::VipGoodStrikeCombat
                     } else {
                         Remark::GoodStrikeCombat
                     };
                     self.base.say(remark);
+                    if debug {
+                        eprintln!(
+                            "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=say_queued remark={:?}]",
+                            ctx.frame, self.base.me, ctx.original_creation_order, remark,
+                        );
+                    }
                 }
             }
             // Kill remark.
