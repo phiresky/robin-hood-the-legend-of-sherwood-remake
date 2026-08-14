@@ -1470,7 +1470,8 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     assert_eq!(carried_entity.element_data().direction(), 9);
     assert_eq!(
         i16::from(carried_entity.position_iface().get_direction_goal()),
-        13
+        9,
+        "DropCorpse SetDirectionInstantly must not restore the carrier's distinct facing as a goal"
     );
     let (_, _, selected) = engine
         .orders

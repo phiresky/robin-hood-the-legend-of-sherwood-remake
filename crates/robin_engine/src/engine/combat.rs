@@ -2497,6 +2497,12 @@ mod tests {
             target.element_data().position().z.to_bits(),
             plane.compute_z(120.0, 240.0).to_bits()
         );
+        assert_eq!(target.element_data().direction(), 0);
+        assert_eq!(
+            i16::from(target.position_iface().get_direction_goal()),
+            0,
+            "SetDirectionInstantly must leave both corpse direction latches at carrier + 12"
+        );
     }
 
     #[test]
@@ -3771,7 +3777,6 @@ impl EngineInner {
                 }
             }
             elem.set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
-            elem.set_direction_goal(carrier_direction as i16);
             if let Some(human) = target.human_data_mut() {
                 human.carrier = None;
             }
