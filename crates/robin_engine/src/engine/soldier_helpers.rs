@@ -41,6 +41,41 @@ fn damage_parry_handoff_debug_config() -> Option<&'static DamageParryHandoffDebu
         .as_ref()
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum AttentiveModeCaller {
+    AiOwnerEffect,
+    StateChangeCallback,
+    ConsoleCheat,
+    Unclassified,
+}
+
+struct AttentiveModeCallerDebugConfig {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn attentive_mode_caller_debug_config() -> Option<&'static AttentiveModeCallerDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<AttentiveModeCallerDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_ATTENTIVE_MODE_CALLER")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when attentive-mode caller debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for attentive-mode caller diagnostic: {error}")
+                })
+            };
+            Some(AttentiveModeCallerDebugConfig {
+                frame: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_FRAME"),
+                creation_order: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_CREATION_ORDER"),
+            })
+        })
+        .as_ref()
+}
+
 fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
     if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
         return false;
@@ -285,6 +320,29 @@ impl EngineInner {
         target: bool,
         fast_variant: bool,
     ) {
+        self.set_soldier_attentive_mode_from(
+            entity_id,
+            target,
+            fast_variant,
+            AttentiveModeCaller::Unclassified,
+        );
+    }
+
+    pub(crate) fn set_soldier_attentive_mode_from(
+        &mut self,
+        entity_id: EntityId,
+        target: bool,
+        fast_variant: bool,
+        caller: AttentiveModeCaller,
+    ) {
+        // Keep the diagnostic master/frame gates ahead of every added entity
+        // or creation-order read. Normal behavior below retains its original
+        // reads and control flow when the diagnostic is disabled.
+        let debug_creation_order = attentive_mode_caller_debug_config().and_then(|config| {
+            (self.control.frame_counter == config.frame)
+                .then(|| self.world.original_creation_order(entity_id))
+                .filter(|creation_order| *creation_order == config.creation_order)
+        });
         let (will_be_attentive, has_officer_anim) = match self.world.entities.get(entity_id) {
             Some(Entity::Soldier(s)) => (
                 s.npc
@@ -299,7 +357,37 @@ impl EngineInner {
             _ => return,
         };
 
+        if let Some(creation_order) = debug_creation_order {
+            let attentive = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::enemy_ai)
+                .expect("attentive-mode caller diagnostic target lost enemy AI")
+                .attentive;
+            eprintln!(
+                "ATTENTIVE_MODE_CALLER frame={} owner={} creation_order={} phase=before caller={caller:?} target={target} fast_variant={fast_variant} attentive={attentive} will_be_attentive={will_be_attentive}",
+                self.control.frame_counter,
+                entity_id.index(),
+                creation_order,
+            );
+        }
+
         if target == will_be_attentive {
+            if let Some(creation_order) = debug_creation_order {
+                eprintln!(
+                    "ATTENTIVE_MODE_CALLER frame={} owner={} creation_order={} phase=after caller={caller:?} target={target} launched_sequence=None attentive={} will_be_attentive={will_be_attentive}",
+                    self.control.frame_counter,
+                    entity_id.index(),
+                    creation_order,
+                    self.world
+                        .entities
+                        .get(entity_id)
+                        .and_then(Entity::enemy_ai)
+                        .expect("attentive-mode caller diagnostic target lost enemy AI")
+                        .attentive,
+                );
+            }
             return;
         }
 
@@ -311,12 +399,30 @@ impl EngineInner {
             Command::LeaveAttentiveMode
         };
 
-        self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
+        let launched_sequence =
+            self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
 
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id)
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()
         {
             enemy.will_be_attentive = target;
+        }
+        if let Some(creation_order) = debug_creation_order {
+            let enemy = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::enemy_ai)
+                .expect("attentive-mode caller diagnostic target lost enemy AI");
+            eprintln!(
+                "ATTENTIVE_MODE_CALLER frame={} owner={} creation_order={} phase=after caller={caller:?} target={target} launched_sequence={} attentive={} will_be_attentive={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                creation_order,
+                launched_sequence.0,
+                enemy.attentive,
+                enemy.will_be_attentive,
+            );
         }
     }
 

@@ -3387,7 +3387,12 @@ impl EngineInner {
         // manager Hourglass after every actor's Hourglass has completed
         // (RHelementactorsoldier.cpp:2082-2114,
         // RHsequence.cpp:235-287, RHengine.cpp:3737-3746).
-        self.set_soldier_attentive_mode(owner, request.target, request.fast_officer_variant);
+        self.set_soldier_attentive_mode_from(
+            owner,
+            request.target,
+            request.fast_officer_variant,
+            crate::engine::soldier_helpers::AttentiveModeCaller::StateChangeCallback,
+        );
         if request.forget_after
             && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(owner)
             && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()

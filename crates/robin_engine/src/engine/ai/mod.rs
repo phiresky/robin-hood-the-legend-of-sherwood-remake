@@ -8049,7 +8049,12 @@ impl EngineInner {
             take
         };
         if let Some(request) = attentive_request {
-            self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
+            self.set_soldier_attentive_mode_from(
+                npc_id,
+                request.target,
+                request.fast_officer_variant,
+                crate::engine::soldier_helpers::AttentiveModeCaller::AiOwnerEffect,
+            );
             if request.forget_after
                 && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
                 && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
