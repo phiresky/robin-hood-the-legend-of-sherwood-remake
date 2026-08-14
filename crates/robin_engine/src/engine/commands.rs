@@ -1665,7 +1665,9 @@ impl EngineInner {
             })
             .unwrap_or_default();
 
-        for step in steps {
+        let step_count = steps.len();
+        let mut posture_recovery_embedded = false;
+        for (step_index, step) in steps.into_iter().enumerate() {
             let cmd = match step.replay {
                 crate::macro_store::QaReplayCommand::Move {
                     destination,
@@ -1858,7 +1860,36 @@ impl EngineInner {
                     continue;
                 }
             };
-            self.apply_command(sim, display, input, assets, &cmd);
+            // Original StartQuickAction clones the recorded elements into a
+            // single sequence and appends posture recovery to that sequence
+            // before launching it.  Keep the final TakeCorpse interaction
+            // and its recovery in the same route: a standalone recovery is a
+            // competing root and can otherwise win arbitration first.
+            // TODO(parity): coalesce every modern QuickActionStep variant
+            // into one Original-shaped action/post-seek sequence.  Those
+            // variants currently dispatch through heterogeneous builders
+            // with command-specific side effects, so only the source-proven
+            // final TakeCorpse shape is embedded here.
+            if step_index + 1 == step_count
+                && let PlayerCommand::LaunchInteraction {
+                    actor,
+                    target,
+                    command: Command::TakeCorpse,
+                    running,
+                } = &cmd
+            {
+                self.apply_interaction_with_seek_and_recovery(
+                    sim,
+                    *actor,
+                    *target,
+                    Command::TakeCorpse,
+                    *running,
+                    true,
+                );
+                posture_recovery_embedded = true;
+            } else {
+                self.apply_command(sim, display, input, assets, &cmd);
+            }
         }
 
         // Tack a posture-restoration element (EquipBow / CrouchDown /
@@ -1879,10 +1910,12 @@ impl EngineInner {
         //     and produces a single bare element keyed off the PC's
         //     current posture / action_state — which is the right
         //     element to launch into the actor's queue post-replay.
-        let mut recovery = crate::sequence::Sequence::default();
-        self.append_posture_recovery(pc, &mut recovery);
-        if !recovery.elements.is_empty() {
-            self.launch_sequence(recovery);
+        if !posture_recovery_embedded {
+            let mut recovery = crate::sequence::Sequence::default();
+            self.append_posture_recovery(pc, &mut recovery);
+            if !recovery.elements.is_empty() {
+                self.launch_sequence(recovery);
+            }
         }
 
         // Post-seek continuation is now ported via
@@ -2363,6 +2396,20 @@ impl EngineInner {
         command: Command,
         running: bool,
     ) {
+        self.apply_interaction_with_seek_and_recovery(sim, actor, target, command, running, false);
+    }
+
+    /// Build the ordinary interaction route, optionally retaining quick-action
+    /// posture recovery in the same sequence as the recorded interaction.
+    fn apply_interaction_with_seek_and_recovery(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+        append_posture_recovery: bool,
+    ) {
         // Ranged actions bypass the seek entirely: the actor fires or
         // throws from wherever it stands.  This mirrors the original
         // bow click path, which launches RHCOMMAND_SHOOT_BOW directly.
@@ -2590,6 +2637,9 @@ impl EngineInner {
             interaction.command_level = 1;
             let mut post_seek = Sequence::new();
             post_seek.append_element(interaction);
+            if append_posture_recovery {
+                self.append_posture_recovery(actor, &mut post_seek);
+            }
             if let SequenceElementData::Movement {
                 post_seek_sequence, ..
             } = &mut seek.data
@@ -2608,6 +2658,9 @@ impl EngineInner {
             // it until SequenceManager::Hourglass at the end of the frame.
             let mut seq = Sequence::new();
             seq.append_element(interaction);
+            if append_posture_recovery {
+                self.append_posture_recovery(actor, &mut seq);
+            }
             self.launch_sequence(seq);
         }
     }
@@ -4737,6 +4790,171 @@ mod tests {
         element.sprite = sprite;
         element.set_position_map(position);
         element.set_direction_instantly(direction);
+    }
+
+    fn setup_take_corpse_macro_scene(
+        target_x: f32,
+    ) -> (EngineInner, LevelAssets, EntityId, EntityId) {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let sector = crate::position_interface::SectorHandle::new(1);
+        {
+            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc.element_data_mut().posture = Posture::HelpingToClimb;
+            pc.element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+            pc.element_data_mut().set_sector(sector);
+        }
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::TransitionWaitingUprightCarryingCorpse,
+            crate::coordinates::SpriteLocalPoint::new(25.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+        engine
+            .get_entity_mut(pc_id)
+            .expect("test PC exists after sprite binding")
+            .element_data_mut()
+            .set_sector(sector);
+
+        let mut corpse = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Lying,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        corpse
+            .element
+            .set_position_map(crate::coordinates::MapPoint::new(target_x, 100.0));
+        corpse.element.set_sector(sector);
+        let corpse_id = engine.add_entity(Entity::Pc(corpse));
+
+        let state = engine.players.macro_store.get_or_insert(pc_id);
+        state.begin_recording(0);
+        state.append_if_recording(QuickActionStep {
+            action: Action::NoAction,
+            position: crate::coordinates::MapPoint::new(target_x, 100.0),
+            replay: QaReplayCommand::Interaction {
+                target: corpse_id,
+                command: Command::TakeCorpse,
+                double_click: false,
+            },
+        });
+        state.stop_recording();
+
+        (engine, assets, pc_id, corpse_id)
+    }
+
+    fn start_macro(engine: &mut EngineInner, assets: &LevelAssets, pc_id: EntityId) {
+        let sim = crate::sim_rng::test_context();
+        engine.apply_command(
+            &sim,
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+    }
+
+    #[test]
+    fn take_corpse_macro_embeds_helping_recovery_after_near_interaction() {
+        let (mut engine, assets, pc_id, _corpse_id) = setup_take_corpse_macro_scene(110.0);
+
+        start_macro(&mut engine, &assets, pc_id);
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("macro launches one interaction route");
+        let commands: Vec<_> = sequence
+            .elements
+            .iter()
+            .map(|element| element.command)
+            .collect();
+        assert_eq!(
+            commands,
+            [Command::TakeCorpse, Command::EnterHelpingClimb],
+            "Original StartQuickAction appends posture recovery to the recorded sequence"
+        );
+        assert_eq!(sequence.elements[0].command_level, 1);
+        assert_eq!(sequence.elements[1].command_level, 2);
+    }
+
+    #[test]
+    fn take_corpse_macro_embeds_helping_recovery_in_far_post_seek() {
+        let (mut engine, assets, pc_id, _corpse_id) = setup_take_corpse_macro_scene(180.0);
+
+        start_macro(&mut engine, &assets, pc_id);
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("macro launches one seek route");
+        let seek = sequence.get(0).expect("route begins with Seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            post_seek_sequence, ..
+        } = &seek.data
+        else {
+            panic!("TakeCorpse macro route must begin with movement");
+        };
+        let post_seek = post_seek_sequence
+            .as_deref()
+            .expect("TakeCorpse remains attached to Seek");
+        let commands: Vec<_> = post_seek
+            .elements
+            .iter()
+            .map(|element| element.command)
+            .collect();
+        assert_eq!(commands, [Command::TakeCorpse, Command::EnterHelpingClimb]);
+    }
+
+    #[test]
+    fn ordinary_take_corpse_does_not_add_macro_posture_recovery() {
+        let (mut engine, assets, pc_id, corpse_id) = setup_take_corpse_macro_scene(110.0);
+        engine
+            .players
+            .macro_store
+            .get_or_insert(pc_id)
+            .clear_slot(0);
+        let sim = crate::sim_rng::test_context();
+
+        engine.apply_command(
+            &sim,
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: corpse_id,
+                command: Command::TakeCorpse,
+                running: false,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("ordinary interaction launches one route");
+        assert_eq!(sequence.len(), 1);
+        assert_eq!(sequence.get(0).unwrap().command, Command::TakeCorpse);
     }
 
     fn setup_strangle_command_scene() -> (EngineInner, LevelAssets, EntityId, EntityId) {
