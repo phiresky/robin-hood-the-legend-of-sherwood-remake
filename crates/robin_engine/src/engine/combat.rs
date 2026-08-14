@@ -3934,6 +3934,30 @@ impl EngineInner {
         );
     }
 
+    /// Apply the gameplay half of PC::Execute's Listen-exit action message.
+    /// The caller has already installed the explicit Wait successor.
+    pub(super) fn apply_listen_done_action_handoff(&mut self, actor_id: EntityId) {
+        self.get_entity(actor_id)
+            .unwrap_or_else(|| panic!("ListenDone owner {actor_id:?} disappeared"))
+            .pc_data()
+            .unwrap_or_else(|| panic!("ListenDone owner {actor_id:?} is not a PC"));
+        if self.players.seats[0].selection.contains(&actor_id) {
+            self.orders
+                .messenger
+                .send(crate::messenger::Message::pc_with_value(
+                    crate::messenger::PcMessage::UnselectAction,
+                    Some(actor_id),
+                    crate::profiles::Action::Listen as u32,
+                ));
+            self.unselect_action(actor_id);
+        } else if let Some(pc) = self
+            .get_entity_mut(actor_id)
+            .and_then(crate::element::Entity::pc_data_mut)
+        {
+            pc.current_action = crate::profiles::Action::NoAction;
+        }
+    }
+
     /// Drive one actor's ability and apply its completion effects inline at
     /// that actor's creation-order position.
     #[allow(unused_variables)] // Done results retain owner identity; Terminated consumes it.
@@ -4891,16 +4915,13 @@ impl EngineInner {
                     // Hourglass: it must already be available when the exit
                     // transition terminates and sends its consolation card.
                     self.actor_wait(actor_id);
-                    // Exit transition animation finished.  Forward
-                    // PcMessage::UnselectAction(Listen) to clear the
-                    // HUD active state.
-                    self.orders
-                        .messenger
-                        .send(crate::messenger::Message::pc_with_value(
-                            crate::messenger::PcMessage::UnselectAction,
-                            Some(actor_id),
-                            crate::profiles::Action::Listen as u32,
-                        ));
+                    // Original branches immediately after Wait(): an
+                    // unselected PC only stores NOACTION, while a selected PC
+                    // synchronously forwards MSG_UNSELECT_ACTION(Listen).
+                    // Apply that message's gameplay half inline, before a
+                    // later input-boundary SelectPC can restitute the stale
+                    // Listen action and Stop() the just-postponed Wait.
+                    self.apply_listen_done_action_handoff(actor_id);
                     tracing::debug!(
                         actor = ?actor_id,
                         "Listen: exit transition done → Inactive, MSG_UNSELECT_ACTION sent"

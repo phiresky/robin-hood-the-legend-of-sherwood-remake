@@ -5860,6 +5860,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     });
     assets.profile_manager = std::sync::Arc::new(profiles);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.players.seats[0].selection.push(owner);
     let enter_seq =
         engine.launch_element(SequenceElement::new(1, Command::EnterListen, Some(owner)));
     let mut display = HostDisplayState::default();
@@ -5995,6 +5996,71 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
             .action_state,
         crate::element::ActionState::Waiting
     );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .current_action,
+        crate::profiles::Action::NoAction,
+        "selected Listen DONE must synchronously apply MSG_UNSELECT_ACTION"
+    );
+    let listen_done_waits_before_reselection: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .map(move |element| (sequence.id, element.owner, element.state, element.command))
+        })
+        .filter(|(_, element_owner, _, command)| {
+            *element_owner == Some(owner) && *command == Command::Wait
+        })
+        .filter(|(_, _, state, _)| {
+            matches!(
+                state,
+                SequenceState::Todo | SequenceState::Postponed | SequenceState::InProgress
+            )
+        })
+        .collect();
+    assert_eq!(
+        listen_done_waits_before_reselection.len(),
+        1,
+        "Listen DONE must synchronously publish exactly one priority-Wait successor"
+    );
+    assert!(
+        matches!(
+            listen_done_waits_before_reselection[0].2,
+            SequenceState::Todo | SequenceState::Postponed | SequenceState::InProgress
+        ),
+        "Listen DONE Wait must remain live before terminal advance"
+    );
+    engine.select_pc(&assets, 0, owner, false, false);
+    let listen_done_waits_after_reselection: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner) && element.command == Command::Wait)
+        .filter(|element| {
+            matches!(
+                element.state,
+                SequenceState::Todo | SequenceState::Postponed | SequenceState::InProgress
+            )
+        })
+        .map(|element| element.state)
+        .collect();
+    assert_eq!(
+        listen_done_waits_after_reselection,
+        listen_done_waits_before_reselection
+            .iter()
+            .map(|(_, _, state, _)| *state)
+            .collect::<Vec<_>>(),
+        "same-frame SelectPC restitution of cleared NOACTION must not Stop the Listen DONE Wait"
+    );
     // The enter chain's terminal condolence releases the postponed leave
     // back through the production to-go queue. Depending on where in the
     // frame the release lands, the same frame's manager drain may already
@@ -6053,6 +6119,49 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
             .is_active(),
         "released LeaveListen must not install stale ability ownership"
     );
+}
+
+#[test]
+fn unselected_listen_done_clears_action_without_dispatching_leave_listen() {
+    use crate::element::{ActionState, Command, Posture};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let pc = engine.get_entity_mut(owner).unwrap();
+        pc.actor_data_mut().unwrap().action_state = ActionState::Listening;
+        pc.pc_data_mut().unwrap().current_action = crate::profiles::Action::Listen;
+    }
+
+    engine.apply_listen_done_action_handoff(owner);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .current_action,
+        crate::profiles::Action::NoAction
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .all(|element| element.command != Command::LeaveListen),
+        "Original's unselected branch calls SetCurrentAction directly, not UnSelectAction"
+    );
+}
+
+#[test]
+#[should_panic(expected = "is not a PC")]
+fn listen_done_rejects_non_pc_owner() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    engine.apply_listen_done_action_handoff(owner);
 }
 
 fn install_owner_selected_test_melee(
