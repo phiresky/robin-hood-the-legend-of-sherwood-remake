@@ -75,10 +75,17 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     trace=${traces[index]}
     relative=${trace#"$corpus_dir"/}
     key=${relative//\//__}
+    # Older launches used a corpus root of `.` and therefore retained the
+    # leading `parity-save-replays/` in status/log keys.  Treat that spelling
+    # as the same logical trace so a resumed sweep does not rerun already
+    # completed work under a second filename namespace.
+    full_key=${trace//\//__}
     log="$audit_dir/logs/$key.log"
     status="$audit_dir/status/$key.status"
 
-    [[ -f "$status" ]] && continue
+    if [[ -f "$status" || -f "$audit_dir/status/$full_key.status" ]]; then
+        continue
+    fi
     if [[ ! -f "$trace" ]]; then
         write_status "$status" missing
         continue
