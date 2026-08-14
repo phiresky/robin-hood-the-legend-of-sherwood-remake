@@ -1,5 +1,14 @@
 use super::*;
 
+#[inline]
+fn panic_retry_side(original_creation_order: u32) -> u8 {
+    if original_creation_order & 1 != 0 {
+        4
+    } else {
+        12
+    }
+}
+
 #[derive(Debug)]
 struct BoredBoundaryDebugConfig {
     enabled: bool,
@@ -5140,12 +5149,11 @@ impl AiController {
                         } else {
                             // Previous attempt failed — rotate 90° to
                             // the side determined by creation-order
-                            // parity, with ±3 sector jitter. We key off
-                            // the NPC handle's low bit because it's
-                            // stable, unique, and has the same parity
-                            // effect as the original creation-order
-                            // bit.
-                            let side = if self.me & 1 != 0 { 4 } else { 12 };
+                            // parity, with ±3 sector jitter.
+                            let original_creation_order = ctx.original_creation_order.expect(
+                                "panic retry owner is missing its authoritative creation order",
+                            );
+                            let side = panic_retry_side(original_creation_order);
                             let jitter =
                                 (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..7)
                                     as i32
@@ -5441,6 +5449,19 @@ impl ConsiderationAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panic_retry_side_uses_original_creation_order_parity() {
+        assert_eq!(panic_retry_side(68), 12);
+        assert_eq!(panic_retry_side(69), 4);
+
+        let rust_entity_slot = 37;
+        assert_ne!(
+            panic_retry_side(68),
+            panic_retry_side(rust_entity_slot),
+            "trace owner creation-order 68 must not inherit entity-slot 37 parity",
+        );
+    }
 
     #[test]
     fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {
