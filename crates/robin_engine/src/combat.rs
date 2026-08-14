@@ -482,7 +482,11 @@ pub fn receive_sword_damage(
                 def_profile,
                 defender.direction,
                 attacker.direction_to_attacker,
-                get_strike_direction(attacker_profile, *strike),
+                // ReceiveSwordDamage asks the defender's `mpSword` for both
+                // its protection and the strike-direction classification.
+                // The damage payload's sword remains authoritative for the
+                // cutting and stunning values below.
+                get_strike_direction(def_profile, *strike),
                 attacker.elevation,
                 defender.elevation,
             );
@@ -2235,6 +2239,89 @@ mod tests {
         // No defender profile → full damage flags set.
         assert!(result.contains(SwordDamageResult::CUTTING_DAMAGE));
         assert!(result.contains(SwordDamageResult::STUNNING_DAMAGE));
+    }
+
+    #[test]
+    fn live_sword_damage_uses_defender_weapon_for_protection_direction() {
+        let mut attacker_profile = make_hth_profile();
+        let mut defender_profile = attacker_profile.clone();
+        let strike = SwordStrike::A;
+        attacker_profile.thrusts[strike as usize].kind = WeaponThrustKind::Lateral;
+        attacker_profile.thrusts[strike as usize].direction = WeaponThrustDirection::LeftToRight;
+        attacker_profile.thrusts[strike as usize].cutting = 10;
+        attacker_profile.thrusts[strike as usize].stunning = 0;
+        defender_profile.thrusts[strike as usize].kind = WeaponThrustKind::Lateral;
+        defender_profile.thrusts[strike as usize].direction = WeaponThrustDirection::RightToLeft;
+        // Facing north with the attacker due north, LTR selects HIT_RIGHT
+        // while RTL selects HIT_LEFT. Extreme protection values make the
+        // result independent of the actual 1..=99 rolls.
+        attacker_profile.protection_by_localization = [0, 0, 99, 0, 0];
+        attacker_profile.bludgeon_protection = 99;
+        defender_profile.protection_by_localization = [0, 0, 99, 0, 0];
+        defender_profile.bludgeon_protection = 99;
+
+        let defender = SwordDefenderContext {
+            action_state: ActionState::WaitingSword,
+            direction: 0,
+            elevation: 0.0,
+        };
+        let attacker = SwordAttackerContext {
+            direction: 0,
+            direction_to_attacker: 0,
+            elevation: 0.0,
+            fighting_ability: 50,
+            is_rank_soldier: false,
+        };
+        let ctx = default_ctx();
+
+        let apply = |defender_profile: &HtHWeaponProfile| {
+            let sim_context = crate::sim_rng::test_context();
+            let mut human = make_human();
+            let mut life_points = 100;
+            let ((result, cutting), trace) = crate::sim_rng::with_draw_trace(|| {
+                receive_sword_damage(
+                    &sim_context,
+                    &mut human,
+                    &mut life_points,
+                    &SwordDamageParams {
+                        defender: &defender,
+                        defender_profile: Some(defender_profile),
+                        attacker_profile: &attacker_profile,
+                        strike,
+                        attacker: &attacker,
+                        concussion_ctx: &ctx,
+                        max_life_points: 100,
+                    },
+                )
+            });
+            (result, cutting, life_points, trace)
+        };
+
+        let (heterogeneous_result, heterogeneous_cutting, heterogeneous_life, trace) =
+            apply(&defender_profile);
+        assert!(heterogeneous_result.is_empty());
+        assert_eq!(heterogeneous_cutting, 0);
+        assert_eq!(heterogeneous_life, 100);
+        assert_eq!(
+            trace,
+            vec![
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+            ]
+        );
+
+        let (same_profile_result, same_profile_cutting, same_profile_life, trace) =
+            apply(&attacker_profile);
+        assert!(same_profile_result.contains(SwordDamageResult::CUTTING_DAMAGE));
+        assert_eq!(same_profile_cutting, 10);
+        assert_eq!(same_profile_life, 90);
+        assert_eq!(
+            trace,
+            vec![
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+            ]
+        );
     }
 
     #[test]
