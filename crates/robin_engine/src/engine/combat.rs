@@ -24,17 +24,6 @@ fn projectile_landing_debug_matches(frame: u32, shooter: EntityId, projectile: E
             .is_none_or(|value| value == projectile.index())
 }
 
-/// Original returns from `ComputeTrajectory` immediately after a terminal
-/// WATER or HOLE material is identified.  Its obstacle and sector-membership
-/// resolution below that branch therefore only runs for ordinary impacts.
-pub(super) fn should_initialize_projectile_landing_membership(
-    terminal_impact: bool,
-    terminal_lands_in_water: bool,
-    terminal_lands_in_hole: bool,
-) -> bool {
-    terminal_impact && !terminal_lands_in_water && !terminal_lands_in_hole
-}
-
 #[cfg(test)]
 thread_local! {
     static RECEIVE_PURSE_REVEAL_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> =
@@ -649,12 +638,7 @@ impl EngineInner {
             // membership before the projectile's explicit pre-add
             // Hourglass. It is therefore observable throughout flight, not
             // only after the projectile lands.
-            let initialize_landing_membership = should_initialize_projectile_landing_membership(
-                terminal_impact,
-                terminal_lands_in_water,
-                terminal_lands_in_hole,
-            );
-            let initial_landing_resolution = initialize_landing_membership.then(|| {
+            let initial_landing_resolution = terminal_impact.then(|| {
                 let end = trajectory_end.expect("terminal impact has no trajectory endpoint");
                 if let Some(obstacle) = terminal_obstacle {
                     self.world
@@ -818,7 +802,7 @@ impl EngineInner {
                     element.set_layer(resolution.layer);
                 }
             }
-            if initialize_landing_membership {
+            {
                 let element = self
                     .world
                     .entities

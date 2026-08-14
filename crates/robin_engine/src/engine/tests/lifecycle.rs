@@ -449,63 +449,6 @@ fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
 }
 
 #[test]
-fn terminal_water_projectile_skips_initial_membership_resolution() {
-    let element = terminal_projectile_membership_fixture(true, false);
-
-    assert_eq!(element.obstacle_index(), None);
-    assert_eq!(element.sprite.position_iface.get_plane(), None);
-}
-
-#[test]
-fn terminal_hole_projectile_skips_initial_membership_resolution() {
-    let element = terminal_projectile_membership_fixture(false, true);
-
-    assert_eq!(element.obstacle_index(), None);
-    assert_eq!(element.sprite.position_iface.get_plane(), None);
-}
-
-#[test]
-fn terminal_dry_projectile_keeps_initial_membership_resolution() {
-    let element = terminal_projectile_membership_fixture(false, false);
-
-    assert_eq!(
-        element.obstacle_index(),
-        crate::position_interface::ObstacleHandle::new(17)
-    );
-    assert_eq!(
-        element.sprite.position_iface.get_plane(),
-        Some(&crate::position_interface::PlaneZCoeffs {
-            az: 1.0,
-            bz: 2.0,
-            dz: 3.0,
-        })
-    );
-}
-
-fn terminal_projectile_membership_fixture(
-    terminal_lands_in_water: bool,
-    terminal_lands_in_hole: bool,
-) -> crate::element::ElementData {
-    let mut element = crate::element::ElementData::default();
-    if super::super::combat::should_initialize_projectile_landing_membership(
-        true,
-        terminal_lands_in_water,
-        terminal_lands_in_hole,
-    ) {
-        crate::bow_shot::bind_trajectory_obstacle(
-            &mut element,
-            crate::position_interface::ObstacleHandle::new(17),
-            Some(crate::position_interface::PlaneZCoeffs {
-                az: 1.0,
-                bz: 2.0,
-                dz: 3.0,
-            }),
-        );
-    }
-    element
-}
-
-#[test]
 fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
