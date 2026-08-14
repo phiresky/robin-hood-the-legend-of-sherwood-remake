@@ -13,6 +13,33 @@ struct OpponentCallerDebugConfig {
     participant: u32,
 }
 
+struct ThrustAdmissionDebugConfig {
+    frame: u32,
+    owner: u32,
+}
+
+fn thrust_admission_debug_config() -> Option<&'static ThrustAdmissionDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<ThrustAdmissionDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_THRUST_A_ADMISSION")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when thrust-A admission debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for thrust-A admission diagnostic: {error}")
+                })
+            };
+            Some(ThrustAdmissionDebugConfig {
+                frame: parse("PARITY_DEBUG_THRUST_A_ADMISSION_FRAME"),
+                owner: parse("PARITY_DEBUG_THRUST_A_ADMISSION_OWNER"),
+            })
+        })
+        .as_ref()
+}
+
 fn opponent_caller_debug_config() -> Option<&'static OpponentCallerDebugConfig> {
     static CONFIG: std::sync::OnceLock<Option<OpponentCallerDebugConfig>> =
         std::sync::OnceLock::new();
@@ -55,6 +82,11 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
+        let admission_debug = thrust_admission_debug_config().is_some_and(|config| {
+            strike == SwordStrike::A
+                && config.frame == self.control.frame_counter
+                && config.owner == owner.index()
+        });
         // Validate attacker
         let owner_ok = self
             .get_entity(owner)
@@ -83,13 +115,73 @@ impl EngineInner {
         }
 
         if strike == SwordStrike::A {
-            if can_enter_swordfight_with(
+            let can_enter = can_enter_swordfight_with(
                 &self.world.entities,
                 owner,
                 target,
                 &assets.profile_manager,
                 &self.world.fast_grid,
-            ) {
+            );
+            if admission_debug {
+                let owner_entity = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} vanished"));
+                let target_entity = self
+                    .world
+                    .entities
+                    .get(target)
+                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} vanished"));
+                let owner_human = owner_entity
+                    .human_data()
+                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} is not human"));
+                let target_human = target_entity
+                    .human_data()
+                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} is not human"));
+                let owner_sector = owner_entity.element_data().sector();
+                let target_sector = target_entity.element_data().sector();
+                let selected = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner);
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("diagnosed thrust element {seq_id:?}/{elem_idx} vanished")
+                    });
+                eprintln!(
+                    "PARITY_THRUST_A_ADMISSION frame={} owner={} target={} can_enter={} seq={} elem={} element_id={} state={:?} priority={:?} selected={selected:?} owner_dead={} owner_unconscious={} owner_net={} owner_soldier={} owner_vip={} owner_robin={} owner_sector={owner_sector:?} owner_building={} owner_wall_ladder={} target_dead={} target_unconscious={} target_net={} target_soldier={} target_vip={} target_robin={} target_sector={target_sector:?} target_building={} target_wall_ladder={}",
+                    self.control.frame_counter,
+                    owner.index(),
+                    target.index(),
+                    can_enter,
+                    seq_id.0,
+                    elem_idx,
+                    element.id,
+                    element.state,
+                    element.priority,
+                    owner_entity.is_dead(),
+                    owner_human.unconscious,
+                    owner_human.stuck_under_nets_counter,
+                    owner_entity.is_soldier(),
+                    is_vip_from_profile(owner_entity, &assets.profile_manager),
+                    owner_entity.pc_data().is_some_and(|pc| pc.robin),
+                    is_in_building_sector(owner_sector, &self.world.fast_grid),
+                    is_on_wall_or_ladder(owner_sector, &self.world.fast_grid),
+                    target_entity.is_dead(),
+                    target_human.unconscious,
+                    target_human.stuck_under_nets_counter,
+                    target_entity.is_soldier(),
+                    is_vip_from_profile(target_entity, &assets.profile_manager),
+                    target_entity.pc_data().is_some_and(|pc| pc.robin),
+                    is_in_building_sector(target_sector, &self.world.fast_grid),
+                    is_on_wall_or_ladder(target_sector, &self.world.fast_grid),
+                );
+            }
+            if can_enter {
                 self.set_as_new_principal_opponent(assets, owner, target);
                 self.set_as_new_principal_opponent(assets, target, owner);
             } else {
