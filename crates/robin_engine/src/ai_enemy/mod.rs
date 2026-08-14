@@ -4252,16 +4252,14 @@ impl EnemyAi {
     ) {
         let outgoing_state = self.base.current_state;
         let outgoing_substate = self.base.current_substate;
+
+        // `ReturnToDutyCommonStuff` enters through virtual Enemy `SetState` in
+        // Original. That override forgets the old timer before the common tail
+        // decides whether to launch a fresh bored timer.
+        self.base.timer_is_running = false;
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
         let incoming_state = self.base.current_state;
         let incoming_substate = self.base.current_substate;
-
-        // `ReturnToDutyCommonStuff` reaches this pair through virtual Enemy
-        // `SetState`, whose first side effect is `mbTimerIsRunning = false`
-        // (`RHartificialmalignity.cpp:9145-9159`). The shared base setter does
-        // not own that subclass field, so restore it at the same resumed
-        // virtual boundary before any caller tail observes the new state.
-        self.base.timer_is_running = false;
 
         // ReturnToDutyCommonStuff calls the virtual Enemy SetState in Original.
         // When an archer leaves the bow substates, that override clears
@@ -5923,6 +5921,46 @@ mod tests {
         ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
+    }
+
+    #[test]
+    fn return_to_duty_virtual_timer_reset_precedes_common_bored_timer_launch() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.timer_is_running = true;
+        ai.base.when_does_timer_ring = 999;
+        ai.base.likes_to_sit_around = true;
+        let ctx = AiContext {
+            frame: 254,
+            posture: Posture::Sitting,
+            position: ai.base.initial_position,
+            ..AiContext::default()
+        };
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx);
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+        assert!(
+            ai.base.timer_is_running,
+            "the common tail's later LaunchTimer must win over virtual SetState's reset"
+        );
+        assert!((324..394).contains(&ai.base.when_does_timer_ring));
+    }
+
+    #[test]
+    fn return_to_duty_virtual_timer_reset_stays_cleared_without_common_launch() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.timer_is_running = true;
+        ai.base.when_does_timer_ring = 999;
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &AiContext::default());
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+        assert!(
+            !ai.base.timer_is_running,
+            "virtual SetState must still clear the old timer when the common tail launches none"
+        );
     }
 
     #[test]

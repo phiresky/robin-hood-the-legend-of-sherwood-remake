@@ -1,6 +1,42 @@
 use super::*;
 
 #[derive(Debug)]
+struct BoredBoundaryDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    owner_from: Option<u32>,
+    owner_through: Option<u32>,
+}
+
+fn bored_boundary_debug_config() -> &'static BoredBoundaryDebugConfig {
+    static CONFIG: std::sync::OnceLock<BoredBoundaryDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_BORED_BOUNDARY").is_some();
+        if !enabled {
+            return BoredBoundaryDebugConfig {
+                enabled: false,
+                frame: None,
+                owner_from: None,
+                owner_through: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for BORED_BOUNDARY diagnostic: {error}")
+                })
+            })
+        };
+        BoredBoundaryDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_BORED_BOUNDARY_FRAME"),
+            owner_from: parse("PARITY_DEBUG_BORED_BOUNDARY_OWNER_FROM"),
+            owner_through: parse("PARITY_DEBUG_BORED_BOUNDARY_OWNER_THROUGH"),
+        }
+    })
+}
+
+#[derive(Debug)]
 struct ConsiderReportDebugConfig {
     enabled: bool,
     frame: Option<u32>,
@@ -566,6 +602,14 @@ impl Default for AiController {
 // ---------------------------------------------------------------------------
 
 impl AiController {
+    pub(crate) fn bored_boundary_debug_matches(frame: u32, owner: u32) -> bool {
+        let config = bored_boundary_debug_config();
+        config.enabled
+            && config.frame.is_none_or(|expected| expected == frame)
+            && config.owner_from.is_none_or(|from| owner >= from)
+            && config.owner_through.is_none_or(|through| owner <= through)
+    }
+
     pub fn new(owner: NpcHandle) -> Self {
         Self {
             me: owner,
@@ -1170,6 +1214,8 @@ impl AiController {
     /// Officers and high-pride soldiers use longer intervals; everyone
     /// else uses the short default.
     pub fn get_bored_time(&self, sim: &crate::sim_rng::SimulationContext, ctx: &AiContext) -> u16 {
+        // Check the process-local gate before reading any diagnostic-only state.
+        let debug = Self::bored_boundary_debug_matches(ctx.frame, self.me);
         use crate::profiles::ProfileRank;
         const AI_MIN_DEFAULT_BORED_INTERVAL: u16 = 70;
         const AI_DELTA_DEFAULT_BORED_INTERVAL: u16 = 70;
@@ -1194,6 +1240,24 @@ impl AiController {
                 AI_DELTA_DEFAULT_BORED_INTERVAL,
             )
         };
+        if debug {
+            eprintln!(
+                "BORED_BOUNDARY frame={} owner={} phase=get_bored_time state={:?} substate={:?} rank={:?} pride={} min={} delta={} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}",
+                ctx.frame,
+                self.me,
+                self.current_state,
+                self.current_substate,
+                ctx.self_rank,
+                ctx.self_pride,
+                min,
+                delta,
+                self.timer_is_running,
+                self.when_does_timer_ring,
+                self.outbox.reentrant.self_stimuli.len(),
+                self.outbox.reentrant.owner_work.len(),
+                self.outbox.actor.orders.len(),
+            );
+        }
         // P_RECTANGLE ignores `lambda`; pass MAX_ATT_VALUE for the un-biased sample.
         min + (Self::random_value(
             sim,
