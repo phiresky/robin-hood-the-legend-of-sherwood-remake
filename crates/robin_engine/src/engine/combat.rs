@@ -742,6 +742,48 @@ impl EngineInner {
                     let landing = trajectory_end
                         .expect("terminal impact lost its endpoint")
                         .to_map();
+                    let terminal_obstacle_ref = terminal_obstacle.map(|handle| {
+                        let index = usize::from(u16::from(handle));
+                        obstacle_list.get(index).unwrap_or_else(|| {
+                            panic!("diagnostic terminal obstacle {index} disappeared")
+                        })
+                    });
+                    let material_inputs = terminal_obstacle_ref.map(|obstacle| {
+                        let sectors = obstacle
+                            .material_sectors
+                            .iter()
+                            .enumerate()
+                            .map(|(index, sector)| {
+                                (
+                                    index,
+                                    sector.material,
+                                    sector.bounding_box.contains_point(landing),
+                                    sector.contains(landing),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        (obstacle.material, sectors)
+                    });
+                    let ground_material_inputs = assets
+                        .water_zones
+                        .zones
+                        .iter()
+                        .enumerate()
+                        .map(|(index, zone)| {
+                            (
+                                index,
+                                zone.material,
+                                zone.bounding_box.contains_point(landing),
+                                zone.contains(landing),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let scoped_material = crate::water_zones::determine_water_hole_scoped(
+                        &assets.water_zones,
+                        terminal_obstacle_ref,
+                        landing,
+                    )
+                    .map(|resolved| (resolved.material, resolved.sector_points.map(<[_]>::len)));
                     let candidate_layer = obstacle
                         .filter(|(_, active, projection, layer, _, _)| {
                             *active && *projection && *layer != u16::MAX
@@ -770,7 +812,7 @@ impl EngineInner {
                         Vec::new()
                     };
                     eprintln!(
-                        "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_obstacle={obstacle:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
+                        "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_impact={} lands_in_water={} lands_in_hole={} terminal_obstacle={obstacle:?} material_inputs={material_inputs:?} ground_material_inputs={ground_material_inputs:?} scoped_material={scoped_material:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
                         self.control.frame_counter,
                         result.shooter.index(),
                         arrow_id.index(),
@@ -788,6 +830,9 @@ impl EngineInner {
                             .to_bits(),
                         landing.x.to_bits(),
                         landing.y.to_bits(),
+                        terminal_impact,
+                        terminal_lands_in_water,
+                        terminal_lands_in_hole,
                         candidate_layer,
                     );
                 }
