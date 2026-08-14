@@ -1228,6 +1228,23 @@ impl TraceCommand {
     }
 }
 
+fn is_recorded_nested_selection_pair(first: &TraceCommand, second: &TraceCommand) -> bool {
+    let TraceCommand::SelectPc {
+        pc: selected_pc,
+        append: false,
+    } = first
+    else {
+        return false;
+    };
+
+    match second {
+        TraceCommand::SelectAction { pc, .. } | TraceCommand::CancelAction { pc: Some(pc) } => {
+            pc == selected_pc
+        }
+        _ => false,
+    }
+}
+
 fn normalized_trace_sword_seek_distance(
     with_seek: bool,
     seek_distance: Option<f32>,
@@ -2458,14 +2475,66 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     )
                 });
         }
-        for command in frame.commands.drain(..) {
+        let mut frame_commands = VecDeque::from(std::mem::take(&mut frame.commands));
+        while let Some(recorded_command) = frame_commands.pop_front() {
+            // RHParity records the resolved nested action immediately after its
+            // non-append SelectPc root. Apply only that source-defined pair as
+            // one batch. Other raw commands stay interleaved because conversion
+            // of SelectActionIndex observes selection mutations from earlier
+            // commands in this same frame.
+            if frame_commands
+                .front()
+                .is_some_and(|next| is_recorded_nested_selection_pair(&recorded_command, next))
+            {
+                let nested_command = frame_commands
+                    .pop_front()
+                    .expect("recorded nested selection pair lost its second command");
+                let mut commands = Vec::with_capacity(2);
+                for command in [recorded_command, nested_command] {
+                    if debug_stage_timing {
+                        eprintln!(
+                            "parity stage: converting command before frame {}: {command:?}",
+                            frame.frame_after
+                        );
+                    }
+                    commands.push(
+                        command
+                            .into_player_command(map, &engine)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "recorded nested selection command disappeared before frame {}",
+                                    frame.frame_after
+                                )
+                            }),
+                    );
+                }
+                if debug_stage_timing {
+                    for command in &commands {
+                        eprintln!(
+                            "parity stage: applying command before frame {}: {command:?}",
+                            frame.frame_after
+                        );
+                    }
+                }
+                engine.apply_local_commands(&mut display, &mut input, &assets, &commands);
+                if debug_stage_timing {
+                    for command in &commands {
+                        eprintln!(
+                            "parity stage: applied command before frame {}: {command:?}",
+                            frame.frame_after
+                        );
+                    }
+                }
+                continue;
+            }
+
             if debug_stage_timing {
                 eprintln!(
-                    "parity stage: converting command before frame {}: {command:?}",
+                    "parity stage: converting command before frame {}: {recorded_command:?}",
                     frame.frame_after
                 );
             }
-            if let Some(command) = command.into_player_command(map, &engine) {
+            if let Some(command) = recorded_command.into_player_command(map, &engine) {
                 if debug_stage_timing {
                     eprintln!(
                         "parity stage: applying command before frame {}: {command:?}",
@@ -8059,6 +8128,43 @@ mod tests {
         }))
         .expect("parse Original global action cancellation");
         assert!(matches!(command, TraceCommand::CancelAction { pc: None }));
+    }
+
+    #[test]
+    fn recorded_nested_selection_batch_excludes_state_dependent_action_index() {
+        let pc = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 137,
+        };
+        let other_pc = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 138,
+        };
+        let select = TraceCommand::SelectPc { pc, append: false };
+
+        assert!(is_recorded_nested_selection_pair(
+            &select,
+            &TraceCommand::SelectAction {
+                pc,
+                action: TraceAction::Bow,
+            }
+        ));
+        assert!(is_recorded_nested_selection_pair(
+            &select,
+            &TraceCommand::CancelAction { pc: Some(pc) }
+        ));
+        assert!(!is_recorded_nested_selection_pair(
+            &select,
+            &TraceCommand::CancelAction { pc: Some(other_pc) }
+        ));
+        assert!(!is_recorded_nested_selection_pair(
+            &select,
+            &TraceCommand::SelectActionIndex { index: 0 }
+        ));
+        assert!(!is_recorded_nested_selection_pair(
+            &TraceCommand::SelectPc { pc, append: true },
+            &TraceCommand::CancelAction { pc: Some(pc) }
+        ));
     }
 
     /// Every resolved-command type the recorder can emit must decode.  A
