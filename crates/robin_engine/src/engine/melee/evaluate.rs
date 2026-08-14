@@ -31,6 +31,13 @@ pub(super) fn swordfight_distance_adjustment(
     }
 }
 
+fn is_within_smalltalk_strike_range(maximal_range: u16, squared_distance: f32) -> bool {
+    let maximal_range = u32::from(maximal_range);
+    // Original assigns the UWORD range to ULONG, squares it, and casts the
+    // floating-point SquareNorm to ULONG before comparing.
+    maximal_range * maximal_range >= squared_distance as u32
+}
+
 pub(super) fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
     if std::env::var_os("PARITY_DEBUG_REACTIVE_SWORD").is_none() {
         return false;
@@ -952,8 +959,7 @@ impl EngineInner {
                 &assets.profile_manager,
                 "EvaluateSwordfight maximal range",
             )
-            .distance[crate::weapons::WeaponDistance::Maximal as usize]
-                as f32;
+            .distance[crate::weapons::WeaponDistance::Maximal as usize];
             (
                 entity.element_data().position(),
                 max,
@@ -972,7 +978,7 @@ impl EngineInner {
         let dx = principal_pos.x - self_pos.x;
         let dy = principal_pos.y - self_pos.y;
         let dz = principal_pos.z - self_pos.z;
-        let near = self_max * self_max >= dx * dx + dy * dy + dz * dz;
+        let near = is_within_smalltalk_strike_range(self_max, dx * dx + dy * dy + dz * dz);
         let frame = self.control.frame_counter;
         if reactive_sword_debug_frame_matches(frame) {
             let creation_order = self.world.original_creation_order(entity_id);
@@ -2817,11 +2823,18 @@ impl EngineInner {
 
 #[cfg(test)]
 mod tests {
-    use super::opponent_sword_strike_time_limit;
+    use super::{is_within_smalltalk_strike_range, opponent_sword_strike_time_limit};
     use crate::combat::{self, NearbyVictim, ProposedCombatAction, StrikeSelectionContext};
     use crate::element::Camp;
     use crate::profiles::{HtHWeaponProfile, ThrustProfile, WeaponThrustKind};
     use crate::weapons::SwordStrike;
+
+    #[test]
+    fn smalltalk_strike_range_truncates_squared_distance_like_original() {
+        assert!(is_within_smalltalk_strike_range(10, 100.0));
+        assert!(is_within_smalltalk_strike_range(10, 100.999));
+        assert!(!is_within_smalltalk_strike_range(10, 101.0));
+    }
 
     fn reactive_pc_proposal(opponent_animation: crate::order::OrderType) -> ProposedCombatAction {
         let mut profile = HtHWeaponProfile::default();
