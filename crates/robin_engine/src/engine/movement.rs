@@ -12962,11 +12962,23 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|e| e.command == crate::element::Command::PassDoor);
-        let straight_ok = movement_flags_force_direct_dispatch(move_flags)
-            || self
-                .world
-                .fast_grid
-                .is_reachable_thick(source, dest, entity_layer, half_diagonal);
+        let straight_ok = if movement_flags_force_direct_dispatch(move_flags) {
+            true
+        } else {
+            let reachable =
+                self.world
+                    .fast_grid
+                    .is_reachable_thick(source, dest, entity_layer, half_diagonal);
+            self.world.fast_grid.trace_reachable_thick_decision(
+                self.control.frame_counter,
+                source,
+                dest,
+                entity_layer,
+                half_diagonal,
+                reachable,
+            );
+            reachable
+        };
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position.  This mirrors legacy implementation
