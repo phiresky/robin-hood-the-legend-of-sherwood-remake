@@ -8,6 +8,22 @@ use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::SequenceElementData;
 
+fn opponent_order_debug_matches(frame: u32, owner: EntityId) -> bool {
+    if std::env::var_os("PARITY_DEBUG_OPPONENT_ORDER").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for opponent-order diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_OPPONENT_ORDER_FRAME").is_none_or(|value| value == frame)
+        && parse_filter("PARITY_DEBUG_OPPONENT_ORDER_OWNER")
+            .is_none_or(|value| value == owner.index())
+}
+
 impl EngineInner {
     // ─── Tie-up (public, called from natives/UI) ────────────────────
 
@@ -458,6 +474,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         entity_id: EntityId,
     ) {
+        let debug = opponent_order_debug_matches(self.control.frame_counter, entity_id);
         let (self_pos, self_dir, opponents) = {
             let Some(entity) = self.get_entity(entity_id) else {
                 return;
@@ -500,11 +517,22 @@ impl EngineInner {
         }
 
         let new_principal = if !candidates.is_empty() {
+            let rng_before = debug.then(|| self.control.rng.original_replay_cursor());
             let pick = crate::sim_rng::usize(
                 sim,
                 crate::sim_rng::RngSite::PrincipalOpponent,
                 0..candidates.len(),
             );
+            if debug {
+                eprintln!(
+                    "PARITY_OPPONENT_ORDER frame={} phase=choose owner={} before={opponents:?} candidates={candidates:?} pick={} rng_before={:?} rng_after={:?}",
+                    self.control.frame_counter,
+                    entity_id.index(),
+                    candidates[pick],
+                    rng_before.flatten(),
+                    self.control.rng.original_replay_cursor(),
+                );
+            }
             candidates[pick]
         } else {
             // Nearest-opponent fallback.
@@ -531,6 +559,20 @@ impl EngineInner {
                 }
             }
             self.take_smalltalk_initiative(entity_id);
+        }
+        if debug {
+            let after = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::human_data)
+                .map(|human| human.opponents.clone());
+            eprintln!(
+                "PARITY_OPPONENT_ORDER frame={} phase=choose_done owner={} chosen_index={} after={after:?}",
+                self.control.frame_counter,
+                entity_id.index(),
+                new_principal,
+            );
         }
     }
 
@@ -1068,12 +1110,45 @@ impl EngineInner {
                 .and_then(|jl| jl.associated_line_index)
                 .and_then(crate::jump_line::JumpLineIndex::new)
         });
+        let debug_opponent = opponent_order_debug_matches(self.control.frame_counter, opponent);
+        let debug_initiator = opponent_order_debug_matches(self.control.frame_counter, initiator);
+        let opponent_before = debug_opponent.then(|| {
+            self.world
+                .entities
+                .get(opponent)
+                .and_then(Entity::human_data)
+                .map(|human| human.opponents.clone())
+        });
+        let initiator_before = debug_initiator.then(|| {
+            self.world
+                .entities
+                .get(initiator)
+                .and_then(Entity::human_data)
+                .map(|human| human.opponents.clone())
+        });
         let opponent_added = Self::add_opponent(
             &mut self.world.entities,
             opponent,
             initiator,
             opponent_jump_line,
         );
+        if debug_opponent {
+            let after = self
+                .world
+                .entities
+                .get(opponent)
+                .and_then(Entity::human_data)
+                .map(|human| human.opponents.clone());
+            eprintln!(
+                "PARITY_OPPONENT_ORDER frame={} phase=enter_opponent owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
+                self.control.frame_counter,
+                opponent.index(),
+                initiator.index(),
+                opponent_before.flatten(),
+                opponent_added,
+                self.control.rng.original_replay_cursor(),
+            );
+        }
         // Original `AddOpponent` owns these side effects and performs them
         // immediately after each *fresh* insertion. In particular, merely
         // re-entering an already-established fight must not reset initiative.
@@ -1089,6 +1164,23 @@ impl EngineInner {
             opponent,
             aggressor_jump_line,
         );
+        if debug_initiator {
+            let after = self
+                .world
+                .entities
+                .get(initiator)
+                .and_then(Entity::human_data)
+                .map(|human| human.opponents.clone());
+            eprintln!(
+                "PARITY_OPPONENT_ORDER frame={} phase=enter_initiator owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
+                self.control.frame_counter,
+                initiator.index(),
+                opponent.index(),
+                initiator_before.flatten(),
+                initiator_added,
+                self.control.rng.original_replay_cursor(),
+            );
+        }
         if initiator_added {
             self.recompute_relative_fighting_ability(initiator, assets);
             self.take_smalltalk_initiative(initiator);
