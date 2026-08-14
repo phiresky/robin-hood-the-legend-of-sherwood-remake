@@ -2583,6 +2583,60 @@ mod tests {
     }
 
     #[test]
+    fn delayed_corpse_drop_updates_intersections_at_old_current_position() {
+        let carried_position = crate::coordinates::MapPoint::new(100.0, 100.0);
+        let drop_position = crate::coordinates::MapPoint::new(300.0, 300.0);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(drop_position);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position_map(carried_position);
+            target
+                .human_data_mut()
+                .unwrap()
+                .last_is_lying_for_corpse_intersection = Some(false);
+        }
+        let mut neighbour = make_pc(Posture::Tied);
+        neighbour
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
+        neighbour
+            .human_data_mut()
+            .unwrap()
+            .last_is_lying_for_corpse_intersection = Some(true);
+        let neighbour_id = engine.add_entity(neighbour);
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Tied, drop_position, 0);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carried_position);
+        assert!(target.human_data().unwrap().small_repulsive_radius);
+        assert!(
+            engine
+                .get_entity(neighbour_id)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius
+        );
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must retain its delayed destination");
+        assert_eq!(
+            engine
+                .get_entity(target_id)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            drop_position
+        );
+    }
+
+    #[test]
     fn instant_building_corpse_drop_keeps_carrier_surface_and_commits_immediately() {
         let carrier_pos = crate::coordinates::MapPoint::new(120.0, 240.0);
         let plane = crate::position_interface::PlaneZCoeffs {
@@ -3919,6 +3973,13 @@ impl EngineInner {
             sprite.display_order_ref = None;
             sprite.behind_display_order_ref = false;
         }
+        // RHElementActorPC::DropCorpse calls SetStates on the carried human
+        // while an outdoor SetPositionMapDelayed is still only queued.
+        // RHElementActorHuman::SetPosture synchronously runs
+        // UpdateIntersectingCorpses at that boundary, so overlap must be
+        // tested against the body's old current position, not against the
+        // delayed drop destination applied at its later owner slot.
+        self.process_corpse_intersection_update_for(target_id);
         self.actor_wait(target_id);
 
         if in_building && let Some(target) = self.get_entity_mut(target_id) {
