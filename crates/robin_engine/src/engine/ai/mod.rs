@@ -6507,6 +6507,110 @@ impl EngineInner {
         );
     }
 
+    fn debug_speech_attempt_gate_snapshot(
+        &self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        attempt: crate::ai::AiSpeechAttempt,
+    ) {
+        use crate::ai::RemarkTargetFlags;
+
+        let config = speech_lifecycle_debug_config();
+        if !config.enabled {
+            return;
+        }
+        let frame = self.control.frame_counter;
+        if !config.frame.is_none_or(|expected| expected == frame)
+            || !config
+                .actor
+                .is_none_or(|expected| expected == owner.index())
+        {
+            return;
+        }
+
+        let entity = self
+            .world
+            .entities
+            .get(owner)
+            .unwrap_or_else(|| panic!("speech gate diagnostic lost owner {owner:?}"));
+        let ai = entity
+            .ai_controller()
+            .unwrap_or_else(|| panic!("speech gate diagnostic owner {owner:?} lost AI"));
+        let (is_soldier, speech_id) = match entity {
+            Entity::Soldier(soldier) => {
+                let profile = assets
+                    .profile_manager
+                    .get_soldier(soldier.soldier.soldier_profile_index)
+                    .unwrap_or_else(|| {
+                        panic!("speech gate diagnostic owner {owner:?} lost soldier profile")
+                    });
+                (true, profile.exclamation_id)
+            }
+            Entity::Civilian(civilian) => {
+                let profile = assets
+                    .profile_manager
+                    .civilians
+                    .get(usize::from(civilian.civilian.civilian_profile_index))
+                    .unwrap_or_else(|| {
+                        panic!("speech gate diagnostic owner {owner:?} lost civilian profile")
+                    });
+                (false, profile.exclamation_id)
+            }
+            other => panic!(
+                "speech gate diagnostic owner {owner:?} has invalid kind {:?}",
+                other.element_data().kind
+            ),
+        };
+        let creation_order = self.world.original_creation_order(owner);
+        let matching_forbidden = self
+            .ai
+            .global
+            .forbidden_remarks
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.remark == attempt.remark)
+            .map(|(index, entry)| {
+                let scope = RemarkTargetFlags::from_bits_truncate(entry.flags);
+                let applies = (scope.contains(RemarkTargetFlags::THIS_TYPE)
+                    && entry.bad_guy == is_soldier
+                    && entry.speech_id == speech_id)
+                    || (scope.contains(RemarkTargetFlags::THIS_GUY)
+                        && u32::from(entry.guy_index) == creation_order)
+                    || (is_soldier && scope.contains(RemarkTargetFlags::VILLAINS))
+                    || (!is_soldier && scope.contains(RemarkTargetFlags::CIVILIANS));
+                (
+                    index,
+                    entry.flags,
+                    entry.speech_id,
+                    entry.guy_index,
+                    entry.bad_guy,
+                    entry.forbidden_till_frame,
+                    entry.forbidden_till_frame < frame,
+                    applies,
+                )
+            })
+            .collect::<Vec<_>>();
+        let element = entity.element_data();
+        eprintln!(
+            "SPEECHLIFE frame={frame} actor={} phase=attempt_gate_snapshot remark={:?} flags={} state={:?} substate={:?} locks={:?} current_remark={:?} current_remark_flags={} blipped={} sector={:?} in_door_transit={} posture={:?} action={:?} animation={:?} creation_order={creation_order} is_soldier={is_soldier} speech_id={speech_id} script_forbidden={} matching_forbidden={matching_forbidden:?}",
+            owner.index(),
+            attempt.remark,
+            attempt.flags,
+            ai.current_state,
+            ai.current_substate,
+            ai.locks_flag_field,
+            ai.current_remark,
+            ai.current_remark_flags,
+            element.blipped,
+            element.sector(),
+            element.is_in_door_transit(),
+            element.posture,
+            entity.actor_data().map(|actor| actor.action_state),
+            element.sprite.last_action,
+            ai.forbidden_remark_ids.contains(&(attempt.remark as u32)),
+        );
+    }
+
     fn speech_finished_stimulus(flags: crate::ai::SpeechFlags) -> Option<StimulusType> {
         use crate::ai::SpeechFlags;
         if flags.contains(SpeechFlags::MYTALK_1) {
@@ -6595,6 +6699,7 @@ impl EngineInner {
             "attempt_enter",
             (attempt.remark, attempt.flags),
         );
+        self.debug_speech_attempt_gate_snapshot(assets, owner, attempt);
         #[derive(Clone, Copy)]
         enum OwnerProfile {
             Soldier(crate::profiles::SoldierProfileIdx),
