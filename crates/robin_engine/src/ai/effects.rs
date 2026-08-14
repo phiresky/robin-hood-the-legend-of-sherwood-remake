@@ -112,6 +112,12 @@ pub struct AiReentrantOutbox {
     /// latch for the typed owner continuation instead of translating it into
     /// an independent `EVENT_COULDNT_REACHPOINT`.
     pub reconsider_approach_completion_pending: bool,
+    /// `DECISION_OBSERVE` has issued its synchronous `GoNear`, but the
+    /// following ApproachToObserve state write and avenger-on-roof fallback
+    /// have not run yet. Retain a deferred route failure for that exact owner
+    /// continuation instead of surfacing an early EventCouldntReachPoint.
+    #[serde(default)]
+    pub battle_observe_completion_pending: bool,
     /// `AlertOfficer` has issued its synchronous `GoNear`, but the enclosing
     /// `DECISION_LOOK_4_HELP` statement has not inspected the resulting
     /// `mbCouldntReachpoint` latch yet. Original performs that test before
@@ -193,6 +199,13 @@ pub enum AiOwnerWork {
     /// Continue `ReconsiderEnemyApproach` after its synchronous movement
     /// construction has either succeeded or set `mbCouldntReachpoint`.
     ResumeReconsiderEnemyApproachAfterGoNear {
+        target: HumanHandle,
+        target_position: Position,
+    },
+    /// Continue `DECISION_OBSERVE` after its first `GoNear` has synchronously
+    /// succeeded or set `mbCouldntReachpoint`. The continuation owns both the
+    /// ordinary battle-decision log and the roof-fallback early return.
+    ResumeBattleObserveAfterGoNear {
         target: HumanHandle,
         target_position: Position,
     },

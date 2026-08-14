@@ -3959,6 +3959,101 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                    target,
+                    target_position,
+                } => {
+                    let couldnt_reachpoint = self
+                        .world
+                        .entities
+                        .get(owner)
+                        .and_then(Entity::enemy_ai)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "battle-observe continuation owner {} lost Enemy AI",
+                                owner.index()
+                            )
+                        })
+                        .base
+                        .couldnt_reachpoint;
+                    let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+                        panic!(
+                            "battle-observe continuation owner {} has stale target {}",
+                            owner.index(),
+                            target
+                        )
+                    });
+                    let avenger_wait_position = if couldnt_reachpoint {
+                        assert!(
+                            self.scripts.mission.is_some(),
+                            "battle-observe roof recovery requires an installed mission script"
+                        );
+                        crate::engine::ai::precompute_avenger_on_roof_wait_position(
+                            &self.world.entities,
+                            self.script_domains.interactables.doors.as_slice(),
+                            &self.orders.sequence_manager,
+                            owner,
+                            target_id,
+                            &|sector| self.building_sector_is_authorized(sector),
+                            &|sector| self.get_sector_lift_type(sector),
+                        )
+                    } else {
+                        None
+                    };
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!(
+                                "battle-observe continuation owner {} disappeared",
+                                owner.index()
+                            )
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "battle-observe continuation owner {} lost Enemy AI",
+                                owner.index()
+                            )
+                        });
+                    enemy
+                        .base
+                        .outbox
+                        .reentrant
+                        .battle_observe_completion_pending = false;
+                    enemy.resume_battle_observe_after_go_near(
+                        target,
+                        target_position,
+                        avenger_wait_position,
+                        &ctx,
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
                     target,
                     target_position,

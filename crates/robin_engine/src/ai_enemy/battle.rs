@@ -1499,41 +1499,45 @@ impl EnemyAi {
                         // movement in SetState's synchronous actor-effect
                         // prefix so a preceding StopAll and its walking
                         // replacement settle before FilterAIEvent.
+                        let first_new_order = self.base.outbox.actor.orders.len();
                         self.base.go_near(
                             target_pos,
                             observe_distance as i32,
                             GotoFlags::empty(),
                             ctx,
                         );
-                        self.base.set_emoticon(EmoticonType::XMark);
-                        self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
-                        self.base.launch_timer(50, ctx.frame);
-
-                        // Couldn't-reachpoint avenger-on-roof fallback,
-                        // resolved against the target this arm just
-                        // re-picked. Returning from the whole decision
-                        // routine here also skips the decision log line.
-                        if self.base.couldnt_reachpoint
-                            && let Some(wait_pos) = tick.avenger_wait_position_for(target)
-                        {
-                            self.base.couldnt_reachpoint = false;
-                            self.go_near(
-                                AiState::Attacking,
-                                Substate::AttackingRunToAvengerOnRoof,
-                                wait_pos,
-                                50,
-                                GotoFlags::RUN,
+                        if self.base.outbox.actor.orders.len() > first_new_order {
+                            // Original GoNear constructs the route before the
+                            // following SetEmoticon/SetState/timer statements
+                            // and inline mbCouldntReachpoint test. Rust's path
+                            // construction is engine-owned, so suspend that
+                            // exact tail behind the movement actor boundary.
+                            let route_effects = std::mem::take(&mut self.base.outbox.actor);
+                            self.base
+                                .outbox
+                                .reentrant
+                                .owner_work
+                                .push(crate::ai::AiOwnerWork::ActorEffects(route_effects));
+                            self.base.outbox.reentrant.battle_observe_completion_pending = true;
+                            self.base.outbox.reentrant.owner_work.push(
+                                crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                                    target,
+                                    target_position: target_pos,
+                                },
+                            );
+                        } else {
+                            // Local GoNear fast exits already own their result,
+                            // so no engine round trip is required.
+                            self.resume_battle_observe_after_go_near(
+                                target,
+                                target_pos,
+                                tick.avenger_wait_position_for(target),
                                 ctx,
                             );
-                            if let Some(target_pos) = self
-                                .find_fighter(target, tick)
-                                .map(|f| f.position)
-                                .or_else(|| ctx.entity_view(target).map(|view| view.position))
-                            {
-                                self.base.seek_position = target_pos;
-                            }
-                            return false;
                         }
+                        // The typed continuation owns normal logging and the
+                        // roof-fallback early return in both paths.
+                        return false;
                     }
                 }
 
@@ -3056,6 +3060,46 @@ impl EnemyAi {
                 self.base.outbox.reentrant.owner_work,
             );
         }
+    }
+
+    /// Resume Original's `DECISION_OBSERVE` statement immediately after its
+    /// first synchronous `GoNear`. A successful/no-roof path registers the
+    /// decision once; the avenger-on-roof branch returns before that log.
+    pub(crate) fn resume_battle_observe_after_go_near(
+        &mut self,
+        target: HumanHandle,
+        target_position: Position,
+        avenger_wait_position: Option<Position>,
+        ctx: &AiContext,
+    ) {
+        assert_ne!(target, 0, "DECISION_OBSERVE continuation requires a target");
+        assert_eq!(
+            self.base.primary_target, target,
+            "DECISION_OBSERVE continuation target ownership changed"
+        );
+
+        self.base.set_emoticon(EmoticonType::XMark);
+        self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
+        self.base.launch_timer(50, ctx.frame);
+
+        if self.base.couldnt_reachpoint
+            && let Some(wait_pos) = avenger_wait_position
+        {
+            self.base.couldnt_reachpoint = false;
+            self.go_near(
+                AiState::Attacking,
+                Substate::AttackingRunToAvengerOnRoof,
+                wait_pos,
+                50,
+                GotoFlags::RUN,
+                ctx,
+            );
+            self.base.seek_position = target_position;
+            return;
+        }
+
+        self.base
+            .register_log_line(LogLineType::BattleDecision, Decision::Observe as u16);
     }
 
     /// Compute the approach point on `line_idx` closest to the victim.
