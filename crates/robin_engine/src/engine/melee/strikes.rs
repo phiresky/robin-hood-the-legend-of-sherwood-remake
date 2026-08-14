@@ -42,6 +42,25 @@ fn special_strike_lifecycle_debug_matches(frame: u32, owner: u32) -> bool {
             .is_none_or(|expected| expected == owner)
 }
 
+fn opponent_sprite_timing_debug_matches(frame: u32, owner: u32, target: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_OPPONENT_SPRITE_TIMING").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for opponent-sprite-timing diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_FRAME")
+        .is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_OWNER")
+            .is_none_or(|expected| expected == owner)
+        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_TARGET")
+            .is_none_or(|expected| expected == target)
+}
+
 fn special_strike_selected_snapshot(
     manager: &crate::sequence::SequenceManager,
     owner: EntityId,
@@ -2688,10 +2707,47 @@ impl EngineInner {
             // time_limit = 1000 (permissive).  Otherwise, take the
             // sprite's frames-from-now-till-action-done (or 1000 if
             // unavailable).
+            let sprite_timing_debug = opponent_sprite_timing_debug_matches(
+                current_frame,
+                attack.soldier_id.index(),
+                attack.target_id.index(),
+            );
+            let sprite_timing_creation_orders = sprite_timing_debug.then(|| {
+                (
+                    self.world.original_creation_order(attack.soldier_id),
+                    self.world.original_creation_order(attack.target_id),
+                )
+            });
             let opponent_time_limit: Option<i16> =
                 self.get_entity(attack.target_id).and_then(|e| {
                     let animation = self.live_actor_animation(attack.target_id)?;
                     let sprite = &e.element_data().sprite;
+                    if let Some((owner_creation_order, target_creation_order)) =
+                        sprite_timing_creation_orders
+                    {
+                        let script_len = sprite
+                            .current_scripts_opt()
+                            .and_then(|scripts| scripts.get(sprite.current_row as usize))
+                            .map(|script| script.frame_ids.len());
+                        eprintln!(
+                            "OPPONENT_SPRITE_TIMING frame={} owner={} owner_co={} target={} target_co={} caller={:?} animation={animation:?} profile={:?} primary={:?} alternate={:?} use_alternate={} row={} sprite_frame={} frame_count={} action_done_frame={} action_done_counter={} script_len={script_len:?}",
+                            current_frame,
+                            attack.soldier_id.index(),
+                            owner_creation_order,
+                            attack.target_id.index(),
+                            target_creation_order,
+                            only_owner.map(EntityId::index),
+                            sprite.frame_profile_name,
+                            sprite.profile_cache_key,
+                            sprite.alternate_profile_cache_key,
+                            sprite.use_alternate_profile,
+                            sprite.current_row,
+                            sprite.current_frame,
+                            sprite.frame_count,
+                            sprite.action_done_frame,
+                            sprite.action_done_counter,
+                        );
+                    }
                     Some(super::evaluate::opponent_sword_strike_time_limit(
                         Some(animation),
                         || sprite.frames_from_now_till_action_done(),
