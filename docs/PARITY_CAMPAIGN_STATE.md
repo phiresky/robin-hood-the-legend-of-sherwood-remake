@@ -500,6 +500,20 @@ on any examined member's path. Do not re-open this as a rotation bug. Correct sp
   cause): Savegame_000 r001, Savegame_051 r004, Savegame_008 r013, Savegame_040 r001/r010/r011,
   Savegame_024 r014, Savegame_055 r001/r012, Savegame_038 r004/r015.
 
+### Dead code / latent defects found but deliberately NOT fixed (no failing trace yet)
+Same `IsAbleToFight` vs `IsOutOfOrder`/`IsDead` confusion as the fix in `8b6ed1e21`. `IsAbleToFight` is
+the combat-readiness virtual and is hard-coded false for every civilian, so it is wrong in BOTH
+directions wherever the Original tests body condition:
+- `ai_enemy/substate_handlers.rs:5100` — `SeekingTakingNet`/`EVENT_DONE` uses
+  `!view.is_able_to_fight && !view.stuck_under_net`; Original is `IsDead() || IsUnconscious()`
+  (`original-code/RHartificialmalignity.cpp:2237`). Civilians always satisfy the Rust form, so a
+  recovered civilian under a removed net is re-examined instead of returning to duty.
+- `ai_enemy/mod.rs:2618` — `chase_childs` skips candidates with `!view.is_able_to_fight` while its own
+  comment says it filters `!is_dead && !is_unconscious`. Because civilians are never able-to-fight,
+  **`chase_childs` can never find a suspect — the apple-chase behaviour is dead code in the port.**
+  This will not show up in any replay whose capture never exercised apple-chasing; it needs a targeted
+  test or a purpose-recorded trace.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
