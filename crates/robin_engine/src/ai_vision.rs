@@ -72,35 +72,6 @@ pub(crate) fn view_radius_cache_debug_enabled() -> bool {
     view_radius_cache_debug_config().enabled
 }
 
-pub(crate) static DEBUG_CURRENT_FRAME: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(0);
-
-pub(crate) fn debug_set_current_frame(frame: u32) {
-    DEBUG_CURRENT_FRAME.store(frame, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn debug_stare_target() -> Option<(f32, f32)> {
-    static CFG: std::sync::OnceLock<Option<(f32, f32)>> = std::sync::OnceLock::new();
-    *CFG.get_or_init(|| {
-        let raw = std::env::var("PARITY_DEBUG_VR_STARE").ok()?;
-        let (x, y) = raw.split_once(',')?;
-        Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
-    })
-}
-
-pub(crate) fn debug_stare_matches(x: f32, y: f32) -> bool {
-    match debug_stare_target() {
-        Some((tx, ty)) => (x - tx).abs() < 0.01 && (y - ty).abs() < 0.01,
-        None => false,
-    }
-}
-
-pub(crate) fn view_radius_debug_frame_enabled(frame: u32) -> bool {
-
-    let config = view_radius_cache_debug_config();
-    config.enabled && frame >= config.from_frame && frame <= config.through_frame
-}
-
 #[derive(Clone, Copy)]
 struct ViewRadiusSectorDebugContext {
     viewer: EntityId,
@@ -1261,47 +1232,6 @@ pub fn compute_view_radius(
 
     let shadow_sectors = night_fog_shadow_sector_indices(fast_grid, pt_ref, shadow_layer);
 
-    if std::env::var_os("PARITY_DEBUG_VR_SECTORS").is_some() {
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            let mut idx = 0usize;
-            while let Some(o) = sight_obstacles.get(idx) {
-                if o.layer != u16::MAX {
-                    eprintln!(
-                        "VROBST idx={idx} layer={} sector={} box3d={:?}..{:?}",
-                        o.layer, o.sector, o.box_3d_min, o.box_3d_max
-                    );
-                }
-                idx += 1;
-            }
-        });
-        eprintln!(
-            "VRSECT frame={} fwd=({:.5},{:.5}) caller={} eye=({:.3},{:.3},{:.3}) base_r={:.3} obstacle={:?} layer={} ptref=({:.3},{:.3}) sectors={:?}",
-            DEBUG_CURRENT_FRAME.load(std::sync::atomic::Ordering::Relaxed),
-            view_forward.0,
-            view_forward.1,
-            std::panic::Location::caller(),
-            eye_world.x,
-            eye_world.y,
-            eye_world.z,
-            base_radius,
-            target_obstacle.map(|o| (o.layer, o.id)),
-            shadow_layer,
-            pt_ref.x,
-            pt_ref.y,
-            shadow_sectors
-                .iter()
-                .map(|i| {
-                    let s = level.shadow_data.get(i);
-                    (
-                        *i,
-                        s.map(|s| (s.barycentre_3d_x, s.barycentre_3d_y, s.barycentre_3d_z)),
-                    )
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
     tracing::trace!(
         eye_x = eye_world.x,
         eye_y = eye_world.y,
@@ -1427,19 +1357,29 @@ pub fn sector_to_forward(sector: i16) -> (f32, f32) {
 /// CCW for positive θ in standard math convention, which corresponds
 /// to screen-clockwise since the game's Y axis points down.
 ///
-/// Original `SBGeoVector2D::GetRotated` calls the double-precision
-/// libm `cos`/`sin` (the FLOAT angle promotes to double) and keeps the
-/// products and sums in double, rounding to f32 only once per
-/// component.  The stare/follow gaze compares the rotated vector
-/// against the stare vector with catastrophic cancellation, so that
-/// final ULP decides whether the view direction snaps to the raw
-/// stare vector (Savegame_SuN1Sh1nE replay-013 frame 975: f32 trig
-/// left the rotated gaze one ULP short of the crossing, adding a
-/// night-light barycentre `IsReachable` the Original never issued).
+/// `SBGeoVector2D::GetRotated` (original-code/sblibng/SBGeoVector2D.cpp:413-422)
+/// is C++, so the `cos( angle )` / `sin( angle )` calls on the `FLOAT`
+/// angle bind to the `<math.h>` **float** overloads, and the products
+/// stay single-precision.  The shipped Linux build makes that explicit:
+/// `SBGeoVector2D::GetRotated` in
+/// `original-code/build/native-full/robin-schema14-capture` calls
+/// `sincosf` and then does `mulss / mulss / subss` and
+/// `mulss / mulss / addss` — no `cvtss2sd`, no x87.
+///
+/// The last ULP is observable.  `RHElementActorNPC::RefreshView`
+/// (original-code/RHelementactornpc.cpp:1795-1841) feeds the rotated
+/// gaze straight into `Det( vStareVector )`, and it reaches that test
+/// precisely when the two are nearly parallel, so the determinant is
+/// pure cancellation.  Evaluating the rotation in `f64` moves the
+/// x-component one ULP and turns a `Det` of exactly `0` into `+3.8e-6`,
+/// which snaps `mViewParameters.direction` onto the raw — and therefore
+/// un-normalised, ~90-units-long — stare vector.  `ComputeViewRadius`
+/// then places `ptReference` thousands of units off the map, the ±400
+/// light box clips to nothing, and the night-light
+/// `IsReachable( ptEyes, GetBarycentre3D() )` rays are never issued.
 fn rotate_unit(x: f32, y: f32, theta: f32) -> (f32, f32) {
-    let (s, c) = (theta as f64).sin_cos();
-    let (x, y) = (x as f64, y as f64);
-    ((x * c - y * s) as f32, (x * s + y * c) as f32)
+    let (s, c) = theta.sin_cos();
+    (x * c - y * s, x * s + y * c)
 }
 
 /// LOS query: ask the grid for obstacles crossed by the ray, then run
@@ -1630,20 +1570,6 @@ pub struct RefreshViewContext {
 /// of [`refresh_view_look`] still clears a stale look-status the
 /// moment the animation is no longer playing.
 pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
-    if debug_stare_matches(ctx.own_position.x, ctx.own_position.y) {
-        eprintln!(
-            "VRVIEW frame={} status={:?} body_dir={} dir_old={} angle={} dir=({},{}) posture={:?} anim={:?}",
-            DEBUG_CURRENT_FRAME.load(std::sync::atomic::Ordering::Relaxed),
-            npc.eye_status,
-            ctx.body_direction,
-            npc.direction_old,
-            npc.view_angle,
-            npc.view_direction[0],
-            npc.view_direction[1],
-            ctx.posture,
-            ctx.animation,
-        );
-    }
     // Symptom therapy: unconscious/tied/dead NPCs that somehow have
     // a non-closed status get forced to Closed.
     if npc.eye_status != EyeStatus::DieOrGetUnconscious
@@ -1907,26 +1833,6 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
 
 /// Handler for `Stare` and `Follow` (after stare-point update).
 fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &GroundPoint) {
-    let dbg = debug_stare_matches(own_position.x, own_position.y);
-    if dbg {
-        eprintln!(
-            "VRSTARE frame={} own=({},{}) stare=({},{}) vd=({},{}) dir_in=({},{}) angle={} half_range={} step={} status={:?} transition={}",
-            DEBUG_CURRENT_FRAME.load(std::sync::atomic::Ordering::Relaxed),
-            own_position.x,
-            own_position.y,
-            npc.stare_point.x,
-            npc.stare_point.y,
-            vdx,
-            vdy,
-            npc.view_direction[0],
-            npc.view_direction[1],
-            npc.view_angle,
-            npc.view_half_angle_range,
-            npc.view_angle_step,
-            npc.eye_status,
-            npc.view_transition,
-        );
-    }
     // Stare vector from own position to stare point.
     let mut svx = npc.stare_point.x - own_position.x;
     let mut svy = npc.stare_point.y - own_position.y;
@@ -2027,63 +1933,47 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
             npc.view_direction = [rx, ry];
         }
     }
-    if dbg {
-        eprintln!(
-            "VRSTARE   -> sv=({},{}) dir_out=({},{}) angle={}",
-            svx, svy, npc.view_direction[0], npc.view_direction[1], npc.view_angle
-        );
-    }
 }
 
 /// `SBGeoVector2D::operator*` — the 2D dot product
 /// (original-code/sblibng/SBGeoVector2D.cpp:151-154,
 /// `return ( mX * vect.mX + mY * vect.mY );`).
 ///
-/// The Original is a 32-bit x87 build, so `FLT_EVAL_METHOD == 2`: both
-/// products and their sum are evaluated in the 80-bit x87 registers and
-/// rounded to `GEOTYPE` (`float`) exactly once, where the value leaves
-/// the expression.  Two `f32` products need at most 48 mantissa bits, so
-/// evaluating them in `f64` reproduces those x87 intermediates exactly;
-/// rounding every product to `f32` — what a naive port does — does not.
-/// It matters because callers feed the result straight into sign tests
-/// on nearly (anti)parallel vectors, where the cancellation lets the
-/// per-product rounding decide the sign.
+/// The shipped Linux build compiles this to plain SSE scalar singles —
+/// `movss / mulss / mulss / addss` at `SBGeoVector2D::operator*` in
+/// `original-code/build/native-full/robin-schema14-capture` — so every
+/// product and the sum round to `f32` individually.  There is no x87
+/// excess precision to emulate.
 #[inline]
 fn geo_dot(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-    (f64::from(ax) * f64::from(bx) + f64::from(ay) * f64::from(by)) as f32
+    ax * bx + ay * by
 }
 
 /// `SBGeoVector2D::Det` with the default aspect ratio
 /// (original-code/sblibng/SBGeoVector2D.cpp:158-161,
 /// `return ( ( mX * vect.mY - mY * vect.mX ) / fAspectRatio );`).
 ///
-/// Same single-rounding contract as [`geo_dot`]; dividing by the default
-/// `1.0f` aspect ratio is exact and therefore elided.  The cancellation
-/// here is the sharp one: `RHElementActorNPC::RefreshView`
-/// (original-code/RHelementactornpc.cpp:1795-1841) compares this
-/// determinant against zero to decide whether the swept gaze has passed
-/// the stare vector, and by construction the two products agree to
-/// within a few ULPs exactly when it has.
+/// Same single-precision SSE contract as [`geo_dot`] (`mulss / mulss /
+/// subss / divss`); dividing by the default `1.0f` is exact and elided.
 #[inline]
 fn geo_det(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-    (f64::from(ax) * f64::from(by) - f64::from(ay) * f64::from(bx)) as f32
+    ax * by - ay * bx
 }
 
 /// Signed angle between two 2D vectors.
 ///
 /// `SBGeoVector2D::Angle` (original-code/sblibng/SBGeoVector2D.cpp:431-464)
-/// stores the dot and the determinant into `FLOAT` locals — each rounded
-/// once, see [`geo_dot`] / [`geo_det`] — then evaluates
-/// `(FLOAT) atan( (double) ( fDet / fDot ) )`.  The quotient of the two
-/// `FLOAT`s is itself formed in the x87 registers before the cast to
-/// `double`, so the division must not be rounded to `f32` either.
+/// keeps the dot, the determinant, and their quotient in `f32` — the
+/// build emits `divss` for `fDet / fDot` — and only then widens for the
+/// arctangent: `(FLOAT) atan( (double) ( fDet / fDot ) )` compiles to
+/// `cvtss2sd; call atan; cvtsd2ss`.
 fn vec_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
     let dot = geo_dot(ax, ay, bx, by);
     let det = geo_det(ax, ay, bx, by);
     if det == 0.0 {
         return if dot > 0.0 { 0.0 } else { std::f32::consts::PI };
     }
-    let angle = (f64::from(det) / f64::from(dot)).atan() as f32;
+    let angle = f64::from(det / dot).atan() as f32;
     if dot >= 0.0 {
         angle
     } else if det > 0.0 {
@@ -2261,67 +2151,52 @@ mod tests {
         assert!(wx < -0.99 && wy.abs() < 1e-5);
     }
 
-    /// `SBGeoVector2D::GetRotated` (SBGeoVector2D.cpp:413-422) evaluates
-    /// `cos`/`sin` on a `FLOAT` angle through the C `<math.h>` overloads,
-    /// so the angle promotes to `double`, the products and sums stay in
-    /// `double`, and only the final component is cast back to `GEOTYPE`
-    /// (`float`).  Doing the whole thing in `f32` lands one ULP away, and
-    /// the stare/follow gaze in `refresh_view_stare` feeds that vector
-    /// straight into a `Det` sign test with catastrophic cancellation —
-    /// one ULP decides whether the view direction snaps onto the raw
-    /// stare vector, which changes how many detectables get a
-    /// line-of-sight raycast that frame.
+    /// `SBGeoVector2D::GetRotated` (SBGeoVector2D.cpp:413-422) is C++, so the
+    /// `cos`/`sin` calls on its `FLOAT` angle bind to the float overloads and
+    /// the products stay single-precision.  The shipped Linux build proves it:
+    /// `SBGeoVector2D::GetRotated` in
+    /// `original-code/build/native-full/robin-schema14-capture` calls
+    /// `sincosf` and follows it with `mulss / mulss / subss` (x) and
+    /// `mulss / mulss / addss` (y).
     ///
-    /// Expected bit patterns produced by compiling the Original
-    /// expression verbatim against the same libm.
+    /// This pins the observable consequence, taken from
+    /// `60s-random-input/schema14 .../Savegame_036/replay-010` at universal
+    /// frame 34551: an alerted soldier at `(992.3271, 1881.5303)` whose
+    /// `EYES_FOLLOW` gaze has just been stepped back onto its stare vector.
+    /// Evaluating the rotation in `f64` moves the x component one ULP, which
+    /// turns `Det( vStareVector )` from exactly zero into a positive value and
+    /// makes `RefreshView` snap `mViewParameters.direction` onto the raw
+    /// ~148-unit-long stare vector.  `ComputeViewRadius` would then place
+    /// `ptReference` far off the map and drop three night-light
+    /// `IsReachable` rays the Original does issue.
     #[test]
-    fn rotate_unit_keeps_original_double_precision_trig() {
-        // (input x, input y, angle, expected x bits, expected y bits)
-        let cases: [(f32, f32, f32, u32, u32); 5] = [
-            (
-                sector_to_forward(1).0,
-                sector_to_forward(1).1,
-                0.05,
-                0x3edb_549c,
-                0xbf67_523e,
-            ),
-            (
-                sector_to_forward(1).0,
-                sector_to_forward(1).1,
-                -0.7,
-                0xbe9a_df96,
-                0xbf74_01dd,
-            ),
-            (
-                sector_to_forward(2).0,
-                sector_to_forward(2).1,
-                0.7,
-                0x3f7f_112c,
-                0xbdae_aed6,
-            ),
-            (0.6, -0.8, -0.25, 0x3ec4_5031, 0xbf6c_6f3c),
-            (-0.3, 0.95, 0.05, 0xbeb1_b7c9, 0x3f6f_0ec3),
-        ];
+    fn rotate_unit_uses_original_single_precision_trig() {
+        let (vdx, vdy) = sector_to_forward(11);
+        let theta = 0.403_074_44_f32 - 0.392_7_f32;
+        // Stare vector: (stare_point - own_position) with X pre-stretched by
+        // ASPECT_RATIO, exactly as `RefreshView` builds it.
+        let (svx, svy) = (-137.141_63_f32, 55.146_12_f32);
 
-        for (x, y, theta, want_x, want_y) in cases {
-            let (rx, ry) = rotate_unit(x, y, theta);
-            assert_eq!(
-                (rx.to_bits(), ry.to_bits()),
-                (want_x, want_y),
-                "rotate_unit({x}, {y}, {theta}) = ({rx:e}, {ry:e})"
-            );
+        let (rx, ry) = rotate_unit(vdx, vdy, theta);
+        assert_eq!(
+            geo_det(rx, ry, svx, svy),
+            0.0,
+            "single-precision GetRotated must leave the overshoot determinant at zero"
+        );
 
-            // Guard the regression directly: the all-f32 formulation the
-            // port used before disagrees on at least one component of
-            // every case above.
-            let (s, c) = theta.sin_cos();
-            let naive = (x * c - y * s, x * s + y * c);
-            assert_ne!(
-                (naive.0.to_bits(), naive.1.to_bits()),
-                (want_x, want_y),
-                "case ({x}, {y}, {theta}) no longer distinguishes f32 from f64 trig"
-            );
-        }
+        // The f64 formulation the port briefly used disagrees by one ULP in x
+        // and flips that determinant positive, i.e. it snaps when the Original
+        // does not.
+        let (s, c) = (f64::from(theta)).sin_cos();
+        let wide = (
+            (f64::from(vdx) * c - f64::from(vdy) * s) as f32,
+            (f64::from(vdx) * s + f64::from(vdy) * c) as f32,
+        );
+        assert_ne!(wide.0.to_bits(), rx.to_bits());
+        assert!(
+            geo_det(wide.0, wide.1, svx, svy) > 0.0,
+            "f64 rotation no longer reproduces the spurious stare snap"
+        );
     }
 
     /// `SBGeoVector2D::Angle` (SBGeoVector2D.cpp:431-464) forms the dot and

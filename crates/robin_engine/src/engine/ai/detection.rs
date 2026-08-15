@@ -2646,17 +2646,6 @@ impl EngineInner {
                             )
                         })
                     });
-                    if ai_vision::view_radius_debug_frame_enabled(universal_frame) {
-                        eprintln!(
-                            "VRPAIR {{\"frame\":{universal_frame},\"viewer_slot\":{},\"target_slot\":{},\"obstacle\":{},\"obstacle_layer\":{},\"target_is_pc\":{},\"target_is_soldier\":{}}}",
-                            npc_id.index(),
-                            target_id.index(),
-                            target_obstacle_handle.map_or(-1, |h| i32::from(u16::from(h))),
-                            target_obstacle.map_or(-1, |o| i32::from(o.layer)),
-                            target.is_pc,
-                            target.is_soldier,
-                        );
-                    }
                     let q = ai_vision::VisibilityQuery {
                         viewer_los: eye,
                         viewer_world: eye_world,
@@ -5340,7 +5329,6 @@ impl OwnerViewRadiusCache {
         frame: u32,
         diagnostic_source: &'static str,
     ) -> Self {
-        crate::ai_vision::debug_set_current_frame(frame);
         let cache = Self {
             diagnostic_viewer: Some(viewer),
             diagnostic_frame: frame,
