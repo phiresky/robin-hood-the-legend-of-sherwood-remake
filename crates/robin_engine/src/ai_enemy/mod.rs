@@ -2766,6 +2766,23 @@ impl EnemyAi {
                 )
             });
         let forecast = prepared.resolve(sim);
+        if std::env::var_os("PARITY_DEBUG_FORECAST").is_some() {
+            let view_pos = ctx.entity_view(enemy).map(|v| (v.position.x, v.position.y));
+            eprintln!(
+                "OUTOFVIEW frame={} me={} enemy={} view_pos={:?} fallback=({},{}) dir={} gates={} => forecast=({},{}) dir={}",
+                ctx.frame,
+                self.base.me,
+                enemy,
+                view_pos,
+                0,
+                0,
+                0,
+                0,
+                forecast.position.x,
+                forecast.position.y,
+                forecast.direction,
+            );
+        }
         self.base.seek_position = forecast.position;
         self.pc_gone_away_in_this_direction = forecast.direction;
 
