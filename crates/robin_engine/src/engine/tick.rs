@@ -3247,12 +3247,14 @@ impl EngineInner {
         // Rust computes A* synchronously, but the queue retains the original
         // one-call latency and one-completion-per-frame observation order.
         let had_in_flight = self.orders.pending_path_requests.has_in_flight();
+        self.trace_path_barrier("enter");
         let completed = MovementContext::new(
             self.control.frame_counter,
             &mut self.world,
             &mut self.orders,
         )
         .take_completed();
+        self.trace_path_barrier_completed("take1", &completed);
         self.apply_completed_path_work(sim, completed);
 
         MovementContext::new(
@@ -3261,6 +3263,7 @@ impl EngineInner {
             &mut self.orders,
         )
         .start_next(assets);
+        self.trace_path_barrier("after_start1");
 
         // Synchronous mode may deliver the request started above at this same
         // barrier, but ProcessPathRequests returns at most one result per
@@ -3273,6 +3276,7 @@ impl EngineInner {
                 &mut self.orders,
             )
             .take_completed();
+            self.trace_path_barrier_completed("take2", &completed);
             self.apply_completed_path_work(sim, completed);
 
             // In Original's synchronous WAITING arm, starting the first
@@ -3287,6 +3291,7 @@ impl EngineInner {
                 &mut self.orders,
             )
             .start_next(assets);
+            self.trace_path_barrier("after_start2");
         }
 
         // ── Failed-path retry ────────────────────────────────────
@@ -3369,6 +3374,55 @@ impl EngineInner {
                 amount,
             ));
         }
+    }
+
+    fn trace_path_barrier(&self, stage: &str) {
+        if std::env::var_os("PARITY_DEBUG_PATH_BARRIER").is_none() {
+            return;
+        }
+        let pending = self
+            .orders
+            .pending_path_requests
+            .parity_state(&self.world.fast_grid);
+        let brief: Vec<_> = pending
+            .1
+            .iter()
+            .map(|entry| {
+                (
+                    entry.request.actor,
+                    entry.sequence_id,
+                    entry.element_index,
+                    entry.in_flight,
+                    entry.waypoints.as_ref().map(|w| w.len()),
+                )
+            })
+            .collect();
+        eprintln!(
+            "[PATH_BARRIER frame={} stage={stage} ignore={} queue={brief:?}]",
+            self.control.frame_counter, pending.0
+        );
+    }
+
+    fn trace_path_barrier_completed(&self, stage: &str, completed: &Option<CompletedPathWork>) {
+        if std::env::var_os("PARITY_DEBUG_PATH_BARRIER").is_none() {
+            return;
+        }
+        let brief = completed.as_ref().map(|work| match work {
+            CompletedPathWork::Ready { request, waypoints } => (
+                "ready",
+                request.owner,
+                request.seq_id,
+                request.elem_idx,
+                waypoints.len(),
+            ),
+            CompletedPathWork::Failed(request) => {
+                ("failed", request.owner, request.seq_id, request.elem_idx, 0)
+            }
+        });
+        eprintln!(
+            "[PATH_BARRIER frame={} stage={stage} completed={brief:?}]",
+            self.control.frame_counter
+        );
     }
 
     fn apply_completed_path_work(
@@ -6424,6 +6478,7 @@ impl EngineInner {
             beggar_wait_handoffs,
             stature_change_end,
             pc_bow_equip_action,
+            pc_bow_unequip_action,
             pc_helping_climb_action,
         } = execute_sides;
 
@@ -6448,6 +6503,7 @@ impl EngineInner {
         // remarks, blood-alcohol bump).
         self.drain_drop_ale_done(assets, drop_ale_done);
         self.drain_pc_bow_equip_action(assets, pc_bow_equip_action);
+        self.drain_pc_bow_unequip_action(assets, pc_bow_unequip_action);
         self.drain_pc_helping_climb_action(assets, pc_helping_climb_action);
         self.drain_stature_change_end(stature_change_end);
         self.drain_weak_stunned_start(sim, assets, weak_stunned_start);
@@ -6940,6 +6996,33 @@ impl EngineInner {
             // An unselected PC only restores its remembered action; a
             // selected PC also restores the messenger-global action.
             self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+        }
+    }
+
+    fn drain_pc_bow_unequip_action(
+        &mut self,
+        assets: &LevelAssets,
+        pc_bow_unequip_action: Vec<(EntityId, bool)>,
+    ) {
+        for (pc_id, script_driven) in pc_bow_unequip_action {
+            // RHElementActorHuman::Execute, TRANSITION_UNEQUIP_BOW START arm
+            // (PC branch): an empty quiver disables the Bow action outright
+            // (regardless of the script flag); otherwise non-script elements
+            // forward MSG_UNSELECT_ACTION(BOW).
+            if self.get_pc_ammo_count(pc_id, crate::profiles::Action::Bow) == 0 {
+                self.disable_pc_action(assets, pc_id, crate::profiles::Action::Bow);
+            } else if !script_driven {
+                // RHMessenger's MSG_UNSELECT_ACTION pre-process drops the
+                // message unless the unselected action is the messenger's
+                // currently selected action; it then clears that selection
+                // and RHEngine::UnSelectAction clears the PC's remembered
+                // action (the freshly-Waiting action state means no further
+                // cleanup sequence is launched).
+                if self.players.seats[0].selected_action == crate::profiles::Action::Bow {
+                    self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
+                    self.unselect_action(pc_id);
+                }
+            }
         }
     }
 

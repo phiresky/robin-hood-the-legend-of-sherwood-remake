@@ -398,6 +398,119 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 
+## Batch 20 — 2026-08-15 session (resume point)
+
+Frozen runner in use for measurement is still `07872e94` (audit dir
+`output/parity-audits/batch19-head07872e94-nestedd7792d55-preflight/`). That sweep measured
+**204 remaining non-EOF** traces (`remaining-failures-204.snapshot`, sha256
+2ba7e64819c94e39e4578c405ffbc07d6dd227c7026c0046ce5e9e216fa8cf13). Since then main has gained
+11 behaviour fixes clearing **33 traces to exact EOF** (not yet re-measured by a sweep):
+
+| commit | root cause | traces |
+|---|---|---|
+| 588b063a8 | rider-charge scalars rounded once by `operator*=`, not per component | 3 |
+| 60327ada4 | clear `mbDeviated` on aligned transition start (was count-priming) | 5 |
+| 2f8e6b54a | NPC gaze trig evaluated in f64 like Original `GetRotated`/`Angle` | 6 |
+| 198f7a6da | collision candidates grouped; break at first impacting group | 2 |
+| f1767fe51 | `AssignPath` native keeps `mbSpecialAction` (2nd overload) | 2 |
+| 3c1bbd9ae | cross-sector swordfight occupancy gate runs without a jump line; Interrupted + CASCADE_NEXT_LEVEL | 6 |
+| 2b24f1094 | `TRANSITION_UNEQUIP_BOW` also unselects the PC Bow action | 3 |
+| ab4274027 | `ReconsiderEnemyApproach` recomputes the jump line live after retarget | 1 |
+| f0c371b84 | `EndThink` keeps its frame open across completion cascades | 2 |
+| 906cd1cf3 | dead path requests still consume the per-frame result slot | 1 |
+| 4ac810388 | virtual `Kill` runs synchronously inside piercing damage | 2 |
+
+Diagnostics added: `84520e433` `PARITY_DEBUG_RNG_SITE_MAP` (learns Original callsite-offset -> Rust
+site-label pairs while streams agree, then names the draw Rust SKIPPED), `ee0ad7b62`
+`[RECONSIDER_STIMULUS]`, `PARITY_DEBUG_PATH_BARRIER` (in 906cd1cf3), `PARITY_DEBUG_BAD_EXPERIENCE`.
+
+### NEXT ACTION: freeze a runner and sweep — and do NOT sweep failures-only this time
+Three merges touch shared core paths, so a failures-only manifest is blind to the regressions they
+could cause. Include a sample (>= 300) of currently-PASSING traces as a regression guard:
+- `198f7a6da` rewrote 465 lines of `sight_obstacle.rs` (`IsReachableImpact` semantics), used beyond projectiles
+- `f0c371b84` changes Think recursion depth for ALL AI, reviving two previously-dead depth-gated behaviours
+- `906cd1cf3` changes path-request scheduling for every actor
+
+### Corrections to long-standing campaign lore (both verified this session)
+- **Substate mapping**: C++ `RHsubstate` and Rust `ai::model::Substate` align **1:1**, both 256 entries from 0.
+  The old "C++ = Rust index + 1" note was FALSE (fixed at line ~412). A parser that ignores Rust's explicit
+  `= N` discriminants undercounts and appears to confirm the old claim — do not be fooled by it.
+- **RNG cluster labels are artifacts**: `classify_parity_failures.py` keys on the first RNG site of the frame.
+  A full triage of the 15-trace "ambient idle" bucket found NOT ONE member caused by idle/bored/16th-frame
+  code; it decomposed into ~9 unrelated families. Cluster RNG traces by the state delta, not the site label.
+
+### Environment constraints
+- The Original binary CANNOT be rebuilt here: CMake >= 4.0 is satisfiable via pip/uv, but the 32-bit
+  toolchain is missing (`cannot find -lgcc` for `-m32`). Prebuilt `original-code/build/native-full/robin`
+  and `robin-schema14-capture` DO run, and gdb against them is a proven technique — but no new
+  Original-side instrumentation is possible. `addr2line` mis-symbolizes against that prebuilt `robin`
+  (it predates current instrumentation); use `PARITY_DEBUG_RNG_SITE_MAP` instead.
+- Disk is the binding constraint: each agent worktree reaches 6-17 GB (debug + release targets). Twelve
+  concurrent agents once filled a 436 GB disk and corrupted a worktree's git metadata. Remove each
+  worktree right after merging; keep a >12 GB floor.
+
+### Capture campaign (separate from the fix wave)
+`parity-save-replays/60s-random-input/schema14-seed1000000-20260814/` — target 243 saves x 10 replays =
+2430; at checkpoint **850/2430**, running at nice/ionice-idle. It self-pauses by writing `.capture.pause`
+when free disk drops under its 30 GB floor + 9 GB/job reservation; delete that file to resume. Completed
+captures are compressed under `traces/`; `.capture-attempts/` is disposable scratch (it once held 29 GB).
+
+### Agents in flight at checkpoint (8) — worktrees under .claude/worktrees/
+seek flood (16) · light-sector `ComputeViewRadius` raycasts (7+2) · 
+seek-refresh extra movement element (6) · detection/alert escalation (4) · Wait-completion-vs-interruption
+(~20, largest open lead) · plus two finished-and-merged. Their branches are `worktree-agent-<id>`;
+check `git rev-list --count main..<branch>` before assuming work is unmerged.
+**UNREVIEWED**: branch `worktree-agent-a0a0cb7befe82f927` carries `e447d2b50` "Charge a weak enemy on the
+AI's stretched 3D distance" committed AFTER its report was merged — it is unvalidated by the coordinator
+and must be reviewed/validated before merging.
+
+### The "+-4 sector rotation" cluster is DISPROVEN — re-split it (agent returned no fix, 2026-08-15)
+A dedicated agent examined 3 of the 14 members in depth and found Rust computes **exactly the same
+sector the Original computes** in every one; the divergence is always *whether/when the turn is issued*,
+never the sector math. Lead (a) confirmed: `vector_to_sector_0_to_15_with_aspect` is a faithful port.
+Lead (b) is a dead end: `RHartificialintelligence.cpp:1670` and `:2001` are faithfully ported and are not
+on any examined member's path. Do not re-open this as a rotation bug. Correct split:
+- **One real sub-bug, 5 traces — `anim 140 vs 50`**: Savegame_071 r003 (Soldier104), Savegame_032 r006
+  (Soldier87), Savegame_030 r005/r006/r011 (Soldier240). In substate 97
+  (`SeekingSoldierGiveAlertingReportToOfficerPoint`) Rust `PointTo`s at entry+100 while Original does it at
+  entry+150 (measured on three independent saves). The direction Rust picks is the one the Original later
+  uses, so `PointTo`'s sector math is right. Ruled out: AI lock, `IsFrozenAll`, skipped sim frames,
+  `mSubstateAtLastTimerLaunch`. **Best candidate:** `RHElementActor::Instruct`
+  (`original-code/RHelementactor.cpp:1333+`) postpones the `PointTo` TURN element against the looping
+  `WaitingAlerted` wait via `DecidePriorities -> RHPRIORITY_DECISION_POSTPONE`, so the turn starts only at
+  the wait's next completion boundary; Rust instructs it immediately (installed order flips to `Turning`
+  at exactly +100). Testing that should clear all five at once.
+- **Separate, 1 trace** — Savegame_022 r012 (Civilian60, f1413): the interaction's `TurnElement` never
+  reaches the actor. Rust routes every AI Turning intent through the always-deferred arm
+  (`engine/movement.rs:11715` -> `launch_turn_sequence_deferred_no_transitions`), while Original `FaceTo`
+  (`RHartificialintelligence.cpp:2739-2779`) `Halt()`s and `LaunchSequence` **synchronously**. That
+  defer-everything asymmetry is the prime suspect.
+- **Separate, 1 trace** — Savegame_071 r015 (Pc342, f5392): Original's `direction_goal` legitimately
+  oscillates 3<->7 every frame while walking (7 when position advanced, 3 when not); Rust is one frame out
+  of phase. Transient direction-goal write in the anti-collision/deviation path
+  (`RHpositioninterface.cpp:1570/1574/2071/2109/2118`) — adjacent to `60327ada4`.
+- **Unclassified, 7 traces** (not examined; three-for-three heterogeneity means do NOT assume a shared
+  cause): Savegame_000 r001, Savegame_051 r004, Savegame_008 r013, Savegame_040 r001/r010/r011,
+  Savegame_024 r014, Savegame_055 r001/r012, Savegame_038 r004/r015.
+
+### Highest-value unassigned leads
+1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
+   raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
+   Sits under ~20 traces in the two hottest battle saves.
+2. **Civilian on-post turn** (2 traces, clean): linux3/P3 Savegame_074 r001/r002 — Civilian 62
+   `DefaultGotoPostTurn`(8) vs Rust `DefaultOnPost`(11), extra `AiRandomValueRectangle` before `MacroRand`.
+3. **Melee mirror pair**: nicouzouf 069 r010 (strike lands in Rust only) and 037 r005 (lands in Original
+   only) — plausibly one root cause seen from both sides.
+4. **1-ulp `movement_map.x`**: Savegame_029 r014 (f4866), r010 (f5185), Savegame_032 r002.
+5. **Increment seeded from post-move position**: Nescafe P2 Savegame_000 r015 f1531 —
+   `normalize(goal - pos@1530)` reproduces Original `0xbebd747b` bit-exactly.
+6. **Bow-shot initial velocity**: Savegame_029 r001 f12292 — same XY bearing, different speed/pitch;
+   `ComputeInitialThrowVelocity` (`RHelementprojectile.cpp:161-207`) picks a different apex flight time.
+7. **`EnemyAi::end_think` triple latch**: queues all three completion latches; Original's `StartThink`
+   (`RHartificialintelligence.cpp:982-984`) clears all three so at most one can fire. No failing trace yet.
+8. `RuntimeBuildingExitWait` cohort (3) — same missing C++ site `RHsequence.cpp:484`, three different
+   upstream causes; campaign #75 flagged it capture-required.
+
 ## Wave loop (the process to continue)
 
 1. Merge reported agent branches into main (verify suite 2629/0 + debug build).
@@ -409,7 +522,7 @@ Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67
 
 - Remote sweep: `ssh atlasbio-robin-cpu4`; corpora + datadirs + original-code + rust-src at `~/robinhood/`; build `cd ~/robinhood/rust-src && cargo build --release --example original_parity_replay`; sweep script reads `<audit>/traces.snapshot`, writes per-trace `status/<key>.status` (0 pass, 1 state-div, 101 rng-panic, 124 timeout) and `logs/<key>.log`; key = trace path with `/`→`__`.
 - classify_parity_failures.py groups by first divergence boundary; output classification.json.
-- Substates in dumps: C++ enum = Rust index + 1. Aim previews burn creation-order in Original, not in Rust (see memory project_creation_order_preview_gaps).
+- Substates in dumps: C++ `RHsubstate` and Rust `ai::model::Substate` align **1:1** — both are 256 entries starting at `START_SLEEPING_SUBSTATES`/`StartSleepingSubstates = 0`, and e.g. 155 = RUNNING_TO_ENEMY, 208 = RIDER_CHARGING_APPROACHING, 250 = RUN_TO_AVENGER_ON_ROOF on both sides (only 114/201/202 differ in spelling). The earlier "C++ enum = Rust index + 1" note in this file was WRONG and caused misreadings of dumps; verified 2026-08-15 by parsing both enums with explicit discriminants honored. Aim previews burn creation-order in Original, not in Rust (see memory project_creation_order_preview_gaps).
 - RNG contract: Rust consumes recorded draw VALUES; "replay exhausted" = Rust drew MORE than Original; extra/missing draws → compare gate conditions at the named site.
 - `--dump-jsonl` ~500KB/frame — narrow windows only, delete after.
 - Entity mapping in dumps: original pc:N ↔ Rust Pc(PcId(N−1)) sometimes (creation-order shift) — verify entity identity before trusting a dump diff (bit fix-endfacing twice).

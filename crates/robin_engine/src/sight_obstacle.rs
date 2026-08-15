@@ -1318,23 +1318,6 @@ pub fn is_reachable_impact_3d(
     let origin_arr = [origin.x, origin.y, origin.z];
     let dest_arr = [destination.x, destination.y, destination.z];
 
-    // Walk active, type-matching obstacles and find the nearest impact.
-    let mut best_t: f32 = f32::INFINITY;
-    let mut best_obstacle: Option<u32> = None;
-    let mut best_obstacle_impact = None;
-    let mut ground_impact = None;
-
-    #[derive(Clone)]
-    struct DebugGroup {
-        creation_order: usize,
-        x_min: f32,
-        y_min: f32,
-        x_max: f32,
-        y_max: f32,
-        members: Vec<(usize, u32)>,
-    }
-    let mut debug_groups = collision_debug.then(Vec::<DebugGroup>::new);
-
     if collision_debug {
         eprintln!(
             "PARITY_PROJECTILE_COLLISION phase=begin origin_bits=[{:08x},{:08x},{:08x}] destination_bits=[{:08x},{:08x},{:08x}] obstacles={}",
@@ -1348,19 +1331,33 @@ pub fn is_reachable_impact_3d(
         );
     }
 
+    // ── Candidate collection ──
+    //
+    // Original gathers candidates with `RHFastFindGrid::GetObstacles(list,
+    // 0, raySegment, type)` (original-code/RHfastfindgrid.cpp:5180): grid
+    // blocks under the segment's bbox in row-major order, each
+    // segment-intersecting block's load-ordered obstacle list filtered by
+    // active + type, deduplicated, then reduced to obstacles whose ground
+    // bbox intersects the segment exactly.
+    //
+    // TODO(parity): we iterate the obstacle registry in index order
+    // instead of block-traversal order. Per-block lists are filled in
+    // load (index) order, so the relative candidate order only differs
+    // when a higher-index obstacle surfaces in an earlier-traversed
+    // block than a lower-index one, and the candidate set only differs
+    // for an obstacle whose bbox meets the segment while its polygon
+    // touches none of the traversed blocks. Both differences are
+    // observable solely through the group partitioning below.
+    let mut candidates: Vec<usize> = Vec::new();
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
         let active = obstacles.is_active(idx);
         if !active {
             if collision_debug {
                 eprintln!(
-                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=false type_match={} shield={} segment_candidate={:?} group=None bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
+                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=false type_match={} shield={} segment_candidate=false group=None bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
                     obs.id,
                     obs.is_of_type(type_filter),
                     obs.is_shield(),
-                    !obs.box_ground.trivially_rejects_segment(segment(
-                        pt(origin.x, origin.y),
-                        pt(destination.x, destination.y),
-                    )),
                     obs.box_ground.x_min(),
                     obs.box_ground.y_min(),
                     obs.box_ground.x_max(),
@@ -1373,13 +1370,9 @@ pub fn is_reachable_impact_3d(
         if !type_match {
             if collision_debug {
                 eprintln!(
-                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=true type_match=false shield={} segment_candidate={:?} group=None bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
+                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=true type_match=false shield={} segment_candidate=false group=None bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
                     obs.id,
                     obs.is_shield(),
-                    !obs.box_ground.trivially_rejects_segment(segment(
-                        pt(origin.x, origin.y),
-                        pt(destination.x, destination.y),
-                    )),
                     obs.box_ground.x_min(),
                     obs.box_ground.y_min(),
                     obs.box_ground.x_max(),
@@ -1388,50 +1381,14 @@ pub fn is_reachable_impact_3d(
             }
             continue;
         }
-        let shield = obs.is_shield();
-        let segment_candidate = collision_debug.then(|| {
-            !obs.box_ground.trivially_rejects_segment(segment(
-                pt(origin.x, origin.y),
-                pt(destination.x, destination.y),
-            ))
-        });
-        let mut debug_group = None;
-        if collision_debug && !shield && segment_candidate == Some(true) {
-            let groups = debug_groups
-                .as_mut()
-                .expect("enabled collision diagnostic requires group storage");
-            for (group_index, group) in groups.iter_mut().enumerate() {
-                let intersects = group.x_min <= obs.box_ground.x_max()
-                    && group.x_max >= obs.box_ground.x_min()
-                    && group.y_min <= obs.box_ground.y_max()
-                    && group.y_max >= obs.box_ground.y_min();
-                if intersects {
-                    group.x_min = group.x_min.min(obs.box_ground.x_min());
-                    group.y_min = group.y_min.min(obs.box_ground.y_min());
-                    group.x_max = group.x_max.max(obs.box_ground.x_max());
-                    group.y_max = group.y_max.max(obs.box_ground.y_max());
-                    group.members.push((idx, obs.id));
-                    debug_group = Some(group_index);
-                    break;
-                }
-            }
-            if debug_group.is_none() {
-                let group_creation_order = groups.len();
-                debug_group = Some(group_creation_order);
-                groups.push(DebugGroup {
-                    creation_order: group_creation_order,
-                    x_min: obs.box_ground.x_min(),
-                    y_min: obs.box_ground.y_min(),
-                    x_max: obs.box_ground.x_max(),
-                    y_max: obs.box_ground.y_max(),
-                    members: vec![(idx, obs.id)],
-                });
-            }
-        }
-        if shield {
+        // Shields never come out of the grid query: they are neither
+        // registered in the fast-grid blocks nor produced by
+        // `GetMobileObstacles`. Their collision runs through the separate
+        // shield-holder check in the projectile tick.
+        if obs.is_shield() {
             if collision_debug {
                 eprintln!(
-                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active={active} type_match={type_match} shield={shield} segment_candidate={segment_candidate:?} group={debug_group:?} bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
+                    "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=true type_match=true shield=true segment_candidate=false group=None bbox=[{:#.9},{:#.9},{:#.9},{:#.9}] hit=none",
                     obs.id,
                     obs.box_ground.x_min(),
                     obs.box_ground.y_min(),
@@ -1441,26 +1398,15 @@ pub fn is_reachable_impact_3d(
             }
             continue;
         }
-        let candidate_impact = obs.blocking_ray_3d_impact(origin_arr, dest_arr);
-        if collision_debug {
-            let origin_rel_top = origin.z - obs.compute_top_z(origin.x, origin.y);
-            let destination_rel_top =
-                destination.z - obs.compute_top_z(destination.x, destination.y);
-            let origin_rel_bottom = origin.z - obs.compute_bottom_z(origin.x, origin.y);
-            let destination_rel_bottom =
-                destination.z - obs.compute_bottom_z(destination.x, destination.y);
-            let hit_bits = candidate_impact.as_ref().map(|impact| {
-                (
-                    impact.t.to_bits(),
-                    [
-                        impact.point.x.to_bits(),
-                        impact.point.y.to_bits(),
-                        impact.point.z.to_bits(),
-                    ],
-                )
-            });
+        if bbox_intersects_segment_reference(
+            &obs.box_ground,
+            (origin.x, origin.y),
+            (destination.x, destination.y),
+        ) {
+            candidates.push(idx);
+        } else if collision_debug {
             eprintln!(
-                "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active={active} type_match={type_match} shield={shield} on_ground={} points={} segment_candidate={segment_candidate:?} group_creation={debug_group:?} bbox_bits=[{:08x},{:08x},{:08x},{:08x}] relative_bits=[{:08x},{:08x},{:08x},{:08x}] hit_bits={hit_bits:?}",
+                "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=true type_match=true shield=false on_ground={} points={} segment_candidate=Some(false) group_creation=None bbox_bits=[{:08x},{:08x},{:08x},{:08x}] relative_bits=[{:08x},{:08x},{:08x},{:08x}] hit_bits=None",
                 obs.id,
                 obs.on_ground,
                 obs.obstacle_points.len(),
@@ -1468,59 +1414,211 @@ pub fn is_reachable_impact_3d(
                 obs.box_ground.y_min().to_bits(),
                 obs.box_ground.x_max().to_bits(),
                 obs.box_ground.y_max().to_bits(),
-                origin_rel_top.to_bits(),
-                destination_rel_top.to_bits(),
-                origin_rel_bottom.to_bits(),
-                destination_rel_bottom.to_bits(),
+                (origin.z - obs.compute_top_z(origin.x, origin.y)).to_bits(),
+                (destination.z - obs.compute_top_z(destination.x, destination.y)).to_bits(),
+                (origin.z - obs.compute_bottom_z(origin.x, origin.y)).to_bits(),
+                (destination.z - obs.compute_bottom_z(destination.x, destination.y)).to_bits(),
             );
-        }
-        if let Some(impact) = candidate_impact
-            && impact.t < best_t
-        {
-            best_t = impact.t;
-            best_obstacle = Some(idx as u32);
-            best_obstacle_impact = Some(impact.point);
         }
     }
 
-    if let Some(groups) = debug_groups.as_mut() {
+    // `RHFastFindGrid::IsReachableImpact` returns "reachable" outright when
+    // the grid query produced nothing and neither endpoint is below the
+    // ground plane.
+    if candidates.is_empty() && origin.z >= 0.0 && destination.z >= 0.0 {
+        return None;
+    }
+
+    // Ground-crossing point exactly as Original computes it: the
+    // dominant-axis z equation in FLOAT solved for z=0, then
+    // `SBGeoLine2D::EvalX/Y` (whose deltas are DOUBLE) for the other map
+    // coordinate. Those intermediate rounding points are observable in
+    // the final projectile movement.
+    let compute_ground_point = || {
         let dx = destination.x - origin.x;
         let dy = destination.y - origin.y;
-        let quadrant = if dx > 0.0 {
-            if dy > 0.0 {
-                if dx > dy { "right" } else { "up" }
-            } else if dx > -dy {
-                "right"
-            } else {
-                "down"
-            }
-        } else if dy > 0.0 {
-            if -dx > dy { "left" } else { "up" }
-        } else if dx < dy {
-            "left"
+        let dz = destination.z - origin.z;
+        let use_x = dx.abs() > dy.abs();
+        let (primary_origin, primary_delta) = if use_x {
+            (origin.x, dx)
         } else {
-            "down"
+            (origin.y, dy)
         };
-        for unsorted_end in (1..groups.len()).rev() {
-            let mut done = true;
-            for index in 0..unsorted_end {
-                let swap = match quadrant {
-                    "right" => groups[index].x_min > groups[index + 1].x_max,
-                    "left" => groups[index].x_min < groups[index + 1].x_max,
-                    "up" => groups[index].y_min > groups[index + 1].y_max,
-                    "down" => groups[index].y_min < groups[index + 1].y_max,
-                    _ => unreachable!(),
-                };
-                if swap {
-                    groups.swap(index, index + 1);
-                    done = false;
-                }
-            }
-            if done {
+        let a = dz / primary_delta;
+        let b = origin.z - a * primary_origin;
+        let primary = -b / a;
+        let (x, y) = if use_x {
+            let y =
+                (((primary - origin.x) as f64 * dy as f64 / dx as f64) + origin.y as f64) as f32;
+            (primary, y)
+        } else {
+            let x =
+                (((primary - origin.y) as f64 * dx as f64 / dy as f64) + origin.x as f64) as f32;
+            (x, primary)
+        };
+        WorldPoint3D { x, y, z: 0.0 }
+    };
+
+    // No candidates but an endpoint below ground: Original solves the
+    // carrier line against z=0 directly and reports a bare-ground impact
+    // (even when the crossing lies beyond the segment, e.g. both
+    // endpoints below ground).
+    if candidates.is_empty() {
+        return Some(ImpactResult3D {
+            impact: compute_ground_point(),
+            obstacle_index: None,
+        });
+    }
+
+    // ── Group the candidates ──
+    //
+    // Original ranges candidates into bbox-overlap groups: each candidate
+    // joins the first existing group whose accumulated bbox intersects
+    // its ground bbox (expanding that group), otherwise it opens a new
+    // group. Groups never merge, so the partition depends on candidate
+    // order.
+    struct ObstacleGroup {
+        creation_order: usize,
+        x_min: f32,
+        y_min: f32,
+        x_max: f32,
+        y_max: f32,
+        members: Vec<usize>,
+    }
+    let mut groups: Vec<ObstacleGroup> = Vec::new();
+    for &idx in &candidates {
+        let obs = obstacles
+            .get(idx)
+            .expect("collision candidate index out of range");
+        let mut joined = false;
+        for group in groups.iter_mut() {
+            let intersects = group.x_min <= obs.box_ground.x_max()
+                && group.x_max >= obs.box_ground.x_min()
+                && group.y_min <= obs.box_ground.y_max()
+                && group.y_max >= obs.box_ground.y_min();
+            if intersects {
+                group.x_min = group.x_min.min(obs.box_ground.x_min());
+                group.y_min = group.y_min.min(obs.box_ground.y_min());
+                group.x_max = group.x_max.max(obs.box_ground.x_max());
+                group.y_max = group.y_max.max(obs.box_ground.y_max());
+                group.members.push(idx);
+                joined = true;
                 break;
             }
         }
+        if !joined {
+            groups.push(ObstacleGroup {
+                creation_order: groups.len(),
+                x_min: obs.box_ground.x_min(),
+                y_min: obs.box_ground.y_min(),
+                x_max: obs.box_ground.x_max(),
+                y_max: obs.box_ground.y_max(),
+                members: vec![idx],
+            });
+        }
+    }
+
+    // ── Sort the groups along the ray ──
+    //
+    // Original's quadrant selection compares the direction components
+    // exactly as below, then bubble-sorts the group list with a
+    // min-versus-max comparison. That comparison is not a strict weak
+    // order, so the bubble sort must run verbatim rather than through a
+    // library sort.
+    let dx = destination.x - origin.x;
+    let dy = destination.y - origin.y;
+    let quadrant = if dx > 0.0 {
+        if dy > 0.0 {
+            if dx > dy { "right" } else { "up" }
+        } else if dx > -dy {
+            "right"
+        } else {
+            "down"
+        }
+    } else if dy > 0.0 {
+        if -dx > dy { "left" } else { "up" }
+    } else if dx < dy {
+        "left"
+    } else {
+        "down"
+    };
+    for unsorted_end in (1..groups.len()).rev() {
+        let mut done = true;
+        for index in 0..unsorted_end {
+            let swap = match quadrant {
+                "right" => groups[index].x_min > groups[index + 1].x_max,
+                "left" => groups[index].x_min < groups[index + 1].x_max,
+                "up" => groups[index].y_min > groups[index + 1].y_max,
+                "down" => groups[index].y_min < groups[index + 1].y_max,
+                _ => unreachable!(),
+            };
+            if swap {
+                groups.swap(index, index + 1);
+                done = false;
+            }
+        }
+        if done {
+            break;
+        }
+    }
+
+    if collision_debug {
+        // Per-candidate diagnostics, evaluated for every candidate even
+        // though the selection below stops at the first group with an
+        // impact — the extra probes keep the log comparable with the
+        // instrumented Original build.
+        let group_of = |idx: usize| {
+            groups
+                .iter()
+                .find(|group| group.members.contains(&idx))
+                .map(|group| group.creation_order)
+        };
+        for &idx in &candidates {
+            let obs = obstacles
+                .get(idx)
+                .expect("collision candidate index out of range");
+            let hit_bits = obs
+                .blocking_ray_3d_impact(origin_arr, dest_arr)
+                .map(|impact| {
+                    (
+                        impact.t.to_bits(),
+                        [
+                            impact.point.x.to_bits(),
+                            impact.point.y.to_bits(),
+                            impact.point.z.to_bits(),
+                        ],
+                    )
+                });
+            eprintln!(
+                "PARITY_PROJECTILE_COLLISION phase=candidate obstacle={idx} id={} active=true type_match=true shield=false on_ground={} points={} segment_candidate=Some(true) group_creation={:?} bbox_bits=[{:08x},{:08x},{:08x},{:08x}] relative_bits=[{:08x},{:08x},{:08x},{:08x}] hit_bits={hit_bits:?}",
+                obs.id,
+                obs.on_ground,
+                obs.obstacle_points.len(),
+                group_of(idx),
+                obs.box_ground.x_min().to_bits(),
+                obs.box_ground.y_min().to_bits(),
+                obs.box_ground.x_max().to_bits(),
+                obs.box_ground.y_max().to_bits(),
+                (origin.z - obs.compute_top_z(origin.x, origin.y)).to_bits(),
+                (destination.z - obs.compute_top_z(destination.x, destination.y)).to_bits(),
+                (origin.z - obs.compute_bottom_z(origin.x, origin.y)).to_bits(),
+                (destination.z - obs.compute_bottom_z(destination.x, destination.y)).to_bits(),
+            );
+        }
         for (sorted_order, group) in groups.iter().enumerate() {
+            let members: Vec<(usize, u32)> = group
+                .members
+                .iter()
+                .map(|&idx| {
+                    (
+                        idx,
+                        obstacles
+                            .get(idx)
+                            .expect("collision candidate index out of range")
+                            .id,
+                    )
+                })
+                .collect();
             eprintln!(
                 "PARITY_PROJECTILE_COLLISION phase=group quadrant={quadrant} sorted_order={sorted_order} creation_order={} bbox_bits=[{:08x},{:08x},{:08x},{:08x}] members={:?}",
                 group.creation_order,
@@ -1528,78 +1626,121 @@ pub fn is_reachable_impact_3d(
                 group.y_min.to_bits(),
                 group.x_max.to_bits(),
                 group.y_max.to_bits(),
-                group.members,
+                members,
             );
         }
     }
 
-    // Ground-plane crossing: if the ray dips below z=0 at some t ∈ [0,1],
-    // check whether that happens before any obstacle hit.
-    if (origin.z >= 0.0 && destination.z < 0.0) || (origin.z < 0.0 && destination.z >= 0.0) {
-        let denom = origin.z - destination.z;
-        if denom.abs() > 1e-9 {
-            let t_ground = origin.z / denom;
-            if (0.0..=1.0).contains(&t_ground) && t_ground < best_t {
-                best_t = t_ground;
-                best_obstacle = None;
-                best_obstacle_impact = None;
-                // RHFastFindGrid::IsReachableImpact does not obtain the
-                // ground point from the parametric 3D ratio. It builds the
-                // dominant-axis z equation in FLOAT, solves z=0, then uses
-                // SBGeoLine2D::EvalX/Y (whose deltas are DOUBLE) for the
-                // other map coordinate. Those intermediate rounding points
-                // are observable in the final projectile movement.
-                let dx = destination.x - origin.x;
-                let dy = destination.y - origin.y;
-                let dz = destination.z - origin.z;
-                let use_x = dx.abs() > dy.abs();
-                let (primary_origin, primary_delta) = if use_x {
-                    (origin.x, dx)
-                } else {
-                    (origin.y, dy)
-                };
-                let a = dz / primary_delta;
-                let b = origin.z - a * primary_origin;
-                let primary = -b / a;
-                let (x, y) = if use_x {
-                    let y = (((primary - origin.x) as f64 * dy as f64 / dx as f64)
-                        + origin.y as f64) as f32;
-                    (primary, y)
-                } else {
-                    let x = (((primary - origin.y) as f64 * dx as f64 / dy as f64)
-                        + origin.x as f64) as f32;
-                    (x, primary)
-                };
-                ground_impact = Some(WorldPoint3D { x, y, z: 0.0 });
-                if collision_debug {
-                    eprintln!(
-                        "PARITY_PROJECTILE_COLLISION phase=ground t_bits={:08x} point_bits=[{:08x},{:08x},{:08x}]",
-                        t_ground.to_bits(),
-                        x.to_bits(),
-                        y.to_bits(),
-                        0.0f32.to_bits(),
-                    );
-                }
+    // ── Impact collection: first group with a hit wins ──
+    //
+    // Original walks the sorted groups and, after finishing the first
+    // group that contributed any impact, breaks out without probing the
+    // remaining groups — even when a later group holds a strictly nearer
+    // obstacle. The recorded save states depend on this: an arrow whose
+    // first-sorted group holds a solid wall keeps its cleared
+    // layer/sector membership even though a nearer projection-area roof
+    // in a later group would have accepted it.
+    let mut impacts: Vec<(WorldPoint3D, Option<u32>)> = Vec::new();
+    for group in &groups {
+        for &idx in &group.members {
+            let obs = obstacles
+                .get(idx)
+                .expect("collision candidate index out of range");
+            if let Some(impact) = obs.blocking_ray_3d_impact(origin_arr, dest_arr) {
+                impacts.push((
+                    impact.point,
+                    Some(u32::try_from(idx).expect("obstacle index exceeds u32")),
+                ));
             }
         }
+        if !impacts.is_empty() {
+            break;
+        }
     }
 
-    if best_t.is_finite() {
-        let impact = ground_impact
-            .or(best_obstacle_impact)
-            .unwrap_or_else(|| panic!("finite projectile impact has no resolved point"));
+    // ── Ground-plane crossing ──
+    //
+    // Appended after (and competing with) the group impacts, exactly as
+    // Original inserts the z=0 crossing into the same impact list.
+    if (origin.z >= 0.0 && destination.z < 0.0) || (origin.z < 0.0 && destination.z >= 0.0) {
+        let ground = compute_ground_point();
         if collision_debug {
             eprintln!(
-                "PARITY_PROJECTILE_COLLISION phase=selected obstacle={best_obstacle:?} t={best_t:#.9} impact={impact:?} groups={}",
-                debug_groups.as_ref().map_or(0, Vec::len),
+                "PARITY_PROJECTILE_COLLISION phase=ground point_bits=[{:08x},{:08x},{:08x}]",
+                ground.x.to_bits(),
+                ground.y.to_bits(),
+                ground.z.to_bits(),
             );
         }
-        Some(ImpactResult3D {
-            impact,
-            obstacle_index: best_obstacle,
-        })
+        impacts.push((ground, None));
+    }
+
+    // ── Nearest impact by 3D squared distance ──
+    let mut best: Option<(f32, WorldPoint3D, Option<u32>)> = None;
+    for &(point, obstacle_index) in &impacts {
+        let ddx = point.x - origin.x;
+        let ddy = point.y - origin.y;
+        let ddz = point.z - origin.z;
+        let distance_sq = ddx * ddx + ddy * ddy + ddz * ddz;
+        if best.is_none_or(|(best_distance_sq, _, _)| distance_sq < best_distance_sq) {
+            best = Some((distance_sq, point, obstacle_index));
+        }
+    }
+
+    let (distance_sq, impact, obstacle_index) = best?;
+    if collision_debug {
+        eprintln!(
+            "PARITY_PROJECTILE_COLLISION phase=selected obstacle={obstacle_index:?} distance_sq_bits={:08x} impact={impact:?} groups={}",
+            distance_sq.to_bits(),
+            groups.len(),
+        );
+    }
+    Some(ImpactResult3D {
+        impact,
+        obstacle_index,
+    })
+}
+
+/// `SBGeoBoundingBox2D::IsIntersecting(const SBGeoSegment2D&)`
+/// (original-code/sblibng/SBGeoBoundingBox2D.cpp:1154): trivial rejection
+/// with strict comparisons, then inclusive endpoint containment, then the
+/// corner-determinant test of the segment's carrier line.
+fn bbox_intersects_segment_reference(
+    bbox: &crate::coordinates::GroundBBox,
+    a: (f32, f32),
+    b: (f32, f32),
+) -> bool {
+    let Some(rect) = bbox.0 else {
+        return false;
+    };
+    let (x_min, y_min, x_max, y_max) = (rect.min().x, rect.min().y, rect.max().x, rect.max().y);
+    if (a.0 < x_min && b.0 < x_min)
+        || (a.0 > x_max && b.0 > x_max)
+        || (a.1 < y_min && b.1 < y_min)
+        || (a.1 > y_max && b.1 > y_max)
+    {
+        return false;
+    }
+    let inside = |p: (f32, f32)| x_min <= p.0 && p.0 <= x_max && y_min <= p.1 && p.1 <= y_max;
+    if inside(a) || inside(b) {
+        return true;
+    }
+    // Corner-determinant test: the top-left corner picks a side of the
+    // carrier line; the box intersects iff any other corner sits on the
+    // other side (boundary inclusive), or the line runs through the
+    // top-left corner itself.
+    let det = |px: f32, py: f32| (b.0 - a.0) * (py - a.1) - (b.1 - a.1) * (px - a.0);
+    let top_left = det(x_min, y_min);
+    if top_left == 0.0 {
+        return true;
+    }
+    let top_right = det(x_max, y_min);
+    let bottom_right = det(x_max, y_max);
+    let bottom_left = det(x_min, y_max);
+    if top_left > 0.0 {
+        top_right <= 0.0 || bottom_right <= 0.0 || bottom_left <= 0.0
     } else {
-        None
+        top_right >= 0.0 || bottom_right >= 0.0 || bottom_left >= 0.0
     }
 }
 
@@ -2591,5 +2732,141 @@ mod tests {
         // The call site travels with each query so an ordered divergence can
         // be attributed without re-instrumenting.
         assert!(captured.iter().all(|q| q.caller_file.ends_with(".rs")));
+    }
+
+    /// Axis-aligned box obstacle spanning `x0..x1`, `y0..y1` with flat
+    /// top `z_top` and bottom 0, points ordered so the high-`y` edge is
+    /// front-facing for a ray heading toward -y.
+    fn make_box_obstacle(id: u32, x0: f32, x1: f32, y0: f32, y1: f32, z_top: f32) -> SightObstacle {
+        let mut obs = SightObstacle::new_default(id);
+        obs.obstacle_points = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+            .into_iter()
+            .map(|[x, y]| ObstaclePoint {
+                x,
+                y,
+                z_top,
+                z_bottom: 0.0,
+            })
+            .collect();
+        obs.top_plane_points = [[x0, y0, z_top], [x1, y0, z_top], [x0, y1, z_top]];
+        obs.bottom_plane_points = [[x0, y0, 0.0], [x1, y0, 0.0], [x0, y1, 0.0]];
+        obs.rebuild_geometry();
+        obs
+    }
+
+    /// `RHFastFindGrid::IsReachableImpact` collects impacts per
+    /// bbox-overlap group, walks the groups in ray-sorted order, and
+    /// stops after the first group that produced any impact — even when
+    /// a later group holds a strictly nearer obstacle
+    /// (original-code/RHfastfindgrid.cpp:6841-6989). Reproduces the
+    /// Savegame_008 replay-014 frame-5022 shape: a spacer and a tall
+    /// obstacle chain into one early-created group whose expanded bbox
+    /// makes the bubble sort put the separate wall group first.
+    #[test]
+    fn impact_3d_first_sorted_group_beats_nearer_later_group() {
+        // Down-ray (quadrant "down") from (50,100,10) to (50,0,10).
+        let origin = WorldPoint3D {
+            x: 50.0,
+            y: 100.0,
+            z: 10.0,
+        };
+        let dest = WorldPoint3D {
+            x: 50.0,
+            y: 0.0,
+            z: 10.0,
+        };
+        // Index 0: spacer — passed above (top 2 < ray z), creates group A.
+        let spacer = make_box_obstacle(0, 40.0, 60.0, 0.0, 20.0, 2.0);
+        // Index 1: wall in its own group B (bbox disjoint from the
+        // spacer's), hit at y=70 → t=0.3.
+        let wall = make_box_obstacle(1, 40.0, 60.0, 65.0, 70.0, 15.0);
+        // Index 2: tall roof overlapping the spacer → joins group A,
+        // expanding it to y 0..80; hit at y=80 → t=0.2 (nearer).
+        let roof = make_box_obstacle(2, 40.0, 60.0, 10.0, 80.0, 15.0);
+        let obstacles = [spacer, wall, roof];
+
+        // Group A [0,2] expands to y_min=0 < group B y_max=70, so the
+        // quadrant-"down" bubble sort swaps B ahead of A. B's wall hit at
+        // t=0.3 wins although the roof's t=0.2 is nearer.
+        let result = is_reachable_impact_3d(
+            origin,
+            dest,
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(&obstacles),
+            None,
+        )
+        .expect("wall group must produce an impact");
+        assert_eq!(result.obstacle_index, Some(1));
+        assert!((result.impact.y - 70.0).abs() < 1e-3);
+
+        // Sanity: with the wall gone the roof is struck at y=80.
+        let without_wall = [
+            make_box_obstacle(0, 40.0, 60.0, 0.0, 20.0, 2.0),
+            make_box_obstacle(2, 40.0, 60.0, 10.0, 80.0, 15.0),
+        ];
+        let result = is_reachable_impact_3d(
+            origin,
+            dest,
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(&without_wall),
+            None,
+        )
+        .expect("roof must produce an impact");
+        assert_eq!(result.obstacle_index, Some(1));
+        assert!((result.impact.y - 80.0).abs() < 1e-3);
+    }
+
+    /// The z=0 ground crossing joins the impact list after the winning
+    /// group and competes by squared distance, exactly as Original
+    /// appends it (original-code/RHfastfindgrid.cpp:6992-7009).
+    #[test]
+    fn impact_3d_ground_crossing_competes_with_group_impacts() {
+        // Ray dips below ground at y=50 (t=0.5); the wall at y=70
+        // (t=0.3) is nearer and must win.
+        let origin = WorldPoint3D {
+            x: 50.0,
+            y: 100.0,
+            z: 10.0,
+        };
+        let dest = WorldPoint3D {
+            x: 50.0,
+            y: 0.0,
+            z: -10.0,
+        };
+        let wall = make_box_obstacle(7, 40.0, 60.0, 65.0, 70.0, 15.0);
+        let result = is_reachable_impact_3d(
+            origin,
+            dest,
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(std::slice::from_ref(&wall)),
+            None,
+        )
+        .expect("wall impact expected");
+        assert_eq!(result.obstacle_index, Some(0));
+        assert!((result.impact.y - 70.0).abs() < 1e-3);
+
+        // Ground nearer than the wall: dip early so the crossing sits at
+        // y=95 (t=0.05) before the wall.
+        let origin = WorldPoint3D {
+            x: 50.0,
+            y: 100.0,
+            z: 1.0,
+        };
+        let dest = WorldPoint3D {
+            x: 50.0,
+            y: 0.0,
+            z: -19.0,
+        };
+        let result = is_reachable_impact_3d(
+            origin,
+            dest,
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(std::slice::from_ref(&wall)),
+            None,
+        )
+        .expect("ground impact expected");
+        assert_eq!(result.obstacle_index, None);
+        assert_eq!(result.impact.z, 0.0);
+        assert!((result.impact.y - 95.0).abs() < 1e-3);
     }
 }

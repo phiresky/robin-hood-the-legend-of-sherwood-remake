@@ -256,6 +256,29 @@ pub struct AiController {
     /// forever.
     pub think_recursion_depth: u8,
 
+    /// Think frames left open by an `EndThink` that queued a completion
+    /// event instead of dispatching it recursively.
+    ///
+    /// Original `RHArtificialIntelligence::EndThink` calls the follow-up
+    /// `Think(EVENT_*)` *before* decrementing
+    /// `mubThinkMethodRecursionDepth`, so every level of a same-frame
+    /// completion cascade keeps its ancestors' frames open and the depth
+    /// climbs by one per nested Think — reaching the 100.. `ReturnToDuty`
+    /// failsafe after ~100 chained completions. The Rust port queues those
+    /// events and dispatches them iteratively from the engine drain, so an
+    /// `EndThink` that queues a completion must skip its decrement (the
+    /// frame stays logically open) and count it here instead. The cascade's
+    /// innermost `Think` — the first one whose `EndThink` queues nothing —
+    /// then unwinds its own frame plus every counted ancestor frame at once,
+    /// mirroring the stacked decrements the Original performs while
+    /// returning out of the nested calls. The drain's 111-stimulus abandon
+    /// path closes any frames still open when a cascade is force-terminated,
+    /// so a cascade never survives a frame boundary and this stays transient
+    /// bookkeeping.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    pub open_end_think_frames: u8,
+
     // -- Macro system --
     /// Macro bytecode (if any) currently being executed.
     pub macro_command: Vec<u8>,
@@ -504,6 +527,7 @@ impl Default for AiController {
             use_max_norm_to_stop_before_end_of_path: false,
             stop_before_end_of_path_distance: 0,
             think_recursion_depth: 0,
+            open_end_think_frames: 0,
             macro_command: Vec::new(),
             macro_command_offset: 0,
             macro_command_waypoint: None,
@@ -1852,9 +1876,11 @@ impl AiController {
         }
     }
 
-    /// Assign a new patrol path (or drop the current one). The three
-    /// call shapes (sentinel `-1`, sentinel `-2`, valid index) collapse
-    /// to the cases encoded in [`PatrolAssignment`].
+    /// Assign a new patrol path (or drop the current one). The call
+    /// shapes of Original's two `AssignNewPatrolPath` overloads
+    /// (sentinel `-1`, sentinel `-2`, valid waypoint-macro index, valid
+    /// script `RHHikingPath*`) collapse to the cases encoded in
+    /// [`PatrolAssignment`].
     ///
     /// Side effects:
     /// - `BreakMacro()` prologue unconditionally.
@@ -1862,8 +1888,9 @@ impl AiController {
     ///   `initial_position` / `initial_view_direction` so
     ///   `return_to_duty_common_stuff` sends the NPC back to the
     ///   right anchor.
-    /// - Reset `likes_to_sit_around` (per variant), `special_action`,
-    ///   `is_stay_at_home` flags.
+    /// - Reset `likes_to_sit_around` (per variant), `is_stay_at_home`,
+    ///   and — for every variant except [`PatrolAssignment::ScriptWay`] —
+    ///   `special_action`.
     /// - The index variant sets `has_patrol_path` before the Original's
     ///   off-by-one bounds check. An out-of-range assignment therefore
     ///   returns `false` with that flag set while retaining the prior path.
@@ -1898,7 +1925,7 @@ impl AiController {
                 }
                 true
             }
-            PatrolAssignment::Index(pid) => {
+            PatrolAssignment::Index(pid) | PatrolAssignment::ScriptWay(pid) => {
                 let idx = pid.get() as usize;
                 // Original writes mbHasPatrolPath before validating the
                 // authored index. Preserve that odd partial mutation on the
@@ -1906,6 +1933,12 @@ impl AiController {
                 self.has_patrol_path = true;
                 // Strictly greater, so `idx == count` is tolerated
                 // (matches the off-by-one in the original engine).
+                //
+                // todo: the `RHHikingPath*` overload has no bounds check at
+                // all — the script hands it an already-resolved pointer. Rust
+                // resolves the script's Way to an index here, so `ScriptWay`
+                // inherits the index overload's guard. Keep it (failing loud
+                // beats a wild dereference), but note the divergence.
                 if idx > hiking_paths.len() {
                     tracing::warn!(
                         npc = self.me,
@@ -1931,7 +1964,19 @@ impl AiController {
                     path
                 });
                 self.likes_to_sit_around = false;
-                self.special_action = false;
+                // Only the waypoint-macro index overload
+                // (`AssignNewPatrolPath(UWORD)`,
+                // RHartificialintelligence.cpp:5717) clears
+                // `mbSpecialAction`. The `AssignPath` script native goes
+                // through the `RHHikingPath*` overload
+                // (RHartificialintelligence.cpp:5764-5769), whose valid-path arm
+                // leaves `mbSpecialAction` untouched — a leisure-authored NPC
+                // sent onto a scripted route stays special, so its later
+                // return-to-duty GoTo skips the already-on-point shortcut
+                // and runs a real (possibly zero-length) move instead.
+                if matches!(assignment, PatrolAssignment::Index(_)) {
+                    self.special_action = false;
+                }
                 if !self.script_locked && self.current_state == AiState::Default {
                     self.fire_self_stimulus(StimulusType::EventReturnToDuty);
                 }
@@ -2088,7 +2133,11 @@ impl AiController {
             self.couldnt_reachpoint = false;
             self.already_on_point = false;
             self.already_turned = false;
-            self.think_recursion_depth -= 1;
+            let open = std::mem::take(&mut self.open_end_think_frames);
+            self.think_recursion_depth = self
+                .think_recursion_depth
+                .saturating_sub(1)
+                .saturating_sub(open);
             return true;
         }
         // Dispatching a completion event re-enters Think, and Think's entry
@@ -2110,8 +2159,19 @@ impl AiController {
         self.already_turned = false;
         if let Some(event) = event {
             self.outbox.reentrant.self_stimuli.push(event);
+            // Original dispatches this event recursively before the
+            // decrement, so the frame stays open until the cascade's
+            // innermost Think unwinds (see `open_end_think_frames`).
+            self.open_end_think_frames = self.open_end_think_frames.saturating_add(1);
+        } else {
+            // Innermost Think of the cascade: unwind this frame together
+            // with every still-open ancestor frame.
+            let open = std::mem::take(&mut self.open_end_think_frames);
+            self.think_recursion_depth = self
+                .think_recursion_depth
+                .saturating_sub(1)
+                .saturating_sub(open);
         }
-        self.think_recursion_depth -= 1;
         true
     }
 
@@ -5454,6 +5514,55 @@ impl ConsiderationAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Original `EndThink` dispatches its completion `Think(EVENT_*)` before
+    /// decrementing `mubThinkMethodRecursionDepth`, so a same-frame
+    /// completion cascade keeps every ancestor frame open and the depth
+    /// climbs one per nested Think until the 100.. `ReturnToDuty` failsafe.
+    /// The queued-dispatch port must therefore skip the decrement whenever a
+    /// completion event is queued and record the open frame for the engine
+    /// drain to close.
+    #[test]
+    fn end_think_keeps_frame_open_while_completion_event_is_queued() {
+        let mut ai = AiController::new(17);
+
+        // Queued completion: frame stays open, depth is preserved.
+        ai.think_recursion_depth = 1;
+        ai.already_on_point = true;
+        assert!(ai.end_think_completion_events());
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli,
+            [StimulusType::EventReachPoint]
+        );
+        assert_eq!(
+            ai.think_recursion_depth, 1,
+            "queuing EndThink must not unwind"
+        );
+        assert_eq!(ai.open_end_think_frames, 1);
+
+        // A deeper cascade level stacks another open frame.
+        ai.outbox.reentrant.self_stimuli.clear();
+        ai.think_recursion_depth = 2;
+        ai.already_turned = true;
+        assert!(ai.end_think_completion_events());
+        assert_eq!(ai.think_recursion_depth, 2);
+        assert_eq!(ai.open_end_think_frames, 2);
+
+        // Innermost Think (no latch): the whole chain of open ancestor
+        // frames unwinds with it, like the Original's stacked EndThink
+        // decrements while returning out of the recursion.
+        ai.outbox.reentrant.self_stimuli.clear();
+        ai.think_recursion_depth = 3;
+        assert!(ai.end_think_completion_events());
+        assert_eq!(ai.think_recursion_depth, 0);
+        assert_eq!(ai.open_end_think_frames, 0);
+
+        // 100..111 with a pending latch still reports the typed
+        // ReturnToDuty fallback to the caller.
+        ai.think_recursion_depth = 100;
+        ai.already_on_point = true;
+        assert!(!ai.end_think_completion_events());
+    }
 
     #[test]
     fn panic_retry_side_uses_original_creation_order_parity() {
