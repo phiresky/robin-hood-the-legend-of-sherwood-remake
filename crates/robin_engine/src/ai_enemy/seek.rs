@@ -536,6 +536,14 @@ impl EnemyAi {
                     "direction"
                 },
             );
+            eprintln!(
+                "SEEKAREA phase6 center=({},{}) seek_position=({},{}) backtrace:\n{}",
+                self.seek_center.x,
+                self.seek_center.y,
+                self.base.seek_position.x,
+                self.base.seek_position.y,
+                std::backtrace::Backtrace::force_capture(),
+            );
         }
 
         if flags.contains(SeekFlags::LOCATION_FIRST) {
@@ -833,10 +841,18 @@ impl EnemyAi {
             }
         };
 
+        let debug_next_point = std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_some();
+
         // Original short-circuits `IsLocked() || ...`: a locked candidate is
         // skipped without recalculating its shared interest or consuming the
         // acceptance draw. The recursive entry still unlocks it above.
         if is_locked {
+            if debug_next_point {
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"next_point_locked\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"point_id\":{}}}",
+                    ctx.frame, self.base.me, ctx.original_creation_order, next_id,
+                );
+            }
             self.seek_next_point(sim, global, ctx, tick);
             return;
         }
@@ -851,8 +867,22 @@ impl EnemyAi {
         .unwrap_or_else(|| panic!("seek point {next_id} resolved immediately before mutation"))
         .calculate_interest(current_frame);
 
-        if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100) >= interest
-        {
+        let acceptance_roll =
+            crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100);
+        if debug_next_point {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"next_point_roll\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"point_id\":{},\"interest\":{},\"roll\":{},\"accepted\":{},\"remaining\":{:?}}}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                next_id,
+                interest,
+                acceptance_roll,
+                acceptance_roll < interest,
+                self.my_seek_points,
+            );
+        }
+        if acceptance_roll >= interest {
             // Skip this point — try the next one
             self.seek_next_point(sim, global, ctx, tick);
             return;
