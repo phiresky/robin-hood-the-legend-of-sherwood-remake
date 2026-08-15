@@ -12723,7 +12723,8 @@ impl EngineInner {
         let typed_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending
             || ai.outbox.reentrant.battle_observe_completion_pending
             || ai.outbox.reentrant.look_for_help_completion_pending
-            || ai.outbox.reentrant.alert_soldier_completion_pending;
+            || ai.outbox.reentrant.alert_soldier_completion_pending
+            || ai.outbox.reentrant.dead_body_alert_completion_pending;
         let retain_couldnt_reachpoint =
             ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
         if debug_decision_path {

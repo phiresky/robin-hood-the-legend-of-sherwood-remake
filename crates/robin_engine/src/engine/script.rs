@@ -3557,6 +3557,58 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer { center, radius } => {
+                    // Original resumes DeadBodyAlert immediately after
+                    // AlertOfficer's synchronous GoNear and consumes its
+                    // route result before EndThink may surface an event.
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let tick =
+                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!("dead-body-alert owner {} disappeared", owner.index())
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let ai_global = &mut self.ai.global;
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!("dead-body-alert owner {} lost Enemy AI", owner.index())
+                        });
+                    enemy
+                        .base
+                        .outbox
+                        .reentrant
+                        .dead_body_alert_completion_pending = false;
+                    enemy.resume_dead_body_alert_after_alert_officer(
+                        sim, center, radius, ai_global, &ctx, &tick,
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
                     center,
                     check_door_path,

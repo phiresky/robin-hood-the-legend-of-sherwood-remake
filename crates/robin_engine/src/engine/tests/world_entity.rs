@@ -1930,6 +1930,149 @@ fn alert_soldier_typed_tail_owns_couldnt_reachpoint_before_event_surface() {
     );
 }
 
+#[test]
+fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
+    use crate::ai::{AiOwnerWork, StimulusType};
+    use crate::ai_enemy::SeekFlags;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "dead_body_alert_continuation_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission supports owner-local movement settlement"),
+    );
+    let center = crate::ai::Position {
+        x: 175.0,
+        y: 225.0,
+        ..Default::default()
+    };
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("dead-body-alert owner has Enemy AI");
+        ai.base.completion_latch_inside_think = true;
+        ai.base.couldnt_reachpoint = true;
+        ai.base.outbox.reentrant.dead_body_alert_completion_pending = true;
+        ai.base.outbox.reentrant.owner_work.push(
+            AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+                center,
+                radius: 300,
+            },
+        );
+    }
+
+    // EndThink observes the typed latch before the owner continuation runs.
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("dead-body-alert owner retains Enemy AI");
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(!ai.base.outbox.reentrant.dead_body_alert_completion_pending);
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    assert!(
+        !ai.base
+            .outbox
+            .reentrant
+            .self_stimuli
+            .contains(&StimulusType::EventCouldntReachPoint)
+    );
+    assert_eq!(
+        ai.seek_flags,
+        SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
+    );
+    assert_eq!(
+        ai.personal_seek_point_2
+            .as_ref()
+            .expect("failed officer route creates the personal endpoint")
+            .position,
+        center
+    );
+}
+
+#[test]
+fn unrelated_running_to_officer_failure_remains_generic() {
+    use crate::ai::{AiState, StimulusType, Substate};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("generic route-failure owner has Enemy AI");
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingRunningToOfficer;
+    ai.base.completion_latch_inside_think = true;
+    ai.base.couldnt_reachpoint = true;
+
+    engine.surface_synchronous_completion_events_for_owner(owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("generic route-failure owner retains Enemy AI");
+    assert!(!ai.base.couldnt_reachpoint);
+    assert_eq!(
+        ai.base.outbox.reentrant.self_stimuli,
+        vec![StimulusType::EventCouldntReachPoint]
+    );
+    assert!(ai.seek_flags.is_empty());
+    assert!(ai.personal_seek_point_2.is_none());
+}
+
+#[test]
+#[should_panic(expected = "non-enemy AI brain")]
+fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
+    use crate::ai::{AiOwnerWork, Position};
+    use crate::element::AiBrain;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(owner)
+        .expect("wrong-kind continuation owner exists")
+    else {
+        unreachable!()
+    };
+    soldier.npc.ai_brain =
+        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
+    soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("friendly AI has base")
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+            center: Position::default(),
+            radius: 300,
+        });
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+}
+
 fn make_alert_soldier_owner(engine: &mut EngineInner) -> EntityId {
     use crate::element::AiBrain;
 

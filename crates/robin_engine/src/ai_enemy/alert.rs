@@ -1201,6 +1201,18 @@ impl EnemyAi {
         true
     }
 
+    /// Whether AlertOfficer will take its REPORT_OFFICER_AFTER instructed-
+    /// group early return. That source branch returns immediately after
+    /// GoNear and deliberately skips the ordinary final route-failure test.
+    pub(crate) fn alert_officer_returns_to_instructed_group(&self, tick: &AiPerTickData) -> bool {
+        self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER)
+            && self.base.antagonist != 0
+            && tick.camp_soldiers.iter().any(|soldier| {
+                soldier.handle == self.base.antagonist
+                    && soldier.ai_substate == Substate::SeekingOfficerWaitForInstructedGroup
+            })
+    }
+
     // -----------------------------------------------------------------------
     // CreateListOfSoldiersYouCanAlert + GetNearestFighter + OfficerLookForSoldier
     // -----------------------------------------------------------------------

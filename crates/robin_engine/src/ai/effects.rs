@@ -130,6 +130,12 @@ pub struct AiReentrantOutbox {
     /// with the door-path flag before the enclosing Think may see it.
     #[serde(default)]
     pub alert_soldier_completion_pending: bool,
+    /// `DeadBodyAlert` has issued `AlertOfficer`'s synchronous `GoNear`, but
+    /// the enclosing soldier fallback has not inspected the route result.
+    /// Retain route failure for that typed continuation instead of surfacing
+    /// an independent `EVENT_COULDNT_REACHPOINT`.
+    #[serde(default)]
+    pub dead_body_alert_completion_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -246,6 +252,13 @@ pub enum AiOwnerWork {
         center: Position,
         check_door_path: bool,
         failure: crate::ai_friendly::AlertSoldierFailureContinuation,
+    },
+    /// Continue the soldier `DeadBodyAlert` statement after `AlertOfficer`'s
+    /// synchronous `GoNear` has settled. Appended to preserve existing
+    /// serialized discriminants.
+    ResumeDeadBodyAlertAfterAlertOfficer {
+        center: Position,
+        radius: u16,
     },
 }
 
