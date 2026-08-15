@@ -2086,28 +2086,20 @@ impl<'a> MovementContext<'a> {
     /// applied by the root coordinator. Rust computes A* synchronously, but the
     /// result remains parked until the next frame's scheduling barrier.
     pub(super) fn start_next(&mut self, assets: &LevelAssets) {
-        // CancelPathRequest retains the logical list head and merely marks
-        // its eventual delivery invalid. Even when interrupting the owner has
-        // already made the sequence element non-live, that retained request
-        // must still occupy this ProcessPathRequests slot; take_completed
-        // records the invalid completion and only then discards its result.
+        // `RHPathFinder::ProcessPathRequests` never inspects the requesting
+        // sequence element (`original-code/RHpathfinder.cpp:806-820,891-901`).
+        // Every entry that is still in `mListPathRequests` is started and,
+        // one call later, delivered — including entries whose element has
+        // since been interrupted. Only `CancelPathRequest` removes an entry,
+        // and it removes at most the first *later* request for the actor
+        // while the logical head merely gets `mbIgnoreNextPath`
+        // (`original-code/RHpathfinder.cpp:538-598`). Skipping a request here
+        // because its element died would hand the freed result slot to the
+        // next queued request a frame early.
         let retained_cancelled_head = self.orders.pending_path_requests.ignore_next_path;
         let Some(request) = self.orders.pending_path_requests.pop_to_start() else {
             return;
         };
-        let still_live = self
-            .orders
-            .sequence_manager
-            .get_element(request.seq_id, request.elem_idx)
-            .is_some_and(|elem| {
-                elem.owner == Some(request.owner)
-                    && elem.state == crate::sequence::SequenceState::InProgress
-                    && elem.command == crate::element::Command::MoveWaiting
-            });
-        if !path_request_occupies_result_slot(still_live, retained_cancelled_head) {
-            return;
-        }
-
         // Original FindPathNodes observes mbIgnoreNextPath and exits before
         // expanding its first node. The retained head therefore delivers an
         // invalid completion with an empty raw path; it must not calculate a
@@ -2170,11 +2162,6 @@ impl<'a> MovementContext<'a> {
         self.orders.failed_path_requests = still_waiting;
         expired
     }
-}
-
-#[inline]
-fn path_request_occupies_result_slot(still_live: bool, retained_cancelled_head: bool) -> bool {
-    still_live || retained_cancelled_head
 }
 
 #[inline]
@@ -16738,10 +16725,6 @@ mod path_request_timing_tests {
         queue.cancel_for_owner(cancelled);
         assert!(queue.ignore_next_path);
         let retained = queue.pop_to_start().expect("cancelled head remains queued");
-        assert!(path_request_occupies_result_slot(
-            false,
-            queue.ignore_next_path
-        ));
         let cancelled_result = retained_cancelled_path_result(queue.ignore_next_path)
             .expect("cancelled path search exits with an empty raw path");
         assert!(cancelled_result.is_empty());
