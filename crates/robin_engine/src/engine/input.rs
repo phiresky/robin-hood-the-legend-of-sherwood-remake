@@ -1539,19 +1539,18 @@ impl EngineInner {
                     // Belt is only reachable as a long shot — see if a
                     // normal shot works for the head instead.
                     if let Some(eyes) = target.compute_eyes_point(None) {
-                        let (s2, m2) = self.can_shoot_with_bow_at_point(assets, pc_id, eyes, false);
-                        if s2 == BowTarget::Valid && m2 == ShootMode::Normal {
-                            return (BowTarget::Valid, ShootMode::Normal);
-                        }
+                        let head = self.can_shoot_with_bow_at_point(assets, pc_id, eyes, false);
+                        return cxx_resolve_leaning_target((status, shoot), Some(head));
                     }
                 }
                 return (status, shoot);
             }
             // Belt out of range/blocked — try the head.
             if let Some(eyes) = target.compute_eyes_point(None) {
-                return self.can_shoot_with_bow_at_point(assets, pc_id, eyes, false);
+                let head = self.can_shoot_with_bow_at_point(assets, pc_id, eyes, false);
+                return cxx_resolve_leaning_target((status, shoot), Some(head));
             }
-            return (status, shoot);
+            return cxx_resolve_leaning_target((status, shoot), None);
         }
 
         // Non-human target — animals/objects. C++ checks range/LOS
@@ -2963,6 +2962,37 @@ impl EngineInner {
     }
 }
 
+/// Resolve Original's belt/head choice for a leaning target, including its
+/// enum-as-bool head-retry condition. `RHBowTarget::VALID_TARGET` is zero,
+/// while the two failure values are nonzero. Keeping the odd truthiness
+/// separate prevents an intuitive `status == Valid` rewrite.
+fn cxx_resolve_leaning_target(
+    belt: (BowTarget, crate::weapons::ShootMode),
+    head: Option<(BowTarget, crate::weapons::ShootMode)>,
+) -> (BowTarget, crate::weapons::ShootMode) {
+    if belt.0 != BowTarget::Valid {
+        return head.unwrap_or(belt);
+    }
+    if belt.1 != crate::weapons::ShootMode::Long {
+        return belt;
+    }
+
+    let Some((head_status, head_mode)) = head else {
+        return belt;
+    };
+    // Preserve the Original expression literally:
+    //
+    //   if (CanShootWithBowAt(...) && betterShootType == NormalShoot)
+    //
+    // `VALID_TARGET` is zero, so a successful normal head shot makes the
+    // condition false and the valid long belt shot remains selected.
+    if head_status != BowTarget::Valid && head_mode == crate::weapons::ShootMode::Normal {
+        (BowTarget::Valid, crate::weapons::ShootMode::Normal)
+    } else {
+        belt
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2989,6 +3019,26 @@ mod tests {
                 Some(OrderType::AimingWithBow),
             ),
             Some(Command::RaiseBow)
+        );
+    }
+
+    #[test]
+    fn leaning_target_valid_normal_head_does_not_replace_long_belt_shot() {
+        assert_eq!(
+            cxx_resolve_leaning_target(
+                (BowTarget::Valid, ShootMode::Long),
+                Some((BowTarget::Valid, ShootMode::Normal)),
+            ),
+            (BowTarget::Valid, ShootMode::Long),
+            "Original VALID_TARGET is zero, so the valid head retry cannot replace the long belt shot",
+        );
+        assert_eq!(
+            cxx_resolve_leaning_target(
+                (BowTarget::OutOfRange, ShootMode::Long),
+                Some((BowTarget::Valid, ShootMode::Normal)),
+            ),
+            (BowTarget::Valid, ShootMode::Normal),
+            "when the belt is unavailable, Original falls back to the valid head shot",
         );
     }
 }

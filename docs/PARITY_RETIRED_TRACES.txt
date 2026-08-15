@@ -1,4 +1,4 @@
-# Unqualified entries are relative to parity-random-save-replays-60s-15x/traces/.
+# Unqualified entries are relative to parity-save-replays/60s-random-input/schema12/traces/.
 # Corpus-qualified entries retire exactly that path from the full snapshot.
 # Task 73: recorded behavior contradicts current Original source/assets.
 Savegame_Cyrdach/Profile_156/Savegame_010/replay-001-session-0001.jsonl.zst
@@ -32,138 +32,209 @@ Savegame_linux3/Profile_003/Savegame_072/replay-004-session-0001.jsonl.zst
 # Task 320: arrow ricochet contradicts current Original source/profile data/RNG stream.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-010-session-0001.jsonl.zst
 # Task 332: schema-12 selected-view rendering queries contaminated the simulation oracle.
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-002-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-003-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-004-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-006-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-007-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-010-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-011-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-012-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-013-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-014-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-015-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-002-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-004-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-006-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-007-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-010-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-011-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-012-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-013-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-014-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-015-session-0001.jsonl.zst
-parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-001-session-0001.jsonl.zst
-parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-002-session-0001.jsonl.zst
-parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-003-session-0001.jsonl.zst
-parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-001-session-0001.jsonl.zst
-parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-002-session-0001.jsonl.zst
-parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-003-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-006-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-010-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-012-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-014-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-015-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-006-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-010-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-012-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-014-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-015-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst
 # External parity 20: schema-12 selected-view rendering contaminated visibility queries.
-parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_033-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_035-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_linux2/Profile_002/Savegame_033-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_033/replay-003-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_linux2/Profile_002/Savegame_035-session-0001.jsonl.zst
 # Task 244: historical Original read uninitialized ShootType for an out-of-range target.
-parity-random-save-replays-60s-15x/traces/Savegame_Nescafe/Profile_002/Continue/replay-002-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_Nescafe/Profile_002/Restart/replay-002-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-007-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_016/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_021/replay-011-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_029/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Continue/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Continue/replay-015-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Savegame_005/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Savegame_018/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Savegame_024/replay-004-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Savegame_042/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_002/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_014/replay-002-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_017/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_018/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_Nescafe/Profile_002/Continue/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_Nescafe/Profile_002/Restart/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_016/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_021/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_029/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Continue/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Continue/replay-015-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_005/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_018/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_042/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_002/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_014/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_017/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_018/replay-001-session-0001.jsonl.zst
+# Task 244 extension: 17 additional LowerBow captures came from historical
+# Original AimWithBowAt branching on an uninitialized ShootType after
+# CanShootWithBowAt returned OUT_OF_RANGE. Frozen e2 input diagnostics prove
+# every target out of range; current Original and Rust leave bow height unchanged.
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_018/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_014/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_034/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_039/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_002/QuickSave/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_007/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_026/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_026/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_026/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_039/replay-010-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_050/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_068/replay-015-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_031/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_041/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_076/replay-014-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Savegame_036/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/ExQuickSave/replay-012-session-0001.jsonl.zst
+# Task 244 extension (wave 1750): two additional historical Original captures
+# branch on uninitialized ShootType after OUT_OF_RANGE. Frozen e2 diagnostics
+# prove both targets out of range; current Original and Rust preserve bow height.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Continue/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Savegame_046/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_030/replay-001-session-0001.jsonl.zst
 # Task 350: schema-12 selected-view rendering contaminated visibility queries.
-parity-save-replays-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-session-0001.jsonl.zst
 # Task 488: projectile landing membership contradicts current Original source and geometry.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_017/replay-013-session-0001.jsonl.zst
 # Task 497: schema-12 sword-strike record omits resolved click/gesture seek distance.
 Savegame_nicouzouf/Profile_001/Savegame_045/replay-014-session-0001.jsonl.zst
+# Task 161: current Original cannot produce the archived ReturnToDuty watchdog
+# transition; retire the stale capture pending recapture.
+parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_045/replay-011-session-0001.jsonl.zst
 # Task 348: schema-12 captures ended without a clean rng_suffix terminator.
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_019-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_021-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_023-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_025-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_027-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_029-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_034-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_038-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_040-session-0001.jsonl.zst
-parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_042-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_019-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_021-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_023-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_025-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_027-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_029-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_034-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_038-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_040-session-0001.jsonl.zst
+parity-save-replays-legacy/10s-no-input-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_042-session-0001.jsonl.zst
 # Corpus integrity audit: valid zstd containers ended without a clean rng_suffix terminator.
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-007-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-010-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-011-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_001/Savegame_041/replay-012-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_041/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_041/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_041/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_041/replay-010-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_041/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_041/replay-012-session-0001.jsonl.zst
 # Schema-12 refused-action captures: exclamation 14 has no recorded request.
 # Original emits HERO_UNABLE_TO_DO_SOMETHING for anonymous-archer bow refusals
 # (RHengine.cpp:14545; RHParity.cpp:1859-1874), while each matching schema-14
 # capture records anonymous_archer_contest immediately before sound resolution.
 # Only these failing seeds are retired; unlisted siblings remain authoritative.
 # SuN1Sh1nE/Profile_004/Savegame_026: 12 old-60s paths plus its short duplicate.
-parity-random-save-replays/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-004-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-006-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-010-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-011-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-012-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-013-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-014-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-015-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-006-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-010-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-012-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-014-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_026/replay-015-session-0001.jsonl.zst
 # linux2/Profile_002/Restart: 10 old-60s paths with schema-14 replacements.
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-006-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-010-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-011-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-012-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-013-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-014-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Restart/replay-015-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-006-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-010-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-011-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-012-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-013-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-014-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Restart/replay-015-session-0001.jsonl.zst
 # linux3/Profile_003/Savegame_049: 10 old-60s paths with schema-14 replacements.
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-002-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-003-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-004-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-006-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-007-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_049/replay-012-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-003-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-006-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_049/replay-012-session-0001.jsonl.zst
 # nicouzouf/Profile_001/Savegame_061: 10 old-60s paths with schema-14 replacements.
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-001-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-002-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-003-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-004-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-005-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-006-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-007-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-008-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-009-session-0001.jsonl.zst
-parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-012-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-001-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-003-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-004-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-005-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-006-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-008-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-009-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_061/replay-012-session-0001.jsonl.zst
 # The same schema gap has one locked-patch member. RHengine.cpp:6389 emits
 # exclamation 14; its schema-14 replacement records locked_patch before it.
-parity-random-save-replays-60s-15x/traces/Savegame_linux3/Profile_003/Savegame_012/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_012/replay-007-session-0001.jsonl.zst
+# Auxiliary audio RNG policy: Original delayed sound-source restarts consume the
+# shared process RNG (RHsound.cpp:491-503), while Rust intentionally isolates
+# DelayedSoundTimer from gameplay/replay RNG (docs/RNG_AUDIT.md). This trace's
+# first independent frontier is exactly two such sound-restart draws.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/QuickSave/replay-012-session-0001.jsonl.zst
+# Corpus integrity: capture ends at ordinary frame 85815 with no rng_suffix
+# terminator despite a completion marker; retire pending clean recapture.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/ExQuickSave/replay-006-session-0001.jsonl.zst
+# Original sprite timing UB: these captures reach a live two-frame strike row
+# whose initialized action-done frame is UWORD_MAX. Original
+# GetFramesFromNowTillActionDone then performs unchecked wait-time reads for
+# frame indices 2..65534 (RHsprite.cpp:706-718, 1237-1263, 4428-4432). Rust
+# intentionally fails safely instead of reproducing the out-of-bounds reads.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-007-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-007-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_051/replay-003-session-0001.jsonl.zst
+# Historical schema-12 capture is internally incompatible with current
+# Original replay. With identical adopted state and no commands, raw frames
+# 33537-33539 keep PC180 waiting upright, while live Original starts the
+# DropCorpse transition after frame 33538; all disputed fields are recorded.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-012-session-0001.jsonl.zst
+# Original renderer-only night-radius rays. Consolidated VISOWNER captures map
+# the Original-only query prefixes to RHShadowPolygon::ComputeNightRadius
+# (caller RVA 719902), while parity recording deliberately excludes presentation
+# work. Rust must not emit these renderer rays as simulation visibility queries.
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_033/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_033/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_035/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_035/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_035/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_024/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_024/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_024/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_036/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_036/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_036/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-003-session-0001.jsonl.zst

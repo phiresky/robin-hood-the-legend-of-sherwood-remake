@@ -738,7 +738,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
     fried_pc.pc.fried_psykokwack = true;
     fried_pc.actor.produced_noise = None;
     engine.set_actors_frozen(true);
-    engine.control.frame_counter = inactive.index();
+    engine.control.frame_counter = engine.world.original_creation_order(inactive) & 31;
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -796,6 +796,74 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
             .produced_noise
             .is_none(),
         "fried return must precede produced-noise refresh"
+    );
+}
+
+#[test]
+fn tiredness_recovery_uses_original_creation_order_cadence() {
+    let mut engine = EngineInner::new();
+    let restored = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let aligned = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("tiredness fixtures have a character profile")
+        .endurance = 90;
+
+    for owner in [restored, aligned] {
+        engine
+            .get_entity_mut(owner)
+            .and_then(Entity::human_data_mut)
+            .expect("tiredness fixture remains human")
+            .tiredness = 100;
+    }
+
+    let restored_order = (restored.index() + 17) & 31;
+    engine
+        .world
+        .original_creation_order_by_entity
+        .insert(restored, restored_order);
+    engine
+        .world
+        .original_creation_order_by_entity
+        .insert(aligned, aligned.index());
+
+    engine.control.frame_counter = restored.index() & 31;
+    engine.tick_tiredness_for(restored, &assets);
+    assert_eq!(
+        engine
+            .get_entity(restored)
+            .and_then(Entity::human_data)
+            .expect("restored fixture remains human")
+            .tiredness,
+        100,
+        "the kind-local entity slot must not open the recovered cadence"
+    );
+
+    engine.control.frame_counter = restored_order;
+    engine.tick_tiredness_for(restored, &assets);
+    assert_eq!(
+        engine
+            .get_entity(restored)
+            .and_then(Entity::human_data)
+            .expect("restored fixture remains human")
+            .tiredness,
+        91,
+        "the restored Original creation-order slot subtracts endurance / 10"
+    );
+
+    engine.control.frame_counter = aligned.index() & 31;
+    engine.tick_tiredness_for(aligned, &assets);
+    assert_eq!(
+        engine
+            .get_entity(aligned)
+            .and_then(Entity::human_data)
+            .expect("aligned fixture remains human")
+            .tiredness,
+        91,
+        "aligned entity and creation-order slots retain the existing behavior"
     );
 }
 

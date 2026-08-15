@@ -10,7 +10,83 @@ use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{Command, Entity, EntityId};
 use crate::order::OrderType;
-use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
+use crate::sequence::{
+    PendingCondolation, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
+};
+
+struct DamageParryHandoffDebugConfig {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn damage_parry_handoff_debug_config() -> Option<&'static DamageParryHandoffDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<DamageParryHandoffDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when damage-parry handoff debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for damage-parry handoff diagnostic: {error}")
+                })
+            };
+            Some(DamageParryHandoffDebugConfig {
+                frame: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_FRAME"),
+                creation_order: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_CREATION_ORDER"),
+            })
+        })
+        .as_ref()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum AttentiveModeCaller {
+    AiOwnerEffect,
+    ConsoleCheat,
+    Unclassified,
+}
+
+struct AttentiveModeCallerDebugConfig {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn attentive_mode_caller_debug_config() -> Option<&'static AttentiveModeCallerDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<AttentiveModeCallerDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_ATTENTIVE_MODE_CALLER")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when attentive-mode caller debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for attentive-mode caller diagnostic: {error}")
+                })
+            };
+            Some(AttentiveModeCallerDebugConfig {
+                frame: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_FRAME"),
+                creation_order: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_CREATION_ORDER"),
+            })
+        })
+        .as_ref()
+}
+
+fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
+        return false;
+    }
+    let value = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME").unwrap_or_else(|_| {
+        panic!("PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME")
+    });
+    let expected = value
+        .parse::<u32>()
+        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME={value:?}: {error}"));
+    frame == expected
+}
 
 #[cfg(test)]
 thread_local! {
@@ -156,6 +232,78 @@ fn take_condolation_nested_termination(
 }
 
 impl EngineInner {
+    fn trace_damage_parry_handoff(
+        &self,
+        phase: &str,
+        card: PendingCondolation,
+        cross_postponed: Option<(SequenceId, usize)>,
+    ) {
+        let Some(config) = damage_parry_handoff_debug_config() else {
+            return;
+        };
+        if card.command != Command::ReceiveSwordDamage || config.frame != self.control.frame_counter
+        {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(card.owner);
+        if creation_order != config.creation_order {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let selected = manager.current_element_for_actor(card.owner);
+        let deferred = manager
+            .deferred_elements_to_go()
+            .into_iter()
+            .filter(|(seq_id, elem_idx)| {
+                manager
+                    .get_element(*seq_id, *elem_idx)
+                    .is_some_and(|element| element.owner == Some(card.owner))
+            })
+            .collect::<Vec<_>>();
+        eprintln!(
+            "PARITY_DAMAGE_PARRY_HANDOFF frame={} phase={} owner={} owner_co={} terminal_seq={} terminal_elem={} terminal_state={:?} selected={selected:?} cross_postponed={cross_postponed:?} deferred={deferred:?}",
+            self.control.frame_counter,
+            phase,
+            card.owner.index(),
+            creation_order,
+            card.seq_id.0,
+            card.elem_idx,
+            card.terminal_state,
+        );
+        for sequence in manager.sequences_iter() {
+            for (elem_idx, element) in sequence.elements.iter().enumerate() {
+                if element.owner != Some(card.owner) {
+                    continue;
+                }
+                eprintln!(
+                    "PARITY_DAMAGE_PARRY_HANDOFF frame={} phase=element owner={} owner_co={} seq={} elem={} id={} command={:?} level={} state={:?} priority={:?} legacy_v48={} postponed={:?} cross_postponed={:?} first_order={:?} last_order={:?}",
+                    self.control.frame_counter,
+                    card.owner.index(),
+                    creation_order,
+                    sequence.id.0,
+                    elem_idx,
+                    element.id,
+                    element.command,
+                    element.command_level,
+                    element.state,
+                    element.priority,
+                    element.legacy_v48.is_some(),
+                    element.postponed_element_index,
+                    element.cross_postponed,
+                    element
+                        .orders
+                        .front()
+                        .map(|order| (order.order_type, order.done)),
+                    element
+                        .orders
+                        .back()
+                        .map(|order| (order.order_type, order.done)),
+                );
+            }
+        }
+    }
+
     /// Request a soldier enter or leave attentive mode, launching the
     /// appropriate transition-animation sequence element.
     ///
@@ -171,6 +319,29 @@ impl EngineInner {
         target: bool,
         fast_variant: bool,
     ) {
+        self.set_soldier_attentive_mode_from(
+            entity_id,
+            target,
+            fast_variant,
+            AttentiveModeCaller::Unclassified,
+        );
+    }
+
+    pub(crate) fn set_soldier_attentive_mode_from(
+        &mut self,
+        entity_id: EntityId,
+        target: bool,
+        fast_variant: bool,
+        caller: AttentiveModeCaller,
+    ) {
+        // Keep the diagnostic master/frame gates ahead of every added entity
+        // or creation-order read. Normal behavior below retains its original
+        // reads and control flow when the diagnostic is disabled.
+        let debug_creation_order = attentive_mode_caller_debug_config().and_then(|config| {
+            (self.control.frame_counter == config.frame)
+                .then(|| self.world.original_creation_order(entity_id))
+                .filter(|creation_order| *creation_order == config.creation_order)
+        });
         let (will_be_attentive, has_officer_anim) = match self.world.entities.get(entity_id) {
             Some(Entity::Soldier(s)) => (
                 s.npc
@@ -185,7 +356,37 @@ impl EngineInner {
             _ => return,
         };
 
+        if let Some(creation_order) = debug_creation_order {
+            let attentive = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::enemy_ai)
+                .expect("attentive-mode caller diagnostic target lost enemy AI")
+                .attentive;
+            eprintln!(
+                "ATTENTIVE_MODE_CALLER frame={} owner={} creation_order={} phase=before caller={caller:?} target={target} fast_variant={fast_variant} attentive={attentive} will_be_attentive={will_be_attentive}",
+                self.control.frame_counter,
+                entity_id.index(),
+                creation_order,
+            );
+        }
+
         if target == will_be_attentive {
+            if let Some(creation_order) = debug_creation_order {
+                eprintln!(
+                    "ATTENTIVE_MODE_CALLER frame={} owner={} creation_order={} phase=after caller={caller:?} target={target} launched_sequence=None attentive={} will_be_attentive={will_be_attentive}",
+                    self.control.frame_counter,
+                    entity_id.index(),
+                    creation_order,
+                    self.world
+                        .entities
+                        .get(entity_id)
+                        .and_then(Entity::enemy_ai)
+                        .expect("attentive-mode caller diagnostic target lost enemy AI")
+                        .attentive,
+                );
+            }
             return;
         }
 
@@ -197,12 +398,30 @@ impl EngineInner {
             Command::LeaveAttentiveMode
         };
 
-        self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
+        let launched_sequence =
+            self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
 
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id)
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()
         {
             enemy.will_be_attentive = target;
+        }
+        if let Some(creation_order) = debug_creation_order {
+            let enemy = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::enemy_ai)
+                .expect("attentive-mode caller diagnostic target lost enemy AI");
+            eprintln!(
+                "ATTENTIVE_MODE_CALLER frame={} owner={} creation_order={} phase=after caller={caller:?} target={target} launched_sequence={} attentive={} will_be_attentive={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                creation_order,
+                launched_sequence.0,
+                enemy.attentive,
+                enemy.will_be_attentive,
+            );
         }
     }
 
@@ -347,6 +566,11 @@ impl EngineInner {
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
             let from_halt = dispatch.card.from_halt;
+            let diagnostic = damage_parry_handoff_debug_config()
+                .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
+            if let Some((card, cross)) = diagnostic {
+                self.trace_damage_parry_handoff("before_card", card, cross);
+            }
             self.send_condolation_card(sim, dispatch.card, assets);
             // A Halt card performs actor/human cleanup, but the NPC override
             // returns before Think. It cannot causally produce any of these
@@ -363,6 +587,9 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .finish_pending_condolation(dispatch);
+            if let Some((card, cross)) = diagnostic {
+                self.trace_damage_parry_handoff("after_finish", card, cross);
+            }
             // Original `RHSequenceElement::SetState` resumes directly after
             // `SendCondolationCard`: `Ready()` can advance the sequence and
             // `RegisterSequenceElementToGo` immediately calls
@@ -370,6 +597,9 @@ impl EngineInner {
             // inside this exact SetState stack frame, before another
             // condolence card or NPC Hourglass slot can run.
             self.drain_script_synchronous_actions(sim, assets, active_scripts)?;
+            if let Some((card, cross)) = diagnostic {
+                self.trace_damage_parry_handoff("after_sync_drain", card, cross);
+            }
 
             for nested in self
                 .orders
@@ -430,6 +660,11 @@ impl EngineInner {
     ) {
         let card_owner = dispatch.card.owner;
         let from_halt = dispatch.card.from_halt;
+        let diagnostic = damage_parry_handoff_debug_config()
+            .map(|_| (dispatch.card, dispatch.cross_postponed_successor()));
+        if let Some((card, cross)) = diagnostic {
+            self.trace_damage_parry_handoff("owner_boundary_before_card", card, cross);
+        }
         self.send_condolation_card(sim, dispatch.card, assets);
         if !from_halt {
             self.drain_self_stimuli_for_npc_without_forecast(sim, card_owner, assets);
@@ -469,6 +704,9 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .finish_pending_condolation(dispatch);
+        if let Some((card, cross)) = diagnostic {
+            self.trace_damage_parry_handoff("owner_boundary_after_finish", card, cross);
+        }
 
         // `StartPostponedSequenceElement` only calls
         // `RegisterSequenceElementToGo`. Ordinary released work therefore
@@ -481,6 +719,9 @@ impl EngineInner {
                     card_owner.index()
                 )
             });
+        if let Some((card, cross)) = diagnostic {
+            self.trace_damage_parry_handoff("owner_boundary_after_sync_drain", card, cross);
+        }
 
         for nested in self.orders.sequence_manager.drain_pending_condolations() {
             self.close_owner_boundary_condolation(sim, assets, nested, resumed_cross_successors);
@@ -544,6 +785,9 @@ impl EngineInner {
             postponed_successor_pending,
             cancel_path_request_owner,
         } = card;
+        let frame = self.control.frame_counter;
+        let goal_owner_provenance = take_goal_owner_terminal_provenance(owner, seq_id, elem_idx)
+            .filter(|_| goal_owner_handoff_debug_frame_matches(frame));
 
         #[cfg(test)]
         observe_condolation_card(owner, command);
@@ -629,7 +873,28 @@ impl EngineInner {
             selected_element.is_some_and(|selected| selected != (seq_id, usize::from(elem_idx)));
         let detaches_selected_order = detaches_selected_goal && !successor_already_selected;
         let mut cleared_selected_goal = false;
-        let frame = self.control.frame_counter;
+        if let Some(provenance) = &goal_owner_provenance {
+            let actor_state = self.world.entities.get(owner).and_then(|entity| {
+                entity.actor_data().map(|actor| {
+                    (
+                        actor.action_state,
+                        actor.active_movement,
+                        actor.installed_order,
+                    )
+                })
+            });
+            let position_state = self.world.entities.get(owner).map(|entity| {
+                (
+                    entity.position_iface().map_goal(),
+                    entity.position_iface().is_moving(),
+                )
+            });
+            let translating = self.orders.sequence_manager.goal_owner_debug_translating();
+            eprintln!(
+                "[GOAL_OWNER frame={frame} owner={owner:?} stage=before_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} terminal_selected={:?} terminal_translating={:?} dispatch_selected={selected_element:?} dispatch_translating={translating:?} actor={actor_state:?} position={position_state:?}]",
+                provenance.site, provenance.selected, provenance.translating,
+            );
+        }
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
                 actor.active_movement.sequence_id == Some(seq_id)
@@ -733,6 +998,32 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .clear_retained_movement_goals_for_actor(owner);
+        }
+        if let Some(provenance) = &goal_owner_provenance {
+            let selected = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner);
+            let translating = self.orders.sequence_manager.goal_owner_debug_translating();
+            let actor_state = self.world.entities.get(owner).and_then(|entity| {
+                entity.actor_data().map(|actor| {
+                    (
+                        actor.action_state,
+                        actor.active_movement,
+                        actor.installed_order,
+                    )
+                })
+            });
+            let position_state = self.world.entities.get(owner).map(|entity| {
+                (
+                    entity.position_iface().map_goal(),
+                    entity.position_iface().is_moving(),
+                )
+            });
+            eprintln!(
+                "[GOAL_OWNER frame={frame} owner={owner:?} stage=after_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} selected={selected:?} translating={translating:?} actor={actor_state:?} position={position_state:?} cleared_goal={cleared_selected_goal}]",
+                provenance.site,
+            );
         }
 
         // When a movement element with the MAP flag terminates, toggle

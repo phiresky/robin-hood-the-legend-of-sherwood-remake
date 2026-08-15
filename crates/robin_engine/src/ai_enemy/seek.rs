@@ -23,10 +23,49 @@ fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) ->
             .is_none_or(|expected| creation_order == Some(expected))
 }
 
+fn seek_area_phase6_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_SEEK_AREA_PHASE6").is_some()
+}
+
+fn seek_area_phase6_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
+    if !seek_area_phase6_debug_enabled() {
+        return false;
+    }
+    let parse_required = |name: &str| {
+        let value = std::env::var(name)
+            .unwrap_or_else(|_| panic!("PARITY_DEBUG_SEEK_AREA_PHASE6 requires {name}"));
+        if value.is_empty() {
+            panic!("PARITY_DEBUG_SEEK_AREA_PHASE6 requires non-empty {name}");
+        }
+        value.parse::<u32>().unwrap_or_else(|error| {
+            panic!("invalid {name}={value:?} for SEEKAREA phase6 diagnostic: {error}")
+        })
+    };
+    let expected_frame = parse_required("PARITY_DEBUG_SEEK_AREA_FRAME");
+    let expected_owner = parse_required("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER");
+    frame == expected_frame && creation_order == Some(expected_owner)
+}
+
+#[inline]
+fn accumulate_seek_point_interest(current: f32, interest: u8) -> f32 {
+    (f64::from(current) + f64::from(interest) * 0.01_f64) as f32
+}
+
 use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, task_priority};
 
 impl EnemyAi {
+    pub(crate) fn seek_area_phase6_caller_debug_enabled() -> bool {
+        seek_area_phase6_debug_enabled()
+    }
+
+    pub(crate) fn seek_area_phase6_caller_debug_matches(
+        frame: u32,
+        creation_order: Option<u32>,
+    ) -> bool {
+        seek_area_phase6_debug_matches(frame, creation_order)
+    }
+
     // -----------------------------------------------------------------------
     // Flee
     // -----------------------------------------------------------------------
@@ -393,7 +432,7 @@ impl EnemyAi {
                         .flatten();
                     insertion_index = Some(insert_pos);
                     selected_random.insert(insert_pos, idx);
-                    count_f += interest as f32 * 0.01;
+                    count_f = accumulate_seek_point_interest(count_f, interest);
                 }
 
                 if debug_selection {
@@ -473,6 +512,32 @@ impl EnemyAi {
 
         // ── Phase 6: personal seek points (postprocessing) ──
 
+        let debug_phase6 = seek_area_phase6_debug_matches(ctx.frame, ctx.original_creation_order);
+        if debug_phase6 {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"phase6_before\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"state\":{},\"substate\":{},\"flags\":{},\"seek_direction\":{},\"list_size\":{},\"list_empty\":{},\"location_first\":{},\"location_end\":{},\"personal1_constructor\":\"{}\"}}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order
+                    .expect("phase6 diagnostic matched an owner without creation order"),
+                self.base.current_state as u32,
+                self.base.current_substate as u32,
+                flags.bits(),
+                seek_direction,
+                self.my_seek_points.len(),
+                self.my_seek_points.is_empty(),
+                flags.contains(SeekFlags::LOCATION_FIRST),
+                flags.contains(SeekFlags::LOCATION_END),
+                if !flags.contains(SeekFlags::LOCATION_FIRST) {
+                    "none"
+                } else if seek_direction == UNDEFINED_DIRECTION {
+                    "position"
+                } else {
+                    "direction"
+                },
+            );
+        }
+
         if flags.contains(SeekFlags::LOCATION_FIRST) {
             // FindDoorEnemyCouldBeBehind mutates seek_center in place.
             // Mirror that by copying the field out, mutating, then
@@ -506,15 +571,42 @@ impl EnemyAi {
             };
             self.personal_seek_point_1 = Some(sp);
             self.my_seek_points.insert(0, 1111);
+            if debug_phase6 {
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"phase6_personal1\",\"frame\":{},\"owner_creation_order\":{},\"constructor\":\"{}\",\"inserted_id\":1111,\"list_size\":{}}}",
+                    ctx.frame,
+                    ctx.original_creation_order
+                        .expect("phase6 diagnostic matched an owner without creation order"),
+                    if seek_direction == UNDEFINED_DIRECTION {
+                        "position"
+                    } else {
+                        "direction"
+                    },
+                    self.my_seek_points.len(),
+                );
+            }
         }
 
-        if flags.contains(SeekFlags::LOCATION_END) || self.my_seek_points.is_empty() {
+        let insert_personal2 =
+            flags.contains(SeekFlags::LOCATION_END) || self.my_seek_points.is_empty();
+        if insert_personal2 {
             // Create personal_seek_point_2 from the (possibly
             // door-adjusted) seek_center, not the original parameter.
             let mut sp = SeekPoint::from_position(sim, self.seek_center);
             sp.id = 2222;
             self.personal_seek_point_2 = Some(sp);
             self.my_seek_points.push(2222);
+        }
+        if debug_phase6 {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"phase6_after\",\"frame\":{},\"owner_creation_order\":{},\"personal2_inserted\":{},\"personal2_constructor\":\"{}\",\"list_size\":{}}}",
+                ctx.frame,
+                ctx.original_creation_order
+                    .expect("phase6 diagnostic matched an owner without creation order"),
+                insert_personal2,
+                if insert_personal2 { "position" } else { "none" },
+                self.my_seek_points.len(),
+            );
         }
 
         tracing::trace!(
@@ -726,14 +818,14 @@ impl EnemyAi {
         self.actual_seek_point = Some(next_id);
 
         // Check if locked or uninteresting — skip (recurse)
-        let (is_locked, interest) = {
+        let is_locked = {
             if let Some(sp) = resolve_seek_point_id(
                 next_id,
                 &self.personal_seek_point_1,
                 &self.personal_seek_point_2,
                 global,
             ) {
-                (sp.locked, sp.last_calculated_interest)
+                sp.locked
             } else {
                 // Invalid ID — skip
                 self.seek_next_point(sim, global, ctx, tick);
@@ -741,23 +833,25 @@ impl EnemyAi {
             }
         };
 
-        // Recalculate interest
-        let interest = {
-            if let Some(sp) = resolve_seek_point_mut(
-                next_id,
-                &mut self.personal_seek_point_1,
-                &mut self.personal_seek_point_2,
-                global,
-            ) {
-                sp.calculate_interest(current_frame)
-            } else {
-                interest
-            }
-        };
+        // Original short-circuits `IsLocked() || ...`: a locked candidate is
+        // skipped without recalculating its shared interest or consuming the
+        // acceptance draw. The recursive entry still unlocks it above.
+        if is_locked {
+            self.seek_next_point(sim, global, ctx, tick);
+            return;
+        }
 
-        if is_locked
-            || crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100)
-                >= interest
+        // Recalculate interest
+        let interest = resolve_seek_point_mut(
+            next_id,
+            &mut self.personal_seek_point_1,
+            &mut self.personal_seek_point_2,
+            global,
+        )
+        .unwrap_or_else(|| panic!("seek point {next_id} resolved immediately before mutation"))
+        .calculate_interest(current_frame);
+
+        if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100) >= interest
         {
             // Skip this point — try the next one
             self.seek_next_point(sim, global, ctx, tick);
@@ -924,17 +1018,43 @@ impl EnemyAi {
                         ctx,
                         tick,
                     );
-                } else if !self.alert_officer(sim, pos_center, flags.bits(), ctx, tick) {
-                    self.seek_area(
-                        sim,
-                        pos_center,
-                        duty_radius,
-                        SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
-                        UNDEFINED_DIRECTION,
-                        global,
-                        ctx,
-                        tick,
-                    );
+                } else {
+                    let returns_to_instructed_group =
+                        self.alert_officer_returns_to_instructed_group(tick);
+                    let alerted = self.alert_officer(sim, pos_center, flags.bits(), ctx, tick);
+                    if alerted && !returns_to_instructed_group {
+                        // AlertOfficer calls GoNear synchronously, and Original
+                        // inspects mbCouldntReachpoint before DeadBodyAlert
+                        // returns. Rust constructs that route at the owner
+                        // boundary, so close the actor prefix and resume the
+                        // enclosing statement there.
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                &mut self.base.outbox.actor,
+                            )),
+                        );
+                        self.base
+                            .outbox
+                            .reentrant
+                            .dead_body_alert_completion_pending = true;
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+                                center: pos_center,
+                                radius: duty_radius,
+                            },
+                        );
+                    } else if !alerted {
+                        self.seek_area(
+                            sim,
+                            pos_center,
+                            duty_radius,
+                            SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
+                            UNDEFINED_DIRECTION,
+                            global,
+                            ctx,
+                            tick,
+                        );
+                    }
                 }
             }
             ProfileRank::Officer => {
@@ -983,6 +1103,35 @@ impl EnemyAi {
             }
             _ => {}
         }
+    }
+
+    /// Resume the statement following the soldier DeadBodyAlert call to
+    /// AlertOfficer. A failed GoNear is consumed inline and falls back to the
+    /// corpse search; a successful route has no further tail.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resume_dead_body_alert_after_alert_officer(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        center: Position,
+        radius: u16,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        if !self.base.couldnt_reachpoint {
+            return;
+        }
+        self.base.couldnt_reachpoint = false;
+        self.seek_area(
+            sim,
+            center,
+            radius,
+            SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
+            UNDEFINED_DIRECTION,
+            global,
+            ctx,
+            tick,
+        );
     }
     // -----------------------------------------------------------------------
     // Body examination
@@ -1294,6 +1443,325 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_enemy::CampSoldierInfo;
+
+    fn alert_test_officer(handle: u32, substate: Substate) -> CampSoldierInfo {
+        let position = Position {
+            x: 80.0,
+            y: 40.0,
+            ..Position::default()
+        };
+        CampSoldierInfo {
+            handle,
+            active: true,
+            position,
+            position_world: crate::coordinates::WorldPoint3D::new(80.0, 40.0, 0.0),
+            direction: 0,
+            rank: ProfileRank::Officer,
+            ai_state: AiState::Default,
+            ai_substate: substate,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            detected_body: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: Some(crate::ai::PreparedForecastDestination::fixed(position, 0)),
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 500,
+            real_half_aperture: 1.0,
+            eye_blind: false,
+        }
+    }
+
+    #[test]
+    fn dead_body_alert_with_officer_queues_actor_prefix_then_typed_resume() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(40);
+        ai.company_number = 0;
+        ai.base.antagonist = 99;
+        let center = Position {
+            x: 10.0,
+            y: 20.0,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            in_building: true,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers
+            .push(alert_test_officer(7, Substate::DefaultGotoPost));
+
+        ai.dead_body_alert(
+            &sim,
+            center,
+            SeekFlags::empty(),
+            &mut AiGlobalState::default(),
+            None,
+            &ctx,
+            &tick,
+        );
+
+        assert!(ai.base.outbox.reentrant.dead_body_alert_completion_pending);
+        assert_eq!(ai.base.outbox.reentrant.owner_work.len(), 3);
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work[0],
+            crate::ai::AiOwnerWork::StateChange(_)
+        ));
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work[1],
+            crate::ai::AiOwnerWork::ActorEffects(_)
+        ));
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work[2],
+            crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+                center: queued_center,
+                radius: 300
+            } if queued_center == center
+        ));
+        assert!(ai.base.outbox.actor.orders.is_empty());
+
+        // Settle the queued GoNear as a route failure, then run the exact
+        // typed tail that owns that result.
+        ai.base.couldnt_reachpoint = true;
+        ai.base.outbox.reentrant.dead_body_alert_completion_pending = false;
+        ai.resume_dead_body_alert_after_alert_officer(
+            &sim,
+            center,
+            300,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+        );
+        assert_eq!(
+            ai.seek_flags,
+            SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
+        );
+        assert!(ai.personal_seek_point_2.is_some());
+        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
+    fn dead_body_alert_instructed_group_route_never_queues_fallback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(44);
+        ai.company_number = 0;
+        ai.base.antagonist = 7;
+        ai.seek_flags = SeekFlags::REPORT_OFFICER_AFTER;
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            in_building: true,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(alert_test_officer(
+            7,
+            Substate::SeekingOfficerWaitForInstructedGroup,
+        ));
+
+        ai.dead_body_alert(
+            &sim,
+            Position::default(),
+            SeekFlags::empty(),
+            &mut AiGlobalState::default(),
+            None,
+            &ctx,
+            &tick,
+        );
+
+        // Route construction reports failure only after the AI borrow is
+        // released. With no typed tail queued, that later result cannot run
+        // the ordinary DeadBodyAlert fallback.
+        ai.base.couldnt_reachpoint = true;
+        assert!(!ai.base.outbox.reentrant.dead_body_alert_completion_pending);
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer { .. }
+                ))
+        );
+        assert!(ai.personal_seek_point_2.is_none());
+        assert!(!ai.seek_flags.contains(SeekFlags::BODY_SEEK));
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingSoldierReturnToOfficer
+        );
+    }
+
+    #[test]
+    fn failed_dead_body_alert_officer_route_falls_back_to_body_seek() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(41);
+        ai.company_number = 0;
+        ai.base.couldnt_reachpoint = true;
+        let center = Position {
+            x: 120.0,
+            y: 240.0,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            in_building: true,
+            ..AiContext::default()
+        };
+
+        ai.resume_dead_body_alert_after_alert_officer(
+            &sim,
+            center,
+            300,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert!(!ai.base.couldnt_reachpoint);
+        assert_eq!(
+            ai.seek_flags,
+            SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
+        );
+        assert_eq!(ai.my_seek_points, vec![2222]);
+        assert_eq!(
+            ai.personal_seek_point_2
+                .as_ref()
+                .expect("body search owns its personal endpoint")
+                .position,
+            center
+        );
+        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
+    fn successful_dead_body_alert_officer_route_has_no_fallback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(42);
+        ai.company_number = 0;
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            in_building: true,
+            ..AiContext::default()
+        };
+
+        ai.resume_dead_body_alert_after_alert_officer(
+            &sim,
+            Position::default(),
+            300,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert!(ai.seek_flags.is_empty());
+        assert!(ai.my_seek_points.is_empty());
+        assert!(ai.personal_seek_point_2.is_none());
+        assert!(ai.base.outbox.actor.orders.is_empty());
+    }
+
+    #[test]
+    fn dead_body_alert_without_officer_falls_back_immediately() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(43);
+        ai.company_number = 0;
+        // Force the AlertOfficer arm independently of the random answer.
+        ai.base.antagonist = 99;
+        let center = Position {
+            x: 60.0,
+            y: 90.0,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            in_building: true,
+            ..AiContext::default()
+        };
+
+        ai.dead_body_alert(
+            &sim,
+            center,
+            SeekFlags::empty(),
+            &mut AiGlobalState::default(),
+            None,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(
+            ai.seek_flags,
+            SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
+        );
+        assert_eq!(ai.my_seek_points, vec![2222]);
+        assert!(ai.personal_seek_point_2.is_some());
+        assert!(!ai.base.outbox.reentrant.dead_body_alert_completion_pending);
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer { .. }
+                ))
+        );
+    }
+
+    #[test]
+    fn seek_point_interest_accumulator_narrows_once_after_double_arithmetic() {
+        let accumulated = accumulate_seek_point_interest(0.0, 10);
+        let all_f32 = 10.0_f32 * 0.01_f32;
+
+        assert_eq!(accumulated.to_bits(), 0x3dcc_cccd);
+        assert_eq!(all_f32.to_bits(), 0x3dcc_cccc);
+    }
+
+    #[test]
+    fn seek_point_interest_accumulator_preserves_original_threshold_crossing() {
+        let interests = [55, 19, 32, 44, 1, 44, 27, 97, 56, 15, 83, 26, 14, 0, 56, 31];
+        let accumulated = interests
+            .into_iter()
+            .fold(0.0, accumulate_seek_point_interest);
+        let all_f32 = interests.into_iter().fold(0.0_f32, |current, interest| {
+            current + f32::from(interest) * 0.01_f32
+        });
+
+        assert_eq!(accumulated.to_bits(), 0x40c0_0001);
+        assert_eq!(all_f32.to_bits(), 0x40bf_ffff);
+        assert!(accumulated >= 6.0);
+        assert!(all_f32 < 6.0);
+    }
+
+    #[test]
+    fn seek_point_interest_accumulator_keeps_exact_threshold_control() {
+        let accumulated = [50, 50]
+            .into_iter()
+            .fold(0.0, accumulate_seek_point_interest);
+
+        assert_eq!(accumulated, 1.0);
+    }
 
     #[test]
     fn seek_area_obligatory_selection_respects_original_finite_sentinel() {
@@ -1390,5 +1858,94 @@ mod tests {
 
         assert_eq!(ai.base.last_goto_destination, route_point);
         assert_eq!(ai.base.seek_position, search_center);
+    }
+
+    #[test]
+    fn locked_seek_point_skips_interest_recalculation_and_acceptance_draw() {
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(118);
+        ai.my_seek_points = vec![0, 1];
+        let locked_position = Position {
+            x: 100.0,
+            ..Position::default()
+        };
+        let accepted_position = Position {
+            x: 200.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points = vec![
+            SeekPoint {
+                position: locked_position,
+                frame_when_full_interest: 1_000,
+                directions: vec![2],
+                last_calculated_interest: 7,
+                locked: true,
+                id: 0,
+            },
+            SeekPoint {
+                position: accepted_position,
+                frame_when_full_interest: 0,
+                directions: vec![4],
+                last_calculated_interest: 3,
+                locked: false,
+                id: 1,
+            },
+        ];
+        let ctx = AiContext {
+            frame: 500,
+            ..AiContext::default()
+        };
+
+        let (_, draws) = with_draw_trace(|| {
+            ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+        });
+
+        assert_eq!(draws, [RngSite::SeekPointAcceptance]);
+        assert_eq!(global.seek_points[0].last_calculated_interest, 7);
+        assert!(!global.seek_points[0].locked);
+        assert_eq!(global.seek_points[1].last_calculated_interest, 100);
+        assert!(global.seek_points[1].locked);
+        assert_eq!(ai.actual_seek_point, Some(1));
+        assert_eq!(ai.base.last_goto_destination, accepted_position);
+    }
+
+    #[test]
+    fn unlocked_seek_point_recalculates_draws_subtracts_and_locks() {
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(118);
+        ai.my_seek_points.push(0);
+        let destination = Position {
+            x: 300.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points.push(SeekPoint {
+            position: destination,
+            frame_when_full_interest: 501,
+            directions: vec![6],
+            last_calculated_interest: 7,
+            locked: false,
+            id: 0,
+        });
+        let ctx = AiContext {
+            frame: 500,
+            ..AiContext::default()
+        };
+
+        let (_, draws) = with_draw_trace(|| {
+            ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+        });
+
+        assert_eq!(draws, [RngSite::SeekPointAcceptance]);
+        assert_eq!(global.seek_points[0].last_calculated_interest, 100);
+        assert_eq!(global.seek_points[0].frame_when_full_interest, 5_501);
+        assert!(global.seek_points[0].locked);
+        assert_eq!(ai.actual_seek_point, Some(0));
+        assert_eq!(ai.base.last_goto_destination, destination);
     }
 }

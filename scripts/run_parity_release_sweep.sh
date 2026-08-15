@@ -25,6 +25,13 @@ workspace=$(pwd)
 snapshot="$audit_dir/traces.snapshot"
 mkdir -p "$audit_dir/logs" "$audit_dir/status"
 
+concurrency=${PARITY_SWEEP_CONCURRENCY:-$shards}
+if [[ ! "$concurrency" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'error: PARITY_SWEEP_CONCURRENCY must be a positive integer\n' >&2
+    exit 2
+fi
+mkdir -p "$audit_dir/.runner-slots"
+
 exact_eof_marker='parity trace matched every recorded frame'
 integrity_status='integrity-eof-marker'
 
@@ -44,6 +51,20 @@ write_status() {
     fi
 }
 
+acquire_runner_slot() {
+    local slot
+    while true; do
+        for ((slot = 0; slot < concurrency; slot += 1)); do
+            exec {runner_slot_fd}>"$audit_dir/.runner-slots/$slot.lock"
+            if flock -n "$runner_slot_fd"; then
+                return 0
+            fi
+            exec {runner_slot_fd}>&-
+        done
+        sleep 1
+    done
+}
+
 if [[ ! -f "$snapshot" ]]; then
     printf 'error: trace snapshot does not exist: %s\n' "$snapshot" >&2
     exit 2
@@ -54,15 +75,23 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     trace=${traces[index]}
     relative=${trace#"$corpus_dir"/}
     key=${relative//\//__}
+    # Older launches used a corpus root of `.` and therefore retained the
+    # leading `parity-save-replays/` in status/log keys.  Treat that spelling
+    # as the same logical trace so a resumed sweep does not rerun already
+    # completed work under a second filename namespace.
+    full_key=${trace//\//__}
     log="$audit_dir/logs/$key.log"
     status="$audit_dir/status/$key.status"
 
-    [[ -f "$status" ]] && continue
+    if [[ -f "$status" || -f "$audit_dir/status/$full_key.status" ]]; then
+        continue
+    fi
     if [[ ! -f "$trace" ]]; then
         write_status "$status" missing
         continue
     fi
 
+    acquire_runner_slot
     if timeout --signal=TERM --kill-after=10s 900s \
         env ROBINHOOD_DATA_DIR="$workspace/datadirs/fullgame_linux" \
         "$runner" --no-auto-dump "$trace" > "$log" 2>&1
@@ -77,4 +106,5 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         runner_status=$?
         write_status "$status" "$runner_status"
     fi
+    exec {runner_slot_fd}>&-
 done

@@ -445,6 +445,62 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
 }
 
 #[test]
+fn consecutive_set_states_preserve_attentive_request_fifo() {
+    use crate::ai::{AiState, Substate};
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier_entity = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = true;
+    enemy.base.current_state = AiState::Seeking;
+    enemy.base.current_substate = Substate::SeekingSeekpoint;
+    enemy.base.stop_all();
+    enemy.set_state(AiState::Attacking, Substate::AttackingReactiontime);
+    enemy.set_state(
+        AiState::Attacking,
+        Substate::AttackingTooProudToAttackApproach,
+    );
+    let owner = engine.add_entity(soldier_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    let owned: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| (element.command, element.state))
+        .collect();
+    assert_eq!(
+        owned,
+        [(Command::LeaveAttentiveMode, SequenceState::Todo)],
+        "Reactiontime's attentive=true observes the already-true will-be gate, then the immediately following TooProudApproach attentive=false launches the sole transition"
+    );
+    let enemy = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("Enemy test AI remains live");
+    assert!(enemy.attentive);
+    assert!(!enemy.will_be_attentive);
+    assert_eq!(enemy.base.current_state, AiState::Attacking);
+    assert_eq!(
+        enemy.base.current_substate,
+        Substate::AttackingTooProudToAttackApproach
+    );
+}
+
+#[test]
 fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     use crate::ai::{LogLineType, Remark};
 
@@ -1824,6 +1880,362 @@ pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
     })
 }
 
+#[test]
+fn alert_soldier_typed_tail_owns_couldnt_reachpoint_before_event_surface() {
+    use crate::element::AiBrain;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(owner)
+        .expect("AlertSoldier test civilian exists")
+    else {
+        panic!("AlertSoldier test owner changed kind")
+    };
+    civilian.npc.ai_brain =
+        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
+    let ai = civilian
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("AlertSoldier test civilian has AI");
+    ai.completion_latch_inside_think = true;
+    ai.couldnt_reachpoint = true;
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier test civilian retains AI");
+    assert!(ai.couldnt_reachpoint);
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier test civilian retains mutable AI")
+        .outbox
+        .reentrant
+        .alert_soldier_completion_pending = false;
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier test civilian retains AI after surface");
+    assert!(!ai.couldnt_reachpoint);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        vec![crate::ai::StimulusType::EventCouldntReachPoint]
+    );
+}
+
+#[test]
+fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
+    use crate::ai::{AiOwnerWork, StimulusType};
+    use crate::ai_enemy::SeekFlags;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "dead_body_alert_continuation_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission supports owner-local movement settlement"),
+    );
+    let center = crate::ai::Position {
+        x: 175.0,
+        y: 225.0,
+        ..Default::default()
+    };
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("dead-body-alert owner has Enemy AI");
+        ai.base.completion_latch_inside_think = true;
+        ai.base.couldnt_reachpoint = true;
+        ai.base.outbox.reentrant.dead_body_alert_completion_pending = true;
+        ai.base.outbox.reentrant.owner_work.push(
+            AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+                center,
+                radius: 300,
+            },
+        );
+    }
+
+    // EndThink observes the typed latch before the owner continuation runs.
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("dead-body-alert owner retains Enemy AI");
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(!ai.base.outbox.reentrant.dead_body_alert_completion_pending);
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    assert!(
+        !ai.base
+            .outbox
+            .reentrant
+            .self_stimuli
+            .contains(&StimulusType::EventCouldntReachPoint)
+    );
+    assert_eq!(
+        ai.seek_flags,
+        SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
+    );
+    assert_eq!(
+        ai.personal_seek_point_2
+            .as_ref()
+            .expect("failed officer route creates the personal endpoint")
+            .position,
+        center
+    );
+}
+
+#[test]
+fn unrelated_running_to_officer_failure_remains_generic() {
+    use crate::ai::{AiState, StimulusType, Substate};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("generic route-failure owner has Enemy AI");
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingRunningToOfficer;
+    ai.base.completion_latch_inside_think = true;
+    ai.base.couldnt_reachpoint = true;
+
+    engine.surface_synchronous_completion_events_for_owner(owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("generic route-failure owner retains Enemy AI");
+    assert!(!ai.base.couldnt_reachpoint);
+    assert_eq!(
+        ai.base.outbox.reentrant.self_stimuli,
+        vec![StimulusType::EventCouldntReachPoint]
+    );
+    assert!(ai.seek_flags.is_empty());
+    assert!(ai.personal_seek_point_2.is_none());
+}
+
+#[test]
+#[should_panic(expected = "non-enemy AI brain")]
+fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
+    use crate::ai::{AiOwnerWork, Position};
+    use crate::element::AiBrain;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(owner)
+        .expect("wrong-kind continuation owner exists")
+    else {
+        unreachable!()
+    };
+    soldier.npc.ai_brain =
+        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
+    soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("friendly AI has base")
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer {
+            center: Position::default(),
+            radius: 300,
+        });
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+}
+
+fn make_alert_soldier_owner(engine: &mut EngineInner) -> EntityId {
+    use crate::element::AiBrain;
+
+    let owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(owner)
+        .expect("AlertSoldier test civilian exists")
+    else {
+        panic!("AlertSoldier test owner changed kind")
+    };
+    civilian.element.active = true;
+    civilian.npc.life_points = 100;
+    civilian.civilian.cached_camp = crate::element::Camp::Lacklandists;
+    civilian.npc.ai_brain =
+        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
+    owner
+}
+
+#[test]
+fn alert_soldier_owner_boundary_first_route_success_runs_success_tail() {
+    use crate::ai::{AiOwnerWork, Remark};
+    use crate::ai_friendly::AlertSoldierFailureContinuation;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = make_alert_soldier_owner(&mut engine);
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier owner has AI");
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+            center: Default::default(),
+            check_door_path: false,
+            failure: AlertSoldierFailureContinuation::Panic,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier owner retains AI");
+    assert_eq!(ai.current_remark, Remark::CivPanic);
+    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+}
+
+#[test]
+fn alert_soldier_owner_boundary_first_failure_retries_and_consumes_success() {
+    use crate::ai::{AiOwnerWork, Remark};
+    use crate::ai_friendly::AlertSoldierFailureContinuation;
+    use crate::coordinates::MapPoint;
+    use crate::element::Camp;
+    use crate::position_interface::SectorHandle;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = make_alert_soldier_owner(&mut engine);
+    let soldier = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    for (id, x) in [(owner, 0.0), (soldier, 100.0)] {
+        let entity = engine
+            .get_entity_mut(id)
+            .expect("AlertSoldier route actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 0.0));
+        entity.element_data_mut().set_sector(SectorHandle::new(1));
+        entity.element_data_mut().set_layer(0);
+        entity
+            .npc_data_mut()
+            .expect("route actor is NPC")
+            .life_points = 100;
+    }
+    engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![soldier.index()]);
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier owner has AI");
+    ai.couldnt_reachpoint = true;
+    ai.completion_latch_inside_think = true;
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+            center: Default::default(),
+            check_door_path: false,
+            failure: AlertSoldierFailureContinuation::Panic,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier owner retains AI");
+    assert_eq!(ai.antagonist, soldier.index());
+    assert_eq!(ai.current_remark, Remark::CivPanic);
+    assert!(!ai.couldnt_reachpoint);
+    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.outbox.actor.begin_panic.is_none());
+}
+
+#[test]
+fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() {
+    use crate::ai::{AiOwnerWork, AiState};
+    use crate::ai_friendly::AlertSoldierFailureContinuation;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = make_alert_soldier_owner(&mut engine);
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AlertSoldier owner has AI");
+    ai.couldnt_reachpoint = true;
+    ai.completion_latch_inside_think = true;
+    ai.outbox.reentrant.alert_soldier_completion_pending = true;
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+            center: Default::default(),
+            check_door_path: false,
+            failure: AlertSoldierFailureContinuation::Panic,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("AlertSoldier owner retains AI");
+    assert_eq!(ai.current_state, AiState::Fleeing);
+    assert!(!ai.couldnt_reachpoint);
+    assert!(!ai.outbox.reentrant.alert_soldier_completion_pending);
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+}
+
 pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
     Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {
@@ -1835,6 +2247,61 @@ pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
         human: Default::default(),
         pc: Default::default(),
     })
+}
+
+#[test]
+fn alert_soldier_friend_append_drain_preserves_preexisting_duplicate_and_order() {
+    use crate::element::{AiBrain, Detectable, DetectableType};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let first_friend = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let second_friend = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("alerting civilian exists")
+    else {
+        panic!("alerting civilian changed kind")
+    };
+    civilian.npc.ai_brain = AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(
+        civilian_id.index(),
+    )));
+    civilian.npc.detectable_lists[DetectableType::Friend as usize].push(Detectable {
+        element: Some(first_friend),
+        detectable_type: DetectableType::Friend,
+        ..Default::default()
+    });
+    let ai = civilian
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("alerting civilian has AI");
+    ai.owner_entity_id = Some(civilian_id);
+    // This is the exact duplicate-preserving lane used by AlertSoldier's
+    // direct retail AddDetectable calls.
+    ai.outbox.actor.append_detectables.extend([
+        (first_friend, DetectableType::Friend),
+        (second_friend, DetectableType::Friend),
+    ]);
+
+    engine.drain_pending_for_npc(&sim, civilian_id, &LevelAssets::default());
+
+    let friends = &engine
+        .get_entity(civilian_id)
+        .expect("alerting civilian remains live")
+        .npc_data()
+        .expect("alerting civilian retains NPC data")
+        .detectable_lists[DetectableType::Friend as usize];
+    assert_eq!(
+        friends
+            .iter()
+            .map(|detectable| detectable.element)
+            .collect::<Vec<_>>(),
+        vec![Some(first_friend), Some(first_friend), Some(second_friend)],
+        "the existing friend must be duplicated and the AlertSoldier registry order retained"
+    );
 }
 
 #[test]
@@ -3081,6 +3548,484 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         )
         .is_none()
     );
+}
+
+#[test]
+fn reconsider_approach_route_settles_before_roof_wait_resume() {
+    use crate::ai::{AiContext, AiOwnerWork, AiState, GotoFlags, Position, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::gate::{Door, GateType};
+    use crate::sector::SectorNumber;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "reconsider_approach_owner_boundary_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission exposes the installed test jump"),
+    );
+
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner_position = Position {
+        x: 0.0,
+        y: 0.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    let target_position = Position {
+        x: 100.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(2),
+        level: 1,
+    };
+    for (id, position) in [(owner_id, owner_position), (target_id, target_position)] {
+        let entity = engine.get_entity_mut(id).expect("approach actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(position.x, position.y));
+        entity.element_data_mut().set_sector(position.sector);
+        entity.element_data_mut().set_layer(position.level);
+    }
+    engine
+        .get_entity_mut(target_id)
+        .and_then(Entity::pc_data_mut)
+        .expect("target is a PC")
+        .has_jump = true;
+    engine.script_domains.interactables.doors = vec![Door {
+        gate_type: GateType::Jump,
+        sector_out: SectorNumber::new(1),
+        sector_in: SectorNumber::new(2),
+        point_out: MapPoint::new(50.0, 100.0),
+        point_in: MapPoint::new(50.0, 150.0),
+        layer_out: 0,
+        layer_in: 1,
+        ..Door::default()
+    }];
+
+    let ctx = AiContext {
+        position: owner_position,
+        ..AiContext::default()
+    };
+    let ai = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("owner has Enemy AI");
+    ai.base.me = owner_id.index();
+    ai.base.primary_target = target_id.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingRunningToEnemy;
+    ai.base.think_recursion_depth = 1;
+    ai.base.go_near(target_position, 50, GotoFlags::RUN, &ctx);
+    let first_route = std::mem::take(&mut ai.base.outbox.actor);
+    assert_eq!(first_route.orders.len(), 1);
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ActorEffects(first_route));
+    ai.base
+        .outbox
+        .reentrant
+        .reconsider_approach_completion_pending = true;
+    ai.base.outbox.reentrant.owner_work.push(
+        AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
+            target: target_id.index(),
+            target_position,
+        },
+    );
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner_id);
+
+    let ai = engine
+        .get_entity(owner_id)
+        .and_then(Entity::enemy_ai)
+        .expect("owner retains Enemy AI");
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::AttackingRunToAvengerOnRoof
+    );
+    assert_eq!(ai.base.last_goto_destination.x, 50.0);
+    assert_eq!(ai.base.last_goto_destination.y, 100.0);
+    assert!(!ai.base.couldnt_reachpoint);
+
+    // Reachable first approaches must consume the same typed tail without
+    // entering the roof-wait branch.
+    let reachable_owner =
+        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let reachable_target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let reachable_owner_position = Position {
+        x: 200.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    let reachable_target_position = Position {
+        x: 300.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    for (id, position) in [
+        (reachable_owner, reachable_owner_position),
+        (reachable_target, reachable_target_position),
+    ] {
+        let entity = engine.get_entity_mut(id).expect("reachable actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(position.x, position.y));
+        entity.element_data_mut().set_sector(position.sector);
+        entity.element_data_mut().set_layer(position.level);
+    }
+    let reachable_ctx = AiContext {
+        position: reachable_owner_position,
+        ..AiContext::default()
+    };
+    let ai = engine
+        .get_entity_mut(reachable_owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("reachable owner has Enemy AI");
+    ai.base.me = reachable_owner.index();
+    ai.base.primary_target = reachable_target.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingRunningToEnemy;
+    ai.base.think_recursion_depth = 1;
+    ai.base
+        .go_near(reachable_target_position, 5, GotoFlags::RUN, &reachable_ctx);
+    let reachable_route = std::mem::take(&mut ai.base.outbox.actor);
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ActorEffects(reachable_route));
+    ai.base
+        .outbox
+        .reentrant
+        .reconsider_approach_completion_pending = true;
+    ai.base.outbox.reentrant.owner_work.push(
+        AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
+            target: reachable_target.index(),
+            target_position: reachable_target_position,
+        },
+    );
+
+    engine.drain_ai_owner_work_for(&sim, &assets, reachable_owner);
+
+    let ai = engine
+        .get_entity(reachable_owner)
+        .and_then(Entity::enemy_ai)
+        .expect("reachable owner retains Enemy AI");
+    assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
+    assert_eq!(ai.base.last_goto_destination, reachable_target_position);
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(
+        !ai.base
+            .outbox
+            .reentrant
+            .reconsider_approach_completion_pending
+    );
+}
+
+#[test]
+fn battle_observe_route_settles_before_source_ordered_tail() {
+    use crate::ai::{
+        AiContext, AiOwnerWork, AiState, Decision, GotoFlags, LogLineType, Position, Substate,
+    };
+    use crate::coordinates::MapPoint;
+    use crate::gate::{Door, GateType};
+    use crate::sector::SectorNumber;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "battle_observe_owner_boundary_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission exposes the installed test jump"),
+    );
+
+    // Save052's shape: the first GoNear crosses sectors and cannot construct
+    // a route, while the target's jump gate provides Original's avenger-on-
+    // roof recovery point.
+    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner_position = Position {
+        x: 10.0,
+        y: 10.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    let target_position = Position {
+        x: 100.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(2),
+        level: 1,
+    };
+    for (id, position) in [(owner_id, owner_position), (target_id, target_position)] {
+        let entity = engine
+            .get_entity_mut(id)
+            .expect("battle-observe actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(position.x, position.y));
+        entity.element_data_mut().set_sector(position.sector);
+        entity.element_data_mut().set_layer(position.level);
+    }
+    engine
+        .get_entity_mut(target_id)
+        .and_then(Entity::pc_data_mut)
+        .expect("battle-observe target is a PC")
+        .has_jump = true;
+    engine.script_domains.interactables.doors = vec![Door {
+        gate_type: GateType::Jump,
+        sector_out: SectorNumber::new(1),
+        sector_in: SectorNumber::new(2),
+        point_out: MapPoint::new(50.0, 100.0),
+        point_in: MapPoint::new(50.0, 150.0),
+        layer_out: 0,
+        layer_in: 1,
+        ..Door::default()
+    }];
+
+    let ctx = AiContext {
+        position: owner_position,
+        ..AiContext::default()
+    };
+    let ai = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("battle-observe owner has Enemy AI");
+    ai.base.me = owner_id.index();
+    ai.base.primary_target = target_id.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingReactiontime;
+    ai.base.think_recursion_depth = 1;
+    ai.base.outbox.actor.set_focus(target_id.index());
+    ai.base
+        .go_near(target_position, 50, GotoFlags::empty(), &ctx);
+    let first_route = std::mem::take(&mut ai.base.outbox.actor);
+    assert_eq!(first_route.focus, Some(target_id.index()));
+    assert_eq!(first_route.orders.len(), 1);
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ActorEffects(first_route));
+    ai.base.outbox.reentrant.battle_observe_completion_pending = true;
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeBattleObserveAfterGoNear {
+            target: target_id.index(),
+            target_position,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner_id);
+
+    let ai = engine
+        .get_entity(owner_id)
+        .and_then(Entity::enemy_ai)
+        .expect("battle-observe owner retains Enemy AI");
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::AttackingRunToAvengerOnRoof
+    );
+    assert_eq!(ai.base.last_goto_destination.x, 50.0);
+    assert_eq!(ai.base.last_goto_destination.y, 100.0);
+    assert_eq!(ai.base.seek_position, target_position);
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(!ai.base.outbox.reentrant.battle_observe_completion_pending);
+    assert_eq!(
+        ai.base
+            .ai_log
+            .iter()
+            .filter(|line| {
+                line.line_type == LogLineType::BattleDecision
+                    && line.info == Decision::Observe as u16
+            })
+            .count(),
+        0,
+        "Original roof fallback returns before the Observe decision log"
+    );
+
+    // A reachable route consumes the same typed tail, enters Approach, and
+    // publishes the Observe decision exactly once.
+    let reachable_owner =
+        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let reachable_target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let reachable_owner_position = Position {
+        x: 200.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    let reachable_target_position = Position {
+        x: 300.0,
+        y: 200.0,
+        sector: crate::position_interface::SectorHandle::new(1),
+        level: 0,
+    };
+    for (id, position) in [
+        (reachable_owner, reachable_owner_position),
+        (reachable_target, reachable_target_position),
+    ] {
+        let entity = engine.get_entity_mut(id).expect("reachable actor exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(position.x, position.y));
+        entity.element_data_mut().set_sector(position.sector);
+        entity.element_data_mut().set_layer(position.level);
+    }
+    let reachable_ctx = AiContext {
+        position: reachable_owner_position,
+        ..AiContext::default()
+    };
+    let ai = engine
+        .get_entity_mut(reachable_owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("reachable owner has Enemy AI");
+    ai.base.me = reachable_owner.index();
+    ai.base.primary_target = reachable_target.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingReactiontime;
+    ai.base.think_recursion_depth = 1;
+    ai.base.outbox.actor.set_focus(reachable_target.index());
+    ai.base.go_near(
+        reachable_target_position,
+        5,
+        GotoFlags::empty(),
+        &reachable_ctx,
+    );
+    let reachable_route = std::mem::take(&mut ai.base.outbox.actor);
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ActorEffects(reachable_route));
+    ai.base.outbox.reentrant.battle_observe_completion_pending = true;
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeBattleObserveAfterGoNear {
+            target: reachable_target.index(),
+            target_position: reachable_target_position,
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, reachable_owner);
+
+    let ai = engine
+        .get_entity(reachable_owner)
+        .and_then(Entity::enemy_ai)
+        .expect("reachable owner retains Enemy AI");
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::AttackingApproachToObserve
+    );
+    assert_eq!(ai.base.last_goto_destination, reachable_target_position);
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(!ai.base.outbox.reentrant.battle_observe_completion_pending);
+    assert_eq!(
+        ai.base
+            .ai_log
+            .iter()
+            .filter(|line| {
+                line.line_type == LogLineType::BattleDecision
+                    && line.info == Decision::Observe as u16
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
+#[should_panic(expected = "battle-observe continuation owner 0 has stale target 999")]
+fn battle_observe_continuation_fails_loud_for_stale_target() {
+    use crate::ai::{AiOwnerWork, AiState, Position, Substate};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("battle-observe owner has Enemy AI");
+    ai.base.me = owner.index();
+    ai.base.primary_target = 999;
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingReactiontime;
+    ai.base.outbox.reentrant.battle_observe_completion_pending = true;
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeBattleObserveAfterGoNear {
+            target: 999,
+            target_position: Position::default(),
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+}
+
+#[test]
+#[should_panic(expected = "battle-observe roof recovery requires an installed mission script")]
+fn battle_observe_roof_fallback_fails_loud_without_mission() {
+    use crate::ai::{AiOwnerWork, AiState, Position, Substate};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("battle-observe owner has Enemy AI");
+    ai.base.me = owner.index();
+    ai.base.primary_target = target.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingReactiontime;
+    ai.base.couldnt_reachpoint = true;
+    ai.base.outbox.reentrant.battle_observe_completion_pending = true;
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeBattleObserveAfterGoNear {
+            target: target.index(),
+            target_position: Position::default(),
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
 }
 
 #[test]
@@ -4453,6 +5398,321 @@ fn review2_context_and_tick(
     );
     let tick = engine.build_npc_tick_data(sim, id, &scratch, assets);
     (ctx, tick)
+}
+
+#[test]
+fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
+    use crate::ai::{AiState, CrossNpcAction, Substate, ThinkResultContinuation};
+    use crate::element::{Command, Detectable, DetectableType};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    engine.drain_direct_ai_owner_boundary(&sim, soldier_id, &assets);
+
+    let sector = crate::position_interface::SectorHandle::new(1);
+    let officer = engine
+        .get_entity_mut(officer_id)
+        .expect("call-rejection officer exists");
+    officer
+        .element_data_mut()
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    officer.element_data_mut().set_sector(sector);
+    let officer_npc = officer.npc_data_mut().expect("officer remains NPC");
+    officer_npc.detectable_lists[DetectableType::Beggar as usize].push(Detectable {
+        element: Some(soldier_id),
+        detectable_type: DetectableType::Beggar,
+        ..Default::default()
+    });
+    let officer_ai = officer
+        .enemy_ai_mut()
+        .expect("call-rejection officer has EnemyAi");
+    officer_ai.base.antagonist = soldier_id.index();
+    officer_ai.base.initial_position = crate::ai::Position {
+        x: 200.0,
+        y: 100.0,
+        sector,
+        level: 0,
+    };
+    officer_ai.attentive = true;
+    officer_ai.will_be_attentive = true;
+    officer_ai.base.current_state = AiState::Seeking;
+    officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
+    officer_ai
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::RequestThinkResult {
+            target: soldier_id.index(),
+            caller: officer_id.index(),
+            stimulus_type: crate::ai::StimulusType::CallHey,
+            info: crate::ai::StimulusInfo::Human(officer_id.index()),
+            continuation: ThinkResultContinuation::OfficerCalledSoldier,
+        });
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("call rejector has EnemyAi")
+        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+
+    engine.process_synchronous_think_results_for(&sim, officer_id, &assets, true);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .expect("call-rejection officer survives");
+    let ai = officer
+        .enemy_ai()
+        .expect("call-rejection officer retains EnemyAi");
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    assert!(
+        officer
+            .npc_data()
+            .expect("officer remains NPC")
+            .detectable_lists[DetectableType::Beggar as usize]
+            .is_empty(),
+        "ReturnToDuty's Beggar deletion must settle on the resumed caller stack"
+    );
+    assert!(!ai.base.outbox.actor.has_boundary_work());
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+
+    let commands: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(officer_id))
+        .map(|element| (element.command, element.state))
+        .collect();
+    let leave = commands
+        .iter()
+        .position(|(command, _)| *command == Command::LeaveAttentiveMode)
+        .expect("rejected call must publish LeaveAttentiveMode");
+    let movement = commands
+        .iter()
+        .position(|(command, _)| *command == Command::Move)
+        .expect("rejected call must publish the return-to-post movement");
+    assert!(
+        leave < movement,
+        "LeaveAttentiveMode must precede GoTo: {commands:?}"
+    );
+    assert_eq!(commands[leave].1, crate::sequence::SequenceState::Todo);
+    assert_eq!(commands[movement].1, crate::sequence::SequenceState::Todo);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(officer_id)
+            .is_none(),
+        "deferred owner mode must not instruct either element"
+    );
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    let current = engine
+        .orders
+        .sequence_manager
+        .current_element_for_actor(officer_id)
+        .and_then(|(sequence, index)| engine.orders.sequence_manager.get_element(sequence, index))
+        .expect("manager phase must select the attentive transition");
+    assert_eq!(current.command, Command::LeaveAttentiveMode);
+    assert_eq!(current.state, crate::sequence::SequenceState::InProgress);
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(officer_id)
+                    && element.command == Command::Move
+                    && element.state == crate::sequence::SequenceState::InProgress
+            }),
+        "return-to-post movement must remain behind LeaveAttentiveMode"
+    );
+}
+
+#[test]
+fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
+    use crate::ai::{AiState, CrossNpcAction, Substate, ThinkResultContinuation};
+    use crate::element::{Detectable, DetectableType};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    engine.drain_direct_ai_owner_boundary(&sim, soldier_id, &assets);
+    let officer = engine
+        .get_entity_mut(officer_id)
+        .expect("call-acceptance officer exists");
+    officer
+        .npc_data_mut()
+        .expect("officer remains NPC")
+        .detectable_lists[DetectableType::Beggar as usize]
+        .push(Detectable {
+            element: Some(soldier_id),
+            detectable_type: DetectableType::Beggar,
+            ..Default::default()
+        });
+    let officer_ai = officer
+        .enemy_ai_mut()
+        .expect("call-acceptance officer has EnemyAi");
+    officer_ai.base.antagonist = soldier_id.index();
+    officer_ai.attentive = true;
+    officer_ai.will_be_attentive = true;
+    officer_ai.base.current_state = AiState::Seeking;
+    officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
+    officer_ai
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::RequestThinkResult {
+            target: soldier_id.index(),
+            caller: officer_id.index(),
+            stimulus_type: crate::ai::StimulusType::CallHey,
+            info: crate::ai::StimulusInfo::Human(officer_id.index()),
+            continuation: ThinkResultContinuation::OfficerCalledSoldier,
+        });
+
+    engine.process_synchronous_think_results_for(&sim, officer_id, &assets, true);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .expect("call-acceptance officer survives");
+    let ai = officer
+        .enemy_ai()
+        .expect("call-acceptance officer retains EnemyAi");
+    assert_eq!(ai.base.current_state, AiState::Seeking);
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::SeekingOfficerWaitForSoldier
+    );
+    assert!(ai.base.timer_is_running);
+    assert_eq!(
+        ai.base.when_does_timer_ring,
+        engine.control.frame_counter + 20
+    );
+    assert_eq!(ai.base.antagonist, soldier_id.index());
+    assert_eq!(
+        officer
+            .npc_data()
+            .expect("officer remains NPC")
+            .detectable_lists[DetectableType::Beggar as usize]
+            .first()
+            .map(|detectable| (detectable.element, detectable.detectable_type)),
+        Some((Some(soldier_id), DetectableType::Beggar)),
+        "accepted CALL_HEY must not enter ReturnToDuty"
+    );
+    assert_eq!(
+        officer
+            .npc_data()
+            .expect("officer remains NPC")
+            .detectable_lists[DetectableType::Beggar as usize]
+            .len(),
+        1
+    );
+    assert!(!ai.base.outbox.actor.has_boundary_work());
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(officer_id)
+                    && element.command == crate::element::Command::LeaveAttentiveMode
+            }),
+        "accepted CALL_HEY must not publish a return-to-duty transition"
+    );
+    let soldier = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("accepted soldier retains EnemyAi");
+    assert_eq!(
+        soldier.base.current_substate,
+        Substate::SeekingSoldierCalledByOfficer
+    );
+    assert_eq!(soldier.base.antagonist, officer_id.index());
+}
+
+#[test]
+fn nested_reentrant_turn_remains_deferred_until_manager() {
+    use crate::ai::{AiState, CrossNpcAction, StimulusInfo, StimulusType, Substate};
+    use crate::element::Command;
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, source_id, target_id, assets) = setup_review2_officer_and_soldier();
+    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
+    engine.drain_direct_ai_owner_boundary(&sim, target_id, &assets);
+
+    engine
+        .get_entity_mut(source_id)
+        .expect("nested-turn source exists")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(0.0, 0.0));
+    let target = engine
+        .get_entity_mut(target_id)
+        .expect("nested-turn target exists");
+    target
+        .element_data_mut()
+        .set_position_map(MapPoint::new(40.0, 0.0));
+    let target_ai = target
+        .enemy_ai_mut()
+        .expect("nested-turn target has EnemyAi");
+    target_ai.base.current_state = AiState::Seeking;
+    target_ai.base.current_substate = Substate::SeekingOfficerWaitForCharly;
+    target_ai.base.antagonist = source_id.index();
+
+    engine
+        .get_entity_mut(source_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("nested-turn source has AI")
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::SendStimulus {
+            target: target_id.index(),
+            stimulus_type: StimulusType::CallCoordinate,
+            info: StimulusInfo::Human(source_id.index()),
+            fallback_to_sender: None,
+            to_whole_patrol: false,
+        });
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, source_id, &assets, true, true);
+
+    let turns: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(target_id) && element.command == Command::Turn)
+        .map(|element| element.state)
+        .collect();
+    assert_eq!(turns, [SequenceState::Todo]);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(target_id)
+            .is_none(),
+        "nested Turn must remain uninstructed until the manager hourglass"
+    );
+    assert_eq!(
+        engine
+            .get_entity(target_id)
+            .and_then(Entity::enemy_ai)
+            .expect("nested-turn target retains EnemyAi")
+            .base
+            .current_substate,
+        Substate::SeekingOfficerLectureCharly
+    );
 }
 
 #[test]
@@ -6014,6 +7274,54 @@ fn review2_instruct_gather_position_closes_at_owner_boundary() {
             .and_then(Entity::ai_controller)
             .expect("review2 gather source retains AI")
             .has_pending_synchronous_cross_npc_actions()
+    );
+}
+
+#[test]
+fn phalanx_primary_target_propagation_precedes_later_member_assignment() {
+    use crate::ai::CrossNpcAction;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, source_id, member_id, assets) = setup_review2_officer_and_soldier();
+    let propagated_target = 89;
+    let member_target = 90;
+    let source = engine
+        .get_entity_mut(source_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("phalanx propagation source has AI");
+    source.outbox.reentrant.cross_npc_actions.extend([
+        CrossNpcAction::SetPrimaryTarget {
+            target: member_id.index(),
+            primary_target: propagated_target,
+        },
+        CrossNpcAction::SetPhalanxThemList {
+            target: member_id.index(),
+            them: vec![member_target],
+            primary_target: member_target,
+        },
+    ]);
+
+    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
+
+    let member = engine
+        .get_entity(member_id)
+        .and_then(Entity::enemy_ai)
+        .expect("phalanx member retains EnemyAi");
+    assert_eq!(member.list_them, vec![member_target]);
+    assert_eq!(
+        member.base.primary_target, member_target,
+        "the later inline member decision must win over propagated phalanx target"
+    );
+    assert!(
+        engine
+            .get_entity(source_id)
+            .and_then(Entity::ai_controller)
+            .expect("phalanx propagation source retains AI")
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .is_empty(),
+        "the direct target setter must not escape to the next-frame global batch"
     );
 }
 

@@ -9,11 +9,11 @@ fi
 output=$1
 retired_file=docs/PARITY_RETIRED_SAVES.txt
 retired_trace_file=docs/PARITY_RETIRED_TRACES.txt
-old_corpus=parity-random-save-replays-60s-15x
+old_corpus=parity-save-replays/60s-random-input/schema12
 corpora=(
-    parity-random-save-replays-60s-15x-schema14
-    parity-save-replays-schema12
-    parity-random-save-replays
+    parity-save-replays/60s-random-input/schema14
+    parity-save-replays/30s-random-input
+    parity-save-replays/15-no-input
 )
 
 if [[ ! -f "$retired_file" ]]; then
@@ -46,12 +46,22 @@ mkdir -p "$output_dir"
 snapshot_tmp=$(mktemp "$output.tmp.XXXXXX")
 trap 'rm -f "$snapshot_tmp"' EXIT
 
+trace_is_complete() {
+    local trace=$1
+    local marker=${trace%-session-*}.complete
+    if [[ ! -f "$marker" ]]; then
+        printf 'warning: excluding trace without completion marker: %s\n' "$trace" >&2
+        return 1
+    fi
+}
+
 while IFS= read -r -d '' trace; do
     relative=${trace#"$old_corpus/traces/"}
     save=${relative%/replay-*}
     if [[ ! -v "retired_saves[$save]" \
         && ! -v "retired_traces[$relative]" \
         && ! -v "retired_traces[$trace]" ]]; then
+        trace_is_complete "$trace" || continue
         printf '%s\n' "$trace"
     fi
 done < <(find "$old_corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z) > "$snapshot_tmp"
@@ -59,6 +69,7 @@ done < <(find "$old_corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z
 for corpus in "${corpora[@]}"; do
     while IFS= read -r -d '' trace; do
         if [[ ! -v "retired_traces[$trace]" ]]; then
+            trace_is_complete "$trace" || continue
             printf '%s\n' "$trace"
         fi
     done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)

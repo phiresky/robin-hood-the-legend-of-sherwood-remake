@@ -9,6 +9,72 @@ use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
+#[derive(Debug, Clone, Copy)]
+enum MovementPopGoalOwnerKind {
+    Pc,
+    Soldier,
+    Civilian,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MovementPopGoalOwnerDebugConfig {
+    frame: u32,
+    kind: MovementPopGoalOwnerKind,
+    index: u32,
+}
+
+fn movement_pop_goal_owner_debug_config() -> Option<&'static MovementPopGoalOwnerDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<MovementPopGoalOwnerDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF")?;
+            let frame = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME").unwrap_or_else(|_| {
+                panic!(
+                    "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME"
+                )
+            });
+            let frame = frame.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME={frame:?}: {error}")
+            });
+            let owner = std::env::var("PARITY_DEBUG_GOAL_OWNER").unwrap_or_else(|_| {
+                panic!(
+                    "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER=pc|soldier|civilian:INDEX"
+                )
+            });
+            let (kind, index) = owner.split_once(':').unwrap_or_else(|| {
+                panic!("PARITY_DEBUG_GOAL_OWNER must look like pc|soldier|civilian:INDEX")
+            });
+            let kind = match kind {
+                "pc" => MovementPopGoalOwnerKind::Pc,
+                "soldier" => MovementPopGoalOwnerKind::Soldier,
+                "civilian" => MovementPopGoalOwnerKind::Civilian,
+                unsupported => {
+                    panic!("PARITY_DEBUG_GOAL_OWNER has unsupported kind {unsupported:?}")
+                }
+            };
+            let index = index.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid PARITY_DEBUG_GOAL_OWNER={owner:?}: {error}")
+            });
+            Some(MovementPopGoalOwnerDebugConfig { frame, kind, index })
+        })
+        .as_ref()
+}
+
+fn movement_pop_goal_owner_debug_matches(frame: u32, owner: EntityId) -> bool {
+    let Some(config) = movement_pop_goal_owner_debug_config() else {
+        return false;
+    };
+    config.frame == frame
+        && config.index == owner.index()
+        && matches!(
+            (config.kind, owner),
+            (MovementPopGoalOwnerKind::Pc, EntityId::Pc(_))
+                | (MovementPopGoalOwnerKind::Soldier, EntityId::Soldier(_))
+                | (MovementPopGoalOwnerKind::Civilian, EntityId::Civilian(_))
+        )
+}
+
 /// Per-owner lift translation snapshot consumed by movement Execute's live
 /// animation derivation. Covers the lift cases of
 /// `DetermineMovementAnimation`.
@@ -425,10 +491,19 @@ struct LiveMobileGeometry {
         std::collections::BTreeMap<u16, Vec<Vec<crate::coordinates::MapPoint>>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RiderChargeExecution {
+    /// Identity of the same order object after Execute returned. Rider charge
+    /// may legitimately assign that object a fresh ID on its last animation
+    /// frame. `None` means a synchronous callback replaced the entry object
+    /// while Execute was still running.
+    completion_order_id: Option<std::num::NonZeroU32>,
+}
+
 #[cfg(test)]
 thread_local! {
     static LAST_MOBILE_CROSSING_INCREMENT: std::cell::Cell<Option<MapVec>> = const { std::cell::Cell::new(None) };
-    static POST_EXECUTE_CROSSING_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> = const { std::cell::RefCell::new(None) };
+    static POST_EXECUTE_CROSSING_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -438,13 +513,13 @@ pub(super) fn take_last_mobile_crossing_increment() -> Option<MapVec> {
 
 #[cfg(test)]
 pub(super) fn set_post_execute_crossing_observer(
-    observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
+    observer: Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>,
 ) {
     POST_EXECUTE_CROSSING_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
 }
 
 #[cfg(test)]
-fn observe_post_execute_crossing(engine: &EngineInner, entity_id: EntityId) {
+fn observe_post_execute_crossing(engine: &mut EngineInner, entity_id: EntityId) {
     POST_EXECUTE_CROSSING_OBSERVER.with(|slot| {
         if let Some(observer) = slot.borrow_mut().as_mut() {
             observer(engine, entity_id);
@@ -1622,6 +1697,7 @@ struct ProcessedPathRequest {
     waypoints: Option<Vec<MapPoint>>,
 }
 
+#[derive(Debug)]
 pub(crate) struct ParityPendingPathRequest {
     pub(crate) request: crate::pathfinder::ParityPathRequest,
     pub(crate) sequence_id: crate::sequence::SequenceId,
@@ -2662,6 +2738,7 @@ struct MovementDeferred {
 /// be borrowed as a whole.
 #[allow(clippy::too_many_arguments)]
 fn apply_prepared_anti_collision_step(
+    frame: u32,
     mover_snap: &super::anti_collision::ActorSnapshot,
     anti_snapshots: &EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
     static_repulsive_points: &[crate::ai::RepulsivePoint],
@@ -2673,35 +2750,183 @@ fn apply_prepared_anti_collision_step(
     speed: f32,
     anti_on: bool,
 ) -> (f32, f32) {
-    super::anti_collision::apply_anti_collision_step(
-        mover_snap,
-        anti_snapshots.as_slice(),
-        static_repulsive_points,
-        prepared
-            .mobile_points_by_layer
-            .get(&mover_snap.layer)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        prepared
-            .mobile_lines_by_layer
-            .get(&mover_snap.layer)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        prepared
-            .mobile_polygons_by_layer
-            .get(&mover_snap.layer)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        Some(fast_grid),
-        Some(state),
-        nx,
-        ny,
-        speed,
-        anti_on,
-    )
+    super::anti_collision::with_goal_owner_anti_frame(frame, || {
+        let trace = super::anti_collision::goal_owner_anti_debug_frame(mover_snap.id).is_some();
+        let before = trace.then(|| {
+            (
+                state.pi.map_position(),
+                state.pi.map_goal(),
+                state.pi.is_deviated(),
+                state.pi.blocked_count,
+                state.pi.radius,
+            )
+        });
+        let result = super::anti_collision::apply_anti_collision_step(
+            mover_snap,
+            anti_snapshots.as_slice(),
+            static_repulsive_points,
+            prepared
+                .mobile_points_by_layer
+                .get(&mover_snap.layer)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            prepared
+                .mobile_lines_by_layer
+                .get(&mover_snap.layer)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            prepared
+                .mobile_polygons_by_layer
+                .get(&mover_snap.layer)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            Some(fast_grid),
+            Some(&mut *state),
+            nx,
+            ny,
+            speed,
+            anti_on,
+        );
+        if trace {
+            eprintln!(
+                "[GOAL_OWNER frame={frame} owner={:?} stage=anti_result requested_bits={:08x},{:08x},{:08x} result_bits={:08x},{:08x} before={before:?} after=({:?},{:?},{},{},{})]",
+                mover_snap.id,
+                nx.to_bits(),
+                ny.to_bits(),
+                speed.to_bits(),
+                result.0.to_bits(),
+                result.1.to_bits(),
+                state.pi.map_position(),
+                state.pi.map_goal(),
+                state.pi.is_deviated(),
+                state.pi.blocked_count,
+                state.pi.radius,
+            );
+        }
+        result
+    })
 }
 
 impl EngineInner {
+    /// Opt-in sequence/path ownership trace for parity frontiers where the
+    /// queued path operands already agree but the selected movement command
+    /// does not. Keep this on stderr and outside serialized state so enabling
+    /// it cannot affect simulation or cache compatibility.
+    pub(in crate::engine) fn trace_path_owner_lifecycle(
+        &self,
+        stage: &'static str,
+        owner: EntityId,
+        focus: Option<(crate::sequence::SequenceId, usize)>,
+    ) {
+        if std::env::var_os("PARITY_DEBUG_PATH_OWNER_LIFECYCLE").is_none() {
+            return;
+        }
+        let parse_filter = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for path-owner lifecycle diagnostic: {error}")
+                })
+            })
+        };
+        let frame = self.control.frame_counter;
+        if parse_filter("PARITY_DEBUG_PATH_OWNER_FRAME").is_some_and(|expected| expected != frame)
+            || self.get_entity(owner).is_none()
+        {
+            return;
+        }
+        let creation_order = self.world.original_creation_order(owner);
+        if parse_filter("PARITY_DEBUG_PATH_OWNER_CREATION_ORDER")
+            .is_some_and(|expected| expected != creation_order)
+        {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let selected = manager.current_element_for_actor(owner);
+        let current_order =
+            manager
+                .current_order_for_actor(owner)
+                .map(|(sequence_id, element_index, order)| {
+                    (
+                        sequence_id,
+                        element_index,
+                        order.order_type,
+                        order.order_id,
+                        order.done,
+                        order.target_x.to_bits(),
+                        order.target_y.to_bits(),
+                        order.tolerance.to_bits(),
+                        order.move_flags,
+                        order.antagonist,
+                    )
+                });
+        let graph = manager
+            .sequences_iter()
+            .flat_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .filter(move |(_, element)| element.owner == Some(owner))
+                    .map(move |(element_index, element)| {
+                        (
+                            sequence.id,
+                            element_index,
+                            element.command,
+                            element.state,
+                            element.priority,
+                            element.cross_postponed,
+                            manager.is_registered_to_go(sequence.id, element_index),
+                            element.current_order().map(|order| {
+                                (
+                                    order.order_type,
+                                    order.order_id,
+                                    order.done,
+                                    order.target_x.to_bits(),
+                                    order.target_y.to_bits(),
+                                    order.tolerance.to_bits(),
+                                    order.move_flags,
+                                    order.antagonist,
+                                )
+                            }),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let actor = self.get_entity(owner).and_then(|entity| {
+            entity.actor_data().map(|actor| {
+                (
+                    actor.action_state,
+                    actor
+                        .installed_order
+                        .as_ref()
+                        .map(|order| (order.order_type, order.order_id)),
+                )
+            })
+        });
+        let position = self.get_entity(owner).map(|entity| {
+            (
+                entity.position_iface().map_position(),
+                entity.position_iface().old_map_position(),
+                entity.position_iface().map_goal(),
+                entity
+                    .position_iface()
+                    .is_increment_map_computed()
+                    .then(|| entity.position_iface().get_increment_map()),
+                entity.position_iface().is_moving(),
+                entity.position_iface().is_deviated(),
+            )
+        });
+        let pending_paths = self
+            .orders
+            .pending_path_requests
+            .parity_state(&self.world.fast_grid);
+        eprintln!(
+            "[PATH_OWNER frame={frame} co={creation_order} owner={} stage={stage} focus={focus:?} selected={selected:?} current_order={current_order:?} actor={actor:?} position={position:?} pending={pending_paths:?} graph={graph:?}]",
+            owner.index(),
+        );
+    }
+
     pub(crate) fn parity_failed_path_requests(
         &self,
     ) -> Vec<crate::pathfinder::ParityFailedPathRequest> {
@@ -2920,10 +3145,11 @@ impl EngineInner {
             &LiveMobileGeometry,
             &mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
         )>,
-    ) -> bool {
+    ) -> Option<RiderChargeExecution> {
         use crate::element::{ActionState, ActiveRiderCharge, Posture};
         use crate::weapons::SwordStrike;
 
+        let provenance_frame = self.control.frame_counter;
         let selected = self
             .orders
             .sequence_manager
@@ -2951,7 +3177,7 @@ impl EngineInner {
                 actor.active_rider_charge = None;
                 actor.last_executed_rider_charge_order_id = None;
             }
-            return false;
+            return None;
         }
         let (seq_id, elem_idx, order, next_order, speed_factor) = live.unwrap();
 
@@ -3138,6 +3364,7 @@ impl EngineInner {
                             goal_map: goal,
                         };
                         let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                            provenance_frame,
                             &mover_snapshot,
                             anti_snapshots,
                             &self.ai.global.repulsive_points,
@@ -3289,7 +3516,7 @@ impl EngineInner {
             );
         }
 
-        if last_frame {
+        let completion_order_id = if last_frame {
             // Rewrite only the same live order identity sampled above. Damage
             // can interrupt or replace it synchronously; never mutate a newer
             // order in that case.
@@ -3302,7 +3529,7 @@ impl EngineInner {
                     current.order_type == OrderType::RiderCharging
                         && current.order_id == order.order_id
                 });
-            if still_same {
+            let rewritten_id = if still_same {
                 let fresh_id = self.orders.allocate_order_id();
                 let current = self
                     .orders
@@ -3324,14 +3551,28 @@ impl EngineInner {
                     order_id: fresh_id,
                     order_type: OrderType::RunningUpright,
                 });
-            }
+                Some(fresh_id)
+            } else {
+                None
+            };
             self.world.entities[rider_id]
                 .as_mut()
                 .expect("rider remained present at charge completion")
                 .actor_data_mut()
                 .expect("RiderCharging soldier must have actor data")
                 .active_rider_charge = None;
-        }
+            rewritten_id
+        } else {
+            self.orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| element.current_order())
+                .filter(|current| {
+                    current.order_type == OrderType::RiderCharging
+                        && current.order_id == order.order_id
+                })
+                .map(|current| current.order_id)
+        };
 
         // RHElementActor::Hourglass clears mbNewOrder after Execute even when
         // FrozenAll prevented RHSprite::PerformMotion from initializing. Stamp
@@ -3352,7 +3593,9 @@ impl EngineInner {
             frozen_all,
             "executed rider charge in owner movement slot"
         );
-        true
+        Some(RiderChargeExecution {
+            completion_order_id,
+        })
     }
 
     pub(super) fn lift_endpoint_points(
@@ -5506,21 +5749,68 @@ impl EngineInner {
         entity_id: EntityId,
         intent: &mut crate::order::AiOrderIntent,
     ) -> bool {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                entity_id.index(),
+            );
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=preflight_enter order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} find_accessible={} ask_obstacle={} compute_direction={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                intent.order_type,
+                intent.target_x.to_bits(),
+                intent.target_y.to_bits(),
+                intent.move_flags,
+                intent.tolerance.to_bits(),
+                intent.no_halt,
+                intent.reverse,
+                intent.find_accessible,
+                intent.ask_obstacle,
+                intent.compute_direction,
+            );
+        }
         // Upper-bound check.  `AiController::go_to` already rejects
         // `target_x <= 0 || target_y <= 0` before pushing the intent;
         // the engine drain owns the `>= GetLevelSize()` half because
         // `level_size` lives on the shared cutscene camera, not on
-        // `AiContext`.
-        let level_w = self.feedback.cutscene_camera.level_size.x;
-        let level_h = self.feedback.cutscene_camera.level_size.y;
-        if level_w > 0.0 && intent.target_x >= level_w
-            || level_h > 0.0 && intent.target_y >= level_h
-        {
-            self.set_ai_couldnt_reachpoint(entity_id);
-            return false;
+        // `AiContext`. Direct RHMOVE_MAP elements are the exception: the
+        // merry-man exit path intentionally targets a reinforcement door's
+        // PointOut beyond the playable map and Actor::Instruct admits MAP
+        // movement without the ordinary reachable-position gate.
+        let move_flags =
+            crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
+        if !move_flags.contains(crate::sequence::MoveFlags::MAP) {
+            let level_w = self.feedback.cutscene_camera.level_size.x;
+            let level_h = self.feedback.cutscene_camera.level_size.y;
+            if level_w > 0.0 && intent.target_x >= level_w
+                || level_h > 0.0 && intent.target_y >= level_h
+            {
+                self.set_ai_couldnt_reachpoint(entity_id);
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_upper_bound level=({:08x},{:08x}) target=({:08x},{:08x})",
+                        self.control.frame_counter,
+                        entity_id.index(),
+                        level_w.to_bits(),
+                        level_h.to_bits(),
+                        intent.target_x.to_bits(),
+                        intent.target_y.to_bits(),
+                    );
+                }
+                return false;
+            }
         }
 
         if !intent.find_accessible && !intent.ask_obstacle {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=preflight_result result=accepted_no_checks",
+                    self.control.frame_counter,
+                    entity_id.index(),
+                );
+            }
             return true;
         }
 
@@ -5553,6 +5843,17 @@ impl EngineInner {
                 .find_authorized_position(&mut bbox, layer)
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_find_accessible target=({:08x},{:08x}) layer={} move_box={:?}",
+                        self.control.frame_counter,
+                        entity_id.index(),
+                        intent.target_x.to_bits(),
+                        intent.target_y.to_bits(),
+                        layer,
+                        move_box,
+                    );
+                }
                 return false;
             }
             let centre = bbox.center();
@@ -5572,17 +5873,53 @@ impl EngineInner {
                 .is_straight_movement_authorized(position, dest, layer, &move_box)
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_straight from=({:08x},{:08x}) target=({:08x},{:08x}) layer={} move_box={:?}",
+                        self.control.frame_counter,
+                        entity_id.index(),
+                        position.x.to_bits(),
+                        position.y.to_bits(),
+                        intent.target_x.to_bits(),
+                        intent.target_y.to_bits(),
+                        layer,
+                        move_box,
+                    );
+                }
                 return false;
             }
         }
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=preflight_result result=accepted target=({:08x},{:08x})",
+                self.control.frame_counter,
+                entity_id.index(),
+                intent.target_x.to_bits(),
+                intent.target_y.to_bits(),
+            );
+        }
         true
     }
 
     /// Set `AiController::couldnt_reachpoint = true` on the entity, used
     /// by the GoTo pre-flight gates to surface a same-frame failure to
     /// the AI's stuck-retry / fallback logic.
+    #[track_caller]
     fn set_ai_couldnt_reachpoint(&mut self, entity_id: EntityId) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                entity_id.index(),
+            );
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=set_couldnt_reachpoint caller={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                std::panic::Location::caller(),
+            );
+        }
         let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;
         };
@@ -6198,6 +6535,8 @@ impl EngineInner {
 
     fn execute_globally_frozen_pre_motion_owner(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         selected: MovementOwnerSelection,
     ) -> OrderType {
@@ -6302,6 +6641,8 @@ impl EngineInner {
             if in_tolerance {
                 if has_post_seek {
                     self.start_post_seek_sequence(
+                        sim,
+                        assets,
                         owner,
                         Some((selected.seq_id, selected.elem_idx)),
                     );
@@ -6618,7 +6959,8 @@ impl EngineInner {
                 entity.element_data_mut().sprite.last_motion_state =
                     Some(crate::sprite::MotionState::InProgress);
             }
-            let frozen_order = self.execute_globally_frozen_pre_motion_owner(owner, selected);
+            let frozen_order =
+                self.execute_globally_frozen_pre_motion_owner(sim, assets, owner, selected);
             // RunningUpright is exceptional among the ordinary movement
             // Execute arms: it calls SetStates(MOVING_FAST) unconditionally
             // after PerformMotion, not only for RHMOTION_START. Therefore the
@@ -6660,8 +7002,8 @@ impl EngineInner {
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon
             // work or RunningUpright samples that frozen frame and may Think.
-            let consumed_charge = self.tick_rider_charge_owner(sim, assets, owner, true, None);
-            if !consumed_charge && self.selected_galopp_decision_frame(owner, selected) {
+            let charge_execution = self.tick_rider_charge_owner(sim, assets, owner, true, None);
+            if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
             return;
@@ -7492,7 +7834,7 @@ impl EngineInner {
         }
 
         for (entity_id, seq_id, elem_idx) in post_seek_arrivals {
-            self.start_post_seek_sequence(entity_id, Some((seq_id, elem_idx)));
+            self.start_post_seek_sequence(sim, assets, entity_id, Some((seq_id, elem_idx)));
         }
 
         // These are derived Execute-arm tails in Original, so they close
@@ -7626,7 +7968,7 @@ impl EngineInner {
             .and_then(|element| element.current_order())
             .filter(|order| order.order_id == selected.order_id)
             .map(|order| order.compute_direction);
-        if self.tick_rider_charge_owner(
+        if let Some(charge_execution) = self.tick_rider_charge_owner(
             sim,
             assets,
             entity_id,
@@ -7646,14 +7988,18 @@ impl EngineInner {
             );
             if charge_motion == Some(MotionState::Terminated) {
                 // Actor::Hourglass advances only after line-crossing
-                // callbacks. Never consume a replacement installed by
-                // one of those callbacks in place of the entry order.
+                // callbacks. ExecuteRiderCharge may legitimately call NewID
+                // on its same `pOrder`; compare against that post-Execute
+                // identity, while still refusing to consume a callback
+                // replacement installed after Execute returned.
                 let entry_still_current = self
                     .orders
                     .sequence_manager
                     .get_element(selected.seq_id, selected.elem_idx)
                     .and_then(|element| element.current_order())
-                    .is_some_and(|order| order.order_id == selected.order_id);
+                    .is_some_and(|order| {
+                        Some(order.order_id) == charge_execution.completion_order_id
+                    });
                 if entry_still_current {
                     self.do_next_order(selected.seq_id, selected.elem_idx);
                 }
@@ -7708,19 +8054,48 @@ impl EngineInner {
         // transition can therefore have no FinalTol target while the
         // actor still owns the entity interaction. Keep this snapshot
         // separate: genuine point seeks have no actor-owned target.
-        let live_actor_seek_target = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(|entity| entity.actor_data())
-            .and_then(|actor| actor.seek_target)
-            .and_then(|target_id| self.world.entities.get(target_id))
-            .map(|target| {
-                (
-                    target.element_data().position_map(),
-                    target.ground_position(),
+        let actor_seek_flags = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement { flags, .. } => Some(*flags),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "selected PerformSeek owner {entity_id:?} lost movement flags for sequence {:?} element {}",
+                    selected.seq_id, selected.elem_idx
                 )
             });
+        let live_actor_seek_target = self.world.entities.get(entity_id).and_then(|entity| {
+            let actor = entity.actor_data()?;
+            let target = self.world.entities.get(actor.seek_target?)?;
+            let target_position = target.element_data().position_map();
+            let sampled_target = actor_seek_flags
+                .contains(crate::sequence::MoveFlags::USE_POINT)
+                .then(|| target.cxx_current_point_map())
+                .flatten()
+                .filter(|point| *point != target_position)
+                .unwrap_or(target_position);
+            let delta = sampled_target - entity.element_data().position_map();
+            let stretched_y =
+                if actor_seek_flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE) {
+                    delta.y * 1.743_446_8
+                } else {
+                    delta.y
+                };
+            let target_unchanged_or_in_tolerance = target_position
+                == actor.last_seek_target_position
+                || delta.x * delta.x + stretched_y * stretched_y
+                    < actor.seek_distance * actor.seek_distance * 1.1025;
+            Some((
+                target_position,
+                target.ground_position(),
+                target.element_data().sector(),
+                target_unchanged_or_in_tolerance,
+            ))
+        });
         let seek_tolerance_reached = |position: MapPoint, self_sector| {
             if ft.tol <= 0.0 {
                 return false;
@@ -7747,12 +8122,17 @@ impl EngineInner {
                 dist_sq < ft.tol * ft.tol * 1.1025
             }
         };
+        let provenance_frame = self.control.frame_counter;
+        let diagnostic_creation_order =
+            crate::sprite::sprite_row_diagnostic_creation_order(provenance_frame, || {
+                self.world.original_creation_order(entity_id)
+            });
+        let sprite_row_diagnostic = diagnostic_creation_order.is_some();
         let entity = self
             .world
             .entities
             .get_mut(entity_id)
             .expect("movement actor ID collected from entity table must remain present");
-        let provenance_frame = self.control.frame_counter;
         super::animation::direction_provenance_snapshot(
             entity.position_iface(),
             entity_id,
@@ -8711,16 +9091,32 @@ impl EngineInner {
                 provenance_frame,
                 "turn:perform_seek:after",
             );
+            let diagnostic_pre = sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
+            let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
             let result = sprite.perform_motion(
                 sim,
                 motion_order,
                 sprite_motion_order_for_nonanimation(anim),
-                u16::from(sprite.position_iface.get_direction().as_u8()),
+                played_direction,
                 FrameProgression::Default,
                 false,
                 motion_method,
                 dest_already_at_pos,
             );
+            if let Some(pre) = diagnostic_pre {
+                sprite.emit_sprite_row_diagnostic(
+                    "perform_motion",
+                    provenance_frame,
+                    diagnostic_creation_order.expect("enabled diagnostic has owner"),
+                    entity_id.index(),
+                    order_action,
+                    sprite_motion_order_for_nonanimation(anim),
+                    played_direction,
+                    FrameProgression::Default,
+                    pre,
+                    result.0,
+                );
+            }
             super::animation::direction_provenance_snapshot(
                 &sprite.position_iface,
                 entity_id,
@@ -8826,6 +9222,7 @@ impl EngineInner {
                         goal_map: goal,
                     };
                     let (dx, dy) = apply_prepared_anti_collision_step(
+                        provenance_frame,
                         &mover_snapshot,
                         anti_snapshots,
                         &self.ai.global.repulsive_points,
@@ -9314,6 +9711,7 @@ impl EngineInner {
                             goal_map,
                         };
                         let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                            provenance_frame,
                             mover_snap,
                             anti_snapshots,
                             &self.ai.global.repulsive_points,
@@ -9593,13 +9991,6 @@ impl EngineInner {
                     }
                 }
                 let eid = entity_id;
-                if is_final_waypoint
-                    && is_sword_motion
-                    && let Some(human) = entity.human_data_mut()
-                {
-                    human.last_motion_was_step_back_in_combat =
-                        active_move_flags.contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT);
-                }
                 // PerformSeek wraps the transition animation too. When
                 // the last stop transition terminates, Original checks
                 // the live target before retiring the movement: an
@@ -9754,16 +10145,41 @@ impl EngineInner {
                     && entity
                         .actor_data()
                         .is_some_and(|actor| actor.active_door_pass.is_none());
+                // A copied terminal stop transition can lose the movement
+                // element's target while Actor::PerformSeek still owns the
+                // entity in mpSeekTarget. That remains entity-seek mode, not
+                // point-seek mode: on the last order Original starts the
+                // post-seek when the target is still in our sector and either
+                // has not moved since RefreshSeek or is inside tolerance.
+                let final_actor_entity_post_seek_arrival = is_final_waypoint
+                    && movement_is_last_sequence_element
+                    && ft.target_id.is_none()
+                    && actor_seek_flags.contains(crate::sequence::MoveFlags::SEEK)
+                    && live_actor_seek_target.is_some_and(
+                        |(_, _, target_sector, target_unchanged_or_in_tolerance)| {
+                            target_sector.is_some()
+                                && target_sector == entity.element_data().sector()
+                                && target_unchanged_or_in_tolerance
+                        },
+                    )
+                    && entity
+                        .actor_data()
+                        .is_some_and(|actor| actor.post_seek_sequence.is_some())
+                    && entity
+                        .actor_data()
+                        .is_some_and(|actor| actor.active_door_pass.is_none());
+                let final_actor_owned_post_seek_arrival =
+                    final_point_post_seek_arrival || final_actor_entity_post_seek_arrival;
                 let actor_owned_interaction = entity
                     .is_pc()
                     .then(|| {
                         actor_post_seek_interaction(entity.actor_data().expect("actor-only branch"))
                     })
                     .flatten();
-                let actor_owned_interaction_out_of_range = final_point_post_seek_arrival
+                let actor_owned_interaction_out_of_range = final_actor_owned_post_seek_arrival
                     && actor_owned_interaction.is_some()
                     && live_actor_seek_target
-                        .map(|(target_position, _)| {
+                        .map(|(target_position, _, _, _)| {
                             interaction_exceeds_init_range(
                                 entity.element_data().position_map(),
                                 target_position,
@@ -9776,7 +10192,7 @@ impl EngineInner {
                     // remains actor-owned. HITTING still turns before its
                     // validity abort; TYING validates before turning.
                     if actor_owned_interaction == Some(ActorPostSeekInteraction::Hit) {
-                        let (_, target_ground) = live_actor_seek_target
+                        let (_, target_ground, _, _) = live_actor_seek_target
                             .expect("out-of-range actor-owned Hit retained a live target");
                         let here_ground = entity.ground_position();
                         let facing = vector_to_sector_0_to_15(
@@ -9797,7 +10213,7 @@ impl EngineInner {
                     return;
                 }
                 let actor = entity.actor_data_mut().expect("actor-only branch");
-                if final_point_post_seek_arrival {
+                if final_actor_owned_post_seek_arrival {
                     deferred
                         .post_seek_arrivals
                         .push((eid, move_seq_id, move_elem_idx));
@@ -10428,6 +10844,7 @@ impl EngineInner {
                             goal_map,
                         };
                         let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                            provenance_frame,
                             mover_snap,
                             anti_snapshots,
                             &self.ai.global.repulsive_points,
@@ -11118,6 +11535,11 @@ impl EngineInner {
         _defer_turn_instruction: bool,
         halt_already_applied: bool,
     ) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                entity_id.index(),
+            );
         // `StopAll` halts the actor inline before subsequent work,
         // and `FaceTo` / `GoTo` do the same on their own.  The Halt
         // is deferred to this drain (via `pending_halt`) so it runs
@@ -11157,6 +11579,32 @@ impl EngineInner {
             };
             ai.take_pending_orders()
         };
+        if debug_decision_path {
+            let (couldnt_reachpoint, already_on_point, owner_work) = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::ai_controller)
+                .map(|ai| {
+                    (
+                        ai.couldnt_reachpoint,
+                        ai.already_on_point,
+                        format!("{:?}", ai.outbox.reentrant.owner_work),
+                    )
+                })
+                .unwrap_or_else(|| panic!("diagnostic owner {} lost AI", entity_id.index()));
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=drain_intents count={} take_halt={} halt_already_applied={} couldnt={} already={} owner_work={}",
+                self.control.frame_counter,
+                entity_id.index(),
+                intents.len(),
+                take_halt,
+                halt_already_applied,
+                couldnt_reachpoint,
+                already_on_point,
+                owner_work,
+            );
+        }
         for intent in intents {
             match intent.order_type {
                 OrderType::WalkingUpright
@@ -11222,6 +11670,31 @@ impl EngineInner {
                     // StopAll/Halt effects at their own call sites instead of
                     // "fixing" the legacy bug.
                     self.launch_ai_move(entity_id, &intent);
+                    if debug_decision_path {
+                        let ai = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .and_then(Entity::ai_controller)
+                            .unwrap_or_else(|| {
+                                panic!("diagnostic owner {} lost AI", entity_id.index())
+                            });
+                        eprintln!(
+                            "AIDECISION frame={} owner={} stage=launch_move_done order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} couldnt={} already={} owner_work={:?}",
+                            self.control.frame_counter,
+                            entity_id.index(),
+                            intent.order_type,
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                            intent.move_flags,
+                            intent.tolerance.to_bits(),
+                            intent.no_halt,
+                            intent.reverse,
+                            ai.couldnt_reachpoint,
+                            ai.already_on_point,
+                            ai.outbox.reentrant.owner_work,
+                        );
+                    }
 
                     // GoTo has a separate, effective tail check after
                     // launching its sequence: an actor whose old movement is
@@ -12555,11 +13028,23 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|e| e.command == crate::element::Command::PassDoor);
-        let straight_ok = movement_flags_force_direct_dispatch(move_flags)
-            || self
-                .world
-                .fast_grid
-                .is_reachable_thick(source, dest, entity_layer, half_diagonal);
+        let straight_ok = if movement_flags_force_direct_dispatch(move_flags) {
+            true
+        } else {
+            let reachable =
+                self.world
+                    .fast_grid
+                    .is_reachable_thick(source, dest, entity_layer, half_diagonal);
+            self.world.fast_grid.trace_reachable_thick_decision(
+                self.control.frame_counter,
+                source,
+                dest,
+                entity_layer,
+                half_diagonal,
+                reachable,
+            );
+            reachable
+        };
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position.  This mirrors legacy implementation
@@ -12720,7 +13205,9 @@ impl EngineInner {
             }
             let parity_request = crate::pathfinder::parity_path_capture_is_active()
                 .then(|| parity_path_request_state(&self.world.fast_grid, &request));
+            self.trace_path_owner_lifecycle("before_path_enqueue", owner, Some((seq_id, elem_idx)));
             self.orders.pending_path_requests.enqueue(request);
+            self.trace_path_owner_lifecycle("after_path_enqueue", owner, Some((seq_id, elem_idx)));
             if let Some(request) = parity_request {
                 crate::pathfinder::record_parity_path_event(
                     crate::pathfinder::ParityPathEvent::Queued(request),
@@ -12963,27 +13450,114 @@ impl EngineInner {
 }
 
 impl EngineInner {
+    fn trace_selected_movement_order_pop(
+        &self,
+        stage: &'static str,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        result: &'static str,
+    ) {
+        let frame = self.control.frame_counter;
+        if !movement_pop_goal_owner_debug_matches(frame, owner) {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let captured = manager.get_element(seq_id, elem_idx).map(|element| {
+            (
+                element.command,
+                element.state,
+                element.data.is_movement(),
+                element.orders.len(),
+                element.current_order().map(|order| {
+                    (
+                        order.order_type,
+                        order.order_id,
+                        order.done,
+                        order.target_x.to_bits(),
+                        order.target_y.to_bits(),
+                    )
+                }),
+            )
+        });
+        let live_selected = manager.current_element_for_actor(owner);
+        let live_order =
+            manager
+                .current_order_for_actor(owner)
+                .map(|(live_seq, live_idx, order)| {
+                    (
+                        live_seq,
+                        live_idx,
+                        order.order_type,
+                        order.order_id,
+                        order.done,
+                        order.target_x.to_bits(),
+                        order.target_y.to_bits(),
+                    )
+                });
+        let translating = manager.goal_owner_debug_translating();
+        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+            panic!("movement-pop diagnostic owner {owner:?} disappeared at frame {frame}")
+        });
+        let actor = entity.actor_data().unwrap_or_else(|| {
+            panic!("movement-pop diagnostic owner {owner:?} is not an actor at frame {frame}")
+        });
+        let position = entity.position_iface();
+        eprintln!(
+            "[GOAL_OWNER frame={frame} owner={owner:?} stage=movement_pop_{stage} result={result} captured_seq={seq_id:?} captured_elem={elem_idx} captured={captured:?} live_selected={live_selected:?} live_order={live_order:?} translating={translating:?} active_movement={:?} installed_order={:?} action_state={:?} goal={:?} position={:?} moving={} moving_map={}]",
+            actor.active_movement,
+            actor.installed_order,
+            actor.action_state,
+            position.map_goal(),
+            position.map_position(),
+            position.is_moving(),
+            position.is_moving_map(),
+        );
+    }
+
     fn pop_selected_movement_order(
         &mut self,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let selected = self
+        let selection = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| {
                 let owner = element.owner?;
-                (element.state == crate::sequence::SequenceState::InProgress
+                let selected = (element.state == crate::sequence::SequenceState::InProgress
                     && element.data.is_movement()
                     && self
                         .orders
                         .sequence_manager
                         .current_element_for_actor(owner)
                         == Some((seq_id, elem_idx)))
-                .then_some((owner, element.orders.len() == 1))
+                .then_some((owner, element.orders.len() == 1));
+                Some((owner, selected))
             });
+        let diagnostic_owner = selection.map(|(owner, _)| owner);
+        if let Some(owner) = diagnostic_owner {
+            self.trace_selected_movement_order_pop("entry", owner, seq_id, elem_idx, "pending");
+        }
+        let selected = selection.and_then(|(_, selected)| selected);
         let Some((owner, final_order_will_exhaust)) = selected else {
+            if let Some(owner) = diagnostic_owner {
+                let manager = &self.orders.sequence_manager;
+                let result = match manager.get_element(seq_id, elem_idx) {
+                    None => "rejected_missing_element",
+                    Some(element) if element.owner.is_none() => "rejected_missing_owner",
+                    Some(element)
+                        if element.state != crate::sequence::SequenceState::InProgress =>
+                    {
+                        "rejected_not_in_progress"
+                    }
+                    Some(element) if !element.data.is_movement() => "rejected_not_movement",
+                    Some(_) => "rejected_live_selection_mismatch",
+                };
+                self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, result);
+            }
             // The pop was collected before a synchronous callback selected a
             // replacement. It no longer owns either the actor order or its
             // sprite goal, so applying it now would mutate the replacement.
@@ -13004,6 +13578,7 @@ impl EngineInner {
                 .clear_retained_movement_goals_for_actor(owner);
         }
         self.do_next_order(seq_id, elem_idx);
+        self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, "accepted");
     }
 }
 
@@ -14295,6 +14870,109 @@ mod movement_transition_state_tests {
     };
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
+    #[test]
+    fn map_exit_move_bypasses_ordinary_level_bounds_preflight() {
+        fn make_owner(engine: &mut EngineInner) -> EntityId {
+            let mut element = ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            };
+            element.set_position_map(MapPoint::new(90.0, 90.0));
+            let mut npc = NpcData::default();
+            npc.ai_brain = AiBrain::Enemy(Box::default());
+            engine.add_entity(Entity::Soldier(ActorSoldier {
+                element,
+                actor: ActorData::default(),
+                human: HumanData::default(),
+                npc,
+                soldier: SoldierData::default(),
+            }))
+        }
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let destination = crate::ai::Position {
+            x: 100.0,
+            y: 130.0,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        };
+
+        let mut map_exit = EngineInner::new();
+        map_exit.feedback.cutscene_camera.level_size =
+            crate::coordinates::MapSize::new(100.0, 100.0);
+        let map_owner = make_owner(&mut map_exit);
+        map_exit
+            .get_entity_mut(map_owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap()
+            .run_to_map_exit(destination);
+        map_exit.launch_pending_orders_for_npc_mode(&sim, &assets, map_owner, false);
+        let launched = map_exit.drain_pending_move_requests_for_owner(&sim, map_owner);
+        assert_eq!(launched.len(), 1, "RHMOVE_MAP must launch through PointOut");
+        let element = map_exit
+            .orders
+            .sequence_manager
+            .get_element(launched[0], 0)
+            .expect("map-exit movement must remain registered for manager Hourglass");
+        let SequenceElementData::Movement {
+            destination: actual,
+            flags,
+            ..
+        } = &element.data
+        else {
+            panic!("map-exit sequence must contain movement")
+        };
+        assert_eq!(*actual, MapPoint::new(destination.x, destination.y));
+        assert!(flags.contains(MoveFlags::MAP));
+        assert!(
+            !map_exit
+                .get_entity(map_owner)
+                .unwrap()
+                .ai_controller()
+                .unwrap()
+                .couldnt_reachpoint
+        );
+
+        for ordinary_destination in [MapPoint::new(100.0, 90.0), MapPoint::new(90.0, 130.0)] {
+            let mut ordinary = EngineInner::new();
+            ordinary.feedback.cutscene_camera.level_size =
+                crate::coordinates::MapSize::new(100.0, 100.0);
+            let ordinary_owner = make_owner(&mut ordinary);
+            ordinary
+                .get_entity_mut(ordinary_owner)
+                .unwrap()
+                .ai_controller_mut()
+                .unwrap()
+                .outbox
+                .actor
+                .orders
+                .push(AiOrderIntent::new(
+                    OrderType::RunningUpright,
+                    ordinary_destination.x,
+                    ordinary_destination.y,
+                ));
+            ordinary.launch_pending_orders_for_npc_mode(&sim, &assets, ordinary_owner, false);
+            assert!(
+                ordinary
+                    .drain_pending_move_requests_for_owner(&sim, ordinary_owner)
+                    .is_empty(),
+                "ordinary GoTo at or outside the level must retain the existing rejection"
+            );
+            assert!(
+                ordinary
+                    .get_entity(ordinary_owner)
+                    .unwrap()
+                    .ai_controller()
+                    .unwrap()
+                    .couldnt_reachpoint
+            );
+        }
+    }
+
     fn run_stale_sword_crenel_transition() -> (u8, u8) {
         use crate::fast_find_grid::GridSector;
         use crate::gate::{Door, DoorIndex, DoorType};
@@ -15525,6 +16203,58 @@ mod movement_transition_state_tests {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         finish_terminal_seek_tick(&mut engine, owner);
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::Hitting));
+    }
+
+    #[test]
+    fn terminal_non_seek_move_does_not_launch_stale_actor_post_seek() {
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 16.0);
+        let (seq_id, elem_idx) = {
+            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            (
+                actor.active_movement.sequence_id.unwrap(),
+                actor.active_movement.element_index,
+            )
+        };
+        let SequenceElementData::Movement { flags, .. } = &mut engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .expect("terminal movement fixture lost its selected element")
+            .data
+        else {
+            panic!("terminal movement fixture lost movement data")
+        };
+        *flags = MoveFlags::empty();
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        for _ in 0..64 {
+            engine.tick_entity_movement(&sim, &assets);
+            engine.hourglass_phase_sequences(
+                &sim,
+                &mut crate::engine::HostDisplayState::default(),
+                &assets,
+            );
+            if engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_movement
+                .sequence_id
+                .is_none()
+            {
+                break;
+            }
+        }
+
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert!(actor.active_movement.sequence_id.is_none());
+        assert!(
+            actor.post_seek_sequence.is_some(),
+            "ordinary Move must not consume stale actor-owned post-seek state"
+        );
+        assert_ne!(engine.actor_order_type(owner), Some(OrderType::Hitting));
     }
 
     #[test]

@@ -99,9 +99,39 @@ impl EngineInner {
         assets: &LevelAssets,
         commands: &[PlayerInput],
     ) {
-        for inp in commands {
+        for (index, inp) in commands.iter().enumerate() {
             let seat = self.ensure_seat(inp.player_id);
-            self.apply_command_for_seat(sim, display, input, assets, seat, &inp.command);
+            // Original RHMessenger::ForwardMessage is recursive. The parity
+            // recorder therefore retains both the root SelectPC message and
+            // its depth-2 SelectAction restitution as adjacent commands (see
+            // RHParity::ShouldRecordNestedSelection). During replay the
+            // recorded child is authoritative; synthesizing it again inside
+            // SelectPC can launch work from stale hidden action state before
+            // the recorded child corrects that state.
+            let recorded_nested_selection_action = matches!(
+                (&inp.command, commands.get(index + 1)),
+                (
+                    PlayerCommand::SelectPc {
+                        pc_id: selected,
+                        append: false,
+                    },
+                    Some(PlayerInput {
+                        player_id,
+                        command:
+                            PlayerCommand::SelectResolvedAction { pc_id: nested, .. }
+                            | PlayerCommand::CancelAction { pc_id: nested },
+                    }),
+                ) if *player_id == inp.player_id && selected == nested
+            );
+            self.apply_command_for_seat_with_replay_context(
+                sim,
+                display,
+                input,
+                assets,
+                seat,
+                &inp.command,
+                recorded_nested_selection_action,
+            );
         }
     }
 
@@ -156,6 +186,21 @@ impl EngineInner {
         assets: &LevelAssets,
         seat: usize,
         cmd: &PlayerCommand,
+    ) {
+        self.apply_command_for_seat_with_replay_context(
+            sim, display, input, assets, seat, cmd, false,
+        );
+    }
+
+    fn apply_command_for_seat_with_replay_context(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        seat: usize,
+        cmd: &PlayerCommand,
+        recorded_nested_selection_action: bool,
     ) {
         use PlayerCommand::*;
 
@@ -692,7 +737,22 @@ impl EngineInner {
 
             // ── Selection ───────────────────────────────────────
             SelectPc { pc_id, append } => {
-                self.select_pc(assets, seat, *pc_id, *append, true);
+                if recorded_nested_selection_action {
+                    assert!(
+                        self.get_entity(*pc_id)
+                            .and_then(crate::element::Entity::pc_data)
+                            .is_some(),
+                        "recorded nested selection action targets missing or non-PC {pc_id:?}"
+                    );
+                }
+                self.select_pc_with_action_fanout(
+                    assets,
+                    seat,
+                    *pc_id,
+                    *append,
+                    true,
+                    !recorded_nested_selection_action,
+                );
                 self.update_recording_after_selection_change();
             }
             TogglePcSelection { pc_id } => {
@@ -1605,7 +1665,9 @@ impl EngineInner {
             })
             .unwrap_or_default();
 
-        for step in steps {
+        let step_count = steps.len();
+        let mut posture_recovery_embedded = false;
+        for (step_index, step) in steps.into_iter().enumerate() {
             let cmd = match step.replay {
                 crate::macro_store::QaReplayCommand::Move {
                     destination,
@@ -1798,7 +1860,45 @@ impl EngineInner {
                     continue;
                 }
             };
-            self.apply_command(sim, display, input, assets, &cmd);
+            // Original StartQuickAction clones the recorded elements into a
+            // single sequence and appends posture recovery to that sequence
+            // before launching it.  Keep the final TakeCorpse interaction
+            // and its recovery in the same route: a standalone recovery is a
+            // competing root and can otherwise win arbitration first.
+            // TODO(parity): coalesce every modern QuickActionStep variant
+            // into one Original-shaped action/post-seek sequence.  Those
+            // variants currently dispatch through heterogeneous builders
+            // with command-specific side effects, so only the source-proven
+            // final TakeCorpse and DropAle shapes are embedded here.
+            if step_index + 1 == step_count
+                && let PlayerCommand::LaunchInteraction {
+                    actor,
+                    target,
+                    command: Command::TakeCorpse,
+                    running,
+                } = &cmd
+            {
+                self.apply_interaction_with_seek_and_recovery(
+                    sim,
+                    *actor,
+                    *target,
+                    Command::TakeCorpse,
+                    *running,
+                    true,
+                );
+                posture_recovery_embedded = true;
+            } else if step_index + 1 == step_count
+                && let PlayerCommand::DropAleAt {
+                    actor,
+                    target_pos,
+                    running,
+                } = &cmd
+            {
+                self.apply_drop_ale_at_with_recovery(*actor, *target_pos, *running, true);
+                posture_recovery_embedded = true;
+            } else {
+                self.apply_command(sim, display, input, assets, &cmd);
+            }
         }
 
         // Tack a posture-restoration element (EquipBow / CrouchDown /
@@ -1819,10 +1919,12 @@ impl EngineInner {
         //     and produces a single bare element keyed off the PC's
         //     current posture / action_state — which is the right
         //     element to launch into the actor's queue post-replay.
-        let mut recovery = crate::sequence::Sequence::default();
-        self.append_posture_recovery(pc, &mut recovery);
-        if !recovery.elements.is_empty() {
-            self.launch_sequence(recovery);
+        if !posture_recovery_embedded {
+            let mut recovery = crate::sequence::Sequence::default();
+            self.append_posture_recovery(pc, &mut recovery);
+            if !recovery.elements.is_empty() {
+                self.launch_sequence(recovery);
+            }
         }
 
         // Post-seek continuation is now ported via
@@ -2303,6 +2405,31 @@ impl EngineInner {
         command: Command,
         running: bool,
     ) {
+        self.apply_interaction_with_seek_and_recovery(sim, actor, target, command, running, false);
+    }
+
+    fn stamp_beggar_dont_talk_counter(&mut self, target: EntityId) {
+        // The Pay click resolver has already validated that this target is the
+        // eligible beggar. Preserve the existing direct Civilian + FriendlyAi
+        // mutation semantics here.
+        if let Some(crate::element::Entity::Civilian(c)) = self.get_entity_mut(target)
+            && let crate::element::AiBrain::Friendly(ref mut ai) = c.npc.ai_brain
+        {
+            ai.set_beggar_dont_talk_counter(3);
+        }
+    }
+
+    /// Build the ordinary interaction route, optionally retaining quick-action
+    /// posture recovery in the same sequence as the recorded interaction.
+    fn apply_interaction_with_seek_and_recovery(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+        append_posture_recovery: bool,
+    ) {
         // Ranged actions bypass the seek entirely: the actor fires or
         // throws from wherever it stands.  This mirrors the original
         // bow click path, which launches RHCOMMAND_SHOOT_BOW directly.
@@ -2355,21 +2482,22 @@ impl EngineInner {
             .get(actor)
             .map(|s| s.is_recording())
             .unwrap_or(false);
+
         if running && !is_recording_macro && is_addinteraction_with_seek_command {
             self.actor_make_fast(sim, actor);
+            // Civilian::MouseClicked performs this post-call stamp even when
+            // AddInteractionWithSeek reduced the double-click to MakeFast.
+            if command == Command::Pay {
+                self.stamp_beggar_dont_talk_counter(target);
+            }
             return;
         }
 
-        // Suppress the beggar's alms-request remarks during the
-        // entire seek + receive-purse animation chain by stamping the
-        // don't-talk counter at click time, before the walk-up starts.
-        // `reveal_scrolls` bumps the same counter again at the chain's
-        // end, so both sites are needed.
-        if command == Command::Pay
-            && let Some(crate::element::Entity::Civilian(c)) = self.get_entity_mut(target)
-            && let crate::element::AiBrain::Friendly(ref mut ai) = c.npc.ai_brain
-        {
-            ai.set_beggar_dont_talk_counter(3);
+        // Suppress the beggar's alms-request remarks during the ordinary
+        // seek + receive-purse chain. `reveal_scrolls` bumps the same counter
+        // again at the chain's end, so both sites are needed.
+        if command == Command::Pay {
+            self.stamp_beggar_dont_talk_counter(target);
         }
 
         let (pc_pos, pc_sector, pc_posture) = match self.get_entity(actor) {
@@ -2530,6 +2658,9 @@ impl EngineInner {
             interaction.command_level = 1;
             let mut post_seek = Sequence::new();
             post_seek.append_element(interaction);
+            if append_posture_recovery {
+                self.append_posture_recovery(actor, &mut post_seek);
+            }
             if let SequenceElementData::Movement {
                 post_seek_sequence, ..
             } = &mut seek.data
@@ -2548,6 +2679,9 @@ impl EngineInner {
             // it until SequenceManager::Hourglass at the end of the frame.
             let mut seq = Sequence::new();
             seq.append_element(interaction);
+            if append_posture_recovery {
+                self.append_posture_recovery(actor, &mut seq);
+            }
             self.launch_sequence(seq);
         }
     }
@@ -3549,8 +3683,17 @@ impl EngineInner {
             distance
         };
 
-        let mut seek_elem =
-            SequenceElement::new_movement(1, Command::Seek, Some(pc_id), OrderType::RunningUpright);
+        // RHEngine::PerformSwordfight authors this seek as
+        // RHNONANIMATION_RUNNING_WITH_SWORD.  FORCE_SWORD_MOVEMENT is a
+        // separate policy bit and must remain clear: if the opponent goes
+        // away before Execute, Human's ordinary orphan-sword guard still
+        // aborts the movement and quits swordfight.
+        let mut seek_elem = SequenceElement::new_movement(
+            1,
+            Command::Seek,
+            Some(pc_id),
+            OrderType::RunningWithSword,
+        );
         let mut post_seek = Sequence::new();
         post_seek.append_element(strike_elem);
         if let SequenceElementData::Movement {
@@ -3584,6 +3727,18 @@ impl EngineInner {
         actor: EntityId,
         target_pos: crate::coordinates::MapPoint,
         running: bool,
+    ) {
+        self.apply_drop_ale_at_with_recovery(actor, target_pos, running, false);
+    }
+
+    /// Build the ordinary DropAle route, optionally retaining quick-action
+    /// posture recovery in its post-seek sequence.
+    fn apply_drop_ale_at_with_recovery(
+        &mut self,
+        actor: EntityId,
+        target_pos: crate::coordinates::MapPoint,
+        running: bool,
+        append_posture_recovery: bool,
     ) {
         use crate::order::OrderType;
 
@@ -3728,6 +3883,9 @@ impl EngineInner {
             *elem_layer = goal_layer;
             let mut post_seek = Sequence::new();
             post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(actor)));
+            if append_posture_recovery {
+                self.append_posture_recovery(actor, &mut post_seek);
+            }
             *post_seek_sequence = Some(Box::new(post_seek));
         }
 
@@ -4679,6 +4837,266 @@ mod tests {
         element.set_direction_instantly(direction);
     }
 
+    fn setup_take_corpse_macro_scene(
+        target_x: f32,
+    ) -> (EngineInner, LevelAssets, EntityId, EntityId) {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let sector = crate::position_interface::SectorHandle::new(1);
+        {
+            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc.element_data_mut().posture = Posture::HelpingToClimb;
+            pc.element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+            pc.element_data_mut().set_sector(sector);
+        }
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::TransitionWaitingUprightCarryingCorpse,
+            crate::coordinates::SpriteLocalPoint::new(25.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+        engine
+            .get_entity_mut(pc_id)
+            .expect("test PC exists after sprite binding")
+            .element_data_mut()
+            .set_sector(sector);
+
+        let mut corpse = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Lying,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        corpse
+            .element
+            .set_position_map(crate::coordinates::MapPoint::new(target_x, 100.0));
+        corpse.element.set_sector(sector);
+        let corpse_id = engine.add_entity(Entity::Pc(corpse));
+
+        let state = engine.players.macro_store.get_or_insert(pc_id);
+        state.begin_recording(0);
+        state.append_if_recording(QuickActionStep {
+            action: Action::NoAction,
+            position: crate::coordinates::MapPoint::new(target_x, 100.0),
+            replay: QaReplayCommand::Interaction {
+                target: corpse_id,
+                command: Command::TakeCorpse,
+                double_click: false,
+            },
+        });
+        state.stop_recording();
+
+        (engine, assets, pc_id, corpse_id)
+    }
+
+    fn start_macro(engine: &mut EngineInner, assets: &LevelAssets, pc_id: EntityId) {
+        let sim = crate::sim_rng::test_context();
+        engine.apply_command(
+            &sim,
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+    }
+
+    #[test]
+    fn take_corpse_macro_embeds_helping_recovery_after_near_interaction() {
+        let (mut engine, assets, pc_id, _corpse_id) = setup_take_corpse_macro_scene(110.0);
+
+        start_macro(&mut engine, &assets, pc_id);
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("macro launches one interaction route");
+        let commands: Vec<_> = sequence
+            .elements
+            .iter()
+            .map(|element| element.command)
+            .collect();
+        assert_eq!(
+            commands,
+            [Command::TakeCorpse, Command::EnterHelpingClimb],
+            "Original StartQuickAction appends posture recovery to the recorded sequence"
+        );
+        assert_eq!(sequence.elements[0].command_level, 1);
+        assert_eq!(sequence.elements[1].command_level, 2);
+    }
+
+    #[test]
+    fn take_corpse_macro_embeds_helping_recovery_in_far_post_seek() {
+        let (mut engine, assets, pc_id, _corpse_id) = setup_take_corpse_macro_scene(180.0);
+
+        start_macro(&mut engine, &assets, pc_id);
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("macro launches one seek route");
+        let seek = sequence.get(0).expect("route begins with Seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            post_seek_sequence, ..
+        } = &seek.data
+        else {
+            panic!("TakeCorpse macro route must begin with movement");
+        };
+        let post_seek = post_seek_sequence
+            .as_deref()
+            .expect("TakeCorpse remains attached to Seek");
+        let commands: Vec<_> = post_seek
+            .elements
+            .iter()
+            .map(|element| element.command)
+            .collect();
+        assert_eq!(commands, [Command::TakeCorpse, Command::EnterHelpingClimb]);
+    }
+
+    #[test]
+    fn ordinary_take_corpse_does_not_add_macro_posture_recovery() {
+        let (mut engine, assets, pc_id, corpse_id) = setup_take_corpse_macro_scene(110.0);
+        engine
+            .players
+            .macro_store
+            .get_or_insert(pc_id)
+            .clear_slot(0);
+        let sim = crate::sim_rng::test_context();
+
+        engine.apply_command(
+            &sim,
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: corpse_id,
+                command: Command::TakeCorpse,
+                running: false,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("ordinary interaction launches one route");
+        assert_eq!(sequence.len(), 1);
+        assert_eq!(sequence.get(0).unwrap().command, Command::TakeCorpse);
+    }
+
+    fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
+        {
+            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc.element_data_mut().posture = Posture::HelpingToClimb;
+            pc.element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(20.0, 30.0));
+        }
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::DroppingAle,
+            crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+
+        let target_pos = crate::coordinates::MapPoint::new(80.0, 90.0);
+        let state = engine.players.macro_store.get_or_insert(pc_id);
+        state.begin_recording(0);
+        state.append_if_recording(QuickActionStep {
+            action: Action::Ale,
+            position: target_pos,
+            replay: QaReplayCommand::DropAle {
+                target_pos,
+                running: false,
+            },
+        });
+        state.stop_recording();
+
+        (engine, assets, pc_id)
+    }
+
+    fn drop_ale_post_seek_commands(engine: &EngineInner) -> Vec<Command> {
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("DropAle launches one seek route");
+        let seek = sequence.get(0).expect("DropAle route begins with Seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            post_seek_sequence, ..
+        } = &seek.data
+        else {
+            panic!("DropAle route must begin with movement");
+        };
+        post_seek_sequence
+            .as_deref()
+            .expect("DropAle remains attached to Seek")
+            .elements
+            .iter()
+            .map(|element| element.command)
+            .collect()
+    }
+
+    #[test]
+    fn drop_ale_macro_embeds_helping_recovery_in_post_seek() {
+        let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
+
+        start_macro(&mut engine, &assets, pc_id);
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        assert_eq!(
+            drop_ale_post_seek_commands(&engine),
+            [Command::DropAle, Command::EnterHelpingClimb]
+        );
+    }
+
+    #[test]
+    fn ordinary_drop_ale_does_not_add_macro_posture_recovery() {
+        let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
+        engine
+            .players
+            .macro_store
+            .get_or_insert(pc_id)
+            .clear_slot(0);
+        let target_pos = crate::coordinates::MapPoint::new(80.0, 90.0);
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::DropAleAt {
+                actor: pc_id,
+                target_pos,
+                running: false,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        assert_eq!(drop_ale_post_seek_commands(&engine), [Command::DropAle]);
+    }
+
     fn setup_strangle_command_scene() -> (EngineInner, LevelAssets, EntityId, EntityId) {
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Strangle, 0)]);
         let sector = crate::position_interface::SectorHandle::new(1);
@@ -4978,6 +5396,36 @@ mod tests {
         engine.add_entity(Entity::Pc(pc))
     }
 
+    fn spawn_friendly_civilian(engine: &mut EngineInner) -> EntityId {
+        let mut civilian = ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: crate::element::CivilianData {
+                cached_civilian_type: crate::profiles::CivilianType::Beggar,
+                ..Default::default()
+            },
+        };
+        civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::default());
+        engine.add_entity(Entity::Civilian(civilian))
+    }
+
+    fn friendly_beggar_dont_talk_counter(engine: &EngineInner, target: EntityId) -> u16 {
+        let Some(Entity::Civilian(civilian)) = engine.get_entity(target) else {
+            panic!("friendly counter target is not a civilian");
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("friendly counter target does not have FriendlyAi");
+        };
+        ai.beggar_dont_talk_counter
+    }
+
     fn first_seek_tolerance(engine: &EngineInner) -> f32 {
         let sequence = engine
             .orders
@@ -4993,7 +5441,7 @@ mod tests {
     }
 
     #[test]
-    fn sword_strike_seek_uses_resolved_tolerance_and_ordinary_upright_movement() {
+    fn sword_strike_seek_uses_resolved_tolerance_and_authored_sword_movement() {
         let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
         {
             let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
@@ -5066,7 +5514,7 @@ mod tests {
         else {
             panic!("strike seek must be a movement element");
         };
-        assert_eq!(*action, crate::order::OrderType::RunningUpright);
+        assert_eq!(*action, crate::order::OrderType::RunningWithSword);
         assert_eq!(*element, Some(target_id));
         assert_eq!(*tolerance, 63.0);
         assert!(flags.contains(MoveFlags::SEEK));
@@ -6057,6 +6505,67 @@ mod tests {
     }
 
     #[test]
+    fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+        let target_id = spawn_friendly_civilian(&mut engine);
+
+        let movement = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(pc_id),
+            crate::order::OrderType::WalkingUpright,
+        );
+        let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(movement_sequence, 0);
+
+        engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::Pay, true);
+
+        assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 3);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let current = engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .expect("the preexisting movement remains selected");
+        let SequenceElementData::Movement { action, flags, .. } = &current.data else {
+            panic!("preexisting movement changed kind");
+        };
+        assert_eq!(*action, crate::order::OrderType::RunningUpright);
+        assert!(flags.contains(MoveFlags::FAST));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .all(|element| !matches!(element.command, Command::Pay | Command::Seek))
+        );
+    }
+
+    #[test]
+    fn running_non_pay_does_not_stamp_friendly_target() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+        let target_id = spawn_friendly_civilian(&mut engine);
+        let Some(Entity::Civilian(civilian)) = engine.get_entity_mut(target_id) else {
+            unreachable!("new friendly target changed kind");
+        };
+        let crate::element::AiBrain::Friendly(ai) = &mut civilian.npc.ai_brain else {
+            unreachable!("new friendly target changed AI kind");
+        };
+        ai.set_beggar_dont_talk_counter(2);
+
+        engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::SearchCmd, true);
+
+        assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 2);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+    }
+
+    #[test]
     fn swordstrike_down_uses_original_literal_seek_distance() {
         assert_eq!(interaction_distance(Command::SwordstrikeDown), 40.0);
     }
@@ -6456,6 +6965,93 @@ mod tests {
         // Seat 1 was lazy-grown to fill the gap but is inactive.
         let seat1 = engine.seat(PlayerId(1)).expect("seat 1 was filled");
         assert!(!seat1.is_active(1));
+    }
+
+    #[test]
+    fn recorded_nested_cancel_is_the_only_select_pc_action_fanout() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        use crate::player_command::{PlayerCommand, PlayerInput};
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
+        let mut input = InputState::default();
+        let mut display = HostDisplayState::default();
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .current_action = Action::Bow;
+
+        engine.apply_commands(
+            sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[
+                PlayerInput::host(PlayerCommand::SelectPc {
+                    pc_id,
+                    append: false,
+                }),
+                PlayerInput::host(PlayerCommand::CancelAction { pc_id }),
+            ],
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::pc_data)
+                .expect("test PC data")
+                .current_action,
+            Action::NoAction
+        );
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| {
+                    element.owner == Some(pc_id) && element.command == Command::EquipBow
+                }),
+            "the root SelectPc must not synthesize stale EquipBow before its recorded nested CancelAction"
+        );
+    }
+
+    #[test]
+    fn lone_select_pc_still_restitutes_bow_action() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        use crate::player_command::{PlayerCommand, PlayerInput};
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
+        let mut input = InputState::default();
+        let mut display = HostDisplayState::default();
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .current_action = Action::Bow;
+
+        engine.apply_commands(
+            sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[PlayerInput::host(PlayerCommand::SelectPc {
+                pc_id,
+                append: false,
+            })],
+        );
+
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| {
+                    element.owner == Some(pc_id) && element.command == Command::EquipBow
+                }),
+            "a live/lone SelectPc must still replay its stored Bow action"
+        );
     }
 
     #[test]

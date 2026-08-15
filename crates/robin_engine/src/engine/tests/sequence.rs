@@ -11,6 +11,135 @@ fn assets_with_test_pc_profile() -> LevelAssets {
     }
 }
 
+#[test]
+fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_nonattentive() {
+    use crate::element::{ActionState, Camp, Command};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let enemy = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test soldier has enemy AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = false;
+    engine
+        .get_entity_mut(owner)
+        .expect("test soldier remains live")
+        .actor_data_mut()
+        .expect("test soldier has actor state")
+        .action_state = ActionState::Waiting;
+    bind_test_action_point(
+        &mut engine,
+        owner,
+        OrderType::WaitingAlerted,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+    let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+    wait.orders
+        .push_back(Order::test_new(OrderType::WaitingAlerted, 0.0, 0.0));
+    let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(wait_sequence, 0);
+
+    let (_, mut outcomes, executed) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+    assert_eq!(
+        executed.map(|result| result.order_type),
+        Some(OrderType::WaitingAlerted),
+        "the regression must enter the actual soldier WaitingAlerted Execute arm"
+    );
+    assert_eq!(outcomes.execute_sides.waiting_alerted_leave, [owner]);
+    engine.drain_waiting_alerted_leave(std::mem::take(
+        &mut outcomes.execute_sides.waiting_alerted_leave,
+    ));
+
+    let matching: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| {
+            element.owner == Some(owner) && element.command == Command::LeaveAttentiveMode
+        })
+        .map(|element| element.state)
+        .collect();
+    assert_eq!(matching, [SequenceState::Todo]);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(owner, Command::LeaveAttentiveMode)
+    );
+}
+
+#[test]
+fn waiting_alerted_execute_does_not_duplicate_a_leave_already_waiting_to_launch() {
+    use crate::element::{Camp, Command};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test soldier has enemy AI")
+        .will_be_attentive = false;
+    engine.launch_element(SequenceElement::new(
+        1,
+        Command::LeaveAttentiveMode,
+        Some(owner),
+    ));
+
+    engine.drain_waiting_alerted_leave(vec![owner]);
+
+    let matching = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| {
+            element.owner == Some(owner) && element.command == Command::LeaveAttentiveMode
+        })
+        .count();
+    assert_eq!(matching, 1);
+}
+
+#[test]
+fn waiting_alerted_execute_preserves_attentive_requested_state() {
+    use crate::element::{Camp, Command};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let enemy = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test soldier has enemy AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = true;
+
+    engine.drain_waiting_alerted_leave(vec![owner]);
+
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(owner) && element.command == Command::LeaveAttentiveMode
+            })
+    );
+}
+
 pub(super) fn bind_test_action_point(
     engine: &mut EngineInner,
     id: EntityId,
@@ -1493,7 +1622,12 @@ fn post_seek_handoff_clears_selected_movement_goal() {
         .sequence_manager
         .element_in_progress(seek_sequence, 0);
 
-    assert!(engine.start_post_seek_sequence(owner, Some((seek_sequence, 0))));
+    assert!(engine.start_post_seek_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        owner,
+        Some((seek_sequence, 0)),
+    ));
     assert_eq!(
         engine
             .get_entity(owner)
@@ -1502,6 +1636,77 @@ fn post_seek_handoff_clears_selected_movement_goal() {
             .map_goal(),
         crate::coordinates::MapPoint::ZERO,
         "SendCondolationCard clears the selected seek goal before post-seek launch"
+    );
+}
+
+#[test]
+fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
+    use crate::element::{Camp, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let corpse = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+    let mut parent = Sequence::new();
+    parent.append_element(SequenceElement::new_movement(
+        1,
+        Command::MoveOk,
+        Some(owner),
+        OrderType::WalkingUpright,
+    ));
+    parent.append_element(SequenceElement::new_generic(
+        2,
+        Command::EnterHelpingClimb,
+        Some(owner),
+    ));
+    let parent_id = engine.orders.sequence_manager.launch_sequence(parent);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(parent_id, 0);
+
+    let mut post_seek = Sequence::new();
+    post_seek.append_element(SequenceElement::new_interaction(
+        1,
+        Command::TakeCorpse,
+        Some(owner),
+        Some(corpse),
+    ));
+    engine
+        .get_entity_mut(owner)
+        .expect("post-seek owner remains live")
+        .actor_data_mut()
+        .expect("PC has actor state")
+        .post_seek_sequence = Some(Box::new(post_seek));
+
+    assert!(engine.start_post_seek_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        owner,
+        Some((parent_id, 0)),
+    ));
+
+    let queued_commands: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .deferred_elements_to_go()
+        .into_iter()
+        .map(|(sequence_id, element_index)| {
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .expect("deferred element remains registered")
+                .command
+        })
+        .collect();
+    assert_eq!(
+        queued_commands,
+        [Command::EnterHelpingClimb, Command::TakeCorpse],
+        "Original Ready() registers the parent successor before StartPostSeekSequence launches its tail"
     );
 }
 
@@ -1592,6 +1797,152 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
     assert!(
         concrete_seek.current_order().is_some(),
         "the concrete movement is prepared, but its first Execute must install the new sprite goal"
+    );
+}
+
+#[test]
+fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_empty() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    install_test_building_sector(&mut engine, 42);
+    let owner = engine.add_entity(make_test_civilian(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let retained_goal = MapPoint::new(1137.9464, 490.93048);
+    for entity in [owner, target] {
+        engine
+            .get_entity_mut(entity)
+            .unwrap()
+            .element_data_mut()
+            .set_sector(SectorHandle::new(42));
+    }
+
+    let mut outgoing =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
+    outgoing.priority = SequencePriority::Normal;
+    outgoing.orders.push_back(Order::new(
+        OrderType::RunningUpright,
+        retained_goal.x,
+        retained_goal.y,
+        engine.orders.allocate_order_id(),
+    ));
+    let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(outgoing_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.position_iface_mut().set_map_goal(retained_goal);
+        let actor = entity.actor_data_mut().unwrap();
+        actor.active_movement = ActiveMovement::new(outgoing_sequence, 0);
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut seek =
+        SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::RunningUpright);
+    seek.priority = SequencePriority::Normal;
+    if let SequenceElementData::Movement { element, .. } = &mut seek.data {
+        *element = Some(target);
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let seek_sequence = engine.orders.sequence_manager.launch_element(seek);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let outgoing = engine
+        .orders
+        .sequence_manager
+        .get_element(outgoing_sequence, 0)
+        .expect("replaced movement remains inspectable");
+    assert_eq!(outgoing.state, SequenceState::Interrupted);
+    let seek = engine
+        .orders
+        .sequence_manager
+        .get_element(seek_sequence, 0)
+        .expect("empty building Seek remains inspectable");
+    assert_eq!(seek.command, Command::Move);
+    assert_eq!(seek.state, SequenceState::Terminated);
+    assert!(seek.orders.is_empty());
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(entity.position_iface().map_goal(), retained_goal);
+    assert_eq!(
+        entity.actor_data().unwrap().continuation.motion_state,
+        MotionState::InProgress
+    );
+}
+
+#[test]
+fn different_building_rewritten_seek_keeps_its_refresh_order() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
+
+    let mut engine = EngineInner::new();
+    install_test_building_sector(&mut engine, 42);
+    {
+        let mut level = (*engine.world.fast_grid.level).clone();
+        let mut other_building = level.sectors[0].clone();
+        other_building.sector_number = crate::sector::SectorNumber::new(43);
+        level
+            .sector_number_map
+            .insert(other_building.sector_number, 1);
+        level.sectors.push(other_building);
+        engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
+    }
+    let owner = engine.add_entity(make_test_civilian(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_sector(SectorHandle::new(42));
+    engine
+        .get_entity_mut(target)
+        .unwrap()
+        .element_data_mut()
+        .set_sector(SectorHandle::new(43));
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RunningUpright);
+    if let SequenceElementData::Movement { flags, element, .. } = &mut movement.data {
+        *flags = MoveFlags::SEEK;
+        *element = Some(target);
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("rewritten Seek remains inspectable");
+    assert_eq!(movement.state, SequenceState::InProgress);
+    assert_eq!(movement.orders.len(), 1);
+    assert_eq!(
+        movement.current_order().map(|order| order.order_type),
+        Some(OrderType::RefreshingSeek)
     );
 }
 
@@ -2633,6 +2984,141 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
         attentive_orders.contains(&OrderType::TransitionWaitingUprightWaitingAlerted),
         "postponing a movement must not suppress the attentive transition, got {attentive_orders:?}",
     );
+}
+
+#[test]
+fn leave_attentive_translation_keeps_transition_after_attentive_was_already_cleared() {
+    use crate::element::{Camp, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine
+        .get_entity_mut(soldier_id)
+        .unwrap()
+        .set_posture(Posture::Upright);
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::LeaveAttentiveMode,
+            Some(soldier_id),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("leave element remains registered")
+        .posture_after_transition = Posture::Upright;
+
+    let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+    }
+    .dispatch(soldier_id, Command::LeaveAttentiveMode, sequence, 0);
+
+    assert_eq!(
+        barrier,
+        crate::engine::sequence_runtime::OwnerActionBarrier::Reach
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("leave element remains registered");
+    assert_eq!(element.state, SequenceState::InProgress);
+    assert_eq!(element.orders.len(), 1);
+    assert_eq!(
+        element.orders.front().unwrap().order_type,
+        OrderType::TransitionWaitingAlertedWaitingUpright
+    );
+
+    let non_upright = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::LeaveAttentiveMode,
+            Some(soldier_id),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(non_upright, 0)
+        .expect("non-upright leave remains registered")
+        .posture_after_transition = Posture::Crouched;
+    let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+    }
+    .dispatch(soldier_id, Command::LeaveAttentiveMode, non_upright, 0);
+    assert_eq!(
+        barrier,
+        crate::engine::sequence_runtime::OwnerActionBarrier::Skip
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(non_upright, 0)
+        .expect("non-upright leave remains registered");
+    assert_eq!(element.state, SequenceState::Terminated);
+    assert!(element.orders.is_empty());
+}
+
+#[test]
+fn enter_attentive_translation_still_suppresses_an_already_satisfied_enter() {
+    use crate::element::{Camp, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine
+        .get_entity_mut(soldier_id)
+        .unwrap()
+        .set_posture(Posture::Upright);
+    engine
+        .get_entity_mut(soldier_id)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .attentive = true;
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::EnterAttentiveMode,
+            Some(soldier_id),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("enter element remains registered")
+        .posture_after_transition = Posture::Upright;
+
+    let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+    }
+    .dispatch(soldier_id, Command::EnterAttentiveMode, sequence, 0);
+
+    assert_eq!(
+        barrier,
+        crate::engine::sequence_runtime::OwnerActionBarrier::Skip
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("enter element remains registered");
+    assert_eq!(element.state, SequenceState::Terminated);
+    assert!(element.orders.is_empty());
 }
 
 #[test]

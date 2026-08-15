@@ -246,7 +246,7 @@ fn get_transition_flags_actor(ctx: &TransitionCtx) -> (EX, CP, EA) {
                         | CP::CAN_BE_CARRYING_ON_SHOULDERS;
                     exit = shared_exit;
                 }
-                Some(DT::LiftHigh) | Some(DT::LiftLow) | Some(DT::LiftHighCrenel) => {
+                Some(DT::LiftHigh) | Some(DT::LiftLow) => {
                     // lift doors: adjacent sector's LiftType
                     // determines the outcome.
                     match ctx.door_lift_kind {
@@ -268,6 +268,13 @@ fn get_transition_flags_actor(ctx: &TransitionCtx) -> (EX, CP, EA) {
                             // all flags empty.
                         }
                     }
+                }
+                Some(DT::LiftHighCrenel) => {
+                    // Original RHElementActor::GetTransitionFlags omits
+                    // DOOR_LIFT_HIGH_CRENEL from its PassDoor switch even
+                    // though Translate handles the door as a high lift. Keep
+                    // every transition flag empty here: the translated wall
+                    // choreography owns its own crouch/climb animations.
                 }
                 None => {
                     // Door not resolved (e.g. unit tests without
@@ -1615,25 +1622,13 @@ fn make_posture_transition_pc(
                         );
                         return false;
                     }
-                    // When the driving command is
-                    // `Command::EnterSwordfight`, the
-                    // carrying-corpse→waiting-upright init arm drops
-                    // the corpse synchronously and terminates the
-                    // transition — the drop resolves on the same frame
-                    // as the swordfight starts, with no animation gate.
-                    // Run the synchronous drop here and skip the
-                    // transition order entirely so the carrier lands in
-                    // Upright/Waiting ready to begin swording.
-                    let driving_command = engine
-                        .orders
-                        .sequence_manager
-                        .get_element(seq_id, elem_idx)
-                        .map(|e| e.command);
-                    if matches!(driving_command, Some(Command::EnterSwordfight)) {
-                        engine.force_drop_carried_corpse_instant(owner);
-                        set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
-                        return true;
-                    }
+                    // Original always translates this posture change into the
+                    // corpse-exit order first.  ENTER_SWORDFIGHT is special
+                    // only when that order reaches its first Execute: the PC
+                    // arm drops synchronously and returns TERMINATED there
+                    // (RHelementactorpc.cpp:4905-4917).  Doing the drop while
+                    // generating transitions skips the registered animation
+                    // boundary and advances the owner a manager phase early.
                     push_anim_order_no_dir(
                         engine,
                         seq_id,
@@ -2626,6 +2621,106 @@ mod tests {
     }
 
     #[test]
+    fn pc_pass_door_high_crenel_wall_from_crouched_keeps_authored_walk() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::Crouched, AS::Moving));
+        let (seq, idx) = launch_movement(
+            &mut engine,
+            owner,
+            Command::PassDoor,
+            OrderType::WalkingUpright,
+        );
+        let ctx = TransitionCtx {
+            kind: ElementKind::ActorPc,
+            command: Command::PassDoor,
+            movement_action: Some(OrderType::WalkingUpright),
+            actor_posture: P::Crouched,
+            actor_action_state: AS::Moving,
+            posture_after_transition: P::Crouched,
+            action_state_after_transition: AS::Moving,
+            is_part_of_movement: true,
+            attentive: false,
+            force_crouched: false,
+            door_type: Some(crate::gate::DoorType::LiftHighCrenel),
+            door_lift_kind: Some(crate::sector::LiftType::Wall),
+            antagonist_is_net: false,
+        };
+
+        let (exit, change, enter) = get_transition_flags(&ctx);
+        assert!(exit.is_empty());
+        assert!(change.is_empty());
+        assert!(enter.is_empty());
+        assert!(dispatch_make_posture_transition(
+            &mut engine,
+            seq,
+            idx,
+            owner,
+            change
+        ));
+        assert_eq!(orders_for(&engine, seq, idx), Vec::<OrderType>::new());
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq, idx)
+                .unwrap()
+                .posture_after_transition,
+            P::Crouched,
+            "the high-crenel wall translator, not generic transition flags, owns the climb choreography"
+        );
+    }
+
+    #[test]
+    fn pc_pass_door_high_wall_from_crouched_still_queues_crouch_up() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::Crouched, AS::Moving));
+        let (seq, idx) = launch_movement(
+            &mut engine,
+            owner,
+            Command::PassDoor,
+            OrderType::WalkingUpright,
+        );
+        let ctx = TransitionCtx {
+            kind: ElementKind::ActorPc,
+            command: Command::PassDoor,
+            movement_action: Some(OrderType::WalkingUpright),
+            actor_posture: P::Crouched,
+            actor_action_state: AS::Moving,
+            posture_after_transition: P::Crouched,
+            action_state_after_transition: AS::Moving,
+            is_part_of_movement: true,
+            attentive: false,
+            force_crouched: false,
+            door_type: Some(crate::gate::DoorType::LiftHigh),
+            door_lift_kind: Some(crate::sector::LiftType::Wall),
+            antagonist_is_net: false,
+        };
+
+        let (_, change, _) = get_transition_flags(&ctx);
+        assert_eq!(change, CP::MUST_BE_UPRIGHT);
+        assert!(dispatch_make_posture_transition(
+            &mut engine,
+            seq,
+            idx,
+            owner,
+            change
+        ));
+        assert_eq!(
+            orders_for(&engine, seq, idx),
+            vec![OrderType::TransitionCrouchingUp]
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq, idx)
+                .unwrap()
+                .posture_after_transition,
+            P::Upright
+        );
+    }
+
+    #[test]
     fn pc_carrying_on_shoulders_exit_queues_lower_then_stand_chain() {
         let mut engine = EngineInner::new();
         let mut carrier = make_pc(P::CarryingOnShoulders, AS::Waiting);
@@ -2669,6 +2764,46 @@ mod tests {
         assert!(
             orders_for(&engine, seq, idx).is_empty(),
             "unsupported corpse-drop transition should not queue a fake animation"
+        );
+    }
+
+    #[test]
+    fn pc_enter_swordfight_from_carrying_corpse_registers_exit_before_execute() {
+        let mut engine = EngineInner::new();
+        let carried = engine.add_entity(make_soldier(P::Carried, AS::Waiting, false));
+        let mut carrier = make_pc(P::CarryingCorpse, AS::Waiting);
+        if let Entity::Pc(pc) = &mut carrier {
+            pc.pc.carried = Some(carried);
+        }
+        let owner = engine.add_entity(carrier);
+        let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
+
+        let ok = generate_transition(&mut engine, owner, seq, idx);
+        assert!(ok);
+
+        assert_eq!(
+            orders_for(&engine, seq, idx),
+            vec![OrderType::TransitionCarryingCorpseWaitingUpright],
+            "Original registers the corpse-exit order before its first Execute performs the instant drop"
+        );
+        assert_eq!(
+            engine.get_entity(owner).unwrap().posture(),
+            P::CarryingCorpse
+        );
+        assert_eq!(engine.get_entity(carried).unwrap().posture(), P::Carried);
+        assert_eq!(
+            engine.get_entity(owner).unwrap().pc_data().unwrap().carried,
+            Some(carried),
+            "translation must not consume the carried relationship"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq, idx)
+                .unwrap()
+                .posture_after_transition,
+            P::Upright
         );
     }
 

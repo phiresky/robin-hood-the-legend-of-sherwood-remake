@@ -7,6 +7,7 @@
 //!  - [`post_detection`] — phases P4..P6d: alert dispatch, pursuit, drains.
 
 mod detection;
+pub(crate) use detection::debug_detectable_mutation_load_snapshot;
 #[cfg(test)]
 pub(crate) use detection::set_heard_callback_observer;
 mod post_detection;
@@ -129,8 +130,8 @@ fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle:
 #[derive(Debug)]
 struct CivilianRandomSpeechDebugConfig {
     enabled: bool,
-    frame: Option<u32>,
-    creation_order: Option<u32>,
+    frame: u32,
+    creation_order: u32,
 }
 
 fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugConfig {
@@ -141,21 +142,55 @@ fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugCo
         if !enabled {
             return CivilianRandomSpeechDebugConfig {
                 enabled: false,
-                frame: None,
-                creation_order: None,
+                frame: 0,
+                creation_order: 0,
             };
         }
         let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for CIVRANDSPEECH diagnostic: {error}")
-                })
+            let value = std::env::var(name).unwrap_or_else(|error| {
+                panic!("CIVRANDSPEECH diagnostic requires {name}: {error}")
+            });
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for CIVRANDSPEECH diagnostic: {error}")
             })
         };
         CivilianRandomSpeechDebugConfig {
             enabled,
             frame: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_FRAME"),
             creation_order: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_CREATION_ORDER"),
+        }
+    })
+}
+
+#[derive(Debug)]
+struct SpeechLifecycleDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    actor: Option<u32>,
+}
+
+fn speech_lifecycle_debug_config() -> &'static SpeechLifecycleDebugConfig {
+    static CONFIG: std::sync::OnceLock<SpeechLifecycleDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_SPEECH_LIFECYCLE").is_some();
+        if !enabled {
+            return SpeechLifecycleDebugConfig {
+                enabled: false,
+                frame: None,
+                actor: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for SPEECHLIFE diagnostic: {error}")
+                })
+            })
+        };
+        SpeechLifecycleDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_FRAME"),
+            actor: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_ACTOR"),
         }
     })
 }
@@ -909,6 +944,24 @@ fn installed_animation_has_reached_action_done(
                 && sprite.frame_count >= sprite.action_done_counter))
 }
 
+/// Recreate the still-live `EVENT_DONE` Think frame around the deferred tail
+/// of `TowerGuardCallAlert`. Original calls `BattleDecisions` before that
+/// handler reaches `EndThink`; Rust releases the AI borrow while the alert's
+/// recipient Think calls run and resumes the tail afterward.
+fn begin_suspended_tower_guard_alert_think(ai: &mut crate::ai::AiController) {
+    ai.think_recursion_depth = ai
+        .think_recursion_depth
+        .checked_add(1)
+        .expect("tower-guard alert suspended Think depth overflow");
+}
+
+fn end_suspended_tower_guard_alert_think(ai: &mut crate::ai::AiController) {
+    assert!(
+        ai.end_think_completion_events(),
+        "tower-guard alert suspended Think unexpectedly hit the typed recursion fallback"
+    );
+}
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -974,6 +1027,75 @@ mod parity_tests {
             .and_then(Entity::ai_controller)
             .expect("test soldier retains AI");
         assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
+    fn suspended_tower_guard_alert_tail_owns_deferred_route_rejection() {
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier has AI");
+
+        begin_suspended_tower_guard_alert_think(ai);
+        ai.go_to(
+            crate::ai::Position {
+                x: 100.0,
+                y: 200.0,
+                ..Default::default()
+            },
+            crate::ai::GotoFlags::RUN,
+            &crate::ai::AiContext::default(),
+        );
+        assert_eq!(ai.think_recursion_depth, 1);
+        assert!(ai.completion_latch_inside_think);
+
+        // Path construction is engine-owned and can reject only after the
+        // resumed BattleDecisions borrow has ended. The suspended outer
+        // Think must still own and surface that result.
+        ai.couldnt_reachpoint = true;
+        engine.surface_synchronous_completion_events_for_owner(owner);
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier retains AI");
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli,
+            [crate::ai::StimulusType::EventCouldntReachPoint]
+        );
+        end_suspended_tower_guard_alert_think(ai);
+        assert_eq!(ai.think_recursion_depth, 0);
+
+        // Ordinary direct BattleDecisions calls do not gain completion
+        // ownership merely because this specific tower-guard tail does.
+        ai.outbox.reentrant.self_stimuli.clear();
+        ai.go_to(
+            crate::ai::Position {
+                x: 300.0,
+                y: 400.0,
+                ..Default::default()
+            },
+            crate::ai::GotoFlags::RUN,
+            &crate::ai::AiContext::default(),
+        );
+        assert!(!ai.completion_latch_inside_think);
     }
 
     #[test]
@@ -1540,9 +1662,10 @@ pub(super) fn extract_forecast_input(
     })
 }
 
-/// Map position returned by Original AI `Position(friend)` during SeekArea's
-/// nearby-friend scan. A PassDoor sequence reports its committed destination
-/// side even while the sprite is still interpolating along the door rail.
+/// Map the position returned by Original AI `Position(actor)` during
+/// SeekArea's nearby-friend scan. A PassDoor sequence reports its committed
+/// destination side even while the sprite is still interpolating along the
+/// door rail.
 fn seek_area_friend_position_map(
     raw_position: MapPoint,
     door_pass: Option<(crate::gate::DoorIndex, bool)>,
@@ -1562,18 +1685,22 @@ fn seek_area_friend_position_map(
 }
 
 /// Resolve one soldier's contribution to Original `SeekArea`'s nearby-NPC
-/// scan. The friend-side `Position(...)` call is owned by the currently
-/// selected PassDoor movement element, not the sprite's runtime door-pass
-/// choreography latch. The owner position is supplied explicitly because the
-/// caller observes it at the surrounding Think boundary.
+/// scan. Both `Position(...)` calls are owned by their currently selected
+/// PassDoor movement elements, not the sprites' runtime door-pass choreography
+/// latches.
 fn seek_area_friend_contribution(
     sequence_manager: &crate::sequence::SequenceManager,
     friend_id: EntityId,
-    owner_position: MapPoint,
+    owner_id: EntityId,
+    owner_raw_position: MapPoint,
     friend_raw_position: MapPoint,
     doors: &[crate::gate::Door],
     friend_seeks_with_help: bool,
 ) -> Option<bool> {
+    let owner_selected_door = selected_pass_door_movement(sequence_manager, owner_id)
+        .map(|(door_index, direction)| (door_index, direction != 0));
+    let owner_position =
+        seek_area_friend_position_map(owner_raw_position, owner_selected_door, doors);
     let selected_door_pass = selected_pass_door_movement(sequence_manager, friend_id)
         .map(|(door_index, direction)| (door_index, direction != 0));
     let friend_position =
@@ -1657,7 +1784,15 @@ mod seek_area_friend_position_tests {
         // indirect PassDoor destination is outside. Pre-fix production used
         // the absent runtime ActiveDoorPass latch and returned `Some(true)`.
         assert_eq!(
-            seek_area_friend_contribution(&sequences, friend, owner, raw_friend, &doors, true,),
+            seek_area_friend_contribution(
+                &sequences,
+                friend,
+                EntityId::new(1, EntityIdKind::Soldier),
+                owner,
+                raw_friend,
+                &doors,
+                true,
+            ),
             None
         );
 
@@ -1670,7 +1805,15 @@ mod seek_area_friend_position_tests {
         };
         *direction = 1;
         assert_eq!(
-            seek_area_friend_contribution(&sequences, friend, owner, raw_friend, &doors, true,),
+            seek_area_friend_contribution(
+                &sequences,
+                friend,
+                EntityId::new(1, EntityIdKind::Soldier),
+                owner,
+                raw_friend,
+                &doors,
+                true,
+            ),
             Some(true)
         );
 
@@ -1678,12 +1821,65 @@ mod seek_area_friend_position_tests {
         // and the raw nearby position contributes to both aggregate outputs.
         sequences.element_terminated(sequence_id, 0);
         let contributions = [seek_area_friend_contribution(
-            &sequences, friend, owner, raw_friend, &doors, true,
+            &sequences,
+            friend,
+            EntityId::new(1, EntityIdKind::Soldier),
+            owner,
+            raw_friend,
+            &doors,
+            true,
         )];
         let visible_seeking_friends = contributions.iter().flatten().count();
         let friend_seek_clears_help_flag = contributions.into_iter().flatten().any(|help| help);
         assert_eq!(visible_seeking_friends, 1);
         assert!(friend_seek_clears_help_flag);
+    }
+
+    #[test]
+    fn selected_pass_door_controls_seek_area_owner_radius_position() {
+        let owner = EntityId::new(1, EntityIdKind::Soldier);
+        let friend = EntityId::new(2, EntityIdKind::Soldier);
+        let raw_owner = MapPoint::new(0.0, 0.0);
+        let raw_friend = MapPoint::new(100.0, 0.0);
+        let doors = [crate::gate::Door {
+            point_out: MapPoint::new(1_000.0, 0.0),
+            point_in: MapPoint::new(1_000.0, 0.0),
+            ..Default::default()
+        }];
+        let mut sequences = SequenceManager::new();
+
+        assert_eq!(
+            seek_area_friend_contribution(
+                &sequences, friend, owner, raw_owner, raw_friend, &doors, false,
+            ),
+            Some(false),
+            "raw owner position keeps the friend inside the 500-unit radius"
+        );
+
+        let mut pass = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        let SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut pass.data
+        else {
+            panic!("PassDoor test element changed kind")
+        };
+        *gate_id = Some(crate::gate::DoorIndex(0));
+        *direction = 1;
+        let sequence_id = sequences.launch_element(pass);
+        sequences.element_in_progress(sequence_id, 0);
+
+        assert_eq!(
+            seek_area_friend_contribution(
+                &sequences, friend, owner, raw_owner, raw_friend, &doors, false,
+            ),
+            None,
+            "Original Position(owner) publishes the committed PassDoor side"
+        );
     }
 }
 
@@ -2585,8 +2781,15 @@ impl EngineInner {
         let derived_tail_order = derived_tail_order_type
             .map(|order| order as u32)
             .map_or(-1_i64, i64::from);
+        let direction = entity.element_data().direction();
+        let view_direction = npc.view_direction;
+        let left_side = npc.view_left_side;
+        let right_side = npc.view_right_side;
+        let half_aperture = npc.real_half_aperture;
+        let angle = npc.view_angle;
+        let angle_step = npc.view_angle_step;
         eprintln!(
-            "RVLIFE {{\"engine\":\"rust\",\"seq\":{sequence},\"stage\":{stage:?},\"frame\":{},\"owner_slot\":{},\"creation_order\":{creation_order},\"eye_status\":{},\"alpha_start\":{},\"radius_goal\":{},\"radius_step\":{},\"radius\":{},\"active\":{},\"unconscious\":{},\"tied\":{},\"dead\":{},\"frozen_all\":{},\"installed_order\":{installed_order},\"derived_tail_order\":{derived_tail_order},\"motion_state\":{},\"execution_frozen\":{}}}",
+            "RVLIFE {{\"engine\":\"rust\",\"seq\":{sequence},\"stage\":{stage:?},\"frame\":{},\"owner_slot\":{},\"creation_order\":{creation_order},\"eye_status\":{},\"alpha_start\":{},\"radius_goal\":{},\"radius_step\":{},\"radius\":{},\"active\":{},\"unconscious\":{},\"tied\":{},\"dead\":{},\"frozen_all\":{},\"installed_order\":{installed_order},\"derived_tail_order\":{derived_tail_order},\"motion_state\":{},\"execution_frozen\":{},\"direction\":{direction},\"direction_old\":{},\"view_transition\":{},\"angle_bits\":{},\"angle_step_bits\":{},\"real_half_aperture_bits\":{},\"view_direction_bits\":[{},{}],\"left_side_bits\":[{},{}],\"right_side_bits\":[{},{}]}}",
             self.control.frame_counter,
             npc_id.index(),
             npc.eye_status as u8,
@@ -2601,6 +2804,17 @@ impl EngineInner {
             self.actors_frozen(),
             actor.continuation.motion_state as u8,
             actor.execution_frozen,
+            npc.direction_old,
+            npc.view_transition,
+            angle.to_bits(),
+            angle_step.to_bits(),
+            half_aperture.to_bits(),
+            view_direction[0].to_bits(),
+            view_direction[1].to_bits(),
+            left_side[0].to_bits(),
+            left_side[1].to_bits(),
+            right_side[0].to_bits(),
+            right_side[1].to_bits(),
         );
     }
 
@@ -3095,6 +3309,7 @@ impl EngineInner {
             let contribution = seek_area_friend_contribution(
                 &self.orders.sequence_manager,
                 EntityId::Soldier(other_id),
+                npc_id,
                 me_pos,
                 friend_raw_position,
                 doors,
@@ -6074,6 +6289,12 @@ impl EngineInner {
     pub(super) fn broadcast_body_detectable(&mut self, body_id: EntityId) {
         use crate::element::DetectableType;
 
+        let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
+        let mutation_target_creation_order = (mutation_debug_enabled
+            && detection::detectable_mutation_debug_target_slot_matches(body_id.index()))
+        .then(|| self.original_static_creation_order(body_id))
+        .unwrap_or(0);
+
         // Snapshot the body's position + `knocked_out_in_money_fight`
         // flag for the per-friend radius check below.
         let (body_pos, body_knocked_out_in_money_fight, body_is_soldier) = {
@@ -6100,6 +6321,10 @@ impl EngineInner {
             if friend_id == body_id {
                 continue;
             }
+            let mutation_owner_creation_order = (mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index()))
+            .then(|| self.original_static_creation_order(friend_id))
+            .unwrap_or(0);
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
@@ -6126,11 +6351,36 @@ impl EngineInner {
                     .iter()
                     .any(|d| d.element == Some(body_id));
                 if !already {
+                    let mutation_length_before =
+                        (detection::detectable_mutation_debug_owner_matches(
+                            friend_id.index(),
+                            mutation_owner_creation_order,
+                        ) && detection::detectable_mutation_debug_target_matches(
+                            body_id.index(),
+                            mutation_target_creation_order,
+                        ))
+                        .then(|| npc.detectable_lists[det_idx].len());
                     npc.detectable_lists[det_idx].push(crate::element::Detectable {
                         element: Some(body_id),
                         detectable_type: DetectableType::Body,
                         ..Default::default()
                     });
+                    if let Some(length_before) = mutation_length_before {
+                        detection::debug_detectable_mutation_event(
+                            "add",
+                            "broadcast_body_detectable",
+                            self.control.frame_counter,
+                            friend_id.index(),
+                            mutation_owner_creation_order,
+                            det_idx,
+                            body_id.index(),
+                            mutation_target_creation_order,
+                            false,
+                            true,
+                            length_before,
+                            npc.detectable_lists[det_idx].len(),
+                        );
+                    }
                 }
             }
 
@@ -6160,8 +6410,17 @@ impl EngineInner {
     pub(super) fn delete_beggar_detectable_for_all_npc(&mut self, beggar_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Beggar as usize;
+        let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
+        let mutation_target_creation_order = (mutation_debug_enabled
+            && detection::detectable_mutation_debug_target_slot_matches(beggar_id.index()))
+        .then(|| self.original_static_creation_order(beggar_id))
+        .unwrap_or(0);
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for friend_id in npc_ids {
+            let mutation_owner_creation_order = (mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index()))
+            .then(|| self.original_static_creation_order(friend_id))
+            .unwrap_or(0);
             let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
@@ -6169,7 +6428,41 @@ impl EngineInner {
                 continue;
             };
             if det_idx < npc.detectable_lists.len() {
+                let mutation_before = (detection::detectable_mutation_debug_owner_matches(
+                    friend_id.index(),
+                    mutation_owner_creation_order,
+                ) && detection::detectable_mutation_debug_target_matches(
+                    beggar_id.index(),
+                    mutation_target_creation_order,
+                ))
+                .then(|| {
+                    (
+                        npc.detectable_lists[det_idx].len(),
+                        npc.detectable_lists[det_idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(beggar_id)),
+                    )
+                });
                 npc.detectable_lists[det_idx].retain(|d| d.element != Some(beggar_id));
+                if let Some((before, present_before)) = mutation_before {
+                    let present_after = npc.detectable_lists[det_idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(beggar_id));
+                    detection::debug_detectable_mutation_event(
+                        "delete",
+                        "delete_beggar_detectable_for_all_npc",
+                        self.control.frame_counter,
+                        friend_id.index(),
+                        mutation_owner_creation_order,
+                        det_idx,
+                        beggar_id.index(),
+                        mutation_target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[det_idx].len(),
+                    );
+                }
             }
         }
     }
@@ -6434,6 +6727,150 @@ impl EngineInner {
 
     // ─── Owner-local NPC speech ─────────────────────────────────
 
+    pub(super) fn debug_speech_lifecycle(
+        &self,
+        actor_id: u32,
+        phase: &str,
+        detail: impl std::fmt::Debug,
+    ) {
+        let config = speech_lifecycle_debug_config();
+        if !config.enabled {
+            return;
+        }
+        let frame = self.control.frame_counter;
+        if !config.frame.is_none_or(|expected| expected == frame)
+            || !config.actor.is_none_or(|expected| expected == actor_id)
+        {
+            return;
+        }
+        let sound = &self.feedback.sound_sim;
+        let pending = sound
+            .pending_exclamations
+            .iter()
+            .filter(|item| item.actor_id == actor_id)
+            .map(|item| (item.exclamation_id, item.profile_id, item.variant))
+            .collect::<Vec<_>>();
+        let playing = sound
+            .playing_exclamations
+            .iter()
+            .filter(|item| item.actor_id == actor_id)
+            .map(|item| (item.exclamation_id, item.finish_frame))
+            .collect::<Vec<_>>();
+        let resolved = sound
+            .resolved_exclamations
+            .iter()
+            .filter(|item| item.actor_id == actor_id)
+            .map(|item| (item.exclamation_id, item.identifier, item.duration_frames))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "SPEECHLIFE frame={frame} actor={actor_id} phase={phase} detail={detail:?} pending={pending:?} playing={playing:?} resolved={resolved:?}"
+        );
+    }
+
+    fn debug_speech_attempt_gate_snapshot(
+        &self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        attempt: crate::ai::AiSpeechAttempt,
+    ) {
+        use crate::ai::RemarkTargetFlags;
+
+        let config = speech_lifecycle_debug_config();
+        if !config.enabled {
+            return;
+        }
+        let frame = self.control.frame_counter;
+        if !config.frame.is_none_or(|expected| expected == frame)
+            || !config
+                .actor
+                .is_none_or(|expected| expected == owner.index())
+        {
+            return;
+        }
+
+        let entity = self
+            .world
+            .entities
+            .get(owner)
+            .unwrap_or_else(|| panic!("speech gate diagnostic lost owner {owner:?}"));
+        let ai = entity
+            .ai_controller()
+            .unwrap_or_else(|| panic!("speech gate diagnostic owner {owner:?} lost AI"));
+        let (is_soldier, speech_id) = match entity {
+            Entity::Soldier(soldier) => {
+                let profile = assets
+                    .profile_manager
+                    .get_soldier(soldier.soldier.soldier_profile_index)
+                    .unwrap_or_else(|| {
+                        panic!("speech gate diagnostic owner {owner:?} lost soldier profile")
+                    });
+                (true, profile.exclamation_id)
+            }
+            Entity::Civilian(civilian) => {
+                let profile = assets
+                    .profile_manager
+                    .civilians
+                    .get(usize::from(civilian.civilian.civilian_profile_index))
+                    .unwrap_or_else(|| {
+                        panic!("speech gate diagnostic owner {owner:?} lost civilian profile")
+                    });
+                (false, profile.exclamation_id)
+            }
+            other => panic!(
+                "speech gate diagnostic owner {owner:?} has invalid kind {:?}",
+                other.element_data().kind
+            ),
+        };
+        let creation_order = self.world.original_creation_order(owner);
+        let matching_forbidden = self
+            .ai
+            .global
+            .forbidden_remarks
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.remark == attempt.remark)
+            .map(|(index, entry)| {
+                let scope = RemarkTargetFlags::from_bits_truncate(entry.flags);
+                let applies = (scope.contains(RemarkTargetFlags::THIS_TYPE)
+                    && entry.bad_guy == is_soldier
+                    && entry.speech_id == speech_id)
+                    || (scope.contains(RemarkTargetFlags::THIS_GUY)
+                        && u32::from(entry.guy_index) == creation_order)
+                    || (is_soldier && scope.contains(RemarkTargetFlags::VILLAINS))
+                    || (!is_soldier && scope.contains(RemarkTargetFlags::CIVILIANS));
+                (
+                    index,
+                    entry.flags,
+                    entry.speech_id,
+                    entry.guy_index,
+                    entry.bad_guy,
+                    entry.forbidden_till_frame,
+                    entry.forbidden_till_frame < frame,
+                    applies,
+                )
+            })
+            .collect::<Vec<_>>();
+        let element = entity.element_data();
+        eprintln!(
+            "SPEECHLIFE frame={frame} actor={} phase=attempt_gate_snapshot remark={:?} flags={} state={:?} substate={:?} locks={:?} current_remark={:?} current_remark_flags={} blipped={} sector={:?} in_door_transit={} posture={:?} action={:?} animation={:?} creation_order={creation_order} is_soldier={is_soldier} speech_id={speech_id} script_forbidden={} matching_forbidden={matching_forbidden:?}",
+            owner.index(),
+            attempt.remark,
+            attempt.flags,
+            ai.current_state,
+            ai.current_substate,
+            ai.locks_flag_field,
+            ai.current_remark,
+            ai.current_remark_flags,
+            element.blipped,
+            element.sector(),
+            element.is_in_door_transit(),
+            element.posture,
+            entity.actor_data().map(|actor| actor.action_state),
+            element.sprite.last_action,
+            ai.forbidden_remark_ids.contains(&(attempt.remark as u32)),
+        );
+    }
+
     fn speech_finished_stimulus(flags: crate::ai::SpeechFlags) -> Option<StimulusType> {
         use crate::ai::SpeechFlags;
         if flags.contains(SpeechFlags::MYTALK_1) {
@@ -6488,6 +6925,11 @@ impl EngineInner {
         } else {
             false
         };
+        self.debug_speech_lifecycle(
+            owner.index(),
+            "attempt_rejected",
+            (reason, flags.bits(), invoke_finished_callback),
+        );
         NpcSpeechSettlement {
             invoke_finished_callback,
             category_rejection: None,
@@ -6512,6 +6954,12 @@ impl EngineInner {
         use crate::sound::ExclamationGroup;
 
         let flags = SpeechFlags::from_bits_truncate(attempt.flags);
+        self.debug_speech_lifecycle(
+            owner.index(),
+            "attempt_enter",
+            (attempt.remark, attempt.flags),
+        );
+        self.debug_speech_attempt_gate_snapshot(assets, owner, attempt);
         #[derive(Clone, Copy)]
         enum OwnerProfile {
             Soldier(crate::profiles::SoldierProfileIdx),
@@ -6689,6 +7137,11 @@ impl EngineInner {
 
         if active_remark != Remark::TheSoundOfSilence {
             if flags.contains(SpeechFlags::EMERGENCY) {
+                self.debug_speech_lifecycle(
+                    owner.index(),
+                    "emergency_cancel_before",
+                    (attempt.remark, attempt.flags),
+                );
                 self.feedback
                     .pending_side_effects
                     .sounds
@@ -6696,6 +7149,11 @@ impl EngineInner {
                 // StopExclamation removes the old pending/playing line without
                 // calling SoundIsFinished, so its MYTALK callback is discarded.
                 self.cancel_exclamation_callbacks(owner.index());
+                self.debug_speech_lifecycle(
+                    owner.index(),
+                    "emergency_cancel_after",
+                    (attempt.remark, attempt.flags),
+                );
             } else {
                 return self.reject_npc_speech_attempt(owner, flags, 4);
             }
@@ -6821,6 +7279,16 @@ impl EngineInner {
                     } else {
                         false
                     };
+                self.debug_speech_lifecycle(
+                    owner.index(),
+                    "attempt_category_rejected",
+                    (
+                        reason,
+                        attempt.remark,
+                        attempt.flags,
+                        invoke_finished_callback,
+                    ),
+                );
                 return NpcSpeechSettlement {
                     invoke_finished_callback,
                     category_rejection: Some(CategorySpeechRejectionFinalization {
@@ -6850,6 +7318,17 @@ impl EngineInner {
                     exclamation_id,
                     variant,
                 });
+            self.debug_speech_lifecycle(
+                owner.index(),
+                "attempt_accepted",
+                (
+                    attempt.remark,
+                    attempt.flags,
+                    exclamation_id,
+                    speech_id,
+                    variant,
+                ),
+            );
         }
 
         self.ai.global.screen_remarks.push(crate::ai::ScreenRemark {
@@ -7650,7 +8129,12 @@ impl EngineInner {
             take
         };
         if let Some(request) = attentive_request {
-            self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
+            self.set_soldier_attentive_mode_from(
+                npc_id,
+                request.target,
+                request.fast_officer_variant,
+                crate::engine::soldier_helpers::AttentiveModeCaller::AiOwnerEffect,
+            );
             if request.forget_after
                 && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
                 && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
@@ -7781,6 +8265,7 @@ impl EngineInner {
         // other soldier when the swap heuristic fires — for every
         // improving friend in the pass, not just the last one — so we
         // apply the whole queue here after the owner's AI tick ran.
+        let debug_primary_swap = crate::ai_enemy::primary_swap_debug_enabled();
         for (friend_id, new_target) in effects.friend_primary_target_swaps {
             let friend = self.world.entities.get_mut(friend_id).unwrap_or_else(|| {
                 panic!(
@@ -7796,18 +8281,29 @@ impl EngineInner {
                     friend_id.index()
                 );
             };
-            friend
-                .npc
-                .ai_brain
-                .base_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "pending-drain NPC {} primary-target friend {} has no AI",
-                        npc_id.index(),
-                        friend_id.index()
-                    )
-                })
-                .primary_target = new_target;
+            let friend_ai = friend.npc.ai_brain.base_mut().unwrap_or_else(|| {
+                panic!(
+                    "pending-drain NPC {} primary-target friend {} has no AI",
+                    npc_id.index(),
+                    friend_id.index()
+                )
+            });
+            if debug_primary_swap
+                && crate::ai_enemy::primary_swap_debug_matches(
+                    self.control.frame_counter,
+                    npc_id.index(),
+                )
+            {
+                eprintln!(
+                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={} new_target={}]",
+                    self.control.frame_counter,
+                    npc_id.index(),
+                    friend_id,
+                    friend_ai.primary_target,
+                    new_target,
+                );
+            }
+            friend_ai.primary_target = new_target;
         }
 
         // Process pending bow shot.
@@ -8435,6 +8931,54 @@ impl EngineInner {
                     effects.delete_detectable_entities,
                 );
             }
+            let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
+            let mutation_owner_creation_order = (mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_slot_matches(npc_id.index()))
+            .then(|| self.original_static_creation_order(npc_id))
+            .unwrap_or(0);
+            let mutation_targets = if mutation_debug_enabled
+                && detection::detectable_mutation_debug_owner_matches(
+                    npc_id.index(),
+                    mutation_owner_creation_order,
+                ) {
+                let target_ids = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .and_then(Entity::npc_data)
+                    .expect("DETMUT pending-effect owner lost NPC data")
+                    .detectable_lists
+                    .iter()
+                    .flatten()
+                    .filter_map(|detectable| detectable.element)
+                    .chain(effects.add_detectables.iter().map(|(target, _)| *target))
+                    .chain(effects.append_detectables.iter().map(|(target, _)| *target))
+                    .chain(
+                        effects
+                            .delete_detectable_entities
+                            .iter()
+                            .map(|(target, _)| *target),
+                    )
+                    .collect::<std::collections::BTreeSet<_>>();
+                target_ids
+                    .into_iter()
+                    .filter_map(|target_id| {
+                        if !detection::detectable_mutation_debug_target_slot_matches(
+                            target_id.index(),
+                        ) {
+                            return None;
+                        }
+                        let target_creation_order = self.original_static_creation_order(target_id);
+                        detection::detectable_mutation_debug_target_matches(
+                            target_id.index(),
+                            target_creation_order,
+                        )
+                        .then_some((target_id, target_creation_order))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             // Resolve target classification for each ENEMY-arm push
             // so the `add_detectable` filter can run.  Resolved
             // up-front to avoid borrowing `self.world.entities` mutably
@@ -8485,7 +9029,44 @@ impl EngineInner {
                     npc_id.index(),
                     det_type
                 );
+                let (mutation_length_before, presence_before) = if mutation_targets.is_empty() {
+                    (0, Vec::new())
+                } else {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        mutation_targets
+                            .iter()
+                            .map(|(target_id, target_creation_order)| {
+                                (
+                                    *target_id,
+                                    *target_creation_order,
+                                    npc.detectable_lists[idx]
+                                        .iter()
+                                        .any(|detectable| detectable.element == Some(*target_id)),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                };
                 npc.detectable_lists[idx].clear();
+                for (target_id, target_creation_order, present_before) in presence_before {
+                    if present_before {
+                        detection::debug_detectable_mutation_event(
+                            "delete_all",
+                            "pending_effects.delete_detectables",
+                            self.control.frame_counter,
+                            npc_id.index(),
+                            mutation_owner_creation_order,
+                            idx,
+                            target_id.index(),
+                            target_creation_order,
+                            true,
+                            false,
+                            mutation_length_before,
+                            0,
+                        );
+                    }
+                }
             }
             // Per-entity deletes: `delete_detectable(entity, type)`
             // drops a single (element, type) entry, leaving
@@ -8498,7 +9079,40 @@ impl EngineInner {
                     npc_id.index(),
                     det_type
                 );
+                let mutation_target_creation_order = mutation_targets
+                    .iter()
+                    .find(|(target_id, _)| target_id == entity_id)
+                    .map(|(_, target_creation_order)| *target_creation_order);
+                let mutation_before = mutation_target_creation_order.map(|_| {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        npc.detectable_lists[idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(*entity_id)),
+                    )
+                });
                 npc.detectable_lists[idx].retain(|d| d.element != Some(*entity_id));
+                if let (Some(target_creation_order), Some((before, present_before))) =
+                    (mutation_target_creation_order, mutation_before)
+                {
+                    let present_after = npc.detectable_lists[idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(*entity_id));
+                    detection::debug_detectable_mutation_event(
+                        "delete",
+                        "pending_effects.delete_detectable_entities",
+                        self.control.frame_counter,
+                        npc_id.index(),
+                        mutation_owner_creation_order,
+                        idx,
+                        entity_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[idx].len(),
+                    );
+                }
             }
             if debug_consider_report {
                 let body_ids = npc.detectable_lists[DetectableType::Body as usize]
@@ -8544,7 +9158,40 @@ impl EngineInner {
                         continue;
                     }
                 }
+                let mutation_target_creation_order = mutation_targets
+                    .iter()
+                    .find(|(target_id, _)| target_id == entity_id)
+                    .map(|(_, target_creation_order)| *target_creation_order);
+                let mutation_before = mutation_target_creation_order.map(|_| {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        npc.detectable_lists[idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(*entity_id)),
+                    )
+                });
                 append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, false);
+                if let (Some(target_creation_order), Some((before, present_before))) =
+                    (mutation_target_creation_order, mutation_before)
+                {
+                    let present_after = npc.detectable_lists[idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(*entity_id));
+                    detection::debug_detectable_mutation_event(
+                        "add",
+                        "pending_effects.add_detectables",
+                        self.control.frame_counter,
+                        npc_id.index(),
+                        mutation_owner_creation_order,
+                        idx,
+                        entity_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[idx].len(),
+                    );
+                }
             }
             // Preserve the release-build behavior of selected direct
             // AddDetectable calls. Original's uniqueness check is an assert,
@@ -8558,7 +9205,40 @@ impl EngineInner {
                     npc_id.index(),
                     det_type
                 );
+                let mutation_target_creation_order = mutation_targets
+                    .iter()
+                    .find(|(target_id, _)| target_id == entity_id)
+                    .map(|(_, target_creation_order)| *target_creation_order);
+                let mutation_before = mutation_target_creation_order.map(|_| {
+                    (
+                        npc.detectable_lists[idx].len(),
+                        npc.detectable_lists[idx]
+                            .iter()
+                            .any(|detectable| detectable.element == Some(*entity_id)),
+                    )
+                });
                 append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, true);
+                if let (Some(target_creation_order), Some((before, present_before))) =
+                    (mutation_target_creation_order, mutation_before)
+                {
+                    let present_after = npc.detectable_lists[idx]
+                        .iter()
+                        .any(|detectable| detectable.element == Some(*entity_id));
+                    detection::debug_detectable_mutation_event(
+                        "append",
+                        "pending_effects.append_detectables",
+                        self.control.frame_counter,
+                        npc_id.index(),
+                        mutation_owner_creation_order,
+                        idx,
+                        entity_id.index(),
+                        target_creation_order,
+                        present_before,
+                        present_after,
+                        before,
+                        npc.detectable_lists[idx].len(),
+                    );
+                }
             }
         }
 
@@ -9386,6 +10066,16 @@ impl EngineInner {
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
     ) {
+        let think_debug = self.debug_think_stimulus_matches(npc_id);
+        if think_debug {
+            eprintln!(
+                "THINK_STIMULUS phase=before_panic_launch frame={} owner={} creation_order={} rng_cursor={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                self.world.original_creation_order(npc_id),
+                self.control.rng.original_replay_cursor(),
+            );
+        }
         // Peel the request off the AI base.
         let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
@@ -9630,6 +10320,15 @@ impl EngineInner {
         }
 
         self.begin_panic_no_door_branch(sim, assets, npc_id, &request, ctx, is_civilian);
+        if think_debug {
+            eprintln!(
+                "THINK_STIMULUS phase=after_panic_launch frame={} owner={} creation_order={} rng_cursor={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                self.world.original_creation_order(npc_id),
+                self.control.rng.original_replay_cursor(),
+            );
+        }
     }
 
     /// Drain a queued `pending_panic_seek_fallback` on a single NPC.
@@ -10108,6 +10807,20 @@ impl EngineInner {
                 npc_id.index()
             )
         });
+        if crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_enabled()
+            && crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_matches(
+                ctx.frame,
+                ctx.original_creation_order,
+            )
+        {
+            eprintln!(
+                "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"script_set_ai_state\",\"stimulus\":\"no_event\"}}",
+                ctx.frame,
+                npc_id.index(),
+                ctx.original_creation_order
+                    .expect("phase6 caller diagnostic matched an owner without creation order"),
+            );
+        }
         enemy_ai.seek_area(
             sim,
             request.center,
@@ -11979,7 +12692,12 @@ impl EngineInner {
     /// owner-work continuations such as patrol initialization resume outside
     /// the typed Think call. Surface all three `EndThink` latches before a
     /// sibling synchronous event can enter `StartThink` and clear them.
-    fn surface_synchronous_completion_events_for_owner(&mut self, npc_id: EntityId) {
+    pub(super) fn surface_synchronous_completion_events_for_owner(&mut self, npc_id: EntityId) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                npc_id.index(),
+            );
         let ai = self
             .world
             .entities
@@ -12003,9 +12721,26 @@ impl EngineInner {
         // clears all three latches before the nested handler runs, so a single
         // boundary surfaces at most one event even when several were set.
         let typed_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending
-            || ai.outbox.reentrant.look_for_help_completion_pending;
+            || ai.outbox.reentrant.battle_observe_completion_pending
+            || ai.outbox.reentrant.look_for_help_completion_pending
+            || ai.outbox.reentrant.alert_soldier_completion_pending
+            || ai.outbox.reentrant.dead_body_alert_completion_pending;
         let retain_couldnt_reachpoint =
             ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} owner_work={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                ai.completion_latch_inside_think,
+                ai.couldnt_reachpoint,
+                ai.already_on_point,
+                ai.already_turned,
+                typed_tail_pending,
+                retain_couldnt_reachpoint,
+                ai.outbox.reentrant.owner_work,
+            );
+        }
         let event = if !ai.completion_latch_inside_think {
             None
         } else if retain_couldnt_reachpoint {
@@ -12026,6 +12761,18 @@ impl EngineInner {
         ai.already_turned = false;
         if let Some(event) = event {
             ai.outbox.reentrant.self_stimuli.push(event);
+        }
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=surface_completion_result event={event:?} couldnt={} already_on_point={} already_turned={} self_stimuli={:?} owner_work={:?}",
+                self.control.frame_counter,
+                npc_id.index(),
+                ai.couldnt_reachpoint,
+                ai.already_on_point,
+                ai.already_turned,
+                ai.outbox.reentrant.self_stimuli,
+                ai.outbox.reentrant.owner_work,
+            );
         }
     }
 
@@ -12238,6 +12985,32 @@ impl EngineInner {
                                 )
                             });
                         enemy_ai.right_combat_neighbour = neighbour;
+                    }
+                    crate::ai::CrossNpcAction::SetPrimaryTarget {
+                        target,
+                        primary_target,
+                    } => {
+                        // `PhalanxReinitializeThemList` assigns every member's
+                        // `mpPrimaryTarget` inline while its recursion unwinds.
+                        // Apply that direct setter before a later recursive
+                        // `BreakPhalanx` lets the member choose its own target.
+                        let target_id = EntityId::Soldier(SoldierId(target));
+                        let enemy_ai = self
+                            .world
+                            .entities
+                            .get_mut(target_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous primary-target setter target {target} is missing"
+                                )
+                            })
+                            .enemy_ai_mut()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous primary-target setter target {target} has no EnemyAi"
+                                )
+                            });
+                        enemy_ai.base.primary_target = primary_target;
                     }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
@@ -12469,6 +13242,13 @@ impl EngineInner {
             caller,
             "tower-guard battle continuation caller must be its owner"
         );
+        begin_suspended_tower_guard_alert_think(
+            self.world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its AI")),
+        );
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self
             .world
@@ -12507,6 +13287,17 @@ impl EngineInner {
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its EnemyAi"))
             .battle_decisions(sim, global, &ctx, &tick, Some(grid));
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
+        end_suspended_tower_guard_alert_think(
+            self.world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its AI")),
+        );
+        // EndThink can itself publish a completion event. Close that final
+        // piece of the resumed Original call stack before returning to the
+        // cross-NPC action dispatcher.
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
@@ -13282,7 +14073,7 @@ impl EngineInner {
         }
     }
 
-    fn process_synchronous_think_results_for(
+    pub(super) fn process_synchronous_think_results_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
@@ -13430,11 +14221,33 @@ impl EngineInner {
                 );
 
             // The continuation is the caller's C++ stack frame resuming
-            // immediately after `target->Think(...)` returned. SetState,
-            // Say, and timer work emitted there must therefore close before
-            // the next queued group member is called (and certainly before
-            // this source owner's Hourglass slot returns).
-            self.drain_ai_owner_work_for_mode(sim, assets, source_id, true, defer_turn_instruction);
+            // immediately after `target->Think(...)` returned. The officer's
+            // single-soldier call can reject into ReturnToDuty, whose virtual
+            // SetState and following GoTo synchronously publish actor work as
+            // well as owner callbacks. Close that exact caller stack through
+            // the full owner-local fixed point. Other result continuations
+            // retain their narrower owner-work boundary because their outer
+            // loops still own subsequent member calls.
+            if matches!(
+                continuation,
+                crate::ai::ThinkResultContinuation::OfficerCalledSoldier
+            ) {
+                self.drain_direct_ai_owner_boundary_mode(
+                    sim,
+                    source_id,
+                    assets,
+                    true,
+                    defer_turn_instruction,
+                );
+            } else {
+                self.drain_ai_owner_work_for_mode(
+                    sim,
+                    assets,
+                    source_id,
+                    true,
+                    defer_turn_instruction,
+                );
+            }
         }
     }
 
@@ -14679,7 +15492,12 @@ impl EngineInner {
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.surface_synchronous_completion_events_for_owner(npc_id);
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for_mode(
+                sim,
+                npc_id,
+                assets,
+                defer_turn_instruction,
+            );
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
             // produced causally on this call stack and must close now.
@@ -14946,18 +15764,11 @@ impl EngineInner {
         let frame_phase = npc_hourglass_frame_phase(current_frame, u32::from(register_number));
         let debug_creation_order = {
             let config = civilian_random_speech_debug_config();
-            if !config.enabled
-                || config
-                    .frame
-                    .is_some_and(|expected| expected != current_frame)
-            {
+            if !config.enabled || config.frame != current_frame {
                 None
             } else {
                 let creation_order = self.world.original_creation_order(npc_id);
-                config
-                    .creation_order
-                    .is_none_or(|expected| expected == creation_order)
-                    .then_some(creation_order)
+                (config.creation_order == creation_order).then_some(creation_order)
             }
         };
         if let Some(creation_order) = debug_creation_order {
@@ -15013,6 +15824,28 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        if let Some(creation_order) = debug_creation_order {
+            let Entity::Civilian(civilian) = &*entity else {
+                panic!(
+                    "random-speech civilian {} changed entity kind before call",
+                    npc_id.index()
+                )
+            };
+            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+                panic!("random-speech civilian {} changed AI kind", npc_id.index())
+            };
+            let source_animation = ctx
+                .entity_view(ai.base.me)
+                .map(|view| view.current_animation);
+            eprintln!(
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+                npc_id.index(),
+                source_animation == Some(crate::order::OrderType::Weeping),
+                civilian.element.sprite.last_action,
+                ai.base.outbox.reentrant.owner_work.len(),
+                ai.base.outbox.reentrant.owner_work,
+            );
+        }
         {
             entity
                 .friendly_ai_mut()
@@ -15034,12 +15867,14 @@ impl EngineInner {
                 panic!("random-speech civilian {} changed AI kind", npc_id.index())
             };
             eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after dont_talk={} current_remark={:?} remark_flags={} queued_owner_work={}]",
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
                 npc_id.index(),
                 ai.beggar_dont_talk_counter,
                 ai.base.current_remark,
                 ai.base.current_remark_flags,
+                civilian.element.sprite.last_action,
                 ai.base.outbox.reentrant.owner_work.len(),
+                ai.base.outbox.reentrant.owner_work,
             );
         }
         // Original RandomSpeech calls Say synchronously before the following
@@ -15047,6 +15882,31 @@ impl EngineInner {
         // that same owner-local boundary here even when the lock gate will
         // short-circuit the remainder of Hourglass.
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+        if let Some(creation_order) = debug_creation_order {
+            let Entity::Civilian(civilian) = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "random-speech civilian {} disappeared after drain",
+                    npc_id.index()
+                )
+            }) else {
+                panic!(
+                    "random-speech civilian {} changed entity kind after drain",
+                    npc_id.index()
+                )
+            };
+            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+                panic!("random-speech civilian {} changed AI kind", npc_id.index())
+            };
+            eprintln!(
+                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+                npc_id.index(),
+                ai.base.current_remark,
+                ai.base.current_remark_flags,
+                civilian.element.sprite.last_action,
+                ai.base.outbox.reentrant.owner_work.len(),
+                ai.base.outbox.reentrant.owner_work,
+            );
+        }
     }
 
     // ── RefreshAmbushPoints — per-frame ambush peek scan ─────────

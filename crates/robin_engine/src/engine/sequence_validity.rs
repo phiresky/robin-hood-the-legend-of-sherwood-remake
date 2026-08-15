@@ -990,9 +990,8 @@ impl EngineInner {
     /// - `TransitionCarryingCorpseWaitingUpright`:
     ///   `check_position=true`, TERMINATED — and when the driving
     ///   command is not `DropCorpse`, additionally drops the carried
-    ///   body instantaneously.  The `EnterSwordfight` shortcut isn't
-    ///   reached here because `make_posture_transition_pc` already
-    ///   short-circuits it before the order is queued.
+    ///   body instantaneously. `EnterSwordfight` is handled before this
+    ///   default validity arm by the PC Execute owner in `tick.rs`.
     /// - All `IsInitialisation()` jump-init arms:
     ///   `check_position=true`, ABORTED.  These arms assert
     ///   NON_INTERRUPTABLE priority, which makes `element_impossible`
@@ -1396,10 +1395,8 @@ pub(super) fn pc_init_validity_arm(
 
         // ── TransitionCarryingCorpseWaitingUpright ─────────────
         // Default-branch validity check: if it fails, drop instantly
-        // (unless command is DropCorpse) and TERMINATE.  The
-        // EnterSwordfight shortcut is short-circuited before the
-        // order is even queued by `make_posture_transition_pc`'s
-        // `Posture::CarryingCorpse` arm.
+        // (unless command is DropCorpse) and TERMINATE. EnterSwordfight is
+        // handled before this default validity arm by the PC Execute owner.
         OT::TransitionCarryingCorpseWaitingUpright => {
             Some((true, ValidityArmTerminal::TerminatedDropCorpseUnlessDrop))
         }

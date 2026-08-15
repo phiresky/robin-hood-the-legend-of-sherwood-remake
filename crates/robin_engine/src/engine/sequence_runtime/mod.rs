@@ -1639,12 +1639,14 @@ impl NpcAttentionCommandContext<'_> {
             return false;
         };
         let currently_attentive = entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
+        // RHElementActorSoldier::Translate has deliberately asymmetric arms:
+        // ENTER checks `mbAttentive == false`, while LEAVE checks only the
+        // stamped post-transition posture.  A corrective LEAVE can therefore
+        // still carry its alerted-to-upright animation after an earlier
+        // officer transition has already cleared `mbAttentive`.
         let needs_change = currently_attentive != target_attentive;
-        // RHElementActorSoldier::Translate checks only posture and the current
-        // attentive flag. In particular, a higher-priority attentive element
-        // that postponed a live Move must still play this transition; when it
-        // completes, the movement is translated and path-found again.
-        let can_play_transition = posture_upright_after && needs_change;
+        let can_play_transition =
+            posture_upright_after && (command == Command::LeaveAttentiveMode || needs_change);
         tracing::trace!(
             owner = owner.index(),
             ?command,
@@ -3145,6 +3147,72 @@ mod sequence_phase_context_tests {
                 .expect("shield owner has actor data")
                 .action_state,
             ActionState::HoldingShield
+        );
+    }
+
+    #[test]
+    fn lower_shield_survives_a_completed_stand_up_transition() {
+        use crate::element::ActionState;
+        use crate::order::{Order, OrderType};
+        use crate::sequence::{SequenceElement, SequenceState};
+
+        let mut engine = EngineInner::new();
+        // Captured Save035 r001 boundary: ReceiveHitDamage finishes its
+        // FallingHitUpright action, then LowerShield resumes after StandingUp
+        // has restored the actor to Waiting. Original still translates the
+        // authored lowering animation at that point.
+        let owner = engine.add_entity(shield_pc(ActionState::Waiting));
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::LowerShield, Some(owner)));
+        let stand_up = Order::new(
+            OrderType::StandingUp,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        );
+        engine
+            .orders
+            .sequence_manager
+            .push_order_on(seq_id, 0, stand_up);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, 0)
+            .expect("lower-shield element exists")
+            .initialize_transition_orders();
+
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(owner, Command::LowerShield, seq_id, 0);
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .expect("lower-shield element remains live");
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![OrderType::StandingUp, OrderType::LoweringShield]
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .expect("lower-shield owner exists")
+                .actor_data()
+                .expect("lower-shield owner has actor data")
+                .action_state,
+            ActionState::Waiting,
+            "translation must not invent a shield action state"
         );
     }
 

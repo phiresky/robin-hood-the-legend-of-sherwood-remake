@@ -1,5 +1,50 @@
 use super::*;
 
+#[inline]
+fn panic_retry_side(original_creation_order: u32) -> u8 {
+    if original_creation_order & 1 != 0 {
+        4
+    } else {
+        12
+    }
+}
+
+#[derive(Debug)]
+struct BoredBoundaryDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    owner_from: Option<u32>,
+    owner_through: Option<u32>,
+}
+
+fn bored_boundary_debug_config() -> &'static BoredBoundaryDebugConfig {
+    static CONFIG: std::sync::OnceLock<BoredBoundaryDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_BORED_BOUNDARY").is_some();
+        if !enabled {
+            return BoredBoundaryDebugConfig {
+                enabled: false,
+                frame: None,
+                owner_from: None,
+                owner_through: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for BORED_BOUNDARY diagnostic: {error}")
+                })
+            })
+        };
+        BoredBoundaryDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_BORED_BOUNDARY_FRAME"),
+            owner_from: parse("PARITY_DEBUG_BORED_BOUNDARY_OWNER_FROM"),
+            owner_through: parse("PARITY_DEBUG_BORED_BOUNDARY_OWNER_THROUGH"),
+        }
+    })
+}
+
 #[derive(Debug)]
 struct ConsiderReportDebugConfig {
     enabled: bool,
@@ -62,6 +107,39 @@ fn will_stop_debug_config() -> &'static WillStopDebugConfig {
             enabled: true,
             frame: parse("PARITY_DEBUG_WILLSTOP_FRAME"),
             owner: parse("PARITY_DEBUG_WILLSTOP_OWNER"),
+        }
+    })
+}
+
+#[derive(Debug)]
+struct MacroLifecycleDebugConfig {
+    enabled: bool,
+    frame: Option<u32>,
+    owner: Option<u32>,
+}
+
+fn macro_lifecycle_debug_config() -> &'static MacroLifecycleDebugConfig {
+    static CONFIG: std::sync::OnceLock<MacroLifecycleDebugConfig> = std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let enabled = std::env::var_os("PARITY_DEBUG_MACRO_LIFECYCLE").is_some();
+        if !enabled {
+            return MacroLifecycleDebugConfig {
+                enabled: false,
+                frame: None,
+                owner: None,
+            };
+        }
+        let parse = |name: &str| {
+            std::env::var(name).ok().map(|value| {
+                value.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={value:?} for MACROLIFE diagnostic: {error}")
+                })
+            })
+        };
+        MacroLifecycleDebugConfig {
+            enabled: true,
+            frame: parse("PARITY_DEBUG_MACRO_LIFECYCLE_FRAME"),
+            owner: parse("PARITY_DEBUG_MACRO_LIFECYCLE_OWNER"),
         }
     })
 }
@@ -533,6 +611,14 @@ impl Default for AiController {
 // ---------------------------------------------------------------------------
 
 impl AiController {
+    pub(crate) fn bored_boundary_debug_matches(frame: u32, owner: u32) -> bool {
+        let config = bored_boundary_debug_config();
+        config.enabled
+            && config.frame.is_none_or(|expected| expected == frame)
+            && config.owner_from.is_none_or(|from| owner >= from)
+            && config.owner_through.is_none_or(|through| owner <= through)
+    }
+
     pub fn new(owner: NpcHandle) -> Self {
         Self {
             me: owner,
@@ -699,8 +785,11 @@ impl AiController {
     /// Arm the stimulus timer to fire `frames` ticks from now.
     pub fn launch_timer(&mut self, frames: u32, current_frame: u32) {
         self.timer_is_running = true;
-        // Original stores the raw ULONG sum. In particular, a zero-frame
-        // timer is immediately due when a later phase polls it this frame.
+        // RHArtificialIntelligence::LaunchTimer clamps a zero-duration AI
+        // timer to one frame before forwarding it to RHElementActorNPC.
+        // Macro timers bypass this wrapper and intentionally retain their
+        // raw duration in `launch_macro_timer`.
+        let frames = frames.max(1);
         self.when_does_timer_ring = current_frame.wrapping_add(frames);
         self.substate_at_last_timer_launch = self.current_substate;
     }
@@ -1137,6 +1226,8 @@ impl AiController {
     /// Officers and high-pride soldiers use longer intervals; everyone
     /// else uses the short default.
     pub fn get_bored_time(&self, sim: &crate::sim_rng::SimulationContext, ctx: &AiContext) -> u16 {
+        // Check the process-local gate before reading any diagnostic-only state.
+        let debug = Self::bored_boundary_debug_matches(ctx.frame, self.me);
         use crate::profiles::ProfileRank;
         const AI_MIN_DEFAULT_BORED_INTERVAL: u16 = 70;
         const AI_DELTA_DEFAULT_BORED_INTERVAL: u16 = 70;
@@ -1161,6 +1252,24 @@ impl AiController {
                 AI_DELTA_DEFAULT_BORED_INTERVAL,
             )
         };
+        if debug {
+            eprintln!(
+                "BORED_BOUNDARY frame={} owner={} phase=get_bored_time state={:?} substate={:?} rank={:?} pride={} min={} delta={} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}",
+                ctx.frame,
+                self.me,
+                self.current_state,
+                self.current_substate,
+                ctx.self_rank,
+                ctx.self_pride,
+                min,
+                delta,
+                self.timer_is_running,
+                self.when_does_timer_ring,
+                self.outbox.reentrant.self_stimuli.len(),
+                self.outbox.reentrant.owner_work.len(),
+                self.outbox.actor.orders.len(),
+            );
+        }
         // P_RECTANGLE ignores `lambda`; pass MAX_ATT_VALUE for the un-biased sample.
         min + (Self::random_value(
             sim,
@@ -1221,6 +1330,7 @@ impl AiController {
                     | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                     | CrossNpcAction::SetLeftCombatNeighbour { .. }
                     | CrossNpcAction::SetRightCombatNeighbour { .. }
+                    | CrossNpcAction::SetPrimaryTarget { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);
@@ -1256,6 +1366,7 @@ impl AiController {
                         | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                         | CrossNpcAction::SetLeftCombatNeighbour { .. }
                         | CrossNpcAction::SetRightCombatNeighbour { .. }
+                        | CrossNpcAction::SetPrimaryTarget { .. }
                         | CrossNpcAction::Say { .. }
                 )
             })
@@ -1409,6 +1520,53 @@ impl AiController {
     }
 
     // -- Break macro --
+
+    pub(crate) fn debug_macro_lifecycle(
+        &self,
+        ctx: &AiContext,
+        phase: &str,
+        reason: impl std::fmt::Debug,
+    ) {
+        let config = macro_lifecycle_debug_config();
+        if !config.enabled
+            || !config.frame.is_none_or(|frame| frame == ctx.frame)
+            || !config
+                .owner
+                .is_none_or(|owner| ctx.original_creation_order == Some(owner))
+        {
+            return;
+        }
+        eprintln!(
+            "MACROLIFE frame={} owner={:?} me={} phase={phase} reason={reason:?} state={:?} substate={:?} in_progress={} timer_running={} timer_deadline={} started_this_frame={} command_offset={} remaining_bytes={} waypoint={:?} owner_work_len={} self_stimuli_len={} finish_after_stimuli={}",
+            ctx.frame,
+            ctx.original_creation_order,
+            self.me,
+            self.current_state,
+            self.current_substate,
+            self.macro_in_progress,
+            self.macro_timer_is_running,
+            self.when_does_macro_timer_ring,
+            self.macro_started_in_this_frame,
+            self.macro_command_offset,
+            self.number_of_remaining_macro_bytes,
+            self.macro_command_waypoint,
+            self.outbox.reentrant.owner_work.len(),
+            self.outbox.reentrant.self_stimuli.len(),
+            self.outbox.reentrant.finish_macro_after_self_stimuli,
+        );
+    }
+
+    fn break_macro_debug(&mut self, ctx: &AiContext, reason: &str) {
+        self.debug_macro_lifecycle(ctx, "break_before", reason);
+        self.break_macro();
+        self.debug_macro_lifecycle(ctx, "break_after", reason);
+    }
+
+    fn finish_patrol_macro_debug(&mut self, ctx: &AiContext, reason: &str) {
+        self.debug_macro_lifecycle(ctx, "finish_before", reason);
+        self.finish_patrol_macro();
+        self.debug_macro_lifecycle(ctx, "finish_after", reason);
+    }
 
     pub fn break_macro(&mut self) {
         self.macro_in_progress = false;
@@ -2182,10 +2340,13 @@ impl AiController {
         self.number_of_remaining_macro_bytes = macro_byte_count;
 
         // Start the macro machine.
+        self.debug_macro_lifecycle(ctx, "start_before", "launch_waypoint_macro");
         self.set_ai_state(AiState::Default);
         self.current_substate = Substate::DefaultInMacro;
         self.macro_started_in_this_frame = true;
+        self.debug_macro_lifecycle(ctx, "start_armed", "launch_waypoint_macro");
         self.execute_next_macro_command(sim, ctx);
+        self.debug_macro_lifecycle(ctx, "start_return", "launch_waypoint_macro");
         true
     }
 
@@ -2206,6 +2367,7 @@ impl AiController {
         sim: &crate::sim_rng::SimulationContext,
         ctx: &AiContext,
     ) {
+        self.debug_macro_lifecycle(ctx, "execute_enter", "execute_next_macro_command");
         // If we're still in STATE_DEFAULT, make sure the substate
         // reflects that we're inside the VM.
         if self.current_state == AiState::Default {
@@ -2226,7 +2388,7 @@ impl AiController {
                             self.me,
                             self.macro_command_offset
                         );
-                        self.break_macro();
+                        self.break_macro_debug(ctx, "macro_pc_out_of_bounds");
                         return;
                     }
                 };
@@ -2245,6 +2407,7 @@ impl AiController {
                     self.number_of_remaining_macro_bytes = 0;
                     continue 'vm;
                 };
+                self.debug_macro_lifecycle(ctx, "opcode_started", opcode);
 
                 match opcode {
                     MacroOpcode::ReversePath => {
@@ -2265,7 +2428,7 @@ impl AiController {
 
                     MacroOpcode::GotoPoint => {
                         let Some(index) = self.peek_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "goto_point_truncated");
                             return;
                         };
                         if let Some(ref mut path) = self.patrol_path {
@@ -2287,7 +2450,7 @@ impl AiController {
 
                     MacroOpcode::FaceTo => {
                         let Some(direction) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "face_to_truncated");
                             return;
                         };
                         self.current_substate = Substate::DefaultInMacroWaitingForDone;
@@ -2297,21 +2460,22 @@ impl AiController {
 
                     MacroOpcode::Wait => {
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "wait_truncated");
                             return;
                         };
                         self.launch_macro_timer(frames as u32, ctx.frame);
+                        self.debug_macro_lifecycle(ctx, "timer_started", "wait");
                         self.macro_started_in_this_frame = false;
                         return;
                     }
 
                     MacroOpcode::Check4 => {
                         let Some(friend_id) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_friend_truncated");
                             return;
                         };
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_frames_truncated");
                             return;
                         };
                         // Civilians/royalists log a warning but still
@@ -2326,15 +2490,15 @@ impl AiController {
 
                     MacroOpcode::Check4Sync => {
                         let Some(friend_id) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_sync_friend_truncated");
                             return;
                         };
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_sync_frames_truncated");
                             return;
                         };
                         let Some(index) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "check4_sync_index_truncated");
                             return;
                         };
                         // Log-and-proceed for civilians.
@@ -2368,7 +2532,7 @@ impl AiController {
 
                     MacroOpcode::ChangeWay => {
                         let Some(index) = self.peek_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "change_way_truncated");
                             return;
                         };
                         // The helper runs break_macro + bounds check
@@ -2417,6 +2581,11 @@ impl AiController {
                                 owner_position_before_callback: ctx.position,
                                 owner_boundary_positions,
                             },
+                        );
+                        self.debug_macro_lifecycle(
+                            ctx,
+                            "owner_work_queued",
+                            "change_way_assignment_tail",
                         );
                         return;
                     }
@@ -2490,7 +2659,7 @@ impl AiController {
 
                     MacroOpcode::Bend => {
                         let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "bend_truncated");
                             return;
                         };
                         // Log-and-proceed for civilians.
@@ -2499,6 +2668,7 @@ impl AiController {
                         }
                         self.outbox.actor.look_sidewards = Some(LookDirection::Down);
                         self.launch_macro_timer(frames as u32, ctx.frame);
+                        self.debug_macro_lifecycle(ctx, "timer_started", "bend");
                         self.macro_started_in_this_frame = false;
                         return;
                     }
@@ -2520,7 +2690,7 @@ impl AiController {
 
                     MacroOpcode::PatrolDirection => {
                         let Some(direction) = self.read_macro_u16() else {
-                            self.break_macro();
+                            self.break_macro_debug(ctx, "patrol_direction_truncated");
                             return;
                         };
                         // Log-and-proceed for civilians.
@@ -2559,6 +2729,11 @@ impl AiController {
                                     .collect(),
                             },
                         );
+                        self.debug_macro_lifecycle(
+                            ctx,
+                            "owner_work_queued",
+                            "resume_macro_after_patrol_init",
+                        );
                         return;
                     }
                 }
@@ -2573,7 +2748,7 @@ impl AiController {
                 // wired anyway so a future override that doesn't share
                 // that gate will be invoked from this site.
                 if self.default_bored_standard_procedure(ctx) {
-                    self.break_macro();
+                    self.break_macro_debug(ctx, "default_bored_standard_procedure");
                     return;
                 }
 
@@ -2599,10 +2774,11 @@ impl AiController {
                             crate::parameters_ai::AI_ONE_POINT_DEFAULT_TIME as u32,
                             ctx.frame,
                         );
+                        self.debug_macro_lifecycle(ctx, "timer_started", "one_point_path");
                     } else {
                         // Already here → synthesize a REACH_POINT event so
                         // the stimulus queue picks up the next waypoint.
-                        self.finish_patrol_macro();
+                        self.finish_patrol_macro_debug(ctx, "one_point_reach_point");
                         self.current_substate = Substate::DefaultEnroute;
                         self.fire_self_stimulus(StimulusType::EventReachPoint);
                     }
@@ -2647,12 +2823,17 @@ impl AiController {
                             // may start its next WAIT before the outer macro
                             // completion clears the running flags.
                             self.outbox.reentrant.finish_macro_after_self_stimuli = true;
+                            self.debug_macro_lifecycle(
+                                ctx,
+                                "finish_deferred",
+                                "queued_reach_point",
+                            );
                         } else {
-                            self.finish_patrol_macro();
+                            self.finish_patrol_macro_debug(ctx, "goto_no_reentrant_reach_point");
                         }
                     } else {
                         self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                        self.finish_patrol_macro();
+                        self.finish_patrol_macro_debug(ctx, "missing_next_waypoint");
                     }
                 }
                 return;
@@ -3134,6 +3315,24 @@ impl AiController {
         dx.max(dy) < tolerance
     }
 
+    /// Rust can still expose the outgoing move-to-wait transition in the AI
+    /// snapshot after Original's actor boundary has exposed its idle
+    /// successor. Keep this projection narrower than GoTo's ordinary
+    /// five-pixel gate: only a literal same-position request can observe it.
+    fn outgoing_wait_transition_at_exact_destination(
+        destination: &Position,
+        ctx: &AiContext,
+    ) -> bool {
+        ctx.position == *destination
+            && matches!(
+                ctx.self_animation,
+                crate::order::OrderType::TransitionWalkingUprightWaitingUpright
+                    | crate::order::OrderType::TransitionRunningUprightWaitingUpright
+                    | crate::order::OrderType::TransitionWalkingAlertedWaitingAlerted
+                    | crate::order::OrderType::TransitionRunningAlertedWaitingAlerted
+            )
+    }
+
     /// `GoNear` has a separate early-out from ordinary `GoTo`: Original
     /// compares `RHposition::SquareNorm()` with the squared near tolerance.
     /// Do not reuse the MaxNorm-based five-pixel `GoTo` gate above.
@@ -3260,6 +3459,27 @@ impl AiController {
     /// in a "waiting" substate). Calling this directly via
     /// `ai.base.go_to(...)` bypasses that contract and risks wedge bugs.
     pub fn go_to(&mut self, destination: Position, flags: GotoFlags, ctx: &AiContext) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=goto_enter destination=({:08x},{:08x},sector={:?},level={}) flags={flags:?} position=({:08x},{:08x},sector={:?},level={}) couldnt_before={} already_before={} owner_work_before={:?}",
+                ctx.frame,
+                self.me,
+                ctx.original_creation_order,
+                destination.x.to_bits(),
+                destination.y.to_bits(),
+                destination.sector,
+                destination.level,
+                ctx.position.x.to_bits(),
+                ctx.position.y.to_bits(),
+                ctx.position.sector,
+                ctx.position.level,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+                self.outbox.reentrant.owner_work,
+            );
+        }
         // Record the latest destination / flags so stuck-retry replays,
         // cancellation, and the EventReachPoint re-entry path can see
         // what was most recently requested.
@@ -3297,6 +3517,7 @@ impl AiController {
         // into a `Think(EVENT_REACHPOINT)` re-entry. Deferred Halt effects are
         // projected through Original StopMovement by the helper above.
         let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
+            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
             || (ctx.self_animation_reached_action_done
                 && matches!(
                     ctx.self_animation,
@@ -3325,6 +3546,16 @@ impl AiController {
         );
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.finish_already_on_point();
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=already_on_point couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.me,
+                    self.couldnt_reachpoint,
+                    self.already_on_point,
+                    self.outbox.reentrant.owner_work,
+                );
+            }
             return;
         }
 
@@ -3344,6 +3575,17 @@ impl AiController {
             && self.check_already_near(&destination, near_tolerance, ctx)
         {
             self.finish_already_on_point();
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=already_near tolerance_bits={:08x} couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.me,
+                    near_tolerance.to_bits(),
+                    self.couldnt_reachpoint,
+                    self.already_on_point,
+                    self.outbox.reentrant.owner_work,
+                );
+            }
             return;
         }
 
@@ -3354,6 +3596,12 @@ impl AiController {
         // shared cutscene camera's level size.
         if destination.x <= 0.0 || destination.y <= 0.0 {
             self.couldnt_reachpoint = true;
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=reject_nonpositive couldnt=true",
+                    ctx.frame, self.me,
+                );
+            }
             return;
         }
 
@@ -3363,6 +3611,12 @@ impl AiController {
         // unless a caller stuffs `u16::MAX` in deliberately.
         if destination.sector.is_none() {
             self.couldnt_reachpoint = true;
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=goto_result result=reject_null_sector couldnt=true",
+                    ctx.frame, self.me,
+                );
+            }
             return;
         }
 
@@ -3392,6 +3646,17 @@ impl AiController {
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=goto_result result=queued couldnt={} already={} pending_orders={} owner_work={:?}",
+                ctx.frame,
+                self.me,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+                self.outbox.actor.orders.len(),
+                self.outbox.reentrant.owner_work,
+            );
+        }
     }
 
     /// Prepend the action-state teardown for a launching GoTo / GoNear /
@@ -3474,6 +3739,7 @@ impl AiController {
         // units of a newly coordinated formation point and must still book
         // the replacement walk rather than synthesize EventReachPoint.
         let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
+            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
             || matches!(
                 ctx.self_animation,
                 crate::order::OrderType::WaitingUpright
@@ -3531,6 +3797,24 @@ impl AiController {
         flags: GotoFlags,
         ctx: &AiContext,
     ) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=go_near_enter destination=({:08x},{:08x},sector={:?},level={}) distance={} flags={flags:?} recursion_depth={} couldnt_before={} already_before={}",
+                ctx.frame,
+                self.me,
+                ctx.original_creation_order,
+                destination.x.to_bits(),
+                destination.y.to_bits(),
+                destination.sector,
+                destination.level,
+                distance,
+                self.think_recursion_depth,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+            );
+        }
         // Deep recursion shrinks the stop-distance toward zero so the
         // actor doesn't loop on Think() recursion. Always applied — a
         // mitigation, not a behaviour knob.
@@ -3557,6 +3841,16 @@ impl AiController {
         let same_layer = destination.level == ctx.position.level;
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
             self.finish_already_on_point();
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=go_near_result result=already_near effective_distance={} couldnt={} already={}",
+                    ctx.frame,
+                    self.me,
+                    effective_distance,
+                    self.couldnt_reachpoint,
+                    self.already_on_point,
+                );
+            }
             return;
         }
 
@@ -3568,6 +3862,18 @@ impl AiController {
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=go_near_result result=queued effective_distance={} couldnt={} already={} pending_orders={} owner_work={:?}",
+                ctx.frame,
+                self.me,
+                effective_distance,
+                self.couldnt_reachpoint,
+                self.already_on_point,
+                self.outbox.actor.orders.len(),
+                self.outbox.reentrant.owner_work,
+            );
+        }
     }
 
     // -- Facing commands --
@@ -4848,12 +5154,11 @@ impl AiController {
                         } else {
                             // Previous attempt failed — rotate 90° to
                             // the side determined by creation-order
-                            // parity, with ±3 sector jitter. We key off
-                            // the NPC handle's low bit because it's
-                            // stable, unique, and has the same parity
-                            // effect as the original creation-order
-                            // bit.
-                            let side = if self.me & 1 != 0 { 4 } else { 12 };
+                            // parity, with ±3 sector jitter.
+                            let original_creation_order = ctx.original_creation_order.expect(
+                                "panic retry owner is missing its authoritative creation order",
+                            );
+                            let side = panic_retry_side(original_creation_order);
                             let jitter =
                                 (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..7)
                                     as i32
@@ -5149,6 +5454,19 @@ impl ConsiderationAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panic_retry_side_uses_original_creation_order_parity() {
+        assert_eq!(panic_retry_side(68), 12);
+        assert_eq!(panic_retry_side(69), 4);
+
+        let rust_entity_slot = 37;
+        assert_ne!(
+            panic_retry_side(68),
+            panic_retry_side(rust_entity_slot),
+            "trace owner creation-order 68 must not inherit entity-slot 37 parity",
+        );
+    }
 
     #[test]
     fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {

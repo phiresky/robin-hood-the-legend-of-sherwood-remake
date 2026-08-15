@@ -80,6 +80,39 @@ struct LiftPreflight {
     authored_door_count: usize,
 }
 
+/// Select the doors which define a lift's low/high exit points.
+///
+/// Original `RHSectorLift::InitializeFromProtoStream` owns only the doors
+/// whose inside sector is this lift and orders those doors by `PointOut.Y`.
+/// `GetLowExitPoint` / `GetHighExitPoint` then return the selected doors'
+/// `PointIn` values. Keep the identity selection separate from the cached
+/// coordinates so skewed doors cannot invert the climb direction.
+fn lift_endpoint_door_indices(
+    doors: &[crate::gate::Door],
+    lift_sector: crate::sector::SectorNumber,
+) -> Option<(u32, u32)> {
+    let mut candidates = doors
+        .iter()
+        .enumerate()
+        .filter(|(_, door)| door.sector_in == lift_sector);
+    let (first_idx, first) = candidates.next()?;
+    let mut low = (first_idx as u32, first.point_out.y);
+    let mut high = low;
+    for (index, door) in candidates {
+        if door.point_out.y > low.1 {
+            low = (index as u32, door.point_out.y);
+        }
+        if door.point_out.y < high.1 {
+            high = (index as u32, door.point_out.y);
+        }
+    }
+    assert_ne!(
+        low.0, high.0,
+        "lift sector {lift_sector} has fewer than two distinct high/low endpoint doors"
+    );
+    Some((low.0, high.0))
+}
+
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct PatchStageOutput {
     patch_count: usize,
@@ -3970,47 +4003,36 @@ impl EngineInner {
         }
         let mut lift_endpoints_cached = 0usize;
         let mut lift_endpoints_partial = 0usize;
-        for (door_idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
-            for sector_number in [door.sector_out, door.sector_in] {
-                let Some(&grid_idx) = self
-                    .world
-                    .fast_grid
-                    .level
-                    .sector_number_map
-                    .get(&sector_number)
-                else {
-                    continue;
-                };
-                let Some(gs) = self
-                    .world
-                    .fast_grid_mut()
-                    .level_mut()
-                    .sectors
-                    .get_mut(grid_idx)
-                else {
-                    continue;
-                };
-                if !(gs.sector_type.is_lift() || gs.lift_type.is_some()) {
-                    continue;
-                }
-                let door_idx = door_idx as u32;
-                let lowest = gs
-                    .lowest_door_index
-                    .and_then(|prev| self.script_domains.interactables.doors.get(prev as usize))
-                    .map(|prev| prev.point_in.y)
-                    .is_none_or(|prev_y| door.point_in.y > prev_y);
-                if lowest {
-                    gs.low_exit_point = Some(door.point_in);
-                    gs.lowest_door_index = Some(door_idx);
-                }
-                let highest = gs
-                    .high_exit_point
-                    .map(|prev| prev.y)
-                    .is_none_or(|prev_y| door.point_in.y < prev_y);
-                if highest {
-                    gs.high_exit_point = Some(door.point_in);
-                }
-            }
+        let lift_endpoint_selections: Vec<_> = self
+            .world
+            .fast_grid
+            .level
+            .sectors
+            .iter()
+            .enumerate()
+            .filter(|(_, sector)| sector.sector_type.is_lift() || sector.lift_type.is_some())
+            .filter_map(|(grid_idx, sector)| {
+                let (low_idx, high_idx) = lift_endpoint_door_indices(
+                    &self.script_domains.interactables.doors,
+                    sector.sector_number,
+                )?;
+                let low_point = self.script_domains.interactables.doors[low_idx as usize].point_in;
+                let high_point =
+                    self.script_domains.interactables.doors[high_idx as usize].point_in;
+                Some((grid_idx, low_idx, low_point, high_point))
+            })
+            .collect();
+        for (grid_idx, low_idx, low_point, high_point) in lift_endpoint_selections {
+            let gs = self
+                .world
+                .fast_grid_mut()
+                .level_mut()
+                .sectors
+                .get_mut(grid_idx)
+                .expect("selected lift sector disappeared while caching endpoints");
+            gs.low_exit_point = Some(low_point);
+            gs.high_exit_point = Some(high_point);
+            gs.lowest_door_index = Some(low_idx);
         }
         for gs in &self.world.fast_grid.level.sectors {
             if !(gs.sector_type.is_lift() || gs.lift_type.is_some()) {
@@ -5090,6 +5112,89 @@ fn shuffle_sherwood_slots(
         let a = crate::sim_rng::usize(sim, crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
         let b = crate::sim_rng::usize(sim, crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
         swap(a, b);
+    }
+}
+
+#[cfg(test)]
+mod lift_endpoint_tests {
+    use super::lift_endpoint_door_indices;
+    use crate::coordinates::MapPoint;
+    use crate::gate::Door;
+    use crate::sector::SectorNumber;
+
+    fn lift_door(lift_sector: SectorNumber, point_in: MapPoint, point_out: MapPoint) -> Door {
+        Door {
+            sector_in: lift_sector,
+            point_in,
+            point_out,
+            ..Door::default()
+        }
+    }
+
+    #[test]
+    fn lift_endpoint_identity_uses_point_out_but_caches_point_in() {
+        let lift = SectorNumber::new(42);
+        let doors = vec![
+            // High by the outside endpoint, despite having the lower
+            // lift-side PointIn in screen coordinates.
+            lift_door(lift, MapPoint::new(10.0, 200.0), MapPoint::new(11.0, 10.0)),
+            // Low by the outside endpoint, despite having the higher
+            // lift-side PointIn in screen coordinates.
+            lift_door(lift, MapPoint::new(20.0, 0.0), MapPoint::new(21.0, 100.0)),
+        ];
+
+        let (low, high) = lift_endpoint_door_indices(&doors, lift).unwrap();
+
+        assert_eq!((low, high), (1, 0));
+        assert_eq!(doors[low as usize].point_in, MapPoint::new(20.0, 0.0));
+        assert_eq!(doors[high as usize].point_in, MapPoint::new(10.0, 200.0));
+    }
+
+    #[test]
+    fn lift_endpoint_identity_excludes_reverse_edges_and_preserves_ties() {
+        let lift = SectorNumber::new(42);
+        let outside = SectorNumber::new(7);
+        let mut reverse_edge = lift_door(
+            outside,
+            MapPoint::new(99.0, 99.0),
+            MapPoint::new(99.0, 1000.0),
+        );
+        reverse_edge.sector_out = lift;
+        let doors = vec![
+            lift_door(lift, MapPoint::new(10.0, 10.0), MapPoint::new(10.0, 10.0)),
+            lift_door(lift, MapPoint::new(20.0, 100.0), MapPoint::new(20.0, 100.0)),
+            reverse_edge,
+            // Original uses strict comparisons, so an equal low endpoint
+            // retains the first authored door.
+            lift_door(lift, MapPoint::new(30.0, 100.0), MapPoint::new(30.0, 100.0)),
+        ];
+
+        assert_eq!(lift_endpoint_door_indices(&doors, lift), Some((1, 0)));
+    }
+
+    #[test]
+    #[should_panic(expected = "fewer than two distinct high/low endpoint doors")]
+    fn lift_endpoint_identity_rejects_one_owned_door() {
+        let lift = SectorNumber::new(42);
+        let doors = vec![lift_door(
+            lift,
+            MapPoint::new(10.0, 10.0),
+            MapPoint::new(10.0, 10.0),
+        )];
+
+        let _ = lift_endpoint_door_indices(&doors, lift);
+    }
+
+    #[test]
+    #[should_panic(expected = "fewer than two distinct high/low endpoint doors")]
+    fn lift_endpoint_identity_rejects_equal_outside_heights() {
+        let lift = SectorNumber::new(42);
+        let doors = vec![
+            lift_door(lift, MapPoint::new(10.0, 10.0), MapPoint::new(10.0, 50.0)),
+            lift_door(lift, MapPoint::new(20.0, 20.0), MapPoint::new(20.0, 50.0)),
+        ];
+
+        let _ = lift_endpoint_door_indices(&doors, lift);
     }
 }
 

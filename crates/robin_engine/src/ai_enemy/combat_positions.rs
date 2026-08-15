@@ -42,7 +42,11 @@ fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
 /// Opt-in trace for the event-driven swordfight reposition decision. Keep the
 /// gate process-local and evaluate it before touching any proposal data so the
 /// disabled path cannot add lookups, RNG draws, or simulation state.
-fn reconsider_position_debug_matches(frame: u32, creation_order: Option<u32>, owner: u32) -> bool {
+fn reconsider_position_debug_matches(
+    frame: impl FnOnce() -> u32,
+    creation_order: impl FnOnce() -> Option<u32>,
+    owner: impl FnOnce() -> u32,
+) -> bool {
     if std::env::var_os("PARITY_DEBUG_RECONSIDER_POSITION").is_none() {
         return false;
     }
@@ -53,10 +57,37 @@ fn reconsider_position_debug_matches(frame: u32, creation_order: Option<u32>, ow
             })
         })
     };
+    let frame = frame();
+    let creation_order = creation_order();
+    let owner = owner();
     parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_FRAME").is_none_or(|expected| frame == expected)
         && parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_CREATION_ORDER")
             .is_none_or(|expected| creation_order == Some(expected))
         && parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_OWNER_HANDLE")
+            .is_none_or(|expected| owner == expected)
+}
+
+/// Opt-in trace for the periodic shield-protection decision. The master gate
+/// is checked before either closure is evaluated so a disabled diagnostic
+/// performs no additional simulation-state reads.
+fn arrow_protection_debug_matches(
+    frame: impl FnOnce() -> u32,
+    owner: impl FnOnce() -> u32,
+) -> bool {
+    if std::env::var_os("PARITY_DEBUG_ARROW_PROTECTION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for ARROW_PROTECTION diagnostic: {error}")
+            })
+        })
+    };
+    let frame = frame();
+    let owner = owner();
+    parse_filter("PARITY_DEBUG_ARROW_PROTECTION_FRAME").is_none_or(|expected| frame == expected)
+        && parse_filter("PARITY_DEBUG_ARROW_PROTECTION_OWNER_HANDLE")
             .is_none_or(|expected| owner == expected)
 }
 
@@ -1393,7 +1424,15 @@ impl EnemyAi {
         let shield_advancing = Substate::AttackingAdvancingWithShield as u32;
 
         let mut count: i32 = 0;
-        for f in &tick.nearby_fighters {
+        // Original walks the complete camp soldier registry. In particular it
+        // does not apply IsAbleToFight/Active before counting an orphan
+        // archer: an inactive Seeking soldier still owns its AI state and
+        // shield-bearer link and therefore remains a protection candidate.
+        // `nearby_fighters` applies that unrelated able-to-fight filter;
+        // `fighter_registry` preserves the complete Original scan domain and
+        // ordering, while the distance/state gates below do the actual
+        // admission work.
+        for f in &tick.fighter_registry {
             if !f.is_friendly {
                 continue;
             }
@@ -2098,6 +2137,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let debug = arrow_protection_debug_matches(|| ctx.frame, || self.base.me);
         // Check if we're in the right substate
         match self.base.current_substate {
             Substate::AttackingReactiontimeTurning
@@ -2119,15 +2159,38 @@ impl EnemyAi {
             }
             Substate::AttackingAdvancingWithShield => {
                 if called_from_hourglass {
+                    if debug {
+                        eprintln!(
+                            "ARROW_PROTECTION frame={} owner={} result=reject reason=advancing_hourglass substate={:?}",
+                            ctx.frame, self.base.me, self.base.current_substate
+                        );
+                    }
                     return false;
                 }
             }
-            _ => return false,
+            _ => {
+                if debug {
+                    eprintln!(
+                        "ARROW_PROTECTION frame={} owner={} result=reject reason=substate substate={:?} from_hourglass={}",
+                        ctx.frame, self.base.me, self.base.current_substate, called_from_hourglass
+                    );
+                }
+                return false;
+            }
         }
 
         // Shield bearers only
         let me_snap = self.find_fighter(self.base.me, tick);
         if !me_snap.map(|f| f.is_shield_bearer).unwrap_or(false) {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=reject reason=shield_bearer owner_present={} is_shield_bearer={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    me_snap.is_some(),
+                    me_snap.map(|fighter| fighter.is_shield_bearer)
+                );
+            }
             return false;
         }
         tracing::trace!(
@@ -2143,6 +2206,12 @@ impl EnemyAi {
         let nearest_enemy =
             self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
         if nearest_enemy == 0 {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=reject reason=no_nearest_enemy list_them={:?}",
+                    ctx.frame, self.base.me, self.list_them
+                );
+            }
             return false;
         }
 
@@ -2155,11 +2224,26 @@ impl EnemyAi {
         // Are we already near enough to fight? (PHALANX_ATTACK_DISTANCE gate)
         if let Some(enemy_snap) = self.find_fighter(nearest_enemy, tick) {
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if square_distance_to(&enemy_snap.position, enemy_snap.elevation as f32)
-                < atk_dist * atk_dist
-            {
+            let enemy_square_distance =
+                square_distance_to(&enemy_snap.position, enemy_snap.elevation as f32);
+            if enemy_square_distance < atk_dist * atk_dist {
+                if debug {
+                    eprintln!(
+                        "ARROW_PROTECTION frame={} owner={} result=reject reason=enemy_near nearest={} square_distance_bits={} threshold={}",
+                        ctx.frame,
+                        self.base.me,
+                        nearest_enemy,
+                        enemy_square_distance.to_bits(),
+                        atk_dist * atk_dist
+                    );
+                }
                 return false;
             }
+        } else if debug {
+            eprintln!(
+                "ARROW_PROTECTION frame={} owner={} stage=nearest_enemy_snapshot_missing nearest={}",
+                ctx.frame, self.base.me, nearest_enemy
+            );
         }
 
         // Scan all visible enemies for a dangerous one (using a bow).
@@ -2236,6 +2320,30 @@ impl EnemyAi {
                 "RefreshArrowProtection: no dangerous archer"
             );
             if protectable <= 0 {
+                if debug {
+                    eprintln!(
+                        "ARROW_PROTECTION frame={} owner={} result=reject reason=no_protection_target nearest={} dangerous=0 protectable={} nearby={:?}",
+                        ctx.frame,
+                        self.base.me,
+                        nearest_enemy,
+                        protectable,
+                        tick.nearby_fighters
+                            .iter()
+                            .map(|fighter| (
+                                fighter.handle,
+                                fighter.is_friendly,
+                                fighter.ai_state,
+                                fighter.current_substate,
+                                fighter.is_archer_unit,
+                                fighter.is_shield_bearer,
+                                fighter.shield_bearer_before_me,
+                                fighter.archer_behind_me,
+                                fighter.position,
+                                fighter.elevation,
+                            ))
+                            .collect::<Vec<_>>()
+                    );
+                }
                 return false;
             }
             self.base.primary_target = nearest_enemy;
@@ -2273,6 +2381,20 @@ impl EnemyAi {
         if let Some((run_pos, direction, left_neighbour, right_neighbour)) =
             self.find_phalanx_place(ctx, tick, grid)
         {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=run_to_phalanx nearest={} dangerous={} target={} run_pos={:?} direction={} left={} right={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest_enemy,
+                    dangerous_enemy,
+                    self.base.primary_target,
+                    run_pos,
+                    direction,
+                    left_neighbour,
+                    right_neighbour
+                );
+            }
             self.base.say(Remark::ShieldBearersLineFormation);
             self.base.seek_position = run_pos;
             self.shield_bearer_direction = direction;
@@ -2312,6 +2434,18 @@ impl EnemyAi {
                 ctx,
             );
         } else {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=raise_shield nearest={} dangerous={} target={} target_pos={:?} target_elevation_bits={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest_enemy,
+                    dangerous_enemy,
+                    self.base.primary_target,
+                    target_pos,
+                    target_elevation.to_bits()
+                );
+            }
             // No phalanx slot — raise shield in place
             tracing::trace!(
                 target: "robin_engine::ai_enemy::shield",
@@ -2494,6 +2628,32 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let reconsider_debug = reconsider_position_debug_matches(
+            || ctx.frame,
+            || ctx.original_creation_order,
+            || self.base.me,
+        );
+        if reconsider_debug {
+            let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} creation_order={:?} phase=entry rng={:?} substate={:?} primary={} swordfighting={} enter_pending={} position=({:?},{:?},{:?}) direction={} blood={} cheat={} trainer={}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                rng_cursor,
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.is_swordfighting,
+                ctx.enter_swordfight_pending,
+                ctx.position.x.to_bits(),
+                ctx.position.y.to_bits(),
+                ctx.elevation.to_bits(),
+                ctx.direction,
+                self.base.blood_alcohol,
+                global.stupid_soldiers_cheat,
+                self.combat_trainer,
+            );
+        }
         // Keep ourselves on a heartbeat while in swordfight.
         if self.base.current_substate == Substate::AttackingSwordfight {
             self.base.launch_timer(20, ctx.frame);
@@ -2504,6 +2664,13 @@ impl EnemyAi {
         // `enter_swordfight_pending` on AiContext when there's a pending
         // ENTER_SWORDFIGHT in the sequence manager.
         if ctx.enter_swordfight_pending {
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=enter_pending rng={:?}",
+                    ctx.frame, self.base.me, rng_cursor,
+                );
+            }
             return;
         }
 
@@ -2512,6 +2679,13 @@ impl EnemyAi {
         // fires. Cascade caveat: skips engine FilterAIEvent gate — see
         // end_think comment.
         if !ctx.is_swordfighting {
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=not_swordfighting rng={:?}",
+                    ctx.frame, self.base.me, rng_cursor,
+                );
+            }
             let quit_stimulus = Stimulus::new(StimulusType::EventQuitSwordfight);
             if self.base.has_script_filter_override {
                 tracing::warn!(
@@ -2531,6 +2705,13 @@ impl EnemyAi {
         if let Some(me) = self.find_fighter(self.base.me, tick) {
             self.base.primary_target = me.principal_opponent;
         }
+        if reconsider_debug {
+            let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=principal primary={} rng={:?}",
+                ctx.frame, self.base.me, self.base.primary_target, rng_cursor,
+            );
+        }
 
         // Scotch: if we somehow ended up with a friendly target, bail
         // out cleanly. Use the live entity-view snapshot rather than
@@ -2549,6 +2730,13 @@ impl EnemyAi {
                 false
             });
         if primary_is_friend {
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=primary_friend primary={} rng={:?}",
+                    ctx.frame, self.base.me, self.base.primary_target, rng_cursor,
+                );
+            }
             self.end_swordfight(ctx, tick);
             self.left_combat_neighbour = 0;
             self.right_combat_neighbour = 0;
@@ -2563,7 +2751,15 @@ impl EnemyAi {
         // animation transitions; treating that absence as lost sight
         // made soldiers quit combat and walk into battle-overview
         // positions while still engaged.
-        if !self.is_detecting_360_degrees(self.base.primary_target, ctx) {
+        let detects_primary = self.is_detecting_360_degrees(self.base.primary_target, ctx);
+        if reconsider_debug {
+            let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=detection primary={} detected={} rng={:?}",
+                ctx.frame, self.base.me, self.base.primary_target, detects_primary, rng_cursor,
+            );
+        }
+        if !detects_primary {
             // Lost sight: forecast their direction and abandon the fight.
             if let Some(prepared) = &tick.primary_target_forecast {
                 let forecast = prepared.resolve(sim);
@@ -2593,11 +2789,20 @@ impl EnemyAi {
                     tick,
                 );
             } else {
-                // SetDirectionInstantly to the missed-PC direction with
-                // the isometric Y-stretch via `vec_to_sector` so the
-                // snapped direction matches the AI's face target.
-                let dx = self.base.seek_position.x - ctx.position.x;
-                let dy = self.base.seek_position.y - ctx.position.y;
+                // ForecastDestinationForIA above only populates the retained
+                // seek center. Original aims this immediate snap at the
+                // missed actor's current `Position`, not that forecast.
+                let missed_position = ctx
+                    .entity_view(self.missed_pc)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "lost-enemy overview owner {} is missing current position for target {}",
+                            self.base.me, self.missed_pc
+                        )
+                    })
+                    .position;
+                let dx = missed_position.x - ctx.position.x;
+                let dy = missed_position.y - ctx.position.y;
                 let dir = vec_to_sector(dx, dy);
                 self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
                 self.get_battle_overview(0, ctx, tick);
@@ -2615,17 +2820,41 @@ impl EnemyAi {
                 primary_target = self.base.primary_target,
                 "reconsider_swordfight: detected primary target is absent from nearby_fighters"
             );
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=missing_primary_snapshot primary={} rng={:?}",
+                    ctx.frame, self.base.me, self.base.primary_target, rng_cursor,
+                );
+            }
             return;
         };
 
         // Are we facing the primary opponent?
-        if !is_facing_swordfight_target(
+        let facing_target_position = swordfight_facing_target_position(&primary, tick);
+        let facing_primary = is_facing_swordfight_target(
             &ctx.position,
             ctx.elevation,
             ctx.direction,
-            swordfight_facing_target_position(&primary, tick),
+            facing_target_position,
             primary.elevation,
-        ) {
+        );
+        if reconsider_debug {
+            let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=facing primary={} target=({:?},{:?},{:?}) direction={} facing={} rng={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.primary_target,
+                facing_target_position.x.to_bits(),
+                facing_target_position.y.to_bits(),
+                primary.elevation.to_bits(),
+                ctx.direction,
+                facing_primary,
+                rng_cursor,
+            );
+        }
+        if !facing_primary {
             // Need to turn first; the engine will rotate us, then call back.
             return;
         }
@@ -2668,6 +2897,19 @@ impl EnemyAi {
             }
         }
         let number_of_friends = self.base.list_us.len() as u16;
+        if reconsider_debug {
+            let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=lists us={:?} them={:?} swordfighting_enemies={} nearest_friend_solo={} rng={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.list_us,
+                self.list_them,
+                number_of_swordfighting_enemies,
+                nearest_friend_solo,
+                rng_cursor,
+            );
+        }
 
         // Merry men with bow flee!
         if self.is_merry_man_forest(ctx)
@@ -2675,6 +2917,13 @@ impl EnemyAi {
             && self.merry_man_forest_cassos(ctx, global)
         {
             // Flee!
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=merry_archer_flee rng={:?}",
+                    ctx.frame, self.base.me, rng_cursor,
+                );
+            }
             return;
         }
 
@@ -2703,6 +2952,13 @@ impl EnemyAi {
                     // command's EventDone re-enter this branch recursively.
                     self.base.outbox.actor.enter_swordfight =
                         Some(EnterSwordfightRequest::Rebalance(nearest_enemy_of_solo));
+                    if reconsider_debug {
+                        let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                        eprintln!(
+                            "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=rebalance target={} rng={:?}",
+                            ctx.frame, self.base.me, nearest_enemy_of_solo, rng_cursor,
+                        );
+                    }
                     return;
                 }
             }
@@ -2714,6 +2970,13 @@ impl EnemyAi {
 
         // Stupid-soldiers cheat short circuit.
         if global.stupid_soldiers_cheat {
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=stupid_soldiers_cheat rng={:?}",
+                    ctx.frame, self.base.me, rng_cursor,
+                );
+            }
             return;
         }
 
@@ -2721,11 +2984,32 @@ impl EnemyAi {
         // Preserve the `||` short-circuit: a zero roll at blood alcohol 0
         // consumes only the first draw and still freezes the soldier.
         if drunk_combat_freezes(sim, self.base.blood_alcohol) {
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=drunk_freeze rng={:?}",
+                    ctx.frame, self.base.me, rng_cursor,
+                );
+            }
             return;
+        }
+        if reconsider_debug {
+            let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=after_drunk blood={} rng={:?}",
+                ctx.frame, self.base.me, self.base.blood_alcohol, rng_cursor,
+            );
         }
 
         // Refresh primary snapshot in case it changed above.
         let Some(primary) = self.find_fighter(self.base.primary_target, tick).cloned() else {
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=missing_refreshed_primary primary={} rng={:?}",
+                    ctx.frame, self.base.me, self.base.primary_target, rng_cursor,
+                );
+            }
             return;
         };
         let to_target = pos_diff(&primary.position, &ctx.position);
@@ -2752,6 +3036,19 @@ impl EnemyAi {
             && my_fighting_ability >= combat::MIN_CAPACITY_CHARGE_WEAK_ENEMY
         {
             let target_pos = primary.position;
+            if reconsider_debug {
+                let rng_cursor = crate::sim_rng::original_replay_cursor(sim);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=return reason=weak_enemy_charge target={} distance={} max_range={:?} ability={} rng={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.primary_target,
+                    dist_to_target,
+                    my_max_range,
+                    my_fighting_ability,
+                    rng_cursor,
+                );
+            }
             self.go_near(
                 AiState::Attacking,
                 Substate::AttackingMovingAroundOldEnemy,
@@ -2765,8 +3062,7 @@ impl EnemyAi {
 
         // Re-evaluate combat position 1 in 3 ticks (skip in pure 1v1
         // fights and combat-trainer mode).
-        let reposition_debug =
-            reconsider_position_debug_matches(ctx.frame, ctx.original_creation_order, self.base.me);
+        let reposition_debug = reconsider_debug;
         let reposition_eligible = !self.combat_trainer
             && (number_of_friends != 1 || number_of_swordfighting_enemies != 1);
         // Preserve Original's short-circuit: pure 1v1 and trainer fights do
@@ -3821,6 +4117,56 @@ mod tests {
     }
 
     #[test]
+    fn arrow_protection_counts_inactive_seeking_orphan_from_complete_registry() {
+        // linux3 Profile_003 Savegame_071 replay-012 frame 5208: Soldiers
+        // 250..255 are inactive but remain Seeking orphan archers within the
+        // Original 500-unit camp-soldier scan. The swordfight-oriented nearby
+        // cache excludes them through IsAbleToFight and must not define this
+        // decision's candidate domain.
+        let ai = EnemyAi::new(219);
+        let ctx = AiContext {
+            position: position(1_520.0, 900.0),
+            ..AiContext::default()
+        };
+        let orphan = FighterSnapshot {
+            handle: 250,
+            position: position(1_328.0, 1_033.0),
+            elevation: 0.0,
+            is_friendly: true,
+            is_able_to_fight: false,
+            is_archer_unit: true,
+            ai_state: AiState::Seeking,
+            shield_bearer_before_me: 0,
+            is_tower_guard: false,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(orphan.clone());
+        assert_eq!(
+            ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
+            1,
+            "inactive is not an Original admission gate"
+        );
+
+        tick.fighter_registry[0].ai_state = AiState::Default;
+        assert_eq!(
+            ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
+            0,
+            "the explicit AI-state gate still rejects an inactive Default archer"
+        );
+
+        tick.fighter_registry[0] = FighterSnapshot {
+            position: position(2_100.0, 900.0),
+            ..orphan
+        };
+        assert_eq!(
+            ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
+            0,
+            "the complete registry must still obey the strict 500-unit radius"
+        );
+    }
+
+    #[test]
     fn phalanx_advance_uses_original_aspect_aware_normalization() {
         // Schema-14 Savegame_034/replay-009, frame 34182. Soldier 52 is
         // the center of the three-man phalanx and PC 167 is its target.
@@ -4202,6 +4548,127 @@ mod tests {
             &refreshed_primary.position,
             "a refreshed principal opponent must not inherit the old target's live geometry"
         );
+    }
+
+    fn lost_enemy_reconsider_fixture(company_number: u16) -> (EnemyAi, AiContext, AiPerTickData) {
+        const OWNER: u32 = 21;
+        const TARGET: u32 = 20;
+
+        let target = crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        let mut target_view = crate::ai_entity_view::entity_view_from_entity(
+            &target,
+            51,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        target_view.position = position(100.0, 0.0);
+        target_view.camp = crate::element::Camp::Royalists;
+        target_view.active = false;
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(TARGET, target_view);
+        let ctx = AiContext {
+            position: position(0.0, 0.0),
+            self_is_active: true,
+            camp: crate::element::Camp::Lacklandists,
+            is_swordfighting: true,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: OWNER,
+            principal_opponent: TARGET,
+            is_friendly: true,
+            ..FighterSnapshot::default()
+        });
+        tick.primary_target_is_pc = true;
+        tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
+            position(0.0, 100.0),
+            4,
+        ));
+
+        let mut ai = EnemyAi::new(OWNER);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
+        ai.base.primary_target = TARGET;
+        ai.company_number = company_number;
+        (ai, ctx, tick)
+    }
+
+    #[test]
+    fn lost_enemy_overview_faces_live_target_not_forecast_destination() {
+        // randomguy Profile_004/Savegame_030 replay-014 frame 3456:
+        // Original forecasts the missed PC for possible pursuit, but the
+        // no-follow branch snaps Soldier 21 toward the PC's current Position.
+        let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(100);
+        let sim = SimulationContext::with_seed(0);
+        ai.reconsider_swordfight(
+            &sim,
+            false,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.seek_position, position(0.0, 100.0));
+        assert_eq!(vec_to_sector(100.0, 0.0), 4);
+        assert_eq!(vec_to_sector(0.0, 100.0), 8);
+        let direction_prefixes: Vec<_> = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .filter_map(|work| match work {
+                crate::ai::AiOwnerWork::ActorEffects(effects) => effects.set_direction_instantly,
+                crate::ai::AiOwnerWork::StateChange(change) => change
+                    .actor_effects_before_callback
+                    .as_ref()
+                    .and_then(|effects| effects.set_direction_instantly),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            direction_prefixes,
+            vec![4],
+            "the live-target snap must cross exactly one pre-StopAll actor boundary"
+        );
+        assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+    }
+
+    #[test]
+    fn lost_enemy_follow_path_keeps_forecast_as_seek_center_without_direction_snap() {
+        let (mut ai, ctx, tick) = lost_enemy_reconsider_fixture(0);
+        let sim = SimulationContext::with_seed(0);
+        ai.reconsider_swordfight(
+            &sim,
+            false,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
+        assert_eq!(ai.seek_center, position(0.0, 100.0));
+        assert_eq!(ai.base.current_state, AiState::Seeking);
     }
 
     #[test]

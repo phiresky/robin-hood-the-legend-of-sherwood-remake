@@ -482,7 +482,11 @@ pub fn receive_sword_damage(
                 def_profile,
                 defender.direction,
                 attacker.direction_to_attacker,
-                get_strike_direction(attacker_profile, *strike),
+                // ReceiveSwordDamage asks the defender's `mpSword` for both
+                // its protection and the strike-direction classification.
+                // The damage payload's sword remains authoritative for the
+                // cutting and stunning values below.
+                get_strike_direction(def_profile, *strike),
                 attacker.elevation,
                 defender.elevation,
             );
@@ -875,8 +879,17 @@ pub fn is_in_bow_range(max_bow_range: u16, distance: f32) -> bool {
 /// Energy cost of performing a sword strike.
 /// Returns the tiredness increase from executing the strike.
 pub fn strike_energy_cost(profile: &HtHWeaponProfile, strike: SwordStrike) -> u16 {
-    let energy = profile.thrusts[strike as usize].energy;
-    if energy == 0 { 1 } else { energy }
+    profile.thrusts[strike as usize].energy
+}
+
+/// Apply a completed strike's energy to Original's serialized `UWORD`
+/// tiredness accumulator.
+///
+/// `muwTiredness += GetStrikeEnergy(...)` performs the addition after integer
+/// promotion and then narrows back to the unsigned 16-bit member. Preserve
+/// that modulo-2^16 assignment rather than saturating at the Rust type bound.
+pub fn add_strike_tiredness(current_tiredness: u16, strike_energy: u16) -> u16 {
+    current_tiredness.wrapping_add(strike_energy)
 }
 
 /// Tiredness recovery per frame when not fighting or moving.
@@ -947,21 +960,27 @@ fn is_group_strike(strike: SwordStrike) -> bool {
 
 /// Convert a 0-15 direction sector to angle in radians.
 ///
-/// The trailing `+ 0.1` rad nudges the result a fraction past the sector's
-/// begin edge, so the floor-based `angle_to_sector` round-trips back to
-/// the same sector.
+/// Original's trailing `+ 0.1` nudges the beginning edge just inside the
+/// sector so `AngleToSector` round-trips it to the same sector.
 fn sector_to_angle(sector: i16) -> f32 {
-    (sector as f32) * PI * 2.0 / 16.0 + 0.1
+    // Original's unsuffixed literals promote the UBYTE sector and f32 PI
+    // constant to double for the whole expression, then narrow on return.
+    ((f64::from(sector) / 16.0) * 2.0 * f64::from(PI) + 0.1) as f32
 }
 
 /// Convert an angle in radians to a 0-15 sector.
 ///
-/// Floor binning where sector `k` covers `[k·2π/16, (k+1)·2π/16)`. Input
-/// is normalised into `[0, 2π)` first, so negative angles work naturally.
+/// Positive angles use Original's truncating ULONG conversion and modulo.
+/// Negative angles use its recursive mirror rule, including its asymmetric
+/// treatment of exact negative sector boundaries.
 fn angle_to_sector(angle: f32) -> u8 {
-    let two_pi = PI * 2.0;
-    let normalized = ((angle % two_pi) + two_pi) % two_pi;
-    ((normalized / two_pi * 16.0).floor() as u32 % 16) as u8
+    if angle >= 0.0 {
+        // As in Original, the unsuffixed constants keep this calculation in
+        // double until the truncating ULONG cast.
+        ((f64::from(angle) / (2.0 * f64::from(PI)) * 16.0) as u32 % 16) as u8
+    } else {
+        16 - angle_to_sector(-angle) - 1
+    }
 }
 
 /// Check if `sector` is between `begin` and `end` (inclusive, wrapping 0-15).
@@ -974,6 +993,36 @@ fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
 }
 
 // ─── Multi-victim strike estimation ────────────────────────────────
+
+/// Build the separately normalized forward and side axes used by Original's
+/// push-strike rectangle.
+///
+/// The side axis is a copied direction vector rotated through
+/// `SBGeoVector2D::Rotate(PI / 2.0)`. That method receives a FLOAT angle but
+/// evaluates `sin`/`cos` and its component expressions in double precision,
+/// so it is not bit-identical to the `(-forward.y, forward.x)` shortcut.
+pub(crate) fn push_strike_basis(direction: i16) -> ((f32, f32), (f32, f32)) {
+    let (forward_x, base_y) = crate::element_kinds::direction_vector_16(direction);
+    let forward_y =
+        base_y * ASPECT_RATIO * crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO;
+
+    let angle = (f64::from(PI) / 2.0) as f32;
+    let sine = f64::from(angle).sin();
+    let cosine = f64::from(angle).cos();
+    let side_x = (f64::from(forward_x) * cosine - f64::from(forward_y) * sine) as f32;
+    let side_y = (f64::from(forward_x) * sine + f64::from(forward_y) * cosine) as f32;
+
+    let forward_square_norm = forward_x * forward_x + forward_y * forward_y;
+    let forward_norm = f64::from(forward_square_norm).sqrt() as f32;
+    let side_square_norm = side_x * side_x + side_y * side_y;
+    let side_norm = f64::from(side_square_norm).sqrt() as f32;
+    assert!(forward_norm != 0.0 && side_norm != 0.0);
+
+    (
+        (forward_x / forward_norm, forward_y / forward_norm),
+        (side_x / side_norm, side_y / side_norm),
+    )
+}
 
 /// A nearby entity that might be hit by a sword strike, pre-collected
 /// by the caller from the entity list. Positions are relative to the
@@ -1081,20 +1130,12 @@ fn is_victim_in_strike_arc(
             if max_norm >= 150.0 {
                 return false;
             }
-            let (fx_raw, fy_raw) = crate::element_kinds::direction_vector_16(attacker_direction);
-            let fy_raw =
-                fy_raw * ASPECT_RATIO * crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO;
-            let len = (fx_raw * fx_raw + fy_raw * fy_raw).sqrt();
-            let (fx, fy) = if len > 1e-3 {
-                (fx_raw / len, fy_raw / len)
-            } else {
-                (fx_raw, fy_raw)
-            };
-            let sx = -fy;
-            let sy = fx;
+            let ((fx, fy), (sx, sy)) = push_strike_basis(attacker_direction);
             let front_dist = victim.dx * fx + victim.dy_stretched * fy;
             let side_dist = (victim.dx * sx + victim.dy_stretched * sy).abs();
-            let half_width = thrust.repulsion as f32 / 2.0;
+            // Original stores this in an ULONG and divides before comparing
+            // against the floating-point side distance, so odd widths truncate.
+            let half_width = (thrust.repulsion / 2) as f32;
             front_dist >= min_d && front_dist <= max_d && side_dist <= half_width
         }
 
@@ -1146,7 +1187,9 @@ fn is_victim_in_strike_arc(
 
 /// Convert degrees to radians (profile stores integer degrees).
 fn degrees_to_radians(degrees: u16) -> f32 {
-    (degrees as f32) * PI / 180.0
+    // `degrees / 360.0 * 2.0 * PI` is double-promoted in Original and
+    // narrowed only by the FLOAT return value.
+    ((f64::from(degrees) / 360.0) * 2.0 * f64::from(PI)) as f32
 }
 
 /// Estimate damage of a single strike against a single victim.
@@ -2199,6 +2242,89 @@ mod tests {
     }
 
     #[test]
+    fn live_sword_damage_uses_defender_weapon_for_protection_direction() {
+        let mut attacker_profile = make_hth_profile();
+        let mut defender_profile = attacker_profile.clone();
+        let strike = SwordStrike::A;
+        attacker_profile.thrusts[strike as usize].kind = WeaponThrustKind::Lateral;
+        attacker_profile.thrusts[strike as usize].direction = WeaponThrustDirection::LeftToRight;
+        attacker_profile.thrusts[strike as usize].cutting = 10;
+        attacker_profile.thrusts[strike as usize].stunning = 0;
+        defender_profile.thrusts[strike as usize].kind = WeaponThrustKind::Lateral;
+        defender_profile.thrusts[strike as usize].direction = WeaponThrustDirection::RightToLeft;
+        // Facing north with the attacker due north, LTR selects HIT_RIGHT
+        // while RTL selects HIT_LEFT. Extreme protection values make the
+        // result independent of the actual 1..=99 rolls.
+        attacker_profile.protection_by_localization = [0, 0, 99, 0, 0];
+        attacker_profile.bludgeon_protection = 99;
+        defender_profile.protection_by_localization = [0, 0, 99, 0, 0];
+        defender_profile.bludgeon_protection = 99;
+
+        let defender = SwordDefenderContext {
+            action_state: ActionState::WaitingSword,
+            direction: 0,
+            elevation: 0.0,
+        };
+        let attacker = SwordAttackerContext {
+            direction: 0,
+            direction_to_attacker: 0,
+            elevation: 0.0,
+            fighting_ability: 50,
+            is_rank_soldier: false,
+        };
+        let ctx = default_ctx();
+
+        let apply = |defender_profile: &HtHWeaponProfile| {
+            let sim_context = crate::sim_rng::test_context();
+            let mut human = make_human();
+            let mut life_points = 100;
+            let ((result, cutting), trace) = crate::sim_rng::with_draw_trace(|| {
+                receive_sword_damage(
+                    &sim_context,
+                    &mut human,
+                    &mut life_points,
+                    &SwordDamageParams {
+                        defender: &defender,
+                        defender_profile: Some(defender_profile),
+                        attacker_profile: &attacker_profile,
+                        strike,
+                        attacker: &attacker,
+                        concussion_ctx: &ctx,
+                        max_life_points: 100,
+                    },
+                )
+            });
+            (result, cutting, life_points, trace)
+        };
+
+        let (heterogeneous_result, heterogeneous_cutting, heterogeneous_life, trace) =
+            apply(&defender_profile);
+        assert!(heterogeneous_result.is_empty());
+        assert_eq!(heterogeneous_cutting, 0);
+        assert_eq!(heterogeneous_life, 100);
+        assert_eq!(
+            trace,
+            vec![
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+            ]
+        );
+
+        let (same_profile_result, same_profile_cutting, same_profile_life, trace) =
+            apply(&attacker_profile);
+        assert!(same_profile_result.contains(SwordDamageResult::CUTTING_DAMAGE));
+        assert_eq!(same_profile_cutting, 10);
+        assert_eq!(same_profile_life, 90);
+        assert_eq!(
+            trace,
+            vec![
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+            ]
+        );
+    }
+
+    #[test]
     fn sword_damage_preserves_already_comatose_pc_at_lethal_boundary() {
         let sim_context = crate::sim_rng::test_context();
         let mut human = make_human();
@@ -2480,16 +2606,148 @@ mod tests {
         assert!(strike_has_push_effect(&profile, SwordStrike::Charge)); // Always push
     }
 
+    #[test]
+    fn push_strike_width_uses_original_integer_half_width() {
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::PushAside,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            repulsion: 5,
+            ..Default::default()
+        };
+        // Direction 0 points along -Y, making X the side distance. A width
+        // of 5 therefore has Original's ULONG half-width 2, not 2.5.
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: 2.25,
+            dy_stretched: -10.0,
+            distance: 10.25,
+            direction_sector: 0,
+            camp: Camp::Royalists,
+            facing_direction: 0,
+            elevation: 0.0,
+            life_points: 10,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim,
+            false
+        ));
+
+        // Even widths are unchanged: width 6 has half-width 3 and admits
+        // the same victim.
+        profile.thrusts[SwordStrike::A as usize].repulsion = 6;
+        assert!(is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim,
+            false
+        ));
+    }
+
+    #[test]
+    fn push_strike_side_axis_keeps_original_float_rotate_residual() {
+        let ((forward_x, forward_y), (side_x, side_y)) = push_strike_basis(0);
+        assert_eq!((forward_x.to_bits(), forward_y.to_bits()), (0, 0xbf80_0000));
+        assert_eq!(
+            (side_x.to_bits(), side_y.to_bits()),
+            (0x3f80_0000, 0x333b_bd2e)
+        );
+
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::PushAside,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            repulsion: 20,
+            ..Default::default()
+        };
+        let victim = |dx| NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx,
+            dy_stretched: -100.0,
+            distance: 101.0,
+            direction_sector: 0,
+            camp: Camp::Royalists,
+            facing_direction: 0,
+            elevation: 0.0,
+            life_points: 10,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim(-10.0),
+            false
+        ));
+        assert!(is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim(10.0),
+            false
+        ));
+        assert!(is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::A,
+            0,
+            &victim(9.0),
+            false
+        ));
+    }
+
+    #[test]
+    fn strike_arc_angles_preserve_original_promotions_and_negative_sectors() {
+        let original_sector_angle =
+            ((6.0_f64 / 16.0) * 2.0 * f64::from(std::f32::consts::PI) + 0.1) as f32;
+        assert_eq!(
+            sector_to_angle(6).to_bits(),
+            original_sector_angle.to_bits()
+        );
+
+        let original_strike_angle =
+            ((7.0_f64 / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32;
+        assert_eq!(
+            degrees_to_radians(7).to_bits(),
+            original_strike_angle.to_bits()
+        );
+
+        // Original handles negative angles recursively instead of first
+        // normalizing them. Exactly -PI/8 therefore belongs to sector 14,
+        // not sector 15 from the normalized-floor formulation.
+        assert_eq!(angle_to_sector(-std::f32::consts::PI / 8.0), 14);
+    }
+
     // ── Energy cost ────────────────────────────────────────────────
 
     #[test]
     fn strike_energy() {
         let profile = make_hth_profile();
         assert_eq!(strike_energy_cost(&profile, SwordStrike::A), 3);
-        // Zero-energy strike falls back to 1
+        // RHSword::GetStrikeEnergy returns the authored value directly for a
+        // real strike, so zero remains zero.
         let mut p2 = profile.clone();
         p2.thrusts[2].energy = 0;
-        assert_eq!(strike_energy_cost(&p2, SwordStrike::C), 1);
+        assert_eq!(strike_energy_cost(&p2, SwordStrike::C), 0);
+    }
+
+    #[test]
+    fn completed_strike_tiredness_uses_uword_assignment() {
+        assert_eq!(add_strike_tiredness(11, 0), 11);
+        assert_eq!(add_strike_tiredness(11, 7), 18);
+        assert_eq!(add_strike_tiredness(u16::MAX - 2, 7), 4);
     }
 
     // ── Tiredness recovery ─────────────────────────────────────────

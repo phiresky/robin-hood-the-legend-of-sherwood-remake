@@ -6,6 +6,71 @@ use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
 
+fn arrow_publication_debug_filter(
+    frame_after: u32,
+    shooter_creation_order: u32,
+    projectile_creation_order: Option<u32>,
+) -> bool {
+    if std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for arrow publication diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")
+        .is_none_or(|value| value == frame_after)
+        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER")
+            .is_none_or(|value| value == shooter_creation_order)
+        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER")
+            .is_none_or(|value| projectile_creation_order.is_none_or(|actual| value == actual))
+}
+
+fn record_arrow_publication_debug(
+    stage: &str,
+    frame_after: u32,
+    shooter_creation_order: u32,
+    projectile_creation_order: Option<u32>,
+    entity: &Entity,
+) {
+    if !arrow_publication_debug_filter(
+        frame_after,
+        shooter_creation_order,
+        projectile_creation_order,
+    ) {
+        return;
+    }
+    let Entity::Projectile(arrow) = entity else {
+        panic!("arrow publication diagnostic received a non-projectile entity");
+    };
+    let sprite = &arrow.element.sprite;
+    let position = sprite.position_iface.get_position();
+    let old_position = sprite.position_iface.v48_serialized_state().old_position;
+    eprintln!(
+        "PARITY_ARROW_PUBLICATION_RUST stage={stage} frame_after={frame_after} \
+         projectile_creation_order={projectile_creation_order:?} \
+         shooter_creation_order={shooter_creation_order} active={} flying={} falling={} \
+         trajectory_size={} row={} frame={} frame_count={} \
+         position_bits=[{:08x},{:08x},{:08x}] old_position_bits=[{:08x},{:08x},{:08x}]",
+        arrow.element.active,
+        arrow.projectile.flying,
+        arrow.projectile.falling,
+        arrow.projectile.trajectory.len(),
+        sprite.current_row,
+        sprite.current_frame,
+        sprite.frame_count,
+        position.x.to_bits(),
+        position.y.to_bits(),
+        position.z.to_bits(),
+        old_position.x.to_bits(),
+        old_position.y.to_bits(),
+        old_position.z.to_bits(),
+    );
+}
+
 fn projectile_landing_debug_matches(frame: u32, shooter: EntityId, projectile: EntityId) -> bool {
     if std::env::var_os("PARITY_DEBUG_PROJECTILE_LANDING").is_none() {
         return false;
@@ -347,6 +412,68 @@ impl EngineInner {
         .then_some((seq_id, elem_idx, order.order_id))
     }
 
+    /// Deliver Original `ShootWithBowAt`'s shield warning at the release
+    /// callsite. `RHArtificialIntelligence::Think(EVENT_ARROW_LAUNCHED)` is
+    /// synchronous there, before both the hit roll and arrow insertion.
+    fn warn_shield_target_of_arrow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        shooter: EntityId,
+        target: EntityId,
+    ) {
+        // Shield-bearer admission is two-gated: the HtH weapon must be a
+        // shield weapon *and* the soldier's sprite profile must carry a
+        // `WaitingShield` animation row.
+        let target_is_shield_soldier = match self.get_entity(target) {
+            Some(Entity::Soldier(s)) => {
+                let soldier_profile = assets
+                    .profile_manager
+                    .get_soldier(s.soldier.soldier_profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bow target {} requires missing soldier profile {}",
+                            target.index(),
+                            s.soldier.soldier_profile_index
+                        )
+                    });
+                let weapon = assets
+                    .profile_manager
+                    .get_hth_weapon(soldier_profile.hth_weapon_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bow target {} soldier profile {} requires missing HtH weapon {}",
+                            target.index(),
+                            s.soldier.soldier_profile_index,
+                            soldier_profile.hth_weapon_id
+                        )
+                    });
+                weapon.shield
+                    && s.element
+                        .sprite
+                        .has_animation(crate::order::OrderType::WaitingShield)
+            }
+            _ => false,
+        };
+        if !target_is_shield_soldier {
+            return;
+        }
+
+        // This is a live cone + LOS query, not the detection cadence's stale
+        // `seen_now` snapshot, matching Original's direct IsDetecting call.
+        if self.npc_is_detecting_human(assets, target, shooter, self.control.frame_counter) {
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                target,
+                assets,
+                crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventArrowLaunched,
+                    shooter.index(),
+                ),
+            );
+        }
+    }
+
     /// Advance one exact selected bow arm without detaching or restoring any
     /// other actor state.
     pub(super) fn tick_bow_shot_for(
@@ -500,58 +627,7 @@ impl EngineInner {
                 target_movement,
             );
 
-            // Warn shield-bearing target soldiers that they're being shot
-            // at before the hit roll and projectile insertion, matching
-            // C++ `ShootWithBowAt`.
-            // Shield-bearer admission is two-gated: the HtH weapon must be a
-            // shield weapon *and* the soldier's sprite profile must carry a
-            // `WaitingShield` animation row. A shield-flagged weapon on a
-            // profile that never learned the shield stance is not a bearer.
-            let target_is_shield_soldier = match self.get_entity(result.target) {
-                Some(Entity::Soldier(s)) => {
-                    let weapon_is_shield = match assets
-                        .profile_manager
-                        .get_soldier(s.soldier.soldier_profile_index)
-                        .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
-                    {
-                        Some(w) => w.shield,
-                        None => {
-                            tracing::warn!(
-                                target = ?result.target,
-                                "Bow shot shield warning skipped: missing soldier HtH weapon profile"
-                            );
-                            false
-                        }
-                    };
-                    weapon_is_shield
-                        && s.element
-                            .sprite
-                            .has_animation(crate::order::OrderType::WaitingShield)
-                }
-                _ => false,
-            };
-            if target_is_shield_soldier {
-                // The shield bearer runs its own cone + LOS query here rather
-                // than reading the detection pass's `seen_now` flag: that flag
-                // only refreshes on the bearer's detection cadence, so an
-                // archer who stepped out from behind a wall this frame would
-                // otherwise go unnoticed until the next cadence tick.
-                let target_detects_shooter = self.npc_is_detecting_human(
-                    assets,
-                    result.target,
-                    result.shooter,
-                    self.control.frame_counter,
-                );
-                if target_detects_shooter {
-                    self.dispatch_ai_stimulus(
-                        result.target,
-                        crate::ai::Stimulus::with_human(
-                            crate::ai::StimulusType::EventArrowLaunched,
-                            result.shooter.index(),
-                        ),
-                    );
-                }
-            }
+            self.warn_shield_target_of_arrow(sim, assets, result.shooter, result.target);
 
             // ── Hit chance roll ──────────────────────────────────
             // C++ only applies `mpBow->GetHitChance(...)` in the
@@ -613,24 +689,44 @@ impl EngineInner {
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
+            let collision_debug_identity =
+                crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
+                    crate::sight_obstacle::ProjectileCollisionDebugIdentity {
+                        frame: self.control.frame_counter,
+                        shooter: result.shooter.index(),
+                        projectile_creation_order: self.world.next_original_creation_order,
+                    }
+                });
+            let capture_collision_debug = collision_debug_identity
+                .is_some_and(crate::sight_obstacle::projectile_collision_debug_matches);
+            let compute_trajectory = || {
+                bow_shot::compute_trajectory_ballistic_with_terminal_impact(
+                    bow_point,
+                    velocity,
+                    mass,
+                    flat_shot,
+                    // Magic-bullet short-circuit: skip the obstacle check entirely.
+                    if magic_bullet {
+                        None
+                    } else {
+                        Some(&obstacle_check)
+                    },
+                )
+            };
             let (
                 trajectory,
                 terminal_obstacle,
                 terminal_impact,
                 terminal_lands_in_hole,
                 terminal_lands_in_water,
-            ) = bow_shot::compute_trajectory_ballistic_with_terminal_impact(
-                bow_point,
-                velocity,
-                mass,
-                flat_shot,
-                // Magic-bullet short-circuit: skip the obstacle check entirely.
-                if magic_bullet {
-                    None
-                } else {
-                    Some(&obstacle_check)
-                },
-            );
+            ) = if capture_collision_debug {
+                crate::sight_obstacle::with_projectile_collision_debug_identity(
+                    collision_debug_identity.expect("matched collision debug has no identity"),
+                    compute_trajectory,
+                )
+            } else {
+                compute_trajectory()
+            };
             let terminal_obstacle_plane =
                 bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
             let trajectory_end = trajectory.last().map(|tp| tp.position);
@@ -704,6 +800,24 @@ impl EngineInner {
                 lands_in_hole: terminal_lands_in_hole,
                 initial_velocity: velocity,
             });
+            let diagnostic_identity =
+                std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").map(|_| {
+                    (
+                        self.control.frame_counter.checked_add(1).expect(
+                            "frame counter overflow while recording arrow publication diagnostic",
+                        ),
+                        self.world.original_creation_order(result.shooter),
+                    )
+                });
+            if let Some((frame_after, shooter_creation_order)) = diagnostic_identity {
+                record_arrow_publication_debug(
+                    "after_spawn_arrow",
+                    frame_after,
+                    shooter_creation_order,
+                    None,
+                    &arrow,
+                );
+            }
             let Entity::Projectile(arrow_projectile) = &mut arrow else {
                 panic!("spawn_arrow returned a non-projectile entity");
             };
@@ -714,6 +828,28 @@ impl EngineInner {
             arrow_projectile.projectile.trajectory_origin_sector = trajectory_origin_sector;
             arrow_projectile.projectile.trajectory_origin_layer = layer;
             let arrow_id = self.add_entity(arrow);
+            if capture_collision_debug {
+                crate::sight_obstacle::validate_projectile_collision_debug_spawn(
+                    arrow_id,
+                    self.world.original_creation_order(arrow_id),
+                );
+            }
+            let diagnostic_projectile_creation_order =
+                diagnostic_identity.map(|_| self.world.original_creation_order(arrow_id));
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_add_entity",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing immediately after add_entity"),
+                );
+            }
             if let Some(resolution) = initial_landing_resolution {
                 if projectile_landing_debug_matches(
                     self.control.frame_counter,
@@ -742,6 +878,48 @@ impl EngineInner {
                     let landing = trajectory_end
                         .expect("terminal impact lost its endpoint")
                         .to_map();
+                    let terminal_obstacle_ref = terminal_obstacle.map(|handle| {
+                        let index = usize::from(u16::from(handle));
+                        obstacle_list.get(index).unwrap_or_else(|| {
+                            panic!("diagnostic terminal obstacle {index} disappeared")
+                        })
+                    });
+                    let material_inputs = terminal_obstacle_ref.map(|obstacle| {
+                        let sectors = obstacle
+                            .material_sectors
+                            .iter()
+                            .enumerate()
+                            .map(|(index, sector)| {
+                                (
+                                    index,
+                                    sector.material,
+                                    sector.bounding_box.contains_point(landing),
+                                    sector.contains(landing),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        (obstacle.material, sectors)
+                    });
+                    let ground_material_inputs = assets
+                        .water_zones
+                        .zones
+                        .iter()
+                        .enumerate()
+                        .map(|(index, zone)| {
+                            (
+                                index,
+                                zone.material,
+                                zone.bounding_box.contains_point(landing),
+                                zone.contains(landing),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let scoped_material = crate::water_zones::determine_water_hole_scoped(
+                        &assets.water_zones,
+                        terminal_obstacle_ref,
+                        landing,
+                    )
+                    .map(|resolved| (resolved.material, resolved.sector_points.map(<[_]>::len)));
                     let candidate_layer = obstacle
                         .filter(|(_, active, projection, layer, _, _)| {
                             *active && *projection && *layer != u16::MAX
@@ -770,7 +948,7 @@ impl EngineInner {
                         Vec::new()
                     };
                     eprintln!(
-                        "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_obstacle={obstacle:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
+                        "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_impact={} lands_in_water={} lands_in_hole={} terminal_obstacle={obstacle:?} material_inputs={material_inputs:?} ground_material_inputs={ground_material_inputs:?} scoped_material={scoped_material:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
                         self.control.frame_counter,
                         result.shooter.index(),
                         arrow_id.index(),
@@ -788,6 +966,9 @@ impl EngineInner {
                             .to_bits(),
                         landing.x.to_bits(),
                         landing.y.to_bits(),
+                        terminal_impact,
+                        terminal_lands_in_water,
+                        terminal_lands_in_hole,
                         candidate_layer,
                     );
                 }
@@ -819,7 +1000,35 @@ impl EngineInner {
             // the flying arrow renders its proper sprite instead of the
             // colored-rect fallback.
             self.attach_accessory_sprite(assets, arrow_id);
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_attach_accessory_sprite",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing after accessory sprite attachment"),
+                );
+            }
             self.tick_new_projectile_once(sim, assets, arrow_id);
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_first_hourglass",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing after its first hourglass"),
+                );
+            }
             spawned_projectiles.push(arrow_id);
 
             tracing::debug!(
@@ -1970,7 +2179,7 @@ mod tests {
     };
     use crate::element::{
         ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
-        HumanData, ObjectData, Posture, ProjectileData,
+        EntityId, HumanData, ObjectData, Posture, ProjectileData,
     };
     use crate::engine::{EngineInner, LevelAssets};
     use crate::order::OrderType;
@@ -1993,6 +2202,518 @@ mod tests {
             human: HumanData::default(),
             pc: Default::default(),
         })
+    }
+
+    fn make_arrow_warning_soldier() -> Entity {
+        let mut soldier = crate::element::ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        soldier.npc.life_points = 100;
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        Entity::Soldier(soldier)
+    }
+
+    fn bind_arrow_warning_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WaitingShield as usize] = 0;
+        conversion[OrderType::LoweringShield as usize] = 0;
+        let script = SpriteScript {
+            action_id: OrderType::WaitingShield as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![0, 0],
+            distances: vec![0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0, 0],
+        };
+        entity.element_data_mut().sprite =
+            crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    }
+
+    fn arrow_warning_fixture(
+        shield_weapon: bool,
+        shooter_x: f32,
+    ) -> (
+        EngineInner,
+        LevelAssets,
+        EntityId,
+        EntityId,
+        crate::sequence::SequenceId,
+    ) {
+        use crate::ai::{AiState, Substate};
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{Command, EyeStatus};
+        use crate::sequence::SequenceElement;
+
+        let mut engine = EngineInner::new();
+        // Legacy human handles reserve zero as NULL; production has a hidden
+        // pre-level prefix, so keep the test shooter on a nonzero handle too.
+        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..Default::default()
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let mut shooter = make_pc(Posture::Upright);
+        shooter.element_data_mut().active = true;
+        shooter
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(shooter_x, 0.0, 0.0));
+        shooter
+            .element_data_mut()
+            .set_position_map(MapPoint::new(shooter_x, 0.0));
+        shooter.pc_data_mut().unwrap().life_points = 100;
+        let shooter_id = engine.add_entity(shooter);
+
+        let mut target = make_arrow_warning_soldier();
+        bind_arrow_warning_sprite(&mut target);
+        target
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
+        target
+            .element_data_mut()
+            .set_position_map(MapPoint::new(0.0, 0.0));
+        target.element_data_mut().set_direction_instantly(4);
+        let target_id = engine.add_entity(target);
+        assert!(shooter_id.index() < target_id.index());
+
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profiles = Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers[0].hth_weapon_id = 1;
+        profiles.hth_weapons[0].shield = shield_weapon;
+
+        let Entity::Soldier(target) = engine.get_entity_mut(target_id).unwrap() else {
+            unreachable!()
+        };
+        target.actor.action_state = ActionState::HoldingShield;
+        target.npc.view_direction = [1.0, 0.0];
+        target.npc.view_radius = 135;
+        target.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        target.npc.eye_status = EyeStatus::Stare;
+        let ai = target.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.me = target_id.index();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingProtectingWithShield;
+
+        let lower = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(
+                1,
+                Command::LowerShield,
+                Some(target_id),
+            ));
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(target_id, Command::LowerShield, lower, 0);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(target_id)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::LoweringShield)
+        );
+
+        (engine, assets, shooter_id, target_id, lower)
+    }
+
+    #[test]
+    fn arrow_warning_synchronously_interrupts_later_shield_target_and_preserves_fifo() {
+        use crate::ai::{Stimulus, StimulusType};
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, lower) = arrow_warning_fixture(true, 55.0);
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli
+            .push(Stimulus::new(StimulusType::EventTimer));
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(lower, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "the release-site Think must interrupt LowerShield before the later target slot animates"
+        );
+        assert_eq!(
+            engine
+                .get_entity(target)
+                .and_then(Entity::enemy_ai)
+                .unwrap()
+                .base
+                .primary_target,
+            shooter.index(),
+            "the arrow reaction must run now, not remain queued for the target's later slot"
+        );
+        let queued = &engine
+            .get_entity(target)
+            .and_then(Entity::ai_controller)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli;
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].stimulus_type, StimulusType::EventTimer);
+    }
+
+    #[test]
+    fn arrow_warning_skips_nonshield_and_nonseeing_targets() {
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        for (shield_weapon, shooter_x) in [(false, 55.0), (true, 500.0)] {
+            let (mut engine, assets, shooter, target, lower) =
+                arrow_warning_fixture(shield_weapon, shooter_x);
+
+            engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(lower, 0)
+                    .unwrap()
+                    .state,
+                SequenceState::InProgress
+            );
+            assert!(
+                engine
+                    .get_entity(target)
+                    .and_then(Entity::ai_controller)
+                    .unwrap()
+                    .outbox
+                    .detection
+                    .stimuli
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "bow target 2 requires missing soldier profile 9")]
+    fn arrow_warning_rejects_missing_authoritative_soldier_profile() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, _) = arrow_warning_fixture(true, 55.0);
+        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+            unreachable!()
+        };
+        soldier.soldier.soldier_profile_index = SoldierProfileIdx(9);
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+    }
+
+    fn attach_drop_test_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+        let script = SpriteScript {
+            action_id: 0,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            Arc::new(vec![script; 16]),
+            Arc::new(vec![0; NONANIMATION_END]),
+        );
+    }
+
+    fn corpse_drop_pair(
+        carrier_pos: crate::coordinates::MapPoint,
+    ) -> (
+        EngineInner,
+        crate::element::EntityId,
+        crate::element::EntityId,
+    ) {
+        let mut engine = EngineInner::new();
+        let target_id = engine.add_entity(make_pc(Posture::Carried));
+        let mut carrier = make_pc(Posture::CarryingCorpse);
+        attach_drop_test_sprite(&mut carrier);
+        carrier.pc_data_mut().unwrap().carried = Some(target_id);
+        carrier.element_data_mut().set_position_map(carrier_pos);
+        let carrier_id = engine.add_entity(carrier);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+        (engine, carrier_id, target_id)
+    }
+
+    fn install_corpse_drop_building_sector(engine: &mut EngineInner, raw_sector: u16) {
+        let mut level = crate::fast_find_grid::LevelGrid::default();
+        level
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::BUILDING,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        engine.world.fast_grid_mut().level = Arc::new(level);
+    }
+
+    #[test]
+    fn delayed_corpse_drop_carries_sloped_surface_into_next_frame_position() {
+        let carrier_pos = crate::coordinates::MapPoint::new(743.0, 1681.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: -0.270_139,
+            bz: -1.787_207,
+            dz: 3396.161_9,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        let cached_position = crate::coordinates::WorldPoint3D::new(700.0, 1906.001, 225.001);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_position(cached_position);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Grass);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(1);
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 15);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().layer(), 1);
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Grass
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(target.element_data().position(), cached_position);
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(743.0, 1681.0).to_bits()
+        );
+        assert_ne!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn outdoor_null_surface_corpse_drop_preserves_cached_elevation_until_delayed_commit() {
+        let carrier_pos = crate::coordinates::MapPoint::new(3126.2605, 2149.9695);
+        let carried_position = crate::coordinates::WorldPoint3D::new(3125.0, 2375.001, 225.001);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position(carried_position);
+        }
+        let carried_map = engine
+            .get_entity(target_id)
+            .unwrap()
+            .element_data()
+            .position_map();
+
+        engine.apply_completed_corpse_drop(
+            carrier_id,
+            target_id,
+            Posture::DeadBack,
+            carrier_pos,
+            0,
+        );
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position(), carried_position);
+        assert_eq!(target.element_data().position_map(), carried_map);
+        assert_eq!(target.position_iface().get_obstacle(), None);
+        assert_eq!(target.position_iface().get_plane(), None);
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn delayed_corpse_drop_updates_intersections_at_old_current_position() {
+        let carried_position = crate::coordinates::MapPoint::new(100.0, 100.0);
+        let drop_position = crate::coordinates::MapPoint::new(300.0, 300.0);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(drop_position);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position_map(carried_position);
+            assert_eq!(
+                target
+                    .human_data()
+                    .unwrap()
+                    .last_is_lying_for_corpse_intersection,
+                None,
+                "freshly adopted carried bodies have no derived observer state"
+            );
+        }
+        let mut neighbour = make_pc(Posture::Tied);
+        neighbour
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
+        neighbour
+            .human_data_mut()
+            .unwrap()
+            .last_is_lying_for_corpse_intersection = Some(true);
+        let neighbour_id = engine.add_entity(neighbour);
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Tied, drop_position, 0);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carried_position);
+        assert!(target.human_data().unwrap().small_repulsive_radius);
+        assert!(
+            engine
+                .get_entity(neighbour_id)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius
+        );
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must retain its delayed destination");
+        assert_eq!(
+            engine
+                .get_entity(target_id)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            drop_position
+        );
+    }
+
+    #[test]
+    fn instant_building_corpse_drop_keeps_carrier_surface_and_commits_immediately() {
+        let carrier_pos = crate::coordinates::MapPoint::new(120.0, 240.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: 0.125,
+            bz: -0.25,
+            dz: 45.0,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(17).unwrap();
+        let sector = crate::position_interface::SectorHandle::new(7).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        install_corpse_drop_building_sector(&mut engine, 7);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Leaves);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(3);
+            elem.set_sector(Some(sector));
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 4);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(!target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(target.element_data().layer(), 3);
+        assert_eq!(target.element_data().sector(), Some(sector));
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Leaves
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(120.0, 240.0).to_bits()
+        );
+        assert_eq!(target.element_data().direction(), 0);
+        assert_eq!(
+            i16::from(target.position_iface().get_direction_goal()),
+            4,
+            "SetCarrier(NULL) must restore the carrier's facing as the dropped corpse's goal"
+        );
     }
 
     #[test]
@@ -3180,18 +3901,20 @@ impl EngineInner {
             }
         }
 
-        let (carrier_sector, carrier_layer, drop_box_origin) = self
-            .get_entity(carrier_id)
-            .map(|e| {
-                (
-                    e.element_data().sector(),
-                    e.element_data().layer(),
-                    e.cxx_current_point_map().unwrap_or_else(|| {
-                        panic!("corpse-drop carrier {carrier_id:?} has no current action point")
-                    }),
-                )
-            })
-            .unwrap_or_else(|| panic!("corpse-drop carrier {carrier_id:?} disappeared"));
+        let (carrier_sector, carrier_layer, carrier_obstacle, carrier_plane, drop_box_origin) =
+            self.get_entity(carrier_id)
+                .map(|e| {
+                    (
+                        e.element_data().sector(),
+                        e.element_data().layer(),
+                        e.position_iface().get_obstacle(),
+                        e.position_iface().get_plane().copied(),
+                        e.cxx_current_point_map().unwrap_or_else(|| {
+                            panic!("corpse-drop carrier {carrier_id:?} has no current action point")
+                        }),
+                    )
+                })
+                .unwrap_or_else(|| panic!("corpse-drop carrier {carrier_id:?} disappeared"));
         let in_building = carrier_sector
             .and_then(|s| {
                 self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(s)))
@@ -3227,19 +3950,58 @@ impl EngineInner {
             }
         };
 
+        let preserved_outdoor_position = (!in_building).then(|| {
+            self.get_entity(target_id)
+                .unwrap_or_else(|| panic!("corpse-drop target {target_id:?} disappeared"))
+                .element_data()
+                .position()
+        });
+
         if let Some(target) = self.get_entity_mut(target_id) {
-            target.set_posture(drop_posture);
-            if in_building {
-                target.element_data_mut().set_position_map(drop_pos);
-            } else {
-                target.element_data_mut().set_position_map_delayed(drop_pos);
+            let was_lying = target.element_data().posture.is_lying();
+            if let Some(human) = target.human_data_mut()
+                && human.last_is_lying_for_corpse_intersection.is_none()
+            {
+                // A loaded carried body may reach DropCorpse before its
+                // first owner observation. Seed that derived tracker from
+                // the authoritative pre-SetPosture state so the synchronous
+                // post-mutation hook below still observes false -> true.
+                human.last_is_lying_for_corpse_intersection = Some(was_lying);
             }
-            target
-                .element_data_mut()
-                .set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
-            target
-                .element_data_mut()
-                .set_direction_goal(carrier_direction as i16);
+            target.set_posture(drop_posture);
+            // RHElementActorPC::DropCorpse transfers the carrier's obstacle,
+            // plane, layer, and sector before either the instant or delayed
+            // position write. It deliberately does not replace the corpse's
+            // material. In particular, an outdoor delayed drop must retain
+            // the carrier's plane so next-frame SetPositionMapDelayed computes
+            // elevation on that plane rather than falling back to z=0.
+            let elem = target.element_data_mut();
+            elem.set_obstacle_index(carrier_obstacle, carrier_plane);
+            elem.set_layer(carrier_layer);
+            elem.set_sector(carrier_sector);
+            if in_building {
+                elem.set_position_map(drop_pos);
+            } else {
+                elem.set_position_map_delayed(drop_pos);
+                if let Some(position) = preserved_outdoor_position {
+                    // Original SetObstacle(nullptr) invalidates the cached 3D
+                    // position without overwriting it. SetPositionMapDelayed
+                    // then queues next-frame work, and SetPositionAllComputed
+                    // keeps the old elevated coordinate visible for this
+                    // frame. Rust's eager obstacle setter has already
+                    // projected the current map onto z=0, so restore only the
+                    // cached 3D value/validity here; the delayed write will
+                    // authoritatively recompute it on the next Hourglass.
+                    elem.sprite
+                        .position_iface
+                        .restore_cached_position_all_computed(position);
+                }
+            }
+            elem.set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
+            // Original DropCorpse unlinks through SetCarrier(NULL), whose
+            // release path restores the carrier's facing as the corpse's
+            // direction goal after setting its current direction to +12.
+            elem.set_direction_goal(carrier_direction as i16);
             if let Some(human) = target.human_data_mut() {
                 human.carrier = None;
             }
@@ -3251,6 +4013,13 @@ impl EngineInner {
             sprite.display_order_ref = None;
             sprite.behind_display_order_ref = false;
         }
+        // RHElementActorPC::DropCorpse calls SetStates on the carried human
+        // while an outdoor SetPositionMapDelayed is still only queued.
+        // RHElementActorHuman::SetPosture synchronously runs
+        // UpdateIntersectingCorpses at that boundary, so overlap must be
+        // tested against the body's old current position, not against the
+        // delayed drop destination applied at its later owner slot.
+        self.process_corpse_intersection_update_for(target_id);
         self.actor_wait(target_id);
 
         if in_building && let Some(target) = self.get_entity_mut(target_id) {
@@ -3268,6 +4037,30 @@ impl EngineInner {
             target = ?target_id,
             "Drop: put down body"
         );
+    }
+
+    /// Apply the gameplay half of PC::Execute's Listen-exit action message.
+    /// The caller has already installed the explicit Wait successor.
+    pub(super) fn apply_listen_done_action_handoff(&mut self, actor_id: EntityId) {
+        self.get_entity(actor_id)
+            .unwrap_or_else(|| panic!("ListenDone owner {actor_id:?} disappeared"))
+            .pc_data()
+            .unwrap_or_else(|| panic!("ListenDone owner {actor_id:?} is not a PC"));
+        if self.players.seats[0].selection.contains(&actor_id) {
+            self.orders
+                .messenger
+                .send(crate::messenger::Message::pc_with_value(
+                    crate::messenger::PcMessage::UnselectAction,
+                    Some(actor_id),
+                    crate::profiles::Action::Listen as u32,
+                ));
+            self.unselect_action(actor_id);
+        } else if let Some(pc) = self
+            .get_entity_mut(actor_id)
+            .and_then(crate::element::Entity::pc_data_mut)
+        {
+            pc.current_action = crate::profiles::Action::NoAction;
+        }
     }
 
     /// Drive one actor's ability and apply its completion effects inline at
@@ -4227,16 +5020,13 @@ impl EngineInner {
                     // Hourglass: it must already be available when the exit
                     // transition terminates and sends its consolation card.
                     self.actor_wait(actor_id);
-                    // Exit transition animation finished.  Forward
-                    // PcMessage::UnselectAction(Listen) to clear the
-                    // HUD active state.
-                    self.orders
-                        .messenger
-                        .send(crate::messenger::Message::pc_with_value(
-                            crate::messenger::PcMessage::UnselectAction,
-                            Some(actor_id),
-                            crate::profiles::Action::Listen as u32,
-                        ));
+                    // Original branches immediately after Wait(): an
+                    // unselected PC only stores NOACTION, while a selected PC
+                    // synchronously forwards MSG_UNSELECT_ACTION(Listen).
+                    // Apply that message's gameplay half inline, before a
+                    // later input-boundary SelectPC can restitute the stale
+                    // Listen action and Stop() the just-postponed Wait.
+                    self.apply_listen_done_action_handoff(actor_id);
                     tracing::debug!(
                         actor = ?actor_id,
                         "Listen: exit transition done → Inactive, MSG_UNSELECT_ACTION sent"

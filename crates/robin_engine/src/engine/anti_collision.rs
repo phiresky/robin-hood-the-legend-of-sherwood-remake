@@ -30,6 +30,64 @@ const RADIUS_SWORDFIGHTING_GUY: f32 = 4.0;
 /// to pre-filter neighbours.
 pub const MAX_REPULSIVE_DISTANCE: f32 = 60.0;
 
+thread_local! {
+    /// Current engine frame for the opt-in goal-owner anti-collision trace.
+    /// This is process-local diagnostic context, never serialized game state.
+    static GOAL_OWNER_ANTI_FRAME: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn with_goal_owner_anti_frame<T>(frame: u32, f: impl FnOnce() -> T) -> T {
+    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
+        return f();
+    }
+    GOAL_OWNER_ANTI_FRAME.with(|slot| {
+        let previous = slot.replace(Some(frame));
+        let result = f();
+        slot.set(previous);
+        result
+    })
+}
+
+pub(super) fn goal_owner_anti_debug_frame(mover: EntityId) -> Option<u32> {
+    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
+        return None;
+    }
+    let frame = GOAL_OWNER_ANTI_FRAME.with(std::cell::Cell::get)?;
+    let expected_frame = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME")
+        .unwrap_or_else(|_| {
+            panic!("PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME")
+        })
+        .parse::<u32>()
+        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME: {error}"));
+    if frame != expected_frame {
+        return None;
+    }
+    let filter = std::env::var("PARITY_DEBUG_GOAL_OWNER").unwrap_or_else(|_| {
+        panic!(
+            "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER=pc|soldier|civilian:INDEX"
+        )
+    });
+    let (kind, index) = filter.split_once(':').unwrap_or_else(|| {
+        panic!("PARITY_DEBUG_GOAL_OWNER must look like pc|soldier|civilian:INDEX")
+    });
+    let index = index
+        .parse::<u32>()
+        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER={filter:?}: {error}"));
+    let kind_matches = matches!(
+        (kind, mover),
+        ("pc", EntityId::Pc(_))
+            | ("soldier", EntityId::Soldier(_))
+            | ("civilian", EntityId::Civilian(_))
+    );
+    if kind_matches && mover.index() == index {
+        Some(frame)
+    } else if matches!(kind, "pc" | "soldier" | "civilian") {
+        None
+    } else {
+        panic!("PARITY_DEBUG_GOAL_OWNER has unsupported kind {kind:?}")
+    }
+}
+
 /// Snapshot of everything the anti-collision pre-pass needs from a
 /// neighbour actor.  Captured once per tick — neighbour positions are
 /// not re-read as the mutable loop walks entities, matching the
@@ -646,6 +704,32 @@ pub fn apply_anti_collision_step(
         }
     }
 
+    if let Some(frame) = goal_owner_anti_debug_frame(mover.id) {
+        let relevant_neighbours = neighbours
+            .iter()
+            .flatten()
+            .filter(|candidate| box_future.contains_point(candidate.position_map))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "[GOAL_OWNER frame={frame} owner={:?} stage=anti_gather origin_bits={:08x},{:08x} increment_bits={:08x},{:08x} speed_bits={:08x} future_bits={:08x},{:08x} goal_bits={:08x},{:08x} layer={} radius_bits={:08x} was_deviated={} blocked_count={} mobile_interferes={} neighbours={relevant_neighbours:?} points={points:?} lines={lines:?}]",
+            mover.id,
+            mover.position_map.x.to_bits(),
+            mover.position_map.y.to_bits(),
+            nx.to_bits(),
+            ny.to_bits(),
+            speed.to_bits(),
+            future.x.to_bits(),
+            future.y.to_bits(),
+            state.as_deref().map_or(0, |s| s.goal_map.x.to_bits()),
+            state.as_deref().map_or(0, |s| s.goal_map.y.to_bits()),
+            mover.layer,
+            actor_radius.to_bits(),
+            state.as_deref().is_some_and(|s| s.pi.deviated),
+            state.as_deref().map_or(0, |s| s.pi.blocked_count),
+            mobile_interferes,
+        );
+    }
+
     let was_deviated = state.as_deref().is_some_and(|s| s.pi.deviated);
     if was_deviated {
         tracing::trace!(
@@ -712,6 +796,17 @@ pub fn apply_anti_collision_step(
             return naive;
         }
         // Deviated && !reachable: fall through.
+    }
+
+    // RHPositionInterface::UpdatePositionAntiCollision gathers repulsive
+    // objects first, but returns immediately when that gathered pass has a
+    // zero movement vector.  In particular it does not run the later
+    // no-new-deviation recovery that clears `IsDeviated` and rebuilds the
+    // cached increment.  Keep this after the empty-list arm above: Original
+    // tries to recover the old trajectory first when there are no repulsive
+    // objects, even if the requested step itself is zero.
+    if future == mover.position_map {
+        return (0.0, 0.0);
     }
 
     // Original forwards the animation's requested `fDistance` unchanged to
@@ -1229,6 +1324,78 @@ mod tests {
         );
 
         assert_eq!(movement, (1.0, 0.0));
+    }
+
+    #[test]
+    fn zero_step_with_repulsive_object_preserves_deviation() {
+        let mover = mk_snapshot(0, 0.0, 0.0);
+        let mut object = mk_snapshot(1, 10.0, 0.0);
+        object.is_actor = false;
+        object.is_human = false;
+        object.repulsive_point = Some(RepulsivePoint::new(map_pt(10.0, 0.0), 5.0, 10.0));
+        let snapshots = vec![Some(mover.clone()), Some(object)];
+
+        let mut pi = crate::position_interface::PositionInterface::default();
+        pi.deviated = true;
+        let mut state = AntiCollisionState {
+            pi: &mut pi,
+            move_box: Default::default(),
+            half_diagonal: MoveBoxHalfDiagonal::new(6.0, 4.0),
+            goal_map: map_pt(10.0, 0.0),
+        };
+        let grid = FastFindGrid::default();
+
+        let movement = apply_anti_collision_step(
+            &mover,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(&grid),
+            Some(&mut state),
+            0.0,
+            0.0,
+            1.8,
+            true,
+        );
+
+        assert_eq!(movement, (0.0, 0.0));
+        assert!(state.pi.deviated);
+    }
+
+    #[test]
+    fn zero_step_with_empty_repulsive_lists_recovers_deviation_first() {
+        let mover = mk_snapshot(0, 0.0, 0.0);
+        let snapshots = vec![Some(mover.clone())];
+
+        let mut pi = crate::position_interface::PositionInterface::default();
+        pi.deviated = true;
+        let mut state = AntiCollisionState {
+            pi: &mut pi,
+            move_box: Default::default(),
+            half_diagonal: MoveBoxHalfDiagonal::new(6.0, 4.0),
+            goal_map: map_pt(10.0, 0.0),
+        };
+        let grid = FastFindGrid::default();
+
+        let movement = apply_anti_collision_step(
+            &mover,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(&grid),
+            Some(&mut state),
+            0.0,
+            0.0,
+            1.8,
+            true,
+        );
+
+        assert_eq!(movement, (0.0, 0.0));
+        assert!(!state.pi.deviated);
     }
 
     #[test]

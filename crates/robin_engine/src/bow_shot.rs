@@ -1036,6 +1036,21 @@ fn apply_bounce_reflection(
     }
 }
 
+fn projectile_impact_ratio(
+    position: WorldPoint3D,
+    new_position: WorldPoint3D,
+    impact: WorldPoint3D,
+) -> f32 {
+    let seg_dx = new_position.x - position.x;
+    let seg_dy = new_position.y - position.y;
+    let seg_dz = new_position.z - position.z;
+    let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy + seg_dz * seg_dz;
+    let ix = impact.x - position.x;
+    let iy = impact.y - position.y;
+    let iz = impact.z - position.z;
+    ((ix * ix + iy * iy + iz * iz) / seg_len_sq).sqrt()
+}
+
 fn compute_trajectory_ballistic_impl(
     start: WorldPoint3D,
     initial_velocity: WorldVec3D,
@@ -1174,19 +1189,17 @@ fn compute_trajectory_ballistic_impl(
             // `RHFastFindGrid::IsReachableImpact` over sight obstacles;
             // it does not collide with pathfinding/motion-line
             // geometry.  Keep this path sight-obstacle-only.
+            // RHElementProjectile::ComputeTrajectory uses the ratio of
+            // Euclidean lengths, not a projection of the impact onto the
+            // intended segment.  The distinction matters when collision
+            // geometry returns a point slightly off the segment: it can
+            // change the rounded flight time.
             let ratio_3d = impact_3d.as_ref().map(|r| {
-                let seg_dx = new_position.x - position.x;
-                let seg_dy = new_position.y - position.y;
-                let seg_dz = new_position.z - position.z;
-                let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy + seg_dz * seg_dz;
-                if seg_len_sq <= 1e-9 {
-                    0.0
-                } else {
-                    let ix = r.impact.x - position.x;
-                    let iy = r.impact.y - position.y;
-                    let iz = r.impact.z - position.z;
-                    ((ix * seg_dx + iy * seg_dy + iz * seg_dz) / seg_len_sq).clamp(0.0, 1.0)
-                }
+                projectile_impact_ratio(
+                    position,
+                    new_position,
+                    WorldPoint3D::new(r.impact.x, r.impact.y, r.impact.z),
+                )
             });
 
             let Some(ratio) = ratio_3d else {
@@ -1481,7 +1494,10 @@ pub fn roll_hit_and_compute_bias(
     }
 
     // Miss — compute random bias, scaled by inverse skill.
-    let skill_factor = 1.0 - (bow_skill_capacity.min(100) as f32 / 100.0);
+    // Original uses the raw ULONG capacity here. Normal experience gain caps
+    // it at 100, but SetCapacity does not, so preserve negative factors for
+    // explicitly authored/scripted capacities above 100.
+    let skill_factor = bow_miss_skill_factor(bow_skill_capacity);
     // Original spells this as `SBGeoVector3D(rand(), rand(), rand())`.
     // The shipped/compiler-supported builds evaluate those constructor
     // arguments right-to-left: the first global-stream draw becomes Z and
@@ -1499,6 +1515,11 @@ pub fn roll_hit_and_compute_bias(
         y: by,
         z: bz,
     })
+}
+
+#[inline]
+fn bow_miss_skill_factor(bow_skill_capacity: u32) -> f32 {
+    1.0 - bow_skill_capacity as f32 / 100.0
 }
 
 /// Check if a precomputed trajectory will hit a target point.
@@ -3326,12 +3347,10 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
         && flight_at_endpoint
         && !world_position_is_moving;
     if trajectory_empty && (retire_stopped || retire_live_flying) {
-        // The endpoint frame itself is still presented once. Falling arrows
-        // therefore consume their final tumble draw before the settled cache
-        // retires them; an already-stopped loaded arrow retires immediately.
-        if proj.projectile.flying && proj.projectile.falling {
-            apply_arrow_falling_sprite_visual(sim, proj);
-        }
+        // Original tests the empty-trajectory/settled-position retirement
+        // condition before its falling-arrow visual branch. Preserve the
+        // already-published endpoint sprite and retire without another tumble
+        // draw.
         // Refresh retires the arrow before another Projectile::Hourglass can
         // call NewMove. Settle the exposed movement snapshot at the endpoint
         // as Original's retired sprite state records it.
@@ -5755,6 +5774,34 @@ mod tests {
     }
 
     #[test]
+    fn projectile_impact_time_uses_euclidean_distance_ratio() {
+        let position = WorldPoint3D::new(0.0, 0.0, 0.0);
+        let new_position = WorldPoint3D::new(4.0, 0.0, 0.0);
+        // Collision geometry can return a point off the intended segment.
+        // Original measures the full 3D distance to that point: sqrt(8) / 4
+        // rounds a four-frame segment to three frames.  The old dot
+        // projection measured only 2 / 4 and incorrectly produced two.
+        let impact = WorldPoint3D::new(2.0, 2.0, 0.0);
+        let ratio = projectile_impact_ratio(position, new_position, impact);
+        let impact_time = ((TIME_FLYSEGMENT as f32 * ratio + 0.5) as u16).max(1);
+        let projected_time = ((TIME_FLYSEGMENT as f32 * 0.5 + 0.5) as u16).max(1);
+
+        assert_eq!(impact_time, 3);
+        assert_eq!(projected_time, 2);
+    }
+
+    #[test]
+    fn projectile_near_impact_still_uses_one_frame_minimum() {
+        let ratio = projectile_impact_ratio(
+            WorldPoint3D::new(0.0, 0.0, 0.0),
+            WorldPoint3D::new(4.0, 0.0, 0.0),
+            WorldPoint3D::new(0.01, 0.0, 0.0),
+        );
+        let impact_time = ((TIME_FLYSEGMENT as f32 * ratio + 0.5) as u16).max(1);
+        assert_eq!(impact_time, 1);
+    }
+
+    #[test]
     fn spawn_arrow_creates_flying_projectile_with_trajectory() {
         let traj = vec![
             TrajectoryPoint {
@@ -7217,6 +7264,13 @@ mod tests {
                 assert!(bias.z.abs() < 1.0);
             }
         });
+    }
+
+    #[test]
+    fn bow_miss_skill_factor_uses_unclamped_capacity() {
+        assert_eq!(bow_miss_skill_factor(0), 1.0);
+        assert_eq!(bow_miss_skill_factor(100), 0.0);
+        assert_eq!(bow_miss_skill_factor(150), -0.5);
     }
 
     #[test]
@@ -8989,18 +9043,30 @@ mod tests {
     }
 
     #[test]
-    fn flying_endpoint_renders_final_falling_frame_before_retirement() {
+    fn settled_flying_endpoint_retires_without_another_falling_frame() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.trajectory.clear();
         arrow.projectile.trajectory_frame_count = 0;
         arrow.projectile.falling = true;
+        let published_sprite = (
+            arrow.element.sprite.current_row,
+            arrow.element.sprite.current_frame,
+        );
 
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
         });
 
         assert!(!arrow.element.active);
-        assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
+        assert!(draws.is_empty());
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame,
+            ),
+            published_sprite,
+            "settled retirement preserves the endpoint sprite published by the preceding Refresh"
+        );
         assert!(!arrow.element.sprite.position_iface.is_moving());
         assert!(!arrow.element.sprite.position_iface.is_moving_map());
     }
@@ -9020,10 +9086,13 @@ mod tests {
         // RHElementArrow::Refresh compares GetOldPosition/GetPosition, which
         // are the 3D position-interface values. The separately serialized
         // sprite-space cache is not part of its retirement decision.
-        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
+        });
 
         assert!(arrow.element.active);
         assert!(arrow.element.sprite.position_iface.is_moving());
+        assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
     }
 
     #[test]

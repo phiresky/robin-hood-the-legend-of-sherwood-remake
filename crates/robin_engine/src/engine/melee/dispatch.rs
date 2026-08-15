@@ -8,6 +8,60 @@ use crate::engine::sequence_runtime::OwnerActionBarrier;
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
 
+struct OpponentCallerDebugConfig {
+    frame: u32,
+    participant: u32,
+}
+
+struct ThrustAdmissionDebugConfig {
+    frame: u32,
+    owner: u32,
+}
+
+fn thrust_admission_debug_config() -> Option<&'static ThrustAdmissionDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<ThrustAdmissionDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_THRUST_A_ADMISSION")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when thrust-A admission debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for thrust-A admission diagnostic: {error}")
+                })
+            };
+            Some(ThrustAdmissionDebugConfig {
+                frame: parse("PARITY_DEBUG_THRUST_A_ADMISSION_FRAME"),
+                owner: parse("PARITY_DEBUG_THRUST_A_ADMISSION_OWNER"),
+            })
+        })
+        .as_ref()
+}
+
+fn opponent_caller_debug_config() -> Option<&'static OpponentCallerDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<OpponentCallerDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_OPPONENT_CALLER")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when opponent-caller debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for opponent-caller diagnostic: {error}")
+                })
+            };
+            Some(OpponentCallerDebugConfig {
+                frame: parse("PARITY_DEBUG_OPPONENT_CALLER_FRAME"),
+                participant: parse("PARITY_DEBUG_OPPONENT_CALLER_PARTICIPANT"),
+            })
+        })
+        .as_ref()
+}
+
 impl EngineInner {
     // ─── Sword strike dispatch (sequence-driven) ────────────────────
 
@@ -28,6 +82,11 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
+        let admission_debug = thrust_admission_debug_config().is_some_and(|config| {
+            strike == SwordStrike::A
+                && config.frame == self.control.frame_counter
+                && config.owner == owner.index()
+        });
         // Validate attacker
         let owner_ok = self
             .get_entity(owner)
@@ -56,13 +115,73 @@ impl EngineInner {
         }
 
         if strike == SwordStrike::A {
-            if can_enter_swordfight_with(
+            let can_enter = can_enter_swordfight_with(
                 &self.world.entities,
                 owner,
                 target,
                 &assets.profile_manager,
                 &self.world.fast_grid,
-            ) {
+            );
+            if admission_debug {
+                let owner_entity = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} vanished"));
+                let target_entity = self
+                    .world
+                    .entities
+                    .get(target)
+                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} vanished"));
+                let owner_human = owner_entity
+                    .human_data()
+                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} is not human"));
+                let target_human = target_entity
+                    .human_data()
+                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} is not human"));
+                let owner_sector = owner_entity.element_data().sector();
+                let target_sector = target_entity.element_data().sector();
+                let selected = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner);
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("diagnosed thrust element {seq_id:?}/{elem_idx} vanished")
+                    });
+                eprintln!(
+                    "PARITY_THRUST_A_ADMISSION frame={} owner={} target={} can_enter={} seq={} elem={} element_id={} state={:?} priority={:?} selected={selected:?} owner_dead={} owner_unconscious={} owner_net={} owner_soldier={} owner_vip={} owner_robin={} owner_sector={owner_sector:?} owner_building={} owner_wall_ladder={} target_dead={} target_unconscious={} target_net={} target_soldier={} target_vip={} target_robin={} target_sector={target_sector:?} target_building={} target_wall_ladder={}",
+                    self.control.frame_counter,
+                    owner.index(),
+                    target.index(),
+                    can_enter,
+                    seq_id.0,
+                    elem_idx,
+                    element.id,
+                    element.state,
+                    element.priority,
+                    owner_entity.is_dead(),
+                    owner_human.unconscious,
+                    owner_human.stuck_under_nets_counter,
+                    owner_entity.is_soldier(),
+                    is_vip_from_profile(owner_entity, &assets.profile_manager),
+                    owner_entity.pc_data().is_some_and(|pc| pc.robin),
+                    is_in_building_sector(owner_sector, &self.world.fast_grid),
+                    is_on_wall_or_ladder(owner_sector, &self.world.fast_grid),
+                    target_entity.is_dead(),
+                    target_human.unconscious,
+                    target_human.stuck_under_nets_counter,
+                    target_entity.is_soldier(),
+                    is_vip_from_profile(target_entity, &assets.profile_manager),
+                    target_entity.pc_data().is_some_and(|pc| pc.robin),
+                    is_in_building_sector(target_sector, &self.world.fast_grid),
+                    is_on_wall_or_ladder(target_sector, &self.world.fast_grid),
+                );
+            }
+            if can_enter {
                 self.set_as_new_principal_opponent(assets, owner, target);
                 self.set_as_new_principal_opponent(assets, target, owner);
             } else {
@@ -133,6 +252,55 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
+        let caller_debug = opponent_caller_debug_config().is_some_and(|config| {
+            config.frame == self.control.frame_counter
+                && (config.participant == owner.index()
+                    || opponent.is_some_and(|id| config.participant == id.index()))
+        });
+        if caller_debug {
+            let selected_owner = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner);
+            let selected_opponent =
+                opponent.and_then(|id| self.orders.sequence_manager.current_element_for_actor(id));
+            let sequence = self
+                .orders
+                .sequence_manager
+                .get_sequence(seq_id)
+                .unwrap_or_else(|| {
+                    panic!("diagnosed EnterSwordfight sequence {seq_id:?} vanished")
+                });
+            let counters = sequence.parity_counters();
+            eprintln!(
+                "PARITY_OPPONENT_CALLER frame={} phase=dispatch owner={} opponent={:?} seq={} elem={} selected_owner={selected_owner:?} selected_opponent={selected_opponent:?} counters={counters:?} elements={}",
+                self.control.frame_counter,
+                owner.index(),
+                opponent.map(|id| id.index()),
+                seq_id.0,
+                elem_idx,
+                sequence.elements.len(),
+            );
+            for (index, element) in sequence.elements.iter().enumerate() {
+                eprintln!(
+                    "PARITY_OPPONENT_CALLER frame={} phase=element seq={} index={} id={} owner={:?} command={:?} level={} state={:?} priority={:?} script_driven={} legacy_v48={} postponed={:?} cross_postponed={:?} data={:?}",
+                    self.control.frame_counter,
+                    seq_id.0,
+                    index,
+                    element.id,
+                    element.owner.map(|id| id.index()),
+                    element.command,
+                    element.command_level,
+                    element.state,
+                    element.priority,
+                    element.script_driven,
+                    element.legacy_v48.is_some(),
+                    element.postponed_element_index,
+                    element.cross_postponed,
+                    element.data,
+                );
+            }
+        }
         {
             let Some(entity) = self.world.entities.get_mut(owner) else {
                 self.orders
@@ -841,33 +1009,24 @@ impl<'a> ShieldCommandContext<'a> {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let mut started = false;
-        if let Some(entity) = self.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-            && actor.action_state.is_shield()
-        {
-            // Don't set Waiting immediately — the animation tick
-            // will set it when the lowering animation completes (on
-            // MotionState::Done → SetStates(Upright, Waiting)).
-            // The sprite-anim fallback to TRANSITION_LOWERING_SWORD
-            // when the actor has no LOWERING_SHIELD anim is applied
-            // by the animation driver — the *order's* action stays
-            // LOWERING_SHIELD, only the played sprite differs.
-            actor.shield_face_point = None;
-            started = true;
-        }
-        if started {
-            // The order's animation field is `LOWERING_SHIELD`; the
-            // sprite-anim fallback to `TRANSITION_LOWERING_SWORD`
-            // happens at perform_action time only.  The shield-arm
-            // `dispatch_arm_completion` entry gates advance on
-            // TERMINATED only so Done fires the action-state flip
-            // without retiring the order.
-            self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
-        } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
-        }
+        let actor = self
+            .entities
+            .get_mut(owner)
+            .and_then(crate::element::Entity::actor_data_mut)
+            .unwrap_or_else(|| panic!("LowerShield owner {owner:?} is not a live actor"));
+        // Original Translate(LOWER_SHIELD) appends LOWERING_SHIELD
+        // unconditionally. In particular, an authored LowerShield that was
+        // postponed behind a hit can first finish its StandingUp transition;
+        // the resulting Waiting action state must not suppress the command.
+        // Don't set Waiting immediately — the animation tick owns that state
+        // change when the lowering animation completes.
+        actor.shield_face_point = None;
+
+        // The sprite-anim fallback to TRANSITION_LOWERING_SWORD when the
+        // actor has no LOWERING_SHIELD anim is applied by the animation
+        // driver. The order itself remains LOWERING_SHIELD.
+        self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 
     /// Dispatch a ParryShield command.

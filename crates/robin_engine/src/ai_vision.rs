@@ -1811,10 +1811,12 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
     let mut svx = npc.stare_point.x - own_position.x;
     let mut svy = npc.stare_point.y - own_position.y;
 
-    // Zero-length guard: fall back to body direction.
+    // Zero-length guard: fall back to `GetDirectionVector()`.  Original's
+    // helper has already applied ASPECT_RATIO to Y; the unconditional X
+    // stretch immediately below then applies the same factor to X.
     if svx.abs().max(svy.abs()) == 0.0 {
         svx = vdx;
-        svy = vdy;
+        svy = vdy * crate::position_interface::ASPECT_RATIO;
     }
 
     // Stretch stare vector X by ASPECT_RATIO (0.5736).  An earlier
@@ -2777,6 +2779,67 @@ mod tests {
         // Real half-aperture is narrowed by STARE_APERTURE_FACTOR.
         assert!(
             (npc.real_half_aperture - NORMAL_HALF_APERTURE * STARE_APERTURE_FACTOR).abs() < 1e-4
+        );
+    }
+
+    #[test]
+    fn coincident_follow_target_direction_13_keeps_western_target_inside_cone() {
+        let mut npc = default_npc();
+        focus_entity(&mut npc, EntityId::Pc(crate::entity_id::PcId(318)));
+        npc.direction_old = 13;
+        npc.view_direction = [-0.323_616_98, -0.207_519_53];
+        npc.view_angle = 0.177_500_71;
+
+        let mut c = ctx(None, Posture::Upright);
+        c.body_direction = 13;
+        c.own_position = GroundPoint::new(716.0, 2300.448_974_609_375);
+        c.follow_target_position = Some(c.own_position);
+        refresh_view(&mut npc, &c);
+
+        let (body_x, body_y) = sector_to_forward(13);
+        let aspect = crate::position_interface::ASPECT_RATIO;
+        assert_eq!(npc.view_direction[0].to_bits(), (body_x * aspect).to_bits());
+        assert_eq!(npc.view_direction[1].to_bits(), (body_y * aspect).to_bits());
+
+        // Save073 r002: PC319 lies just inside Original's left cone side.
+        let target = [-104.174_866_f32, -7.136_963_f32];
+        let left_det = npc.view_left_side[0] * target[1] - npc.view_left_side[1] * target[0];
+        let right_det = npc.view_right_side[0] * target[1] - npc.view_right_side[1] * target[0];
+        assert!(
+            left_det >= 0.0,
+            "left determinant {left_det} rejected PC319"
+        );
+        assert!(
+            right_det <= 0.0,
+            "right determinant {right_det} rejected PC319"
+        );
+    }
+
+    #[test]
+    fn coincident_follow_target_direction_15_keeps_northern_target_outside_cone() {
+        let mut npc = default_npc();
+        focus_entity(&mut npc, EntityId::Pc(crate::entity_id::PcId(345)));
+        npc.direction_old = 15;
+        npc.view_direction = [-1.103_042_4, -4.615_387];
+        npc.view_angle = 0.158_107_16;
+
+        let mut c = ctx(None, Posture::Upright);
+        c.body_direction = 15;
+        c.own_position = GroundPoint::new(1347.0, 488.0);
+        c.follow_target_position = Some(c.own_position);
+        refresh_view(&mut npc, &c);
+
+        let (body_x, body_y) = sector_to_forward(15);
+        let aspect = crate::position_interface::ASPECT_RATIO;
+        assert_eq!(npc.view_direction[0].to_bits(), (body_x * aspect).to_bits());
+        assert_eq!(npc.view_direction[1].to_bits(), (body_y * aspect).to_bits());
+
+        // Save073 r013: PC346 lies just beyond Original's right cone side.
+        let target = [-4.828_857_4_f32, -140.476_35_f32];
+        let right_det = npc.view_right_side[0] * target[1] - npc.view_right_side[1] * target[0];
+        assert!(
+            right_det > 0.0,
+            "right determinant {right_det} admitted PC346"
         );
     }
 

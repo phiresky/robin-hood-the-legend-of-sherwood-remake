@@ -216,6 +216,20 @@ impl EngineInner {
                 )
             })
         });
+        let owner_work = |owner: EntityId| {
+            self.get_entity(owner)
+                .and_then(Entity::ai_controller)
+                .map(|ai| {
+                    (
+                        ai.outbox.reentrant.owner_work.len(),
+                        ai.outbox.reentrant.self_stimuli.len(),
+                        ai.outbox.reentrant.cross_npc_actions.len(),
+                    )
+                })
+        };
+        let victim_owner_work = owner_work(victim);
+        let attacker_owner_work = attacker.and_then(owner_work);
+        let rng_cursor = self.control.rng.original_replay_cursor();
         tracing::trace!(
             target: "parity_sword_damage_lifecycle",
             frame,
@@ -230,6 +244,9 @@ impl EngineInner {
             ?selected_graph,
             ?damage_orders,
             ?actor_state,
+            ?rng_cursor,
+            ?victim_owner_work,
+            ?attacker_owner_work,
             "sword-damage lifecycle"
         );
     }
@@ -319,11 +336,6 @@ const MAX_ELEVATION_SWORDFIGHT: f32 = 40.0;
 /// [`crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO`].
 const INVERSE_SWORDFIGHT_ASPECT_RATIO: f32 =
     crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO;
-
-/// Small comparison tolerance for swordfight spacing thresholds.  The
-/// reference compares floats directly, but the Rust port can arrive at
-/// `64.99995` for an intended `65`-unit duel spacing after replayed movement.
-const SWORDFIGHT_DISTANCE_EPSILON: f32 = 0.001;
 
 /// Isometric aspect ratio.
 const ASPECT_RATIO: f32 = crate::position_interface::ASPECT_RATIO;
@@ -2130,6 +2142,135 @@ fn collect_lateral_strike_victims(
     victims
 }
 
+/// Original full-circle DONE-time victim admission in unprojected 3D space.
+///
+/// This is deliberately separate from the circle warning collector: warning
+/// admission uses map-space distance and different range rules, while
+/// `ExecuteFullCircleSwordStrikeEffect` seeds its retained victim list from
+/// `GetPosition()` and the inclusive authored strike range.
+#[allow(clippy::too_many_arguments)]
+fn collect_full_circle_strike_victims(
+    entities: &Entities,
+    attacker_id: EntityId,
+    attacker_position: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+    profile_manager: &crate::profiles::ProfileManager,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> Vec<EntityId> {
+    let mut victims = Vec::new();
+    for (target_id, entity) in entities.humans() {
+        if !is_possible_sword_strike_victim(
+            entities,
+            attacker_id,
+            entity,
+            target_id,
+            profile_manager,
+            fast_grid,
+            obstacles,
+        ) {
+            continue;
+        }
+
+        let target_position = entity.element_data().position();
+        if full_circle_strike_distance_is_in_range(
+            attacker_position,
+            target_position,
+            min_distance,
+            max_distance,
+        ) {
+            victims.push(target_id.into());
+        }
+    }
+    victims
+}
+
+/// Original half-circle DONE-time victim admission: 3D range combined with
+/// an unprojected ground-space angular sector.
+#[allow(clippy::too_many_arguments)]
+fn collect_half_circle_strike_victims(
+    entities: &Entities,
+    attacker_id: EntityId,
+    attacker_position: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+    begin_sector: u8,
+    end_sector: u8,
+    profile_manager: &crate::profiles::ProfileManager,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> Vec<EntityId> {
+    let mut victims = Vec::new();
+    for (target_id, entity) in entities.humans() {
+        if !is_possible_sword_strike_victim(
+            entities,
+            attacker_id,
+            entity,
+            target_id,
+            profile_manager,
+            fast_grid,
+            obstacles,
+        ) {
+            continue;
+        }
+
+        let target_position = entity.element_data().position();
+        if half_circle_strike_seed_allows(
+            attacker_position,
+            target_position,
+            min_distance,
+            max_distance,
+            begin_sector,
+            end_sector,
+        ) {
+            victims.push(target_id.into());
+        }
+    }
+    victims
+}
+
+/// `SBGeoVector3D::Norm`: GEOTYPE products and additions, followed by the
+/// double-precision square root and a narrowing store back to GEOTYPE.
+fn full_circle_strike_distance(
+    attacker: crate::coordinates::WorldPoint3D,
+    victim: crate::coordinates::WorldPoint3D,
+) -> f32 {
+    let dx = attacker.x - victim.x;
+    let dy = attacker.y - victim.y;
+    let dz = attacker.z - victim.z;
+    let squared_norm = dx * dx + dy * dy + dz * dz;
+    f64::from(squared_norm).sqrt() as f32
+}
+
+fn full_circle_strike_distance_is_in_range(
+    attacker: crate::coordinates::WorldPoint3D,
+    victim: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+) -> bool {
+    let distance = full_circle_strike_distance(attacker, victim);
+    distance >= min_distance && distance <= max_distance
+}
+
+fn half_circle_strike_seed_allows(
+    attacker: crate::coordinates::WorldPoint3D,
+    victim: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+    begin_sector: u8,
+    end_sector: u8,
+) -> bool {
+    if !full_circle_strike_distance_is_in_range(attacker, victim, min_distance, max_distance) {
+        return false;
+    }
+
+    let dx = victim.x - attacker.x;
+    let dy = (victim.y - attacker.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+    let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+    is_sector_between(sector, begin_sector, end_sector)
+}
+
 /// Original lateral warning admission is intentionally looser than the hit
 /// collector: active human, not self, geometry only.
 fn collect_lateral_warning_victims(
@@ -2187,8 +2328,9 @@ fn collect_circle_warn_victims(
     attacker_id: EntityId,
     attacker_pos: (f32, f32),
     attacker_direction: i16,
-    base_max_distance: f32,
+    base_max_distance: u16,
     rotation_angle_deg: u16,
+    is_walking_with_sword: impl Fn(EntityId) -> bool,
     profile_manager: &crate::profiles::ProfileManager,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
@@ -2221,19 +2363,18 @@ fn collect_circle_warn_victims(
         // so the warn covers actors about to enter the arc during the
         // strike's rotation.
         let mut max_dist = base_max_distance;
-        let walking_with_sword = entity
-            .actor_data()
-            .map(|a| a.action_state == ActionState::MovingSword)
-            .unwrap_or(false);
-        if walking_with_sword {
+        if is_walking_with_sword(target_id.into()) {
             let enemy_sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
             let relative = ((enemy_sector + 16 - attacker_direction) % 16) as u16;
-            max_dist += f32::from(circle_warning_walking_tolerance(
+            // Original stores both the authored range and this tolerance in
+            // UWORD, so the compound assignment wraps before promotion for
+            // the floating-point distance comparison.
+            max_dist = max_dist.wrapping_add(circle_warning_walking_tolerance(
                 relative,
                 rotation_angle_deg,
             ));
         }
-        if distance <= max_dist {
+        if distance <= f32::from(max_dist) {
             victims.push(target_id.into());
         }
     }
@@ -2246,8 +2387,7 @@ struct PushStrikeParams {
     attacker_pos: (f32, f32),
     attacker_elevation: f32,
     position_space: PushStrikePositionSpace,
-    dir_x: f32,
-    dir_y: f32,
+    attacker_direction: i16,
     min_distance: f32,
     max_distance: f32,
     half_width: f32,
@@ -2257,6 +2397,35 @@ struct PushStrikeParams {
 enum PushStrikePositionSpace {
     Map,
     Ground,
+}
+
+/// Whether PushAside's current collector applies its elevation admission.
+///
+/// Original's warning-time `GetPossibleVictimsOfPushSwordStrike` works only
+/// in map space and has no elevation gate. The DONE-time
+/// `ExecutePushSwordStrike` collector uses ground space and first truncates
+/// the absolute elevation difference to `ULONG` before comparing it with
+/// `MAX_ELEVATION_SWORDFIGHT`.
+fn push_strike_elevation_allows(
+    position_space: PushStrikePositionSpace,
+    attacker_elevation: f32,
+    victim_elevation: f32,
+) -> bool {
+    match position_space {
+        PushStrikePositionSpace::Map => true,
+        PushStrikePositionSpace::Ground => {
+            (attacker_elevation - victim_elevation).abs() as u32 <= MAX_ELEVATION_SWORDFIGHT as u32
+        }
+    }
+}
+
+/// Warning-time push collection has Original's `< 150` MaxNorm shortcut;
+/// DONE-time push effects do not.
+fn push_strike_max_norm_allows(position_space: PushStrikePositionSpace, dx: f32, dy: f32) -> bool {
+    match position_space {
+        PushStrikePositionSpace::Map => dx.abs().max(dy.abs()) < 150.0,
+        PushStrikePositionSpace::Ground => true,
+    }
 }
 
 /// Collect possible victims for a push (rectangle) sword strike.
@@ -2275,23 +2444,12 @@ fn collect_push_victims(
         attacker_pos,
         attacker_elevation,
         position_space,
-        dir_x,
-        dir_y,
+        attacker_direction,
         min_distance,
         max_distance,
         half_width,
     } = *params;
-    // Direction vector (stretched Y for isometric)
-    let dir_sy = dir_y * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-    let len = (dir_x * dir_x + dir_sy * dir_sy).sqrt();
-    if len < 0.001 {
-        return Vec::new();
-    }
-    let fx = dir_x / len;
-    let fy = dir_sy / len;
-    // Side vector (perpendicular)
-    let sx = -fy;
-    let sy = fx;
+    let ((fx, fy), (sx, sy)) = crate::combat::push_strike_basis(attacker_direction);
 
     let mut victims = Vec::new();
     for (target_id, entity) in entities.humans() {
@@ -2306,11 +2464,8 @@ fn collect_push_victims(
         ) {
             continue;
         }
-        // Reject victims whose elevation differs from the attacker by
-        // more than MAX_ELEVATION_SWORDFIGHT (prevents push strikes
-        // across catwalks / stairs).
         let victim_elev = entity.position_iface().get_elevation();
-        if (attacker_elevation - victim_elev).abs() > MAX_ELEVATION_SWORDFIGHT {
+        if !push_strike_elevation_allows(position_space, attacker_elevation, victim_elev) {
             continue;
         }
         let (pos_x, pos_y) = match position_space {
@@ -2328,7 +2483,7 @@ fn collect_push_victims(
         };
         let dx = pos_x - attacker_pos.0;
         let dy = (pos_y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        if dx.abs().max(dy.abs()) >= 150.0 {
+        if !push_strike_max_norm_allows(position_space, dx, dy) {
             continue;
         }
         let front_dist = dx * fx + dy * fy;
@@ -2353,8 +2508,7 @@ fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
 /// Convert a 0-15 direction sector to an angle in radians.
 /// Sector 0 = north (negative Y), increasing clockwise.
 /// The trailing `+ 0.1` rad nudges the result a fraction past the
-/// sector's begin edge, so the floor-based `angle_to_sector`
-/// round-trips back to the same sector.
+/// sector's begin edge so `angle_to_sector` round-trips to the same sector.
 fn sector_to_angle(sector: i16) -> f32 {
     // Original's `(sector / 16.0) * 2.0 * PI + 0.1` uses double
     // intermediates because its decimal literals are unsuffixed, then
@@ -2408,13 +2562,28 @@ pub(crate) fn sword_strike_from_animation(
 
 /// Convert an angle in radians to a 0-15 sector.
 ///
-/// Floor binning where sector `k` covers `[k·2π/16, (k+1)·2π/16)`.
-/// The negative-angle case is handled by normalising the input into
-/// `[0, 2π)` first instead of by recursion.
+/// Positive angles use Original's truncating ULONG conversion and modulo;
+/// negative angles use its recursive mirror rule.
 fn angle_to_sector(angle: f32) -> u8 {
-    let two_pi = std::f32::consts::PI * 2.0;
-    let normalized = ((angle % two_pi) + two_pi) % two_pi;
-    ((normalized / two_pi * 16.0).floor() as u32 % 16) as u8
+    if angle >= 0.0 {
+        ((f64::from(angle) / (2.0 * f64::from(std::f32::consts::PI)) * 16.0) as u32 % 16) as u8
+    } else {
+        // SBGeoVector2D::AngleToSector mirrors negative angles recursively;
+        // this differs from normalization at exact negative boundaries.
+        16 - angle_to_sector(-angle) - 1
+    }
+}
+
+/// `RHSword::GetStrike*Angle` keeps its unsuffixed-literal expression in
+/// double precision and narrows only at the FLOAT return boundary.
+fn strike_profile_angle(degrees: u16) -> f32 {
+    ((f64::from(degrees) / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32
+}
+
+/// Push collectors halve an authored UWORD width with integer division
+/// before promoting the result for the GEOTYPE side-distance comparison.
+fn push_strike_half_width(repulsion: u16) -> f32 {
+    f32::from(repulsion / 2)
 }
 
 // ─── Animation selection ────────────────────────────────────────────
@@ -2680,6 +2849,191 @@ mod tests {
     }
 
     #[test]
+    fn strike_collector_angles_and_push_width_keep_original_conversions() {
+        let expected_angle = ((7.0_f64 / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32;
+        assert_eq!(strike_profile_angle(7).to_bits(), expected_angle.to_bits());
+        assert_eq!(angle_to_sector(-std::f32::consts::PI / 8.0), 14);
+        assert_eq!(push_strike_half_width(5), 2.0);
+        assert_eq!(push_strike_half_width(6), 3.0);
+    }
+
+    #[test]
+    fn push_warning_and_done_effect_keep_distinct_elevation_and_max_norm_gates() {
+        assert!(push_strike_elevation_allows(
+            PushStrikePositionSpace::Map,
+            0.0,
+            80.0,
+        ));
+        assert!(!push_strike_elevation_allows(
+            PushStrikePositionSpace::Ground,
+            0.0,
+            80.0,
+        ));
+
+        // ExecutePushSwordStrike stores fabs(elevation difference) in ULONG,
+        // so the fractional part is discarded before the <= 40.f gate.
+        assert!(push_strike_elevation_allows(
+            PushStrikePositionSpace::Ground,
+            0.0,
+            40.75,
+        ));
+        assert!(!push_strike_elevation_allows(
+            PushStrikePositionSpace::Ground,
+            0.0,
+            41.0,
+        ));
+
+        assert!(push_strike_max_norm_allows(
+            PushStrikePositionSpace::Map,
+            149.999,
+            0.0,
+        ));
+        assert!(!push_strike_max_norm_allows(
+            PushStrikePositionSpace::Map,
+            150.0,
+            0.0,
+        ));
+        assert!(push_strike_max_norm_allows(
+            PushStrikePositionSpace::Ground,
+            160.0,
+            0.0,
+        ));
+    }
+
+    #[test]
+    fn full_circle_done_seed_uses_inclusive_unprojected_3d_range() {
+        let attacker = WorldPoint3D::ZERO;
+        let elevated_same_map = WorldPoint3D::new(0.0, 50.0, 50.0);
+
+        assert_eq!(attacker.to_map(), elevated_same_map.to_map());
+        assert!(!full_circle_strike_distance_is_in_range(
+            attacker,
+            elevated_same_map,
+            0.0,
+            60.0,
+        ));
+
+        let ordinary = WorldPoint3D::new(3.0, 4.0, 12.0);
+        assert_eq!(full_circle_strike_distance(attacker, ordinary), 13.0);
+        assert!(full_circle_strike_distance_is_in_range(
+            attacker, ordinary, 13.0, 13.0,
+        ));
+        assert!(!full_circle_strike_distance_is_in_range(
+            attacker, ordinary, 13.01, 20.0,
+        ));
+    }
+
+    #[test]
+    fn half_circle_done_seed_combines_3d_range_with_ground_space_sector() {
+        let attacker = WorldPoint3D::ZERO;
+        let elevated_same_map = WorldPoint3D::new(0.0, 10.0, 10.0);
+
+        assert_eq!(attacker.to_map(), elevated_same_map.to_map());
+        assert!(half_circle_strike_seed_allows(
+            attacker,
+            elevated_same_map,
+            0.0,
+            20.0,
+            8,
+            8,
+        ));
+        assert!(!half_circle_strike_seed_allows(
+            attacker,
+            elevated_same_map,
+            0.0,
+            10.0,
+            8,
+            8,
+        ));
+
+        let exact_boundary = WorldPoint3D::new(3.0, 4.0, 12.0);
+        assert!(half_circle_strike_seed_allows(
+            attacker,
+            exact_boundary,
+            13.0,
+            13.0,
+            0,
+            15,
+        ));
+    }
+
+    #[test]
+    fn sweep_state_uses_angles_returned_by_original_sword_getters() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(WorldPoint3D::new(10.0, 0.0, 0.0), None));
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::D as usize];
+        thrust.initial_angle = 5;
+        thrust.final_angle = 5;
+        thrust.rotation_angle = 5;
+
+        engine.initialize_sweep(
+            &assets,
+            attacker,
+            SwordStrike::D,
+            Some(1),
+            crate::profiles::WeaponThrustKind::Lateral,
+            vec![victim],
+        );
+        let direction_angle = sector_to_angle(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .element_data()
+                .direction(),
+        );
+        let sweep = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .unwrap();
+        let five_degrees = f32::from_bits(0x3db2_b8c3);
+        assert_eq!(
+            sweep.initial_angle.to_bits(),
+            (direction_angle - five_degrees).to_bits()
+        );
+        assert_eq!(
+            sweep.final_angle.to_bits(),
+            (direction_angle + five_degrees).to_bits()
+        );
+        assert_eq!(sweep.rotation_per_frame.to_bits(), five_degrees.to_bits());
+
+        install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = None;
+        engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
+                .as_ref()
+                .unwrap()
+                .rotation_per_frame
+                .to_bits(),
+            five_degrees.to_bits(),
+            "loaded sweep reconstruction uses the same RHSword getter conversion"
+        );
+
+        // Keep a common authored angle as a control alongside the one-bit 5° case.
+        assert_eq!(strike_profile_angle(45).to_bits(), 0x3f49_0fdb);
+    }
+
+    #[test]
     fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
         // The profile stores 180 degrees, but RHSword::GetStrikeRotationAngle
         // returns PI radians. At relative sector 8 Original therefore extends
@@ -2687,15 +3041,15 @@ mod tests {
         let tolerance = circle_warning_walking_tolerance(8, 180);
         assert_eq!(tolerance, 15);
 
-        let base_max_distance = 60.0;
+        let base_max_distance = 60_u16;
         let walking_target_distance = 74.0;
-        assert!(walking_target_distance <= base_max_distance + f32::from(tolerance));
+        assert!(walking_target_distance <= f32::from(base_max_distance + tolerance));
 
         // Dividing by the raw profile degrees, as the old port did, would
         // reject this moving defender and suppress its WarnForStrike callback.
         let raw_degrees_tolerance = 10.0 + (8.0 * 5.0 * std::f32::consts::PI) / (8.0 * 180.0);
-        assert!(walking_target_distance > base_max_distance + raw_degrees_tolerance);
-        assert!(walking_target_distance > base_max_distance);
+        assert!(walking_target_distance > f32::from(base_max_distance) + raw_degrees_tolerance);
+        assert!(walking_target_distance > f32::from(base_max_distance));
 
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
@@ -2706,21 +3060,30 @@ mod tests {
             },
             None,
         ));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .action_state = ActionState::MovingSword;
-        let assets = assets_with_sword_profile(0, base_max_distance as u16);
-        let collect = |engine: &EngineInner| {
+        {
+            let actor = engine
+                .get_entity_mut(target)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.action_state = ActionState::MovingSword;
+            actor.installed_order = Some(crate::element::InstalledActorOrder {
+                order_id: std::num::NonZeroU32::new(1).unwrap(),
+                order_type: OrderType::WalkingWithSword,
+            });
+        }
+        let assets = assets_with_sword_profile(0, base_max_distance);
+        let collect = |engine: &EngineInner, max_distance| {
             collect_circle_warn_victims(
                 &engine.world.entities,
                 attacker,
                 (0.0, 0.0),
                 0,
-                base_max_distance,
+                max_distance,
                 180,
+                |target_id| {
+                    engine.live_actor_animation(target_id) == Some(OrderType::WalkingWithSword)
+                },
                 &assets.profile_manager,
                 &engine.world.fast_grid,
                 crate::sight_obstacle::ObstacleList {
@@ -2730,15 +3093,45 @@ mod tests {
                 },
             )
         };
-        assert_eq!(collect(&engine), vec![target]);
+        assert_eq!(collect(&engine, base_max_distance), vec![target]);
+
+        // Running shares the port's coarse MovingSword state with walking,
+        // but Original's exact GetAnimation predicate does not extend it.
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order
+            .as_mut()
+            .unwrap()
+            .order_type = OrderType::RunningWithSword;
+        assert!(collect(&engine, base_max_distance).is_empty());
 
         engine
             .get_entity_mut(target)
             .unwrap()
             .actor_data_mut()
             .unwrap()
-            .action_state = ActionState::WaitingSword;
-        assert!(collect(&engine).is_empty());
+            .installed_order
+            .as_mut()
+            .unwrap()
+            .order_type = OrderType::WaitingSword;
+        assert!(collect(&engine, base_max_distance).is_empty());
+
+        // The ordinary case above admits at 60 + 15 = 75. UWORD compound
+        // assignment instead wraps 65530 + 15 to 9, excluding the same
+        // target rather than comparing against an unbounded float sum.
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order
+            .as_mut()
+            .unwrap()
+            .order_type = OrderType::WalkingWithSword;
+        assert!(collect(&engine, u16::MAX - 5).is_empty());
     }
 
     #[test]
@@ -5343,6 +5736,11 @@ mod tests {
             },
             None,
         ));
+        engine
+            .get_entity_mut(victim)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap()
+            .hth_weapon_id = 1;
 
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();
@@ -5362,6 +5760,12 @@ mod tests {
             .push(crate::profiles::CharacterProfile {
                 hth_weapon_id: 1,
                 ..crate::profiles::CharacterProfile::default()
+            });
+        profile_manager
+            .soldiers
+            .push(crate::profiles::SoldierProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::SoldierProfile::default()
             });
         let assets = LevelAssets {
             profile_manager: std::sync::Arc::new(profile_manager),
@@ -5504,6 +5908,13 @@ mod tests {
             },
             None,
         ));
+        for target in [victim, unreached_victim] {
+            engine
+                .get_entity_mut(target)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap()
+                .hth_weapon_id = 1;
+        }
 
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();
@@ -5526,6 +5937,12 @@ mod tests {
             .push(crate::profiles::CharacterProfile {
                 hth_weapon_id: 1,
                 ..crate::profiles::CharacterProfile::default()
+            });
+        profile_manager
+            .soldiers
+            .push(crate::profiles::SoldierProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::SoldierProfile::default()
             });
         let assets = LevelAssets {
             profile_manager: std::sync::Arc::new(profile_manager),
@@ -5722,6 +6139,13 @@ mod tests {
             },
             None,
         ));
+        for target in [retained_victim, replacement_target] {
+            engine
+                .get_entity_mut(target)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap()
+                .hth_weapon_id = 1;
+        }
         let mut assets = assets_with_nonstraight_profile(
             SwordStrike::G,
             crate::profiles::WeaponThrustKind::TrueHalfCircle,
@@ -7185,6 +7609,204 @@ mod tests {
     }
 
     #[test]
+    fn pc_shoulder_sword_damage_skips_good_strike_but_keeps_fall_translation() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+        use crate::sequence::SequencePriority;
+
+        for posture in [
+            Posture::HelpingToClimb,
+            Posture::CarryingOnShoulders,
+            Posture::OnShoulders,
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+            let victim = engine.add_entity(make_pc(
+                WorldPoint3D {
+                    x: 10.0,
+                    ..WorldPoint3D::default()
+                },
+                None,
+            ));
+            let partner = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+            {
+                let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                    unreachable!()
+                };
+                soldier.human.opponents.push(victim);
+                let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+                ai.base.me = attacker.index();
+                ai.base.current_state = AiState::Attacking;
+                ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+                ai.hth_weapon_id = 1;
+            }
+            engine
+                .get_entity_mut(victim)
+                .unwrap()
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+            engine.get_entity_mut(victim).unwrap().set_posture(posture);
+            if posture == Posture::OnShoulders {
+                engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .human_data_mut()
+                    .unwrap()
+                    .carrier = Some(partner);
+                let partner_entity = engine.get_entity_mut(partner).unwrap();
+                partner_entity.set_posture(Posture::CarryingOnShoulders);
+                partner_entity.pc_data_mut().unwrap().carried = Some(victim);
+            } else {
+                engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .pc_data_mut()
+                    .unwrap()
+                    .carried = Some(partner);
+                let partner_entity = engine.get_entity_mut(partner).unwrap();
+                partner_entity.set_posture(Posture::OnShoulders);
+                partner_entity.human_data_mut().unwrap().carrier = Some(victim);
+            }
+
+            let assets = assets_with_sword_profile(1, 50);
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence_id, 0);
+
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence_id, 0),
+            );
+
+            let attacker_ai = engine
+                .get_entity(attacker)
+                .unwrap()
+                .ai_controller()
+                .unwrap();
+            assert!(
+                !attacker_ai.ai_log.iter().any(|entry| {
+                    entry.line_type == LogLineType::Event
+                        && entry.info == StimulusType::EventGoodStrike as u16
+                }),
+                "PC posture {posture:?} must use the PC shoulder override without EventGoodStrike"
+            );
+            assert_eq!(
+                attacker_ai.current_substate,
+                Substate::AttackingSwordfightSpecialStrike,
+                "suppressed EventGoodStrike must not advance the attacker AI"
+            );
+
+            let damage = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("shoulder damage command remains registered");
+            let expected_fall = if posture == Posture::OnShoulders {
+                assert_eq!(damage.priority, SequencePriority::NonInterruptable);
+                OrderType::FallingShoulders
+            } else {
+                OrderType::FallingBackUpright
+            };
+            assert!(
+                damage
+                    .orders
+                    .iter()
+                    .any(|order| order.order_type == expected_fall),
+                "PC posture {posture:?} must retain its shoulder fall translation"
+            );
+            assert!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .sequences_iter()
+                    .flat_map(|sequence| sequence.elements.iter())
+                    .any(|element| element.command == Command::Fall
+                        && element.owner == Some(partner)),
+                "PC posture {posture:?} must still dispatch Fall to its shoulder partner"
+            );
+        }
+    }
+
+    #[test]
+    fn non_pc_helping_to_climb_still_informs_soldier_of_good_strike() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = attacker.index();
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+            ai.hth_weapon_id = 1;
+        }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .set_posture(Posture::HelpingToClimb);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        let assets = assets_with_sword_profile(1, 50);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence_id, 0),
+        );
+
+        let attacker_ai = engine
+            .get_entity(attacker)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert!(attacker_ai.ai_log.iter().any(|entry| {
+            entry.line_type == LogLineType::Event
+                && entry.info == StimulusType::EventGoodStrike as u16
+        }));
+    }
+
+    #[test]
     fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
         use crate::ai::{AiState, LogLineType, Remark, StimulusType, Substate};
 
@@ -7759,6 +8381,132 @@ mod tests {
                                 || value == StimulusType::EventLoseConsciousness as u16
                         )
                 })
+        );
+    }
+
+    #[test]
+    fn lethal_sword_hit_kills_unconscious_npc_before_say_ouch_translation() {
+        use crate::ai::{AiState, LogLineType, Remark, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.npc_data_mut().unwrap().life_points = 15;
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            let ai = victim_entity.enemy_ai_mut().unwrap();
+            ai.hth_weapon_id = 1;
+            ai.base.current_state = AiState::Sleeping;
+            ai.base.current_substate = Substate::SleepingUnconscious;
+        }
+
+        let assets = assets_with_sword_profile_effects(1, 50, 100, 0);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(victim_entity.is_dead());
+        assert!(!victim_entity.human_data().unwrap().unconscious);
+        let ai = victim_entity.ai_controller().unwrap();
+        assert_eq!(ai.current_substate, Substate::SleepingForever);
+        assert!(ai.ai_log.iter().any(|entry| {
+            entry.line_type == LogLineType::Speak && entry.info == Remark::Dies as u16
+        }));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .any(|order| order.order_type == OrderType::DyingSword),
+            "TranslateSwordDamage must retain ownership of the dying visual after synchronous Kill"
+        );
+    }
+
+    #[test]
+    fn nonlethal_sword_hit_keeps_unconscious_npc_silent() {
+        use crate::ai::{AiState, LogLineType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.human_data_mut().unwrap().unconscious = true;
+            victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            let ai = victim_entity.enemy_ai_mut().unwrap();
+            ai.hth_weapon_id = 1;
+            ai.base.current_state = AiState::Sleeping;
+            ai.base.current_substate = Substate::SleepingUnconscious;
+        }
+
+        let assets = assets_with_sword_profile_effects(1, 50, 1, 0);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(victim_entity.npc_data().unwrap().life_points, 49);
+        assert!(victim_entity.human_data().unwrap().unconscious);
+        assert!(
+            !victim_entity
+                .ai_controller()
+                .unwrap()
+                .ai_log
+                .iter()
+                .any(|entry| entry.line_type == LogLineType::Speak),
+            "the ordinary unconscious SayOuch early return must remain intact for survivors"
         );
     }
 
@@ -9044,6 +9792,144 @@ mod tests {
             crate::sprite::MotionState::Start,
             "TranslateSwordDamage changes the selected pointer before Actor::Instruct can stamp InProgress"
         );
+    }
+
+    #[test]
+    fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating() {
+        for initial_posture in [
+            Posture::Lying,
+            Posture::StuckUnderNet,
+            Posture::Flying,
+            Posture::Carried,
+            Posture::OnShoulders,
+            Posture::Tied,
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+            let victim = engine.add_entity(make_soldier(
+                WorldPoint3D {
+                    x: 10.0,
+                    ..WorldPoint3D::ZERO
+                },
+                None,
+            ));
+            {
+                let victim_entity = engine.get_entity_mut(victim).unwrap();
+                victim_entity.element_data_mut().posture = initial_posture;
+                victim_entity.npc_data_mut().unwrap().life_points = 1;
+                victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+            }
+            let assets = assets_with_sword_profile_effects(200, 50, 100, 0);
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            let sequence = engine.orders.sequence_manager.launch_element(damage);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence, 0),
+            );
+
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("grounded sword damage remains registered");
+            assert_eq!(
+                engine.get_entity(victim).unwrap().element_data().posture,
+                Posture::Dead,
+                "TranslateSwordDamage must publish Dead for lethal {initial_posture:?} non-riders"
+            );
+            assert_eq!(element.state, crate::sequence::SequenceState::Terminated);
+            assert!(
+                element.orders.is_empty(),
+                "grounded lethal {initial_posture:?} must not author a replacement animation"
+            );
+        }
+    }
+
+    #[test]
+    fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
+        for (life_points, rider, expected_state) in [
+            (50, false, crate::sequence::SequenceState::Terminated),
+            (1, true, crate::sequence::SequenceState::InProgress),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+            let victim = engine.add_entity(make_soldier(
+                WorldPoint3D {
+                    x: 10.0,
+                    ..WorldPoint3D::ZERO
+                },
+                None,
+            ));
+            {
+                let Entity::Soldier(victim_entity) = engine.get_entity_mut(victim).unwrap() else {
+                    unreachable!()
+                };
+                victim_entity.element.posture = Posture::Lying;
+                victim_entity.npc.life_points = life_points;
+                victim_entity.soldier.rider = rider;
+                victim_entity
+                    .npc
+                    .ai_brain
+                    .enemy_mut()
+                    .unwrap()
+                    .hth_weapon_id = 1;
+            }
+            let assets = if rider {
+                assets_with_sword_profile_effects(200, 50, 100, 0)
+            } else {
+                assets_with_sword_profile_effects(1, 50, 1, 0)
+            };
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            let sequence = engine.orders.sequence_manager.launch_element(damage);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence, 0),
+            );
+
+            assert_eq!(
+                engine.get_entity(victim).unwrap().element_data().posture,
+                Posture::Lying,
+                "living grounded actors and lethal riders bypass the Dead rewrite"
+            );
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .unwrap()
+                    .state,
+                expected_state,
+                "dead riders fall through while living grounded non-riders terminate"
+            );
+        }
     }
 
     #[test]
@@ -11162,5 +12048,81 @@ mod tests {
             engine.control.sim_config.difficulty,
         );
         assert!(ctx.is_in_coma);
+    }
+
+    #[test]
+    fn swordfight_distance_keeps_original_strict_minimum_boundary() {
+        use super::evaluate::{
+            SwordfightDistanceAdjustment as Adjustment, swordfight_distance_adjustment,
+        };
+
+        // Savegame_008/replay-012 reaches this representable distance after
+        // one ordinary 12-unit swordfight correction. Original compares it
+        // directly with the 45-unit MINIMAL range and requests another move.
+        assert_eq!(
+            swordfight_distance_adjustment(44.999_71, 45.0, 65.0, 65.0, false),
+            Adjustment::Farther,
+        );
+        assert_eq!(
+            swordfight_distance_adjustment(45.0, 45.0, 65.0, 65.0, false),
+            Adjustment::None,
+        );
+    }
+
+    #[test]
+    fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
+        let mut engine = make_engine();
+        let owner = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .last_motion_was_step_back_in_combat = false;
+
+        engine.launch_evaluated_step_back(owner, crate::coordinates::MapPoint::new(12.0, 0.0), 0);
+        let (sequence_id, element_index) = engine
+            .orders
+            .sequence_manager
+            .live_element_for_actor_matching(owner, |element| {
+                element.movement_flags_for_test().is_some_and(|flags| {
+                    flags.contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT)
+                })
+            })
+            .expect("evaluated step-back movement must be registered");
+
+        engine
+            .orders
+            .sequence_manager
+            .element_impossible(sequence_id, element_index);
+        assert!(
+            !engine
+                .get_entity(owner)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .last_motion_was_step_back_in_combat,
+            "requesting and then aborting a step-back before RHMOTION_TERMINATED must not publish completed-step history"
+        );
+    }
+
+    #[test]
+    fn swordfight_distance_keeps_original_strict_maximum_and_step_back_guards() {
+        use super::evaluate::{
+            SwordfightDistanceAdjustment as Adjustment, swordfight_distance_adjustment,
+        };
+
+        assert_eq!(
+            swordfight_distance_adjustment(65.000_01, 45.0, 65.0, 60.0, false),
+            Adjustment::Closer,
+        );
+        assert_eq!(
+            swordfight_distance_adjustment(65.0, 45.0, 65.0, 60.0, false),
+            Adjustment::None,
+        );
+        assert_eq!(
+            swordfight_distance_adjustment(65.000_01, 45.0, 65.0, 60.0, true),
+            Adjustment::None,
+        );
     }
 }
