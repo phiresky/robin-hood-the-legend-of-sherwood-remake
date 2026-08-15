@@ -430,6 +430,13 @@ could cause. Include a sample (>= 300) of currently-PASSING traces as a regressi
 - `198f7a6da` rewrote 465 lines of `sight_obstacle.rs` (`IsReachableImpact` semantics), used beyond projectiles
 - `f0c371b84` changes Think recursion depth for ALL AI, reviving two previously-dead depth-gated behaviours
 - `906cd1cf3` changes path-request scheduling for every actor
+- `ee0ad7b62` **is mislabelled**: its message says "Trace swordfight reconsider stimulus" (diagnostics
+  only) but it also rewrites `calculate_opponent_nearest_to_rene` (`ai_enemy/util.rs`) to resolve
+  Maurice's opponents through the full fighter registry instead of the 500-unit `IsAbleToFight`-filtered
+  `nearby_fighters` snapshot. Faithful to `RHArtificialMalignity::CalculateOpponentOfMauriceWhoIsNearestToRene`
+  (`original-code/RHartificialmalignity.cpp:13949`, whose caller at `:13692` asserts non-null), and it
+  advanced three Savegame_024/039 frontiers — but it went in unlabelled and unvalidated, so treat it as
+  an untested behavioural change when reading batch-20 sweep results.
 
 ### Corrections to long-standing campaign lore (both verified this session)
 - **Substate mapping**: C++ `RHsubstate` and Rust `ai::model::Substate` align **1:1**, both 256 entries from 0.
