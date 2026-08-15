@@ -4265,6 +4265,23 @@ impl EngineInner {
                     self.broadcast_resurrection(owner);
                     continue;
                 }
+                crate::ai::AiOwnerWork::TooProudOverviewFinallyFightRemark => {
+                    // Original reads `mCurrentSubstate` here, after
+                    // `BattleDecisions()` and every continuation it queued
+                    // have committed.
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "too-proud overview owner {} lost its Enemy AI before the finally-fight remark",
+                                owner.index()
+                            )
+                        })
+                        .too_proud_overview_finally_fight_remark();
+                    continue;
+                }
                 crate::ai::AiOwnerWork::LaunchTimer {
                     frames,
                     current_frame,

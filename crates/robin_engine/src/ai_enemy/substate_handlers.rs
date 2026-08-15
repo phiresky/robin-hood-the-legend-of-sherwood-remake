@@ -7729,19 +7729,41 @@ impl EnemyAi {
                 // BattleDecisions, then if the resulting substate is a
                 // swordfight (VIP variant says VIP_REMARK, otherwise
                 // REMARK_PROUD_FINALLY_FIGHT).
+                //
+                // Original's `BattleDecisions()` is fully synchronous, so
+                // `mCurrentSubstate` is only read once every nested decision
+                // has committed. Rust splits `ReconsiderEnemyApproach` around
+                // its `GoNear` and finishes it from the owner FIFO — and that
+                // continuation can still leave the any-swordfight set for
+                // `SUBSTATE_ATTACKING_RUN_TO_AVENGER_ON_ROOF`. Queue the test
+                // behind those continuations instead of reading a substate
+                // that Original never observes.
                 self.battle_decisions(sim, global, ctx, tick, grid);
-                if self.base.current_substate.is_any_swordfight() {
-                    let remark = if self.is_vip {
-                        Remark::VipProudFinallyFight
-                    } else {
-                        Remark::ProudFinallyFight
-                    };
-                    self.base.say(remark);
-                }
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::TooProudOverviewFinallyFightRemark);
             }
             _ => {}
         }
         false
+    }
+
+    /// Owner-boundary tail of
+    /// `SUBSTATE_ATTACKING_TOO_PROUD_TO_ATTACK_OVERVIEW`'s `EVENT_TIMER`
+    /// arm (`RHartificialmalignity.cpp:4231-4245`): once `BattleDecisions()`
+    /// has fully returned, a substate inside `_ANY_SWORDFIGHT_SUBSTATE_`
+    /// earns the "finally, a fight" remark.
+    pub(crate) fn too_proud_overview_finally_fight_remark(&mut self) {
+        if self.base.current_substate.is_any_swordfight() {
+            let remark = if self.is_vip {
+                Remark::VipProudFinallyFight
+            } else {
+                Remark::ProudFinallyFight
+            };
+            self.base.say(remark);
+        }
     }
 
     // Retiring: reach point triggers fast face-turn to seek

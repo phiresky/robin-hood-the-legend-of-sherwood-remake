@@ -6424,6 +6424,7 @@ impl EngineInner {
             beggar_wait_handoffs,
             stature_change_end,
             pc_bow_equip_action,
+            pc_bow_unequip_action,
             pc_helping_climb_action,
         } = execute_sides;
 
@@ -6448,6 +6449,7 @@ impl EngineInner {
         // remarks, blood-alcohol bump).
         self.drain_drop_ale_done(assets, drop_ale_done);
         self.drain_pc_bow_equip_action(assets, pc_bow_equip_action);
+        self.drain_pc_bow_unequip_action(assets, pc_bow_unequip_action);
         self.drain_pc_helping_climb_action(assets, pc_helping_climb_action);
         self.drain_stature_change_end(stature_change_end);
         self.drain_weak_stunned_start(sim, assets, weak_stunned_start);
@@ -6940,6 +6942,33 @@ impl EngineInner {
             // An unselected PC only restores its remembered action; a
             // selected PC also restores the messenger-global action.
             self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+        }
+    }
+
+    fn drain_pc_bow_unequip_action(
+        &mut self,
+        assets: &LevelAssets,
+        pc_bow_unequip_action: Vec<(EntityId, bool)>,
+    ) {
+        for (pc_id, script_driven) in pc_bow_unequip_action {
+            // RHElementActorHuman::Execute, TRANSITION_UNEQUIP_BOW START arm
+            // (PC branch): an empty quiver disables the Bow action outright
+            // (regardless of the script flag); otherwise non-script elements
+            // forward MSG_UNSELECT_ACTION(BOW).
+            if self.get_pc_ammo_count(pc_id, crate::profiles::Action::Bow) == 0 {
+                self.disable_pc_action(assets, pc_id, crate::profiles::Action::Bow);
+            } else if !script_driven {
+                // RHMessenger's MSG_UNSELECT_ACTION pre-process drops the
+                // message unless the unselected action is the messenger's
+                // currently selected action; it then clears that selection
+                // and RHEngine::UnSelectAction clears the PC's remembered
+                // action (the freshly-Waiting action state means no further
+                // cleanup sequence is launched).
+                if self.players.seats[0].selected_action == crate::profiles::Action::Bow {
+                    self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
+                    self.unselect_action(pc_id);
+                }
+            }
         }
     }
 
