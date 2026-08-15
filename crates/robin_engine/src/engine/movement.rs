@@ -5670,12 +5670,6 @@ impl EngineInner {
 
         match posture {
             crate::element::Posture::Upright if action_state.is_bow() => {
-                if std::env::var_os("ROBIN_TMP_EQUIPBOW_DEBUG").is_some() {
-                    eprintln!(
-                        "TMPEQUIP frame={} site=append_posture_recovery pc={:?} action_state={:?} level={} last_command={:?}",
-                        self.control.frame_counter, pc_id, action_state, level, last_command,
-                    );
-                }
                 target_sequence.append_element(crate::sequence::SequenceElement::new(
                     level,
                     Command::EquipBow,
