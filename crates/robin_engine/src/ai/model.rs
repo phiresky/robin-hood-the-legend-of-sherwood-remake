@@ -1727,8 +1727,19 @@ pub enum PatrolAssignment {
     /// Sentinel `-2` / `(void*)-1` — drop the path but set
     /// `likes_to_sit_around = true`.
     ClearPathSitAround,
-    /// Valid-index branch.
+    /// Valid-index branch of `AssignNewPatrolPath(UWORD)` (waypoint-macro
+    /// opcodes `CMD_CHANGE_WAY` / `CMD_STAY_HERE`). Clears both
+    /// `likes_to_sit_around` and `special_action`.
     Index(PathId),
+    /// Valid-pointer branch of `AssignNewPatrolPath(RHHikingPath*)` — the
+    /// `AssignPath` script native (RHScript.cpp:5254). Unlike the index
+    /// overload, Original's pointer overload
+    /// (RHartificialintelligence.cpp:5735) only clears
+    /// `mbLikesToSitAround`; an NPC authored with a Special/leisure
+    /// initial action keeps `mbSpecialAction = true` while walking the
+    /// scripted route, which later disables GoTo's already-on-point
+    /// shortcut when it returns to duty.
+    ScriptWay(PathId),
 }
 
 // ---------------------------------------------------------------------------

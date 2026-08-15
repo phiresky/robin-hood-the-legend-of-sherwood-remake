@@ -1898,7 +1898,7 @@ impl AiController {
                 }
                 true
             }
-            PatrolAssignment::Index(pid) => {
+            PatrolAssignment::Index(pid) | PatrolAssignment::ScriptWay(pid) => {
                 let idx = pid.get() as usize;
                 // Original writes mbHasPatrolPath before validating the
                 // authored index. Preserve that odd partial mutation on the
@@ -1931,7 +1931,19 @@ impl AiController {
                     path
                 });
                 self.likes_to_sit_around = false;
-                self.special_action = false;
+                // Only the waypoint-macro index overload
+                // (`AssignNewPatrolPath(UWORD)`,
+                // RHartificialintelligence.cpp:5715) clears
+                // `mbSpecialAction`. The `AssignPath` script native goes
+                // through the `RHHikingPath*` overload
+                // (RHartificialintelligence.cpp:5735), whose valid-path arm
+                // leaves `mbSpecialAction` untouched — a leisure-authored NPC
+                // sent onto a scripted route stays special, so its later
+                // return-to-duty GoTo skips the already-on-point shortcut
+                // and runs a real (possibly zero-length) move instead.
+                if matches!(assignment, PatrolAssignment::Index(_)) {
+                    self.special_action = false;
+                }
                 if !self.script_locked && self.current_state == AiState::Default {
                     self.fire_self_stimulus(StimulusType::EventReturnToDuty);
                 }
