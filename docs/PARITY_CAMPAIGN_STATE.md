@@ -520,6 +520,35 @@ directions wherever the Original tests body condition:
   This will not show up in any replay whose capture never exercised apple-chasing; it needs a targeted
   test or a purpose-recorded trace.
 
+### C vs C++ math overloads — a whole class of precision bugs (learned the hard way, 2026-08-15)
+`2f8e6b54a` "Evaluate NPC gaze trig in double like the Original" was **wrong**, and was corrected by
+`f6f8bd886`. The reasoning error: in C, `cos(float)` promotes its argument to `double`; in **C++**
+`<math.h>` provides overloads, so `cos(float)` binds to the **float** overload. Disassembly of
+`original-code/build/native-full/robin-schema14-capture` settles it — `SBGeoVector2D::GetRotated`
+(`sblibng/SBGeoVector2D.cpp:413-422`) emits `call sincosf` then `mulss/mulss/subss`, i.e. **all single
+precision**; `operator*` (:151-154) and `Det` (:158-161) likewise; only `Angle` (:431-464) goes double
+(`divss; cvtss2sd; call atan; cvtsd2ss`), matching its explicit `(double)` cast. The build is SSE, so
+there is no x87 excess precision either. **Do not infer float width from the C++ source alone — read
+the disassembly of the capture binary.** Note the 6 traces `2f8e6b54a` cleared were fixed by its exact
+`marraySectorX/Y` table change, not by the f64 rotation; all 6 still pass after the correction.
+
+### Retirement candidates: the corpus is STALE for 30s Savegame_023 (3 traces)
+30s `Savegame_linux3/Profile_001/Savegame_023` replay-001 (f54711), replay-002 (f54350),
+replay-003 (f54212). Re-running today's Original binary on the same save and seed reproduces each
+recording and then diverges **from the recording**: at seed 2, f54350, today's Original emits **1**
+visibility query — the same as Rust — while the recording has 2. Rust now agrees with the current
+reference; the recording does not. These are re-record-or-retire candidates, not Rust bugs. Verify the
+same way before spending any more effort on them.
+
+### Missing feature (not a parity bug): RHShadowPolygon night/fog light modulation
+`shadow_polygon.rs` (engine and host side) implements no light modulation and no `is_reachable`. The
+Original's `rhshadowpolygon.cpp:14288-14320` selects SHADOW sectors at the **projection area's** obstacle
+layer (not the target's) and `:14349` calls `IsReachable(mptViewer, pSectorLight->GetBarycentre3D(),
+SIGHTOBSTACLE_OPAQUE)`. gdb confirms a layer-2 `GetSectors(SECTOR_SHADOW)` at f54350 whose box contains
+sector 189's barycentre (1035.3,1433.4) with **no preceding `ComputeViewRadius`** — so the layer-2 scan
+never came from a dropped target obstacle. This is the correct form of the old sub-cause (a); the
+"cadence" sub-cause (b) is **disproved** — no cadence change was needed for any member.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
