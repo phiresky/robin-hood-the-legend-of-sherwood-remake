@@ -3063,6 +3063,32 @@ impl EnemyAi {
 
         // Weak-enemy charge: a soldier sprints in if the foe is out of
         // his max range and he has the capacity to charge.
+        //
+        // This gate is spelled `Distance( mpPrimaryTarget )`
+        // (`RHartificialmalignity.cpp:13756`), which is
+        // `RHArtificialIntelligence::Distance`
+        // (`RHartificialintelligence.cpp:6935`):
+        // `( target->GetPosition() - me->GetPosition() )
+        //      .StretchY( INVERSE_ASPECT_RATIO ).Norm()` — the stretched
+        // **3D world** norm. That is a different metric from the flat
+        // map-space `( Position( target ) - Position( me ) ).Norm()` the
+        // "too far to adversary" test further down uses
+        // (`RHartificialmalignity.cpp:13846`; `RHposition` is 2D). Screen-
+        // vertical separation stretches by ~1.74, so conflating the two
+        // under-reports this distance badly and skips charges the Original
+        // commits to — after which the Original returns, leaving the
+        // reposition roll and the strike proposal undrawn.
+        //
+        // The comparison is also a plain FLOAT one: `GetRange( MAXIMAL )`
+        // promotes to float, so there is no UWORD truncation here (unlike
+        // the `uwDistance` test below).
+        let weak_charge_distance = ai_square_distance(
+            &primary.position,
+            primary.elevation,
+            &ctx.position,
+            ctx.elevation,
+        )
+        .sqrt();
         let my_max_range = self
             .find_fighter(self.base.me, tick)
             .map(|f| f.sword_range_maximal)
@@ -3071,9 +3097,22 @@ impl EnemyAi {
             .find_fighter(self.base.me, tick)
             .map(|f| f.fighting_ability)
             .unwrap_or(0);
+        if reconsider_debug {
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=weak_charge_gate enemy_weak={} rank={:?} charge_dist={} flat_dist={} max_range={} ability={}",
+                ctx.frame,
+                self.base.me,
+                enemy_weak,
+                self.get_rank(),
+                weak_charge_distance,
+                dist_to_target,
+                my_max_range,
+                my_fighting_ability,
+            );
+        }
         if enemy_weak
             && self.get_rank() == ProfileRank::Soldier
-            && dist_to_target > my_max_range as u16
+            && weak_charge_distance > my_max_range
             && my_fighting_ability >= combat::MIN_CAPACITY_CHARGE_WEAK_ENEMY
         {
             let target_pos = primary.position;
