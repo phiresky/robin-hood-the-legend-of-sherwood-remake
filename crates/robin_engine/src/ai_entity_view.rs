@@ -367,6 +367,34 @@ impl AiEntityView {
     pub fn is_civilian(&self) -> bool {
         self.kind == EntityKind::Civilian
     }
+
+    /// Port of `RHElementActorHuman::IsOutOfOrder`
+    /// (`RHelementactorhuman.cpp:13271`):
+    ///
+    /// ```text
+    /// return IsDead() || IsUnconscious() || IsStuckUnderNet()
+    ///     || posture == RHPOSTURE_TIED || posture == RHPOSTURE_CARRIED
+    ///     || ( IsPC() && IsInComa() );
+    /// ```
+    ///
+    /// This is *not* `!is_able_to_fight`: `IsAbleToFight` is a virtual with a
+    /// combat-readiness meaning (civilians are never able to fight, soldiers
+    /// lose it while sleeping / menacing / fleeing / staggering) whereas
+    /// `IsOutOfOrder` asks only whether the human is a "body" — down, netted,
+    /// tied, carried, or comatose. Body queues such as
+    /// `mlistOtherBodiesToExamine` are pruned with this predicate, so
+    /// substituting the combat-readiness flag keeps recovered civilians in the
+    /// queue forever and drops netted-but-alert soldiers out of it.
+    pub fn is_out_of_order(&self) -> bool {
+        self.is_dead
+            || self.is_unconscious
+            || self.stuck_under_net
+            || matches!(
+                self.posture,
+                crate::element::Posture::Tied | crate::element::Posture::Carried
+            )
+            || (self.kind == EntityKind::Pc && self.in_coma)
+    }
 }
 
 /// Handle → [`AiEntityView`] map.  Populated once per AI tick by

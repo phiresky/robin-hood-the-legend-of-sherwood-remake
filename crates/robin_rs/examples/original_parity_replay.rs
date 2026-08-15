@@ -6666,6 +6666,47 @@ fn compare_frame(
                 expected_detection.detectables.len(),
                 actual_detectables.len(),
             );
+            if expected_detection.detectables.len() != actual_detectables.len()
+                && std::env::var_os("PARITY_DEBUG_DETECTABLE_DIFF").is_some()
+            {
+                // Side-by-side dump of both flattened detectable lists for the
+                // NPC whose length diverged. Unlike `PARITY_DEBUG_DETECTABLE_LIST`
+                // this needs no frame/creation-order filter: it fires exactly at
+                // the first divergent frame, which is where the identity of the
+                // added/removed entry (bucket + target) has to be read off.
+                eprintln!(
+                    "DETDIFF owner={id:?} original_len={} rust_len={}",
+                    expected_detection.detectables.len(),
+                    actual_detectables.len()
+                );
+                for (i, d) in expected_detection.detectables.iter().enumerate() {
+                    eprintln!(
+                        "DETDIFF original[{i}] type={} target={:?}->{:?} seen_now={} seen_last={} heard_last={} shadow_now={} shadow_last={} vis={:?}",
+                        d.detectable_type,
+                        d.target,
+                        entity_map.translate(d.target),
+                        d.seen_now,
+                        d.seen_last_frame,
+                        d.heard_last_frame,
+                        d.shadow_seen_now,
+                        d.shadow_seen_last_frame,
+                        d.last_visibility
+                    );
+                }
+                for (i, d) in actual_detectables.iter().enumerate() {
+                    eprintln!(
+                        "DETDIFF rust[{i}] type={} target={:?} seen_now={} seen_last={} heard_last={} shadow_now={} shadow_last={} vis={}",
+                        detectable_type_ordinal(d.detectable_type),
+                        d.element,
+                        d.seen_now,
+                        d.seen_last_frame,
+                        d.heard_last_frame,
+                        d.shadow_seen_now,
+                        d.shadow_seen_last_frame,
+                        d.last_visibility
+                    );
+                }
+            }
             for (detectable_index, (expected_detectable, actual_detectable)) in expected_detection
                 .detectables
                 .iter()
