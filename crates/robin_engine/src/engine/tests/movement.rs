@@ -649,6 +649,141 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
     );
 }
 
+/// `RHPathFinder::ProcessPathRequests` never looks at the requesting
+/// sequence element (`original-code/RHpathfinder.cpp:806-820,891-901`): a
+/// queued request whose element has since been interrupted is still computed
+/// and still consumes one delivery slot. Only the delivery is a no-op,
+/// because `SetCommand( RHCOMMAND_MOVE_OK )` then writes to an element the
+/// actor no longer executes (`original-code/RHengine.cpp:8410`).
+#[test]
+fn dead_path_request_still_consumes_its_scheduling_slot() {
+    use crate::element::Camp;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut config = crate::engine::SimConfig::default();
+    config.synchronous_pathfinding = true;
+    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
+
+    let mut engine = EngineInner::new();
+    let first_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let dead_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let last_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    // The fixture graph has no nodes, so every A* search fails; it still needs
+    // the request's sector in its conversion table to be searched at all.
+    {
+        let graph = std::sync::Arc::make_mut(&mut assets.pathfinder_graph);
+        graph.layers.push(vec![Vec::new()]);
+        graph.alternative_layers.push(vec![Vec::new()]);
+        graph.states.push(vec![0]);
+        let graph_static = graph.static_mut();
+        graph_static
+            .sector_conversion
+            .push(crate::pathfinder::SectorToArea { sector: 0, area: 0 });
+        graph_static
+            .half_diagonals
+            .push(crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 4.0));
+    }
+    engine.world.pathfinder.states = vec![vec![0x5555_5555]];
+
+    let mut launch_waiting_move = |engine: &mut EngineInner, owner| {
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveWaiting,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.orders.push_back(Order::new(
+            OrderType::Freezing,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        ));
+        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+        let _ = engine.orders.sequence_manager.hourglass();
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        sequence_id
+    };
+    let first_sequence = launch_waiting_move(&mut engine, first_owner);
+    let dead_sequence = launch_waiting_move(&mut engine, dead_owner);
+    let last_sequence = launch_waiting_move(&mut engine, last_owner);
+
+    // Original's interrupting arbitration leaves the outgoing element behind
+    // with `RHCOMMAND_MOVE`; its already-queued request stays in the list.
+    let dead = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(dead_sequence, 0)
+        .expect("interrupted movement stays registered");
+    dead.command = Command::Move;
+    dead.state = SequenceState::Interrupted;
+
+    engine.orders.pending_path_requests = PendingPathRequestQueue::restore_v48_waiting(vec![
+        PendingPathRequest::test_request(first_owner, first_sequence, 0),
+        PendingPathRequest::test_request(dead_owner, dead_sequence, 0),
+        PendingPathRequest::test_request(last_owner, last_sequence, 0),
+    ]);
+
+    // First barrier: the WAITING arm computes and delivers the head, then
+    // starts the interrupted element's request and parks it.
+    engine.hourglass_phase_paths(&sim, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .failed_path_requests
+            .iter()
+            .map(|failed| failed.owner)
+            .collect::<Vec<_>>(),
+        vec![first_owner],
+        "only the live head is delivered at the first barrier"
+    );
+    assert!(
+        engine.orders.pending_path_requests.has_in_flight(),
+        "the interrupted element's request must still occupy the pipeline"
+    );
+
+    // Second barrier: that delivery is a no-op for the interrupted element,
+    // so the last request only *starts* here and is delivered a frame later.
+    engine.hourglass_phase_paths(&sim, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .failed_path_requests
+            .iter()
+            .map(|failed| failed.owner)
+            .collect::<Vec<_>>(),
+        vec![first_owner],
+        "the dead request consumes the second barrier's single result slot"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(last_sequence, 0)
+            .expect("last movement stays registered")
+            .command,
+        Command::MoveWaiting,
+        "the trailing request must not be delivered a frame early"
+    );
+
+    engine.hourglass_phase_paths(&sim, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .failed_path_requests
+            .iter()
+            .map(|failed| failed.owner)
+            .collect::<Vec<_>>(),
+        vec![first_owner, last_owner],
+        "the trailing request is delivered one barrier later"
+    );
+}
+
 #[test]
 fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
     use crate::ai::{LogLineType, StimulusType};

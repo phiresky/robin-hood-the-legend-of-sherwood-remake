@@ -3247,12 +3247,14 @@ impl EngineInner {
         // Rust computes A* synchronously, but the queue retains the original
         // one-call latency and one-completion-per-frame observation order.
         let had_in_flight = self.orders.pending_path_requests.has_in_flight();
+        self.trace_path_barrier("enter");
         let completed = MovementContext::new(
             self.control.frame_counter,
             &mut self.world,
             &mut self.orders,
         )
         .take_completed();
+        self.trace_path_barrier_completed("take1", &completed);
         self.apply_completed_path_work(sim, completed);
 
         MovementContext::new(
@@ -3261,6 +3263,7 @@ impl EngineInner {
             &mut self.orders,
         )
         .start_next(assets);
+        self.trace_path_barrier("after_start1");
 
         // Synchronous mode may deliver the request started above at this same
         // barrier, but ProcessPathRequests returns at most one result per
@@ -3273,6 +3276,7 @@ impl EngineInner {
                 &mut self.orders,
             )
             .take_completed();
+            self.trace_path_barrier_completed("take2", &completed);
             self.apply_completed_path_work(sim, completed);
 
             // In Original's synchronous WAITING arm, starting the first
@@ -3287,6 +3291,7 @@ impl EngineInner {
                 &mut self.orders,
             )
             .start_next(assets);
+            self.trace_path_barrier("after_start2");
         }
 
         // ── Failed-path retry ────────────────────────────────────
@@ -3369,6 +3374,55 @@ impl EngineInner {
                 amount,
             ));
         }
+    }
+
+    fn trace_path_barrier(&self, stage: &str) {
+        if std::env::var_os("PARITY_DEBUG_PATH_BARRIER").is_none() {
+            return;
+        }
+        let pending = self
+            .orders
+            .pending_path_requests
+            .parity_state(&self.world.fast_grid);
+        let brief: Vec<_> = pending
+            .1
+            .iter()
+            .map(|entry| {
+                (
+                    entry.request.actor,
+                    entry.sequence_id,
+                    entry.element_index,
+                    entry.in_flight,
+                    entry.waypoints.as_ref().map(|w| w.len()),
+                )
+            })
+            .collect();
+        eprintln!(
+            "[PATH_BARRIER frame={} stage={stage} ignore={} queue={brief:?}]",
+            self.control.frame_counter, pending.0
+        );
+    }
+
+    fn trace_path_barrier_completed(&self, stage: &str, completed: &Option<CompletedPathWork>) {
+        if std::env::var_os("PARITY_DEBUG_PATH_BARRIER").is_none() {
+            return;
+        }
+        let brief = completed.as_ref().map(|work| match work {
+            CompletedPathWork::Ready { request, waypoints } => (
+                "ready",
+                request.owner,
+                request.seq_id,
+                request.elem_idx,
+                waypoints.len(),
+            ),
+            CompletedPathWork::Failed(request) => {
+                ("failed", request.owner, request.seq_id, request.elem_idx, 0)
+            }
+        });
+        eprintln!(
+            "[PATH_BARRIER frame={} stage={stage} completed={brief:?}]",
+            self.control.frame_counter
+        );
     }
 
     fn apply_completed_path_work(

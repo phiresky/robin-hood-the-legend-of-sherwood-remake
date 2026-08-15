@@ -97,6 +97,87 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
 }
 
 #[test]
+fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::SequenceElement;
+
+    let mut assets = assets_with_test_pc_profile();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.characters[0].hth_weapon_id = 1;
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        hth_weapon_id: 1,
+        ..Default::default()
+    });
+    profiles.hth_weapons.push(Default::default());
+    let mut engine = EngineInner::new();
+    let victim = engine.add_entity(make_test_pc(Posture::Flying));
+    let opponent = engine.add_entity(super::world_entity::make_test_ai_soldier(
+        crate::element::Camp::Lacklandists,
+    ));
+    attach_test_campaign_identities(&mut engine);
+    engine
+        .get_entity_mut(opponent)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test soldier has EnemyAi")
+        .hth_weapon_id = 1;
+    {
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        *victim_entity.human_and_life_points_mut().unwrap().1 = 20;
+        victim_entity.human_data_mut().unwrap().opponents = vec![opponent];
+    }
+    engine
+        .get_entity_mut(opponent)
+        .and_then(Entity::human_data_mut)
+        .unwrap()
+        .opponents = vec![victim];
+
+    let damage = SequenceElement::new_damage(
+        1,
+        Command::ReceiveArrowDamage,
+        Some(victim),
+        Some(opponent),
+        20,
+        0,
+    );
+    let sequence = engine.orders.sequence_manager.launch_element(damage);
+
+    engine.dispatch_receive_damage(
+        &crate::sim_rng::test_context(),
+        &assets,
+        victim,
+        sequence,
+        0,
+    );
+
+    assert_eq!(
+        engine.get_entity(victim).unwrap().human_life_points(),
+        0,
+        "the arrow is lethal"
+    );
+    // Human::SetLifePoints runs virtual Kill inside ReceivePiercingDamage, so
+    // TranslateArrowDamage's flying arm terminates its element on a corpse
+    // that already left every opponent list.
+    assert!(
+        engine
+            .get_entity(victim)
+            .and_then(Entity::human_data)
+            .unwrap()
+            .opponents
+            .is_empty(),
+        "the killed victim leaves its own opponent list"
+    );
+    assert!(
+        engine
+            .get_entity(opponent)
+            .and_then(Entity::human_data)
+            .unwrap()
+            .opponents
+            .is_empty(),
+        "the killed victim is removed from its opponent's list"
+    );
+}
+
+#[test]
 fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;

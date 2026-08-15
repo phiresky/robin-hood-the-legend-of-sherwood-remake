@@ -769,6 +769,11 @@ impl FriendlyAi {
             self.base.already_turned = false;
             if let Some(event) = event {
                 self.base.outbox.reentrant.self_stimuli.push(event);
+                // Original dispatches this event recursively before the
+                // decrement, so the frame stays open until the cascade's
+                // innermost Think unwinds (see `open_end_think_frames`).
+                self.base.open_end_think_frames = self.base.open_end_think_frames.saturating_add(1);
+                return;
             }
         } else {
             // The deep-recursion fallback runs `ReturnToDuty` instead of a
@@ -785,7 +790,16 @@ impl FriendlyAi {
                 }
             }
         }
-        self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_sub(1);
+        // No continuation was queued: the innermost Think of a completion
+        // cascade unwinds the whole chain of still-open ancestor frames —
+        // the deferred equivalent of the stacked EndThink decrements the
+        // Original performs while returning out of the nested calls.
+        let open = std::mem::take(&mut self.base.open_end_think_frames);
+        self.base.think_recursion_depth = self
+            .base
+            .think_recursion_depth
+            .saturating_sub(1)
+            .saturating_sub(open);
     }
 
     /// Civilian-side new-task-priority hook is intentionally empty.
