@@ -409,7 +409,7 @@ Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67
 
 - Remote sweep: `ssh atlasbio-robin-cpu4`; corpora + datadirs + original-code + rust-src at `~/robinhood/`; build `cd ~/robinhood/rust-src && cargo build --release --example original_parity_replay`; sweep script reads `<audit>/traces.snapshot`, writes per-trace `status/<key>.status` (0 pass, 1 state-div, 101 rng-panic, 124 timeout) and `logs/<key>.log`; key = trace path with `/`→`__`.
 - classify_parity_failures.py groups by first divergence boundary; output classification.json.
-- Substates in dumps: C++ enum = Rust index + 1. Aim previews burn creation-order in Original, not in Rust (see memory project_creation_order_preview_gaps).
+- Substates in dumps: C++ `RHsubstate` and Rust `ai::model::Substate` align **1:1** — both are 256 entries starting at `START_SLEEPING_SUBSTATES`/`StartSleepingSubstates = 0`, and e.g. 155 = RUNNING_TO_ENEMY, 208 = RIDER_CHARGING_APPROACHING, 250 = RUN_TO_AVENGER_ON_ROOF on both sides (only 114/201/202 differ in spelling). The earlier "C++ enum = Rust index + 1" note in this file was WRONG and caused misreadings of dumps; verified 2026-08-15 by parsing both enums with explicit discriminants honored. Aim previews burn creation-order in Original, not in Rust (see memory project_creation_order_preview_gaps).
 - RNG contract: Rust consumes recorded draw VALUES; "replay exhausted" = Rust drew MORE than Original; extra/missing draws → compare gate conditions at the named site.
 - `--dump-jsonl` ~500KB/frame — narrow windows only, delete after.
 - Entity mapping in dumps: original pc:N ↔ Rust Pc(PcId(N−1)) sometimes (creation-order shift) — verify entity identity before trusting a dump diff (bit fix-endfacing twice).

@@ -1852,9 +1852,11 @@ impl AiController {
         }
     }
 
-    /// Assign a new patrol path (or drop the current one). The three
-    /// call shapes (sentinel `-1`, sentinel `-2`, valid index) collapse
-    /// to the cases encoded in [`PatrolAssignment`].
+    /// Assign a new patrol path (or drop the current one). The call
+    /// shapes of Original's two `AssignNewPatrolPath` overloads
+    /// (sentinel `-1`, sentinel `-2`, valid waypoint-macro index, valid
+    /// script `RHHikingPath*`) collapse to the cases encoded in
+    /// [`PatrolAssignment`].
     ///
     /// Side effects:
     /// - `BreakMacro()` prologue unconditionally.
@@ -1862,8 +1864,9 @@ impl AiController {
     ///   `initial_position` / `initial_view_direction` so
     ///   `return_to_duty_common_stuff` sends the NPC back to the
     ///   right anchor.
-    /// - Reset `likes_to_sit_around` (per variant), `special_action`,
-    ///   `is_stay_at_home` flags.
+    /// - Reset `likes_to_sit_around` (per variant), `is_stay_at_home`,
+    ///   and — for every variant except [`PatrolAssignment::ScriptWay`] —
+    ///   `special_action`.
     /// - The index variant sets `has_patrol_path` before the Original's
     ///   off-by-one bounds check. An out-of-range assignment therefore
     ///   returns `false` with that flag set while retaining the prior path.
@@ -1898,7 +1901,7 @@ impl AiController {
                 }
                 true
             }
-            PatrolAssignment::Index(pid) => {
+            PatrolAssignment::Index(pid) | PatrolAssignment::ScriptWay(pid) => {
                 let idx = pid.get() as usize;
                 // Original writes mbHasPatrolPath before validating the
                 // authored index. Preserve that odd partial mutation on the
@@ -1906,6 +1909,12 @@ impl AiController {
                 self.has_patrol_path = true;
                 // Strictly greater, so `idx == count` is tolerated
                 // (matches the off-by-one in the original engine).
+                //
+                // todo: the `RHHikingPath*` overload has no bounds check at
+                // all — the script hands it an already-resolved pointer. Rust
+                // resolves the script's Way to an index here, so `ScriptWay`
+                // inherits the index overload's guard. Keep it (failing loud
+                // beats a wild dereference), but note the divergence.
                 if idx > hiking_paths.len() {
                     tracing::warn!(
                         npc = self.me,
@@ -1931,7 +1940,19 @@ impl AiController {
                     path
                 });
                 self.likes_to_sit_around = false;
-                self.special_action = false;
+                // Only the waypoint-macro index overload
+                // (`AssignNewPatrolPath(UWORD)`,
+                // RHartificialintelligence.cpp:5717) clears
+                // `mbSpecialAction`. The `AssignPath` script native goes
+                // through the `RHHikingPath*` overload
+                // (RHartificialintelligence.cpp:5764-5769), whose valid-path arm
+                // leaves `mbSpecialAction` untouched — a leisure-authored NPC
+                // sent onto a scripted route stays special, so its later
+                // return-to-duty GoTo skips the already-on-point shortcut
+                // and runs a real (possibly zero-length) move instead.
+                if matches!(assignment, PatrolAssignment::Index(_)) {
+                    self.special_action = false;
+                }
                 if !self.script_locked && self.current_state == AiState::Default {
                     self.fire_self_stimulus(StimulusType::EventReturnToDuty);
                 }

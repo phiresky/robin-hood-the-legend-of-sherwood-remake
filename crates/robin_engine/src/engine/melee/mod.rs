@@ -10572,6 +10572,156 @@ mod tests {
         );
     }
 
+    /// Build a cross-sector `EnterSwordfight` dispatch where `crowding`
+    /// fighters from the owner's sector already engage the opponent, and the
+    /// element carries no jump line.  Returns the engine, the owner and the
+    /// launched sequence id after dispatch.
+    fn dispatch_crowded_cross_sector_swordfight(
+        crowding: usize,
+    ) -> (EngineInner, EntityId, EntityId, crate::sequence::SequenceId) {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let owner_sector = crate::position_interface::SectorHandle::new(1);
+        let opponent_sector = crate::position_interface::SectorHandle::new(2);
+        assert_ne!(owner_sector, opponent_sector);
+
+        let owner = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            owner_sector,
+        ));
+        let opponent = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 60.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            opponent_sector,
+        ));
+        for index in 0..crowding {
+            let fighter = engine.add_entity(make_soldier(
+                WorldPoint3D {
+                    x: index as f32 * 10.0,
+                    y: 120.0,
+                    z: 0.0,
+                },
+                owner_sector,
+            ));
+            engine
+                .get_entity_mut(opponent)
+                .unwrap()
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(fighter);
+        }
+        assert_eq!(
+            number_of_table_swordfight_opponents(
+                &engine.world.entities,
+                opponent,
+                i16::from(owner_sector.unwrap()),
+            ),
+            crowding as u32,
+        );
+
+        let mut element =
+            crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Element(opponent),
+        );
+        // Deliberately no `Field::JumplineDestination`: the original's
+        // `pJumpLine` is null here, which must not switch the occupancy gate
+        // off.
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(element);
+        let seq_id = engine.launch_sequence(sequence);
+
+        engine.dispatch_enter_swordfight(
+            &sim,
+            &LevelAssets::default(),
+            owner,
+            Some(opponent),
+            seq_id,
+            0,
+        );
+        (engine, owner, opponent, seq_id)
+    }
+
+    /// Original `RHElementActorHuman::Translate` case
+    /// `RHCOMMAND_ENTER_SWORDFIGHT` (`RHelementactorhuman.cpp:1324-1372`)
+    /// runs the cross-sector occupancy gate for every unprepared element that
+    /// has an opponent — `if( pJumpLine != 0 )` guards only the inner
+    /// slot-search half.  So a jump-line-less element still interrupts when
+    /// `GetNumberOfTableSwordfightOpponents` reports 3+ fighters on our side,
+    /// and the PC never reaches the `TransitionRaisingSword` order.
+    #[test]
+    fn crowded_cross_sector_swordfight_interrupts_without_a_jump_line() {
+        let (engine, owner, opponent, seq_id) = dispatch_crowded_cross_sector_swordfight(3);
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .expect("interrupted element must survive the dispatch");
+        // `pSequenceElement->SetState( RHSEQ_INTERRUPTED )` — the default
+        // cascade is `CASCADE_NEXT_LEVEL` (`RHsequenceelement.h:152`).  This
+        // must not be Impossible/Terminated: Interrupted abandons the
+        // postponed successor instead of resuming it.
+        assert_eq!(element.state, crate::sequence::SequenceState::Interrupted);
+        assert!(
+            element.current_order().is_none(),
+            "the interrupt returns before InsertOrderAsLast"
+        );
+
+        let owner_entity = engine.get_entity(owner).unwrap();
+        assert_eq!(
+            owner_entity.actor_data().unwrap().action_state,
+            ActionState::Waiting,
+            "the crowded-out PC keeps waiting instead of raising its sword"
+        );
+        assert!(
+            !owner_entity
+                .human_data()
+                .unwrap()
+                .opponents
+                .contains(&opponent),
+            "the interrupt returns before EnterSwordFight, so no relationship forms"
+        );
+    }
+
+    /// Counterpart of the gate above: with fewer than 3 fighters already on
+    /// our side and no jump line, the original falls straight through the
+    /// `if( pJumpLine != 0 )` block and enters the swordfight normally
+    /// (`RHelementactorhuman.cpp:1338-1370`).
+    #[test]
+    fn uncrowded_cross_sector_swordfight_enters_without_a_jump_line() {
+        let (engine, owner, opponent, seq_id) = dispatch_crowded_cross_sector_swordfight(2);
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .expect("in-progress element must survive the dispatch");
+        assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+        assert_eq!(
+            element.current_order().unwrap().order_type,
+            crate::order::OrderType::TransitionRaisingSword
+        );
+        assert!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents
+                .contains(&opponent),
+        );
+    }
+
     #[test]
     fn enter_swordfight_instruct_preserves_live_sprite_destination() {
         let sim = crate::sim_rng::test_context();
