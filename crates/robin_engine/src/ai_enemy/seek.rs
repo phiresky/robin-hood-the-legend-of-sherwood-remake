@@ -329,6 +329,26 @@ impl EnemyAi {
                 }
             }
 
+            if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
+                for (i, sp) in global.seek_points.iter().enumerate() {
+                    eprintln!(
+                        "SEEKAREA {{\"event\":\"point_dump\",\"frame\":{},\"index\":{},\"id\":{},\"x\":{},\"y\":{},\"level\":{},\"center\":[{},{},{}],\"norm\":{},\"norm_bits\":{},\"near\":{}}}",
+                        ctx.frame,
+                        i,
+                        sp.id,
+                        sp.position.x,
+                        sp.position.y,
+                        sp.position.level,
+                        center.x,
+                        center.y,
+                        center.level,
+                        square_norms[i],
+                        square_norms[i].to_bits(),
+                        near_sorted.contains(&i),
+                    );
+                }
+            }
+
             // If nearest point was recently examined, don't look for help
             if let Some(&first_idx) = near_sorted.first()
                 && global.seek_points[first_idx].calculate_interest(current_frame) < 90
@@ -487,6 +507,20 @@ impl EnemyAi {
                     preselection_rng_draws + phase4_attempts + phase4_accepts,
                     count_f,
                 );
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"selection_extra\",\"frame\":{},\"owner_creation_order\":{:?},\"flags\":{},\"seek_direction\":{},\"center_level\":{},\"obligatory\":{:?},\"obligatory2\":{:?},\"selected_random\":{:?}}}",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    flags.bits(),
+                    seek_direction,
+                    center.level,
+                    obligatory_idx.map(|i| global.seek_points[i].id),
+                    obligatory2_idx.map(|i| global.seek_points[i].id),
+                    selected_random
+                        .iter()
+                        .map(|&i| global.seek_points[i].id)
+                        .collect::<Vec<_>>(),
+                );
             }
 
             // ── Phase 5: reorder for optimal travel path ──
@@ -535,6 +569,15 @@ impl EnemyAi {
                 } else {
                     "direction"
                 },
+            );
+            eprintln!(
+                "SEEKAREA {{\"event\":\"phase6_center\",\"frame\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"seek_position\":[{},{}]}}",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.seek_center.x,
+                self.seek_center.y,
+                self.base.seek_position.x,
+                self.base.seek_position.y,
             );
         }
 
@@ -833,10 +876,18 @@ impl EnemyAi {
             }
         };
 
+        let debug_next_point = std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_some();
+
         // Original short-circuits `IsLocked() || ...`: a locked candidate is
         // skipped without recalculating its shared interest or consuming the
         // acceptance draw. The recursive entry still unlocks it above.
         if is_locked {
+            if debug_next_point {
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"next_point_locked\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"point_id\":{}}}",
+                    ctx.frame, self.base.me, ctx.original_creation_order, next_id,
+                );
+            }
             self.seek_next_point(sim, global, ctx, tick);
             return;
         }
@@ -851,8 +902,22 @@ impl EnemyAi {
         .unwrap_or_else(|| panic!("seek point {next_id} resolved immediately before mutation"))
         .calculate_interest(current_frame);
 
-        if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100) >= interest
-        {
+        let acceptance_roll =
+            crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100);
+        if debug_next_point {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"next_point_roll\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"point_id\":{},\"interest\":{},\"roll\":{},\"accepted\":{},\"remaining\":{:?}}}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                next_id,
+                interest,
+                acceptance_roll,
+                acceptance_roll < interest,
+                self.my_seek_points,
+            );
+        }
+        if acceptance_roll >= interest {
             // Skip this point — try the next one
             self.seek_next_point(sim, global, ctx, tick);
             return;
