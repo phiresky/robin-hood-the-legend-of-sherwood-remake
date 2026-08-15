@@ -395,13 +395,19 @@ impl EnemyAi {
                         | Substate::AttackingTooProudToAttackRetireTurn
                         | Substate::AttackingReactiontimeBending => {}
 
-                        // Wait-for-avenger substates.
+                        // Wait-for-avenger substates. Original
+                        // (`RHartificialmalignity.cpp:5442`) sweeps around the
+                        // waiting soldier itself (`Position(mpMe)`), not the
+                        // remembered avenger position it is staring at, and
+                        // takes the plain `GetBattleOverview()` default flags
+                        // (0) rather than the FAST_OVERVIEW variant used by
+                        // the sight/hearing entry points.
                         Substate::AttackingWaitForAvengerOnRoof => {
                             self.reinitialize_them_list(ctx, tick);
                             if self.list_them.is_empty() {
                                 self.seek_area(
                                     sim,
-                                    self.base.seek_position,
+                                    ctx.position,
                                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                                     SeekFlags::empty(),
                                     UNDEFINED_DIRECTION,
@@ -410,7 +416,7 @@ impl EnemyAi {
                                     tick,
                                 );
                             } else {
-                                self.get_battle_overview(0x0001, ctx, tick);
+                                self.get_battle_overview(0, ctx, tick);
                             }
                         }
 
@@ -4208,5 +4214,67 @@ mod tests {
             ai.base.current_substate,
             Substate::SeekingHeardstepsReactiontime
         );
+    }
+
+    /// Original `RHartificialmalignity.cpp:5442-5452` sweeps the waiting
+    /// soldier's own position when the avenger it is watching for goes out of
+    /// view and no fighters remain. Rust used the remembered avenger position
+    /// (`mposSeekPosition`), which shifts the seek center and therefore the
+    /// near-point membership that drives the phase-4 selection draw count.
+    #[test]
+    fn avenger_roof_out_of_view_seeks_from_live_owner_position() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(178);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
+        ai.base.primary_target = 0;
+        // Keep the stale avenger center far from the live position so a
+        // regression cannot accidentally pick the same seek points.
+        ai.base.seek_position = Position {
+            x: 240.0,
+            y: 860.0,
+            ..Position::default()
+        };
+
+        let live_position = Position {
+            x: 1_800.0,
+            y: 2_200.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points = [(1_810.0, 2_200.0), (1_820.0, 2_200.0)]
+            .into_iter()
+            .enumerate()
+            .map(|(id, (x, y))| crate::ai::SeekPoint {
+                position: Position {
+                    x,
+                    y,
+                    ..Position::default()
+                },
+                frame_when_full_interest: 0,
+                directions: vec![0],
+                last_calculated_interest: 100,
+                locked: false,
+                id: id as u16,
+            })
+            .collect();
+
+        let ctx = AiContext {
+            frame: 12_345,
+            position: live_position,
+            ..AiContext::default()
+        };
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventOutOfView, 42),
+            &mut global,
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.seek_center, live_position);
+        assert_ne!(ai.seek_center, ai.base.seek_position);
     }
 }

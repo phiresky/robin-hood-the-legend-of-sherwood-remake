@@ -571,12 +571,13 @@ impl EnemyAi {
                 },
             );
             eprintln!(
-                "SEEKAREA phase6 center=({},{}) seek_position=({},{}) backtrace:\n{}",
+                "SEEKAREA {{\"event\":\"phase6_center\",\"frame\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"seek_position\":[{},{}]}}",
+                ctx.frame,
+                ctx.original_creation_order,
                 self.seek_center.x,
                 self.seek_center.y,
                 self.base.seek_position.x,
                 self.base.seek_position.y,
-                std::backtrace::Backtrace::force_capture(),
             );
         }
 
