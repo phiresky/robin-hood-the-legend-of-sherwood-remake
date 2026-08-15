@@ -4677,3 +4677,10 @@ objects.
 - Cumulative: 2,421 / 5,164 passing (46.9%). Measures #12/#14/#18/#26/#29/#32; #33/#27/#25/#30/#19 land in sweep 14.
 - Sweep 14 must be FULL-UNIVERSE (seek-RNG regression #36 invisible to failure-only sweeps).
 - Classification: output/parity-audits/resweep-69df41aeb/classification.json
+
+## Batch-19 failure re-sweep — 2026-08-15, runner 07872e94d
+- Manifest: the 226 remaining non-EOF traces (`output/parity-audits/batch19-head07872e94-nestedd7792d55-preflight/traces.snapshot`, prepared by the previous session; frozen runner sha256 83615f96…).
+- Result: **22 exact-EOF passes, 143 state divergences, 61 RNG divergences, 0 timeouts → 204 remaining.**
+- Retired families: all 12 nicouzouf Savegame_076 members (beggar-cooldown fix `3ea0b8fc9`), all 9 remaining linux3/Profile_003/Savegame_000 members — the Soldier106 direction_goal pattern was downstream of the officer-route continuation fix `07872e94d` — plus nicouzouf Savegame_073 replay-013.
+- Remaining set: `remaining-failures-204.snapshot` in the same audit dir (sha256 2ba7e64819c94e39e4578c405ffbc07d6dd227c7026c0046ce5e9e216fa8cf13).
+- Cluster analysis of the failing set (pre-sweep, 14 proposed tasks + leftovers): `docs/parity-task-archive/cluster-analysis-batch19.md`.
