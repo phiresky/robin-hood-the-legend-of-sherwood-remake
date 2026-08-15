@@ -2514,13 +2514,39 @@ impl EnemyAi {
         // truncates it through UWORD. Do not use the usual isometric Y stretch.
         let distance = reconsider_approach_distance(live_target_pos, ctx.position);
 
-        // Pre-computed line-jump for table swordfight.
-        // The precomputed line belongs to the snapshotted target. A newly
-        // selected target must never inherit it; the ordinary same-sector
-        // approach remains valid and a later dispatch rebuilds full metadata.
-        let my_line_jump = target_snapshot_is_current
-            .then_some(tick.primary_target_jump_line)
-            .flatten();
+        // Line-jump for table swordfight. `RHArtificialMalignity::
+        // ReconsiderEnemyApproach` (RHartificialmalignity.cpp:6746) evaluates
+        // `mpMe->IsTableSwordfightNeeded( mpPrimaryTarget )` live against the
+        // primary target as it stands on entry — after any synchronous
+        // retarget by the calling decision, and before the friend-swap loop
+        // below can move the pointer again.
+        //
+        // The per-tick snapshot answers exactly that question while it still
+        // describes the same target. After a synchronous retarget it belongs
+        // to the previous target, so recompute the pair for the replacement
+        // instead of dropping the line: Original never leaves `mpMyLineJump`
+        // NULL just because the pointer changed, and a dropped line sends the
+        // approach at the victim's own sector across the level topology.
+        let my_line_jump = if target_snapshot_is_current {
+            tick.primary_target_jump_line
+        } else {
+            // `IsTableSwordfightNeeded` measures with the aggressor's maximal
+            // hand-to-hand weapon range (`weapon.distance[Maximal]`), which the
+            // fighter snapshot carries as `sword_range_maximal`.
+            let my_max_range = self
+                .find_fighter(self.base.me, tick)
+                .map(|f| f.sword_range_maximal)
+                .unwrap_or(self.sword_range);
+            grid.and_then(|g| {
+                crate::engine::melee::table_swordfight_jump_line(
+                    g,
+                    ctx.position.sector.map(i16::from).unwrap_or(-1),
+                    live_target_pos.sector.map(i16::from).unwrap_or(-1),
+                    crate::coordinates::MapPoint::new(live_target_pos.x, live_target_pos.y),
+                    my_max_range as f32,
+                )
+            })
+        };
         let target_animation = if target_snapshot_is_current {
             tick.primary_target_animation
         } else {
@@ -3444,27 +3470,6 @@ impl EnemyAi {
             let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
             if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
                 if debug_decision_path {
-                    // TMP: dump the two sub-checks and the corridor candidates.
-                    let dest_box = ctx.move_box.translated(pt_goal);
-                    let dest_ok = g.is_position_authorized(&dest_box, my_pos.level);
-                    let half_diag = crate::coordinates::MoveBoxHalfDiagonal::new(
-                        ctx.move_box.x_max(),
-                        ctx.move_box.y_max(),
-                    );
-                    let thick_ok = g.is_reachable_thick(pt_me, pt_goal, my_pos.level, half_diag);
-                    eprintln!(
-                        "TMPRIDER dest_ok={dest_ok} thick_ok={thick_ok} dest_box={dest_box:?} half_diag=({:08x},{:08x})",
-                        half_diag.x.to_bits(),
-                        half_diag.y.to_bits(),
-                    );
-                    g.trace_reachable_thick_decision(
-                        ctx.frame,
-                        pt_me,
-                        pt_goal,
-                        my_pos.level,
-                        half_diag,
-                        thick_ok,
-                    );
                     eprintln!(
                         "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_straight goal=({:08x},{:08x}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x}",
                         ctx.frame,
