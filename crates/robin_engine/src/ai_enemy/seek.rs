@@ -332,7 +332,7 @@ impl EnemyAi {
             if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
                 for (i, sp) in global.seek_points.iter().enumerate() {
                     eprintln!(
-                        "SEEKAREA {{\"event\":\"point_dump\",\"frame\":{},\"index\":{},\"id\":{},\"x\":{},\"y\":{},\"level\":{},\"center\":[{},{},{}],\"norm\":{},\"norm_bits\":{},\"near\":{}}}",
+                        "SEEKAREA {{\"event\":\"point_dump\",\"frame\":{},\"index\":{},\"id\":{},\"x\":{},\"y\":{},\"level\":{},\"center\":[{},{},{}],\"norm\":{},\"norm_bits\":{},\"near\":{},\"frame_when_full_interest\":{}}}",
                         ctx.frame,
                         i,
                         sp.id,
@@ -345,6 +345,7 @@ impl EnemyAi {
                         square_norms[i],
                         square_norms[i].to_bits(),
                         near_sorted.contains(&i),
+                        sp.frame_when_full_interest,
                     );
                 }
             }
