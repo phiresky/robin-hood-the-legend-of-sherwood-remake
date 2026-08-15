@@ -2830,7 +2830,7 @@ impl EngineInner {
     ///
     /// For circular hits (H, I), dispatches the experience to all
     /// nearby soldier friends with sufficient IQ.
-    pub(super) fn make_bad_sword_strike_experience(
+    pub(in crate::engine) fn make_bad_sword_strike_experience(
         &mut self,
         assets: &LevelAssets,
         soldier_id: EntityId,
