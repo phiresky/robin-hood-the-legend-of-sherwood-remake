@@ -1529,7 +1529,7 @@ impl EngineInner {
 
         let _died = combat::receive_piercing_damage(human, lp, damage, concussion, max_lp, &ctx);
         let raw_life_points_after = *lp;
-        self.close_pc_wounded_coma_boundary(
+        let coma_saved = self.close_pc_wounded_coma_boundary(
             sim,
             assets,
             victim_id,
@@ -1537,6 +1537,55 @@ impl EngineInner {
             life_points_before,
             raw_life_points_after,
         );
+
+        // `RHElementActorHuman::ReceivePiercingDamage`
+        // (original-code/RHelementactorhuman.cpp:8945) wounds the victim
+        // before `TranslateArrowDamage` runs, and `Human::SetLifePoints`
+        // (RHelementactorhuman.cpp:10674) invokes the virtual `Kill` chain
+        // synchronously inside that call. `Kill`
+        // (RHelementactorhuman.cpp:9414) quits the swordfight and snaps the
+        // AI to SLEEPING_FOREVER regardless of the victim's posture, while
+        // `TranslateArrowDamage` (RHelementactorhuman.cpp:2358) merely
+        // terminates the element without authoring an animation for a
+        // victim that is flying, lying, carried, on shoulders, or tied.
+        // Close that boundary here so those postures still run the kill
+        // cascade instead of leaving a corpse linked to its opponents.
+        let life_points_after = self
+            .get_entity(victim_id)
+            .map(get_life_points)
+            .unwrap_or(raw_life_points_after);
+        // `RHElementActorPC::SetLifePoints` (RHelementactorpc.cpp:6316) speaks
+        // HERO_DIE / HERO_HURT off the stored life-point edge, inside the same
+        // wounding call. `RHElementActorHuman::SayOuch`
+        // (RHelementactorhuman.h:514) is an empty no-op for PCs, so the
+        // translation below must not speak for them again.
+        if !coma_saved {
+            self.pc_life_points_speech(assets, victim_id, life_points_before, life_points_after);
+        }
+        let fresh_lethal = !coma_saved && life_points_before > 0 && life_points_after <= 0;
+        if fresh_lethal {
+            let killer_is_pc = self
+                .orders
+                .sequence_manager
+                .get_element(damage_element.0, damage_element.1)
+                .and_then(|element| match &element.data {
+                    crate::sequence::SequenceElementData::Damage { origin, .. } => *origin,
+                    _ => None,
+                })
+                .map(|killer| {
+                    self.expect_entity(killer, "lethal piercing attacker")
+                        .is_pc()
+                })
+                .unwrap_or(false);
+            self.apply_nonvisual_death_cascade(
+                sim,
+                assets,
+                victim_id,
+                damage_element,
+                killer_is_pc,
+            );
+        }
+
         let translation_posture = self
             .get_entity(victim_id)
             .map(|e| e.element_data().posture)
@@ -1564,16 +1613,25 @@ impl EngineInner {
             );
         if pc_shoulder_override {
             self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
-            self.handle_post_damage(
-                sim,
-                assets,
-                victim_id,
-                life_points_before,
-                None,
-                false,
-                damage_element,
-                None,
-            );
+            if fresh_lethal {
+                self.queue_death_visuals_with_damage_element(
+                    assets,
+                    victim_id,
+                    damage_element,
+                    None,
+                );
+            } else {
+                self.handle_post_damage(
+                    sim,
+                    assets,
+                    victim_id,
+                    life_points_before,
+                    None,
+                    false,
+                    damage_element,
+                    None,
+                );
+            }
             return;
         }
 
@@ -1635,7 +1693,14 @@ impl EngineInner {
             self.force_drop_carried_corpse_instant(victim_id);
         }
 
-        self.say_ouch(sim, assets, victim_id, Some(damage));
+        // `TranslateArrowDamage` opens with the virtual `SayOuch`, which only
+        // NPCs override; the PC edge already spoke above.
+        if !self
+            .expect_entity(victim_id, "piercing-damage say-ouch")
+            .is_pc()
+        {
+            self.say_ouch(sim, assets, victim_id, Some(damage));
+        }
 
         // TranslateArrowDamage / TranslateDamage always select an authored
         // reaction for an upright actor.  In particular, an arrow element
@@ -1690,16 +1755,23 @@ impl EngineInner {
             }
         }
 
-        self.handle_post_damage(
-            sim,
-            assets,
-            victim_id,
-            life_points_before,
-            None,
-            false,
-            damage_element,
-            None,
-        );
+        if fresh_lethal {
+            // The nonvisual half of virtual `Kill` already ran inside
+            // `ReceivePiercingDamage` above; only the translation-owned
+            // dying animation and roll are still outstanding.
+            self.queue_death_visuals_with_damage_element(assets, victim_id, damage_element, None);
+        } else {
+            self.handle_post_damage(
+                sim,
+                assets,
+                victim_id,
+                life_points_before,
+                None,
+                false,
+                damage_element,
+                None,
+            );
+        }
     }
 
     /// Apply hit damage (fist/club, concussion only).
