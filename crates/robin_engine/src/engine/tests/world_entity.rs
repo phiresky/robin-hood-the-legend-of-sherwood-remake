@@ -5313,7 +5313,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
         .expect("call rejector has EnemyAi")
         .set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
-    engine.drain_direct_ai_owner_boundary_mode(&sim, officer_id, &assets, true, true);
+    engine.process_synchronous_think_results_for(&sim, officer_id, &assets, true);
 
     let officer = engine
         .get_entity(officer_id)
@@ -5434,7 +5434,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
             continuation: ThinkResultContinuation::OfficerCalledSoldier,
         });
 
-    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    engine.process_synchronous_think_results_for(&sim, officer_id, &assets, true);
 
     let officer = engine
         .get_entity(officer_id)
@@ -5496,6 +5496,80 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
         Substate::SeekingSoldierCalledByOfficer
     );
     assert_eq!(soldier.base.antagonist, officer_id.index());
+}
+
+#[test]
+fn nested_reentrant_turn_remains_deferred_until_manager() {
+    use crate::ai::{AiState, CrossNpcAction, StimulusInfo, StimulusType, Substate};
+    use crate::element::Command;
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, source_id, target_id, assets) = setup_review2_officer_and_soldier();
+    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
+    engine.drain_direct_ai_owner_boundary(&sim, target_id, &assets);
+
+    engine
+        .get_entity_mut(source_id)
+        .expect("nested-turn source exists")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(0.0, 0.0));
+    let target = engine
+        .get_entity_mut(target_id)
+        .expect("nested-turn target exists");
+    target
+        .element_data_mut()
+        .set_position_map(MapPoint::new(40.0, 0.0));
+    let target_ai = target
+        .enemy_ai_mut()
+        .expect("nested-turn target has EnemyAi");
+    target_ai.base.current_state = AiState::Seeking;
+    target_ai.base.current_substate = Substate::SeekingOfficerWaitForCharly;
+    target_ai.base.antagonist = source_id.index();
+
+    engine
+        .get_entity_mut(source_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("nested-turn source has AI")
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::SendStimulus {
+            target: target_id.index(),
+            stimulus_type: StimulusType::CallCoordinate,
+            info: StimulusInfo::Human(source_id.index()),
+            fallback_to_sender: None,
+            to_whole_patrol: false,
+        });
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, source_id, &assets, true, true);
+
+    let turns: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(target_id) && element.command == Command::Turn)
+        .map(|element| element.state)
+        .collect();
+    assert_eq!(turns, [SequenceState::Todo]);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(target_id)
+            .is_none(),
+        "nested Turn must remain uninstructed until the manager hourglass"
+    );
+    assert_eq!(
+        engine
+            .get_entity(target_id)
+            .and_then(Entity::enemy_ai)
+            .expect("nested-turn target retains EnemyAi")
+            .base
+            .current_substate,
+        Substate::SeekingOfficerLectureCharly
+    );
 }
 
 #[test]

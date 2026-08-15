@@ -14072,7 +14072,7 @@ impl EngineInner {
         }
     }
 
-    fn process_synchronous_think_results_for(
+    pub(super) fn process_synchronous_think_results_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
