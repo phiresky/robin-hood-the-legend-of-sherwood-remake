@@ -4050,6 +4050,10 @@ mod tests {
         let mut alternate_body = object_view(ObjectType::None);
         alternate_body.kind = EntityKind::Soldier;
         alternate_body.position = alternate_position;
+        // `ExamineOtherBodies` prunes the queue with `IsOutOfOrder()`, not
+        // with `IsAbleToFight()` — a KO'd body is what keeps this entry
+        // queued (`RHelementactorhuman.cpp:13271`).
+        alternate_body.is_unconscious = true;
         alternate_body.is_able_to_fight = false;
         let mut views = AiEntityViewMap::new();
         views.insert(207, alternate_body);
@@ -4077,6 +4081,104 @@ mod tests {
         assert_eq!(ai.base.seek_position, alternate_position);
         assert_eq!(ai.base.current_substate, Substate::SeekingBody);
         assert!(ai.my_seek_points.is_empty());
+    }
+
+    /// `RHArtificialMalignity::ExamineOtherBodies`
+    /// (`RHartificialmalignity.cpp:20128`) prunes the queue head while
+    /// `!IsOutOfOrder()`. `IsOutOfOrder` (`RHelementactorhuman.cpp:13271`) is
+    /// a body-state predicate, *not* the combat-readiness `IsAbleToFight`.
+    /// Civilians never report able-to-fight, so proxying the two keeps a woken
+    /// civilian sleeper queued forever: the soldier re-examines the body it is
+    /// already standing next to, `GoNear` short-circuits to
+    /// `EVENT_REACHPOINT`, and the seek collapses into `ReturnToDuty`.
+    #[test]
+    fn examine_other_bodies_prunes_recovered_civilian_that_cannot_fight() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(206);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBody;
+        // Head of the queue: a civilian that woke up. `is_able_to_fight` is
+        // false for every civilian, but `IsOutOfOrder()` is false now.
+        ai.other_bodies_to_examine.push(207);
+        // Behind it: a soldier that is genuinely still down.
+        ai.other_bodies_to_examine.push(208);
+
+        let mut recovered = object_view(ObjectType::None);
+        recovered.kind = EntityKind::Civilian;
+        recovered.is_able_to_fight = false;
+
+        let down_position = Position {
+            x: 658.0,
+            y: 2910.0,
+            sector: crate::position_interface::SectorHandle::new(18),
+            level: 0,
+        };
+        let mut still_down = object_view(ObjectType::None);
+        still_down.kind = EntityKind::Soldier;
+        still_down.position = down_position;
+        still_down.is_able_to_fight = false;
+        still_down.is_unconscious = true;
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(207, recovered);
+        views.insert(208, still_down);
+        let ctx = AiContext {
+            position: Position {
+                x: 792.0,
+                y: 2612.0,
+                sector: crate::position_interface::SectorHandle::new(44),
+                level: 0,
+            },
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        assert!(ai.examine_other_bodies(&ctx, &AiPerTickData::stub()));
+        assert_eq!(
+            ai.base.detected_body, 208,
+            "the recovered civilian must be pruned, not examined"
+        );
+        assert_eq!(ai.base.seek_position, down_position);
+        assert!(ai.other_bodies_to_examine.is_empty());
+        let _ = &sim;
+    }
+
+    /// The predicate itself, in both directions: `IsOutOfOrder()` is the OR of
+    /// the five body states (plus PC coma) and is independent of
+    /// `IsAbleToFight()`.
+    #[test]
+    fn is_out_of_order_is_not_the_complement_of_is_able_to_fight() {
+        // Civilian that is up and about: never able to fight, but in order.
+        let mut civilian = object_view(ObjectType::None);
+        civilian.kind = EntityKind::Civilian;
+        civilian.is_able_to_fight = false;
+        assert!(!civilian.is_out_of_order());
+
+        // Netted / tied / carried / KO'd / dead all count as out of order even
+        // when the combat-readiness flag says otherwise.
+        for apply in [
+            (|v: &mut AiEntityView| v.stuck_under_net = true) as fn(&mut AiEntityView),
+            |v: &mut AiEntityView| v.posture = Posture::Tied,
+            |v: &mut AiEntityView| v.posture = Posture::Carried,
+            |v: &mut AiEntityView| v.is_unconscious = true,
+            |v: &mut AiEntityView| v.is_dead = true,
+        ] {
+            let mut soldier = object_view(ObjectType::None);
+            soldier.kind = EntityKind::Soldier;
+            soldier.is_able_to_fight = true;
+            apply(&mut soldier);
+            assert!(soldier.is_out_of_order());
+        }
+
+        // The coma arm is PC-only.
+        let mut comatose = object_view(ObjectType::None);
+        comatose.kind = EntityKind::Pc;
+        comatose.in_coma = true;
+        assert!(comatose.is_out_of_order());
+        let mut soldier_flagged_coma = object_view(ObjectType::None);
+        soldier_flagged_coma.kind = EntityKind::Soldier;
+        soldier_flagged_coma.in_coma = true;
+        assert!(!soldier_flagged_coma.is_out_of_order());
     }
 
     #[test]
