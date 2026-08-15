@@ -1220,22 +1220,37 @@ impl PositionInterface {
         )
     }
 
-    /// Preserve a stable deviation turn across an in-place movement
-    /// transition. The next `TurnAntiVibration` call may rotate immediately.
-    pub fn prime_deviated_turn_for_current_goal(&mut self) {
-        let diff = (i32::from(self.direction_goal.as_u8()) - i32::from(self.direction.as_u8()))
-            .rem_euclid(16);
-        // Original TurnAntiVibration returns immediately when the current
-        // direction already equals its goal, leaving msbDirectionCount
-        // untouched.  An in-place transition at that heading must preserve
-        // the stable count for a later goal change rather than clear it.
-        if diff == 0 {
-            return;
-        }
-        self.direction_count = match diff {
-            1..=7 => 2,
-            _ => -2,
-        };
+    /// Drop the anti-collision deviation latch when a zero-distance
+    /// (already-at-destination) transition order initializes.
+    ///
+    /// The available C++ source never clears `mbDeviated` on this path, yet
+    /// the shipped Linux game observably does: on Savegame_010 replay-014
+    /// (batch-19 direction cluster), Soldier 61 ends a deviated walk with a
+    /// +2 anti-vibration count (frames 972-983 show the full standing
+    /// hysteresis, so the latch is still set), then a seek whose destination
+    /// equals his current position initializes its start transition on frame
+    /// 1014.  After that, frame 1030's in-place `Turning` rotates
+    /// counter-clockwise on its very first `Turn()` call and frame 1032's
+    /// `RaisingShield` turn rotates clockwise on its first call.  No
+    /// count-changing call happens between the two, so no `msbDirectionCount`
+    /// value can satisfy both anti-vibration gates (`>= +2` and `<= -2`);
+    /// the original must be taking the plain non-deviated `Turn()` path,
+    /// which means the latch itself was dropped.  The same trace bounds the
+    /// clear tightly: mid-walk waypoint order inits (frame 168, Soldier 63)
+    /// and a start-transition init with a real destination (frame 204,
+    /// Soldier 70) both keep the deviated anti-collision recovery branch, so
+    /// only the aligned in-place initialization may clear.
+    ///
+    /// This replaces the earlier "prime the count for the current goal"
+    /// model (task #545), which reproduced the clockwise cases but could
+    /// never reproduce a first-call counter-clockwise rotation from a
+    /// +2 count.  A plain `Turn()` rotates immediately in both directions,
+    /// matching every observation, and #545's aligned-transition case is
+    /// equally satisfied by the hysteresis-free path.
+    /// `msbDirectionCount` is left untouched, mirroring how
+    /// `SetAntiCollisionOn(false)` clears only the latch, never the counter.
+    pub fn clear_deviated_for_aligned_transition_start(&mut self) {
+        self.deviated = false;
     }
 
     /// Turn one step toward the goal direction.  Returns `true` if still turning.
@@ -2409,33 +2424,69 @@ mod tests {
     }
 
     #[test]
-    fn in_place_transition_preserves_stable_deviation_turn() {
+    fn in_place_transition_drops_deviation_latch_for_pending_turn() {
         let mut pi = PositionInterface::new();
         pi.direction = d(12);
         pi.direction_goal = d(10);
         pi.deviated = true;
         pi.direction_count = 0;
 
-        pi.prime_deviated_turn_for_current_goal();
+        pi.clear_deviated_for_aligned_transition_start();
 
         assert!(pi.turn());
         assert_eq!(pi.direction, d(11));
     }
 
     #[test]
-    fn aligned_in_place_transition_preserves_stable_count_for_later_goal() {
+    fn aligned_in_place_transition_makes_later_goal_turn_immediate() {
         let mut pi = PositionInterface::new();
         pi.direction = d(6);
         pi.direction_goal = d(6);
         pi.deviated = true;
         pi.direction_count = 2;
 
-        pi.prime_deviated_turn_for_current_goal();
-        assert_eq!(pi.direction_count, 2);
+        pi.clear_deviated_for_aligned_transition_start();
+        assert_eq!(pi.direction_count, 2, "only the latch drops, not the count");
 
         pi.direction_goal = d(9);
         assert!(pi.turn());
         assert_eq!(pi.direction, d(7));
+    }
+
+    /// Savegame_010 replay-014 frame 1030 (Soldier 61): after an aligned
+    /// in-place transition start, a *counter-clockwise* goal must also
+    /// rotate on the very first `Turn()` call even though the retained
+    /// anti-vibration count is +2.  While the latch is set this is
+    /// impossible — `TurnAntiVibration` needs `count <= -2` for the first
+    /// counter-clockwise step — which is what proves the shipped game drops
+    /// the latch rather than priming the count.
+    #[test]
+    fn aligned_in_place_transition_makes_ccw_turn_immediate_despite_cw_count() {
+        let mut pi = PositionInterface::new();
+        pi.direction = d(15);
+        pi.direction_goal = d(15);
+        pi.deviated = true;
+        pi.direction_count = 2;
+
+        // Latch still set: the counter-clockwise request is absorbed by the
+        // anti-vibration counter instead of rotating.
+        pi.direction_goal = d(14);
+        assert!(pi.turn());
+        assert_eq!(pi.direction, d(15), "anti-vibration holds while latched");
+        assert_eq!(pi.direction_count, 0);
+
+        // With the aligned-transition clear, the same request rotates
+        // immediately, and a subsequent clockwise request does too
+        // (frame 1032's RaisingShield turn).
+        pi.deviated = true;
+        pi.direction_count = 2;
+        pi.clear_deviated_for_aligned_transition_start();
+        assert!(pi.turn());
+        assert_eq!(pi.direction, d(14));
+        pi.direction_goal = d(15);
+        assert!(pi.turn());
+        assert_eq!(pi.direction, d(15));
+        assert!(!pi.turn(), "aligned direction reports finished");
     }
 
     #[test]
