@@ -549,6 +549,53 @@ sector 189's barycentre (1035.3,1433.4) with **no preceding `ComputeViewRadius`*
 never came from a dropped target obstacle. This is the correct form of the old sub-cause (a); the
 "cadence" sub-cause (b) is **disproved** — no cadence change was needed for any member.
 
+### CRITICAL: the current Original binary cannot reproduce the schema-12 corpus
+A fresh 400-frame capture of `reference-saves/Savegame_nicouzouf/Profile_001/Savegame_039` (sha256 matches
+the trace's `initial_save`) **passes the Rust runner end to end** — yet it diverges from the *recorded*
+schema-12 trace of the same save from frame 11. Reason: the recorded run took audio draws off the shared
+libc `rand()` stream, while current `original-code/RHParity.cpp:146-157` gives audio its own generator.
+Exact Original re-runs of schema-12 traces are therefore impossible on this machine, and a schema-12
+failure cannot be assumed to be a Rust bug. Combined with the separately proven staleness of the 30s
+Savegame_023 recordings, **a meaningful share of the remaining failures may be corpus artifacts rather
+than port defects.** Before deep-diagnosing any schema-12 trace, capture the same save fresh and check
+whether current Original agrees with the recording. (Audio also cannot be enabled here: `SDL_AUDIODRIVER`
+of `disk`/ALSA segfault the binary at "Applying sound settings"; only `dummy` runs.)
+
+### Task-4 "early-battle melee micro-gate" cluster: framing DISPROVEN, re-cluster it
+All 22 members were re-measured on merged main: **2 now pass, 6 advanced, 14 unchanged.** The two
+earliest frontiers (f207 / f231) were NOT the root of the other twenty — they moved without moving
+anything else. Do not treat this as one family again. The 14 unchanged members should be re-clustered by
+their own signatures: `DefaultPostLook` at f488/f503, `MeleeInitiative`+`SmalltalkStrikeSide` at
+f517/f616, `SwordDamageProtection` at f1314, and five field-divergence members (f670 `ai.list_them`,
+f792 `actor.animation`, f912 `ai.substate`, f1129 `path_events[0].goal.bits`, f1433 `PassDoor` vs
+`MoveOk`) that are not melee-gate bugs at all.
+Also disproven with Original ground truth (condolation stream from the prebuilt schema14 binary, which
+retains an unconditional `fprintf` at `original-code/RHelementactornpc.cpp:6487`): over 400 frames /
+1667 condolations, `RHCOMMAND_WAIT` was **510/510 `RHSEQ_INTERRUPTED`, zero TERMINATED**. The
+`EVENT_DONE`-on-TERMINATED arm (`:6587-6595`) is dead in a swordfight because a swordfighting actor's
+WAIT becomes `RHANIMATION_WAITING_SWORD`, whose Execute returns `IN_PROGRESS` unconditionally
+(`RHelementactorhuman.cpp:3610-3628`). Rust already matches (`engine/soldier_helpers.rs:1196-1200`).
+
+### Open lead: parade heartbeat timer rings 10 frames late in Rust
+Residual f315 divergence on nicouzouf Savegame_039 replay-001. `SUBSTATE_ATTACKING_SWORDFIGHT_PARADE` is
+left only on `EVENT_TIMER` (`RHartificialmalignity.cpp:4404-4421`), armed once at `:4419` with
+`GetFramesFromStartTillActionDone(GetAnimation()) + 10`. Rust arms it to ring at universal frame 326;
+the Original rings at 316. The formula is NOT the bug: `sprite.rs:1987` is statement-for-statement
+`original-code/RHsprite.cpp:1283-1305`, and the animation<->strike round trip is an identity on A..I.
+Remaining candidates: a second, later `ConsiderToBeginParade` from a different hitter that Rust drops, or
+an `EVENT_ENTER_SWORDFIGHT` (`RHartificialmalignity.cpp:6485-6493`) Rust never delivers. Use the
+`PARITY_DEBUG_PARADE_TIMER` diagnostic merged in `dca5d4789`.
+
+### Two C++ behaviours Rust does not model (deliberately NOT changed — unreachable/unprovable today)
+1. Missing `break` after `case SUBSTATE_ATTACKING_MOVING_AROUND_OLD_ENEMY:`
+   (`RHartificialmalignity.cpp:4372-4383`) falls through into the QUITTING_SWORDFIGHT body; Rust returns.
+   Provably unreachable now: it only bites on `EVENT_TIMER`, and `Think` discards an `EVENT_TIMER` whose
+   `mSubstateAtLastTimerLaunch` differs from the current substate, while nothing arms a timer in
+   substate 173. Changing it would be an unvalidatable no-op with non-zero risk.
+2. Rust's `attacking_quitting_swordfight` calls `end_swordfight()` unconditionally in the sword-action
+   arm; the Original guards it with `if( GetCommand() != RHCOMMAND_QUIT_SWORDFIGHT )`
+   (`RHartificialmalignity.cpp:4392-4397`). Needs an actor-command field on `AiContext` first.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
