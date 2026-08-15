@@ -667,13 +667,25 @@ impl EngineInner {
                     level: data.layer(),
                 };
                 let current_direction = entity.position_iface().get_direction().as_u8() as u16;
+                // The AssignPath native routes through Original's
+                // `AssignNewPatrolPath(RHHikingPath*)` pointer overload,
+                // whose valid-path arm — unlike the waypoint-macro index
+                // overload — does not clear `mbSpecialAction`. `ScriptWay`
+                // carries that distinction.
+                //
+                // todo: the pointer overload's NULL / (void*)-1 arms write
+                // `mbLikesToSitAround` / `mbSpecialAction` only *after* the
+                // synchronous Think(EVENT_RETURN_TO_DUTY), so that Think
+                // observes the pre-assignment flags. Rust defers the think to
+                // the owner drain, which sees the post-assignment flags
+                // instead; no known trace exercises the difference yet.
                 let assignment = if way == 0 {
                     crate::ai::PatrolAssignment::ClearPath
                 } else if way == -1 {
                     crate::ai::PatrolAssignment::ClearPathSitAround
                 } else {
                     crate::ai::PathId::new(way as u16)
-                        .map(crate::ai::PatrolAssignment::Index)
+                        .map(crate::ai::PatrolAssignment::ScriptWay)
                         .unwrap_or(crate::ai::PatrolAssignment::ClearPath)
                 };
                 let ai = self
