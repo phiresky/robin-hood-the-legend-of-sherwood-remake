@@ -3186,11 +3186,13 @@ impl EnemyAi {
         let mut begin_charge = false;
         let mut ok = false;
 
-        // Find primary target position from fighter snapshots.
-        let target_pos = tick
-            .nearby_fighters
-            .iter()
-            .find(|f| f.handle == target && !f.is_friendly)
+        // Find primary target position from fighter snapshots. Original
+        // dereferences the raw `mpPrimaryTarget` pointer, which is not
+        // radius-limited, so fall back to the full fighter registry when the
+        // target is outside the 500-unit `nearby_fighters` window.
+        let target_pos = self
+            .find_fighter(target, tick)
+            .filter(|f| !f.is_friendly)
             .map(|f| f.position);
 
         if target != 0
@@ -3201,10 +3203,8 @@ impl EnemyAi {
             // explicit `is_tied` check separates the bound posture
             // (where the engine still has the entity active so
             // `is_able_to_fight` could return true).
-            let target_alive = tick
-                .nearby_fighters
-                .iter()
-                .find(|f| f.handle == target)
+            let target_alive = self
+                .find_fighter(target, tick)
                 .map(|f| f.is_able_to_fight && !f.is_tied)
                 .unwrap_or(false);
 
@@ -3231,12 +3231,13 @@ impl EnemyAi {
                 if *enemy == target {
                     continue;
                 }
-                let epos = match tick
-                    .nearby_fighters
-                    .iter()
-                    .find(|f| f.handle == *enemy && !f.is_friendly && f.is_able_to_fight)
-                    .map(|f| f.position)
-                {
+                // Original's fallback scan walks `mlistThem` and calls
+                // GetGoodRiderAttackDestination on every non-primary entry
+                // with no liveness or radius prefilter — the list is already
+                // maintained as the fight-capable enemy set. Resolve the
+                // entry through the full fighter registry so enemies beyond
+                // the 500-unit `nearby_fighters` window still get evaluated.
+                let epos = match self.find_fighter(*enemy, tick).map(|f| f.position) {
                     Some(p) => p,
                     None => continue,
                 };

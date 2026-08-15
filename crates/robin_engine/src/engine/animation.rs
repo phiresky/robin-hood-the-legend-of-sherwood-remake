@@ -2318,6 +2318,14 @@ pub(super) struct ExecuteSideOutcomes {
     /// entering the aiming state, restoring the PC's remembered action (and
     /// the messenger action when that PC is selected).
     pub pc_bow_equip_action: Vec<EntityId>,
+    /// PC bow-unequip transitions that reached START, with the element's
+    /// script-driven flag. Original's Human Execute arm
+    /// (`RHelementactorhuman.cpp` `TRANSITION_UNEQUIP_BOW` START) disables
+    /// the Bow action when the quiver is empty, and otherwise forwards
+    /// `MSG_UNSELECT_ACTION(BOW)` for non-script elements — clearing the
+    /// messenger-selected action and the PC's remembered action when Bow is
+    /// the currently selected UI action.
+    pub pc_bow_unequip_action: Vec<(EntityId, bool)>,
     /// PCs whose helping-to-climb entry transition reached DONE. Original
     /// forwards `MSG_SELECT_ACTION(HELP_TO_CLIMB)` right after setting the
     /// stance, which reselects the already-current action and therefore
@@ -5990,6 +5998,24 @@ impl EngineInner {
                                 .execute_sides
                                 .pc_bow_equip_action
                                 .push(entity_id);
+                        }
+                        // Original `TRANSITION_UNEQUIP_BOW` START (PC arm):
+                        // empty quiver disables the Bow action regardless of
+                        // the script flag; otherwise only non-script elements
+                        // forward MSG_UNSELECT_ACTION(BOW). The ammo read
+                        // needs `&mut self`, so defer the whole decision.
+                        if entity.is_pc()
+                            && motion_state == MotionState::Start
+                            && matches!(
+                                anim_type,
+                                OrderType::TransitionUnequipBow
+                                    | OrderType::TransitionUnequipBowAnonymous
+                            )
+                        {
+                            completion_outcomes
+                                .execute_sides
+                                .pc_bow_unequip_action
+                                .push((entity_id, current_element_script_driven));
                         }
                         if entity.is_pc() && motion_state == MotionState::Done {
                             match anim_type {
