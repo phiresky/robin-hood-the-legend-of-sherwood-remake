@@ -5920,26 +5920,26 @@ impl EngineInner {
         entity_id: EntityId,
         intent: &crate::order::AiOrderIntent,
     ) {
-        // The AI think loop can legitimately emit two distinct `GoTo`
-        // intents for the same actor in one tick (e.g. a SEEK retarget
-        // dispatched immediately after a macro-GoTo).  `halt_actor`
-        // tears down the prior Move element cleanly; here we just keep
-        // the latest intent — "last intent wins", since the second
-        // Halt invalidates anything the first request queued.
-        let replaced = self
-            .orders
-            .pending_move_requests
-            .iter()
-            .any(|(eid, _)| *eid == entity_id);
-        if replaced {
-            self.orders
-                .pending_move_requests
-                .retain(|(eid, _)| *eid != entity_id);
-            tracing::trace!(
-                entity = ?entity_id,
-                "launch_ai_move: replacing prior pending Move (AI re-issued GoTo this tick)"
-            );
-        }
+        // One AI think can legitimately emit two distinct `GoTo` intents for
+        // the same actor (`RHArtificialMalignity::ReconsiderSwordfightObservation`
+        // runs its defensive step-back `GoTo` and then deliberately falls
+        // through — `original-code/RHartificialmalignity.cpp:15502-15519` has
+        // no `return` — into the attack block's `GoNear`). Each
+        // `RHArtificialIntelligence::GoTo` builds its own `RHSequence` and
+        // hands it to `RHSequenceManager::LaunchSequence`
+        // (`original-code/RHartificialintelligence.cpp:2453,2594`), so both
+        // land on `mlistSequenceElementsToGo` and both are instructed, in
+        // launch order, by the sequence-manager hourglass
+        // (`original-code/RHsequencemanager.cpp:938-952`). Nothing in `GoTo`
+        // discards the earlier one: its pre-launch halt is the dead
+        // `uwFlags & GOTO_NOHALT == 0` gate, which C++ precedence evaluates as
+        // `uwFlags & 0` (`original-code/RHartificialintelligence.cpp:2423`).
+        //
+        // So keep every intent, in FIFO order. An explicit
+        // `Halt`/`StopAll` still invalidates the queued ones, because
+        // `halt_actor` drops this actor's pending intents at exactly that
+        // boundary — that is Original's
+        // `StopNotYetLaunchedSequenceElements`.
         let mut intent = intent.clone();
         if intent.source_position.is_none() {
             let (raw_source, raw_sector, raw_layer, door_handle, door_direction) = {
