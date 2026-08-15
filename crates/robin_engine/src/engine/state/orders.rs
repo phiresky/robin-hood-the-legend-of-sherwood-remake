@@ -48,15 +48,13 @@ impl OrderRuntime {
     }
 
     /// Validate invariants that must survive queueing and snapshot restore.
+    ///
+    /// The pending-move queue deliberately permits several entries per owner:
+    /// one `Think` can issue two `RHArtificialIntelligence::GoTo` calls, each
+    /// of which launches its own `RHSequence`
+    /// (`original-code/RHartificialmalignity.cpp:15502-15570`). Both survive
+    /// until the sequence-manager hourglass instructs them in launch order.
     pub(crate) fn validate_invariants(&self) -> Result<(), String> {
-        let mut owners = std::collections::HashSet::new();
-        for (owner, _) in &self.pending_move_requests {
-            if !owners.insert(*owner) {
-                return Err(format!(
-                    "pending move queue contains duplicate owner {owner:?}; last-intent-wins enqueue invariant was bypassed"
-                ));
-            }
-        }
         Ok(())
     }
 }
@@ -84,8 +82,14 @@ mod tests {
         assert!(orders.validate_invariants().is_ok());
     }
 
+    /// One `Think` can queue two `GoTo`s for the same actor —
+    /// `ReconsiderSwordfightObservation` falls through from its defensive
+    /// step-back into the attack block without returning
+    /// (`original-code/RHartificialmalignity.cpp:15502-15570`). Both
+    /// `LaunchSequence` calls survive in Original, so the queue must accept
+    /// repeated owners instead of collapsing them to the last intent.
     #[test]
-    fn duplicate_pending_move_owner_violates_last_intent_wins_invariant() {
+    fn pending_move_queue_accepts_two_intents_from_one_think() {
         let mut orders = OrderRuntime::new();
         let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
         let intent =
@@ -94,11 +98,7 @@ mod tests {
         orders.pending_move_requests.push((owner, intent.clone()));
         orders.pending_move_requests.push((owner, intent));
 
-        assert!(
-            orders
-                .validate_invariants()
-                .expect_err("duplicate owner must be rejected")
-                .contains("duplicate owner")
-        );
+        assert!(orders.validate_invariants().is_ok());
+        assert_eq!(orders.pending_move_requests.len(), 2);
     }
 }
