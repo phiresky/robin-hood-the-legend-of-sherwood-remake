@@ -1297,29 +1297,49 @@ pub(super) fn evaluate_combat_position_full(
 }
 
 /// Finds the opponent of `maurice` who is nearest (MaxNorm) to `rene_pos`.
-pub(super) fn calculate_opponent_nearest_to_rene(
-    all_fighters: &[FighterSnapshot],
+///
+/// Port of `RHArtificialMalignity::CalculateOpponentOfMauriceWhoIsNearestToRene`
+/// (`original-code/RHartificialmalignity.cpp:13949`). The Original walks
+/// `pMaurice->GetOpponent(i)` and dereferences those live pointers directly, so
+/// the scan is not restricted to the caller's proximity-limited fighter list:
+/// an opponent standing outside the 500-unit `nearby_fighters` radius still
+/// competes for "nearest". `lookup` must therefore resolve handles through the
+/// complete fighter registry (see `EnemyAi::find_fighter`), not just the
+/// nearby snapshot.
+pub(super) fn calculate_opponent_nearest_to_rene<'a>(
+    lookup: impl Fn(HumanHandle) -> Option<&'a FighterSnapshot>,
     maurice_handle: HumanHandle,
     rene_pos: &Position,
 ) -> HumanHandle {
-    let maurice = match all_fighters.iter().find(|f| f.handle == maurice_handle) {
-        Some(m) => m,
-        None => return 0,
+    let Some(maurice) = lookup(maurice_handle) else {
+        tracing::warn!(
+            maurice = maurice_handle,
+            "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice is absent from the fighter \
+             registry; Original dereferences a live pointer here"
+        );
+        return 0;
     };
 
     let mut nearest: HumanHandle = 0;
     let mut min_dist = u16::MAX;
 
     for &opp_handle in &maurice.opponent_handles {
-        if let Some(opp) = all_fighters.iter().find(|f| f.handle == opp_handle) {
-            // Original subtracts raw map-space RHpositions and stores the 2D
-            // MaxNorm in a UWORD before the strict comparison. Fractional
-            // ties therefore retain Maurice's first opponent.
-            let dist = max_norm(pos_diff(rene_pos, &opp.position)) as u16;
-            if dist < min_dist {
-                min_dist = dist;
-                nearest = opp_handle;
-            }
+        let Some(opp) = lookup(opp_handle) else {
+            tracing::warn!(
+                maurice = maurice_handle,
+                opponent = opp_handle,
+                "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice's opponent is absent from \
+                 the fighter registry; Original dereferences a live pointer here"
+            );
+            continue;
+        };
+        // Original subtracts raw map-space RHpositions and stores the 2D
+        // MaxNorm in a UWORD before the strict comparison. Fractional
+        // ties therefore retain Maurice's first opponent.
+        let dist = max_norm(pos_diff(rene_pos, &opp.position)) as u16;
+        if dist < min_dist {
+            min_dist = dist;
+            nearest = opp_handle;
         }
     }
 
@@ -1685,13 +1705,59 @@ mod required_combat_input_tests {
             },
             ..FighterSnapshot::default()
         };
+        let fighters = [maurice, first, fractionally_nearer];
         assert_eq!(
             calculate_opponent_nearest_to_rene(
-                &[maurice, first, fractionally_nearer],
+                |handle| fighters.iter().find(|f| f.handle == handle),
                 10,
                 &Position::default(),
             ),
             20,
+        );
+    }
+
+    /// `CalculateOpponentOfMauriceWhoIsNearestToRene` dereferences Maurice's
+    /// live opponent pointers, so an opponent outside the caller's
+    /// proximity-limited `nearby_fighters` snapshot still participates. The
+    /// lookup closure resolves through the complete registry.
+    #[test]
+    fn nearest_opponent_resolves_opponents_outside_the_nearby_snapshot() {
+        let maurice = FighterSnapshot {
+            handle: 10,
+            opponent_handles: vec![20, 30],
+            ..FighterSnapshot::default()
+        };
+        let far_but_nearest = FighterSnapshot {
+            handle: 30,
+            position: Position {
+                x: 5.0,
+                ..Position::default()
+            },
+            ..FighterSnapshot::default()
+        };
+        let near_snapshot_entry = FighterSnapshot {
+            handle: 20,
+            position: Position {
+                x: 40.0,
+                ..Position::default()
+            },
+            ..FighterSnapshot::default()
+        };
+        // `nearby` deliberately omits handle 30 — only the wider registry
+        // knows about it, exactly like a fighter beyond the 500-unit radius.
+        let nearby = [maurice.clone(), near_snapshot_entry.clone()];
+        let registry = [maurice, near_snapshot_entry, far_but_nearest];
+        assert_eq!(
+            calculate_opponent_nearest_to_rene(
+                |handle| nearby
+                    .iter()
+                    .find(|f| f.handle == handle)
+                    .or_else(|| registry.iter().find(|f| f.handle == handle)),
+                10,
+                &Position::default(),
+            ),
+            30,
+            "an opponent known only to the complete registry must still win the MaxNorm scan"
         );
     }
 }

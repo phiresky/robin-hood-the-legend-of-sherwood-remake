@@ -923,3 +923,94 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
         0
     );
 }
+
+/// Build a Lacklandist enemy soldier for the learning-by-looking tests.
+fn learning_test_soldier(engine: &mut EngineInner) -> EntityId {
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(s) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    s.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    s.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    s.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(0);
+    let id = engine.add_entity(soldier);
+    let entity = engine.get_entity_mut(id).expect("test soldier exists");
+    let Entity::Soldier(s) = entity else {
+        unreachable!()
+    };
+    let enemy = s
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test soldier has enemy AI");
+    enemy.base.current_state = crate::ai::AiState::Attacking;
+    id
+}
+
+fn learning_test_assets(raw_fighting: u16) -> LevelAssets {
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        fighting: raw_fighting,
+        ..Default::default()
+    });
+    LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    }
+}
+
+/// Original's `MakeBadSwordstrikeExperience` dispatch filters friends with the
+/// virtual `GetFightingAbility()`, which applies the difficulty modifier for
+/// Lacklandist soldiers. A raw capacity of 40 doubles to 80 on Hard and must
+/// pass the `MIN_CAPACITY_LEARNING_BY_LOOKING` (70) gate.
+#[test]
+fn learning_by_looking_uses_difficulty_modified_fighting_ability() {
+    let assets = learning_test_assets(40);
+    let mut engine = EngineInner::new();
+    engine.control.sim_config.difficulty = crate::player_profile::DifficultyLevel::Hard;
+    let learner = learning_test_soldier(&mut engine);
+    let friend = learning_test_soldier(&mut engine);
+    set_map_position(&mut engine, learner, 100.0, 100.0);
+    set_map_position(&mut engine, friend, 150.0, 100.0);
+
+    engine.make_bad_sword_strike_experience(&assets, learner, SwordStrike::H, true);
+
+    let friend_known = engine
+        .get_entity(friend)
+        .unwrap()
+        .enemy_ai()
+        .unwrap()
+        .known_enemy_strike_1;
+    assert_eq!(
+        friend_known,
+        Some(SwordStrike::H),
+        "Hard difficulty doubles a Lacklandist's fighting ability (40 -> 80), so the \
+         friend must learn the circular strike by looking"
+    );
+}
+
+/// On Medium the raw capacity stays 40 (< 70), so the same friend must NOT
+/// learn by looking.
+#[test]
+fn learning_by_looking_respects_unmodified_ability_on_medium() {
+    let assets = learning_test_assets(40);
+    let mut engine = EngineInner::new();
+    engine.control.sim_config.difficulty = crate::player_profile::DifficultyLevel::Medium;
+    let learner = learning_test_soldier(&mut engine);
+    let friend = learning_test_soldier(&mut engine);
+    set_map_position(&mut engine, learner, 100.0, 100.0);
+    set_map_position(&mut engine, friend, 150.0, 100.0);
+
+    engine.make_bad_sword_strike_experience(&assets, learner, SwordStrike::H, true);
+
+    let friend_known = engine
+        .get_entity(friend)
+        .unwrap()
+        .enemy_ai()
+        .unwrap()
+        .known_enemy_strike_1;
+    assert_eq!(
+        friend_known, None,
+        "a raw fighting ability of 40 stays below the learning-by-looking gate on Medium"
+    );
+}
