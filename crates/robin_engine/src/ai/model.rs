@@ -1734,7 +1734,7 @@ pub enum PatrolAssignment {
     /// Valid-pointer branch of `AssignNewPatrolPath(RHHikingPath*)` — the
     /// `AssignPath` script native (RHScript.cpp:5254). Unlike the index
     /// overload, Original's pointer overload
-    /// (RHartificialintelligence.cpp:5735) only clears
+    /// (RHartificialintelligence.cpp:5764-5769) only clears
     /// `mbLikesToSitAround`; an NPC authored with a Special/leisure
     /// initial action keeps `mbSpecialAction = true` while walking the
     /// scripted route, which later disables GoTo's already-on-point

@@ -341,8 +341,8 @@ fn script_way_assignment_keeps_special_action() {
     // clears only `mbLikesToSitAround`; `mbSpecialAction` survives, so a
     // leisure-authored NPC on a scripted route later fails GoTo's
     // already-on-point shortcut and runs a real zero-length move when
-    // returning to its route (RHartificialintelligence.cpp:5735 vs the
-    // index overload at :5715).
+    // returning to its route (RHartificialintelligence.cpp:5764-5769 vs the
+    // index overload at :5717).
     use crate::ai::{PathId, PatrolAssignment};
 
     let paths = vec![crate::level_data::RawHikingPath {
