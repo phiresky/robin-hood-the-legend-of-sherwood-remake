@@ -2408,6 +2408,17 @@ impl EngineInner {
         self.apply_interaction_with_seek_and_recovery(sim, actor, target, command, running, false);
     }
 
+    fn stamp_beggar_dont_talk_counter(&mut self, target: EntityId) {
+        // The Pay click resolver has already validated that this target is the
+        // eligible beggar. Preserve the existing direct Civilian + FriendlyAi
+        // mutation semantics here.
+        if let Some(crate::element::Entity::Civilian(c)) = self.get_entity_mut(target)
+            && let crate::element::AiBrain::Friendly(ref mut ai) = c.npc.ai_brain
+        {
+            ai.set_beggar_dont_talk_counter(3);
+        }
+    }
+
     /// Build the ordinary interaction route, optionally retaining quick-action
     /// posture recovery in the same sequence as the recorded interaction.
     fn apply_interaction_with_seek_and_recovery(
@@ -2471,21 +2482,22 @@ impl EngineInner {
             .get(actor)
             .map(|s| s.is_recording())
             .unwrap_or(false);
+
         if running && !is_recording_macro && is_addinteraction_with_seek_command {
             self.actor_make_fast(sim, actor);
+            // Civilian::MouseClicked performs this post-call stamp even when
+            // AddInteractionWithSeek reduced the double-click to MakeFast.
+            if command == Command::Pay {
+                self.stamp_beggar_dont_talk_counter(target);
+            }
             return;
         }
 
-        // Suppress the beggar's alms-request remarks during the
-        // entire seek + receive-purse animation chain by stamping the
-        // don't-talk counter at click time, before the walk-up starts.
-        // `reveal_scrolls` bumps the same counter again at the chain's
-        // end, so both sites are needed.
-        if command == Command::Pay
-            && let Some(crate::element::Entity::Civilian(c)) = self.get_entity_mut(target)
-            && let crate::element::AiBrain::Friendly(ref mut ai) = c.npc.ai_brain
-        {
-            ai.set_beggar_dont_talk_counter(3);
+        // Suppress the beggar's alms-request remarks during the ordinary
+        // seek + receive-purse chain. `reveal_scrolls` bumps the same counter
+        // again at the chain's end, so both sites are needed.
+        if command == Command::Pay {
+            self.stamp_beggar_dont_talk_counter(target);
         }
 
         let (pc_pos, pc_sector, pc_posture) = match self.get_entity(actor) {
@@ -5384,6 +5396,36 @@ mod tests {
         engine.add_entity(Entity::Pc(pc))
     }
 
+    fn spawn_friendly_civilian(engine: &mut EngineInner) -> EntityId {
+        let mut civilian = ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: crate::element::CivilianData {
+                cached_civilian_type: crate::profiles::CivilianType::Beggar,
+                ..Default::default()
+            },
+        };
+        civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::default());
+        engine.add_entity(Entity::Civilian(civilian))
+    }
+
+    fn friendly_beggar_dont_talk_counter(engine: &EngineInner, target: EntityId) -> u16 {
+        let Some(Entity::Civilian(civilian)) = engine.get_entity(target) else {
+            panic!("friendly counter target is not a civilian");
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("friendly counter target does not have FriendlyAi");
+        };
+        ai.beggar_dont_talk_counter
+    }
+
     fn first_seek_tolerance(engine: &EngineInner) -> f32 {
         let sequence = engine
             .orders
@@ -6460,6 +6502,67 @@ mod tests {
             }
             other => panic!("expected Pay movement seek element, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+        let target_id = spawn_friendly_civilian(&mut engine);
+
+        let movement = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(pc_id),
+            crate::order::OrderType::WalkingUpright,
+        );
+        let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(movement_sequence, 0);
+
+        engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::Pay, true);
+
+        assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 3);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let current = engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .expect("the preexisting movement remains selected");
+        let SequenceElementData::Movement { action, flags, .. } = &current.data else {
+            panic!("preexisting movement changed kind");
+        };
+        assert_eq!(*action, crate::order::OrderType::RunningUpright);
+        assert!(flags.contains(MoveFlags::FAST));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .all(|element| !matches!(element.command, Command::Pay | Command::Seek))
+        );
+    }
+
+    #[test]
+    fn running_non_pay_does_not_stamp_friendly_target() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+        let target_id = spawn_friendly_civilian(&mut engine);
+        let Some(Entity::Civilian(civilian)) = engine.get_entity_mut(target_id) else {
+            unreachable!("new friendly target changed kind");
+        };
+        let crate::element::AiBrain::Friendly(ai) = &mut civilian.npc.ai_brain else {
+            unreachable!("new friendly target changed AI kind");
+        };
+        ai.set_beggar_dont_talk_counter(2);
+
+        engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::SearchCmd, true);
+
+        assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 2);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
     }
 
     #[test]
