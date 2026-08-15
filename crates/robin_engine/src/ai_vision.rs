@@ -79,7 +79,24 @@ pub(crate) fn debug_set_current_frame(frame: u32) {
     DEBUG_CURRENT_FRAME.store(frame, std::sync::atomic::Ordering::Relaxed);
 }
 
+pub(crate) fn debug_stare_target() -> Option<(f32, f32)> {
+    static CFG: std::sync::OnceLock<Option<(f32, f32)>> = std::sync::OnceLock::new();
+    *CFG.get_or_init(|| {
+        let raw = std::env::var("PARITY_DEBUG_VR_STARE").ok()?;
+        let (x, y) = raw.split_once(',')?;
+        Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+    })
+}
+
+pub(crate) fn debug_stare_matches(x: f32, y: f32) -> bool {
+    match debug_stare_target() {
+        Some((tx, ty)) => (x - tx).abs() < 0.01 && (y - ty).abs() < 0.01,
+        None => false,
+    }
+}
+
 pub(crate) fn view_radius_debug_frame_enabled(frame: u32) -> bool {
+
     let config = view_radius_cache_debug_config();
     config.enabled && frame >= config.from_frame && frame <= config.through_frame
 }
@@ -1613,10 +1630,7 @@ pub struct RefreshViewContext {
 /// of [`refresh_view_look`] still clears a stale look-status the
 /// moment the animation is no longer playing.
 pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
-    if std::env::var_os("PARITY_DEBUG_VR_STARE").is_some()
-        && (ctx.own_position.x - 795.054).abs() < 0.01
-        && (ctx.own_position.y - 1670.011).abs() < 0.01
-    {
+    if debug_stare_matches(ctx.own_position.x, ctx.own_position.y) {
         eprintln!(
             "VRVIEW frame={} status={:?} body_dir={} dir_old={} angle={} dir=({},{}) posture={:?} anim={:?}",
             DEBUG_CURRENT_FRAME.load(std::sync::atomic::Ordering::Relaxed),
@@ -1893,9 +1907,7 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
 
 /// Handler for `Stare` and `Follow` (after stare-point update).
 fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &GroundPoint) {
-    let dbg = std::env::var_os("PARITY_DEBUG_VR_STARE").is_some()
-        && (own_position.x - 795.054).abs() < 0.01
-        && (own_position.y - 1670.011).abs() < 0.01;
+    let dbg = debug_stare_matches(own_position.x, own_position.y);
     if dbg {
         eprintln!(
             "VRSTARE frame={} own=({},{}) stare=({},{}) vd=({},{}) dir_in=({},{}) angle={} half_range={} step={} status={:?} transition={}",
@@ -1937,12 +1949,15 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
     svx *= crate::position_interface::ASPECT_RATIO;
 
     // Is the stare vector to the right of the view direction?
+    // Original: `bVectorRight = (mViewParameters.direction.Det( vStareVector ) > 0);`
+    // (original-code/RHelementactornpc.cpp:1795).
     let dir = npc.view_direction;
-    let det_right = dir[0] * svy - dir[1] * svx;
+    let det_right = geo_det(dir[0], dir[1], svx, svy);
     let vector_right = det_right > 0.0;
 
     // Is the stare target in the forward half-plane?
-    let dot_forward = vdx * svx + vdy * svy;
+    // Original: `if ( vViewDirection * vStareVector >= 0 )` (same file:1799).
+    let dot_forward = geo_dot(vdx, vdy, svx, svy);
 
     if dot_forward >= 0.0 {
         // Target in front: rotate toward it.
@@ -1956,10 +1971,10 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
                 npc.view_direction = [rx, ry];
 
                 // Overshoot check: if we passed the stare vector,
-                // snap to it.
-                let new_det = npc.view_direction[0] * svy - npc.view_direction[1] * svx;
+                // snap to it (original-code/RHelementactornpc.cpp:1811-1818).
+                let new_det = geo_det(npc.view_direction[0], npc.view_direction[1], svx, svy);
                 if new_det < 0.0 {
-                    let new_dot = npc.view_direction[0] * svx + npc.view_direction[1] * svy;
+                    let new_dot = geo_dot(npc.view_direction[0], npc.view_direction[1], svx, svy);
                     if new_dot > 0.0 {
                         npc.view_direction = [svx, svy];
                         npc.view_angle = -vec_angle(svx, svy, vdx, vdy);
@@ -1971,10 +1986,10 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
             let (rx, ry) = rotate_unit(vdx, vdy, npc.view_angle);
             npc.view_direction = [rx, ry];
 
-            // Overshoot check (mirrored).
-            let new_det = npc.view_direction[0] * svy - npc.view_direction[1] * svx;
+            // Overshoot check (mirrored, same file:1826-1833).
+            let new_det = geo_det(npc.view_direction[0], npc.view_direction[1], svx, svy);
             if new_det > 0.0 {
-                let new_dot = npc.view_direction[0] * svx + npc.view_direction[1] * svy;
+                let new_dot = geo_dot(npc.view_direction[0], npc.view_direction[1], svx, svy);
                 if new_dot > 0.0 {
                     npc.view_direction = [svx, svy];
                     npc.view_angle = -vec_angle(svx, svy, vdx, vdy);
@@ -2020,18 +2035,55 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
     }
 }
 
+/// `SBGeoVector2D::operator*` — the 2D dot product
+/// (original-code/sblibng/SBGeoVector2D.cpp:151-154,
+/// `return ( mX * vect.mX + mY * vect.mY );`).
+///
+/// The Original is a 32-bit x87 build, so `FLT_EVAL_METHOD == 2`: both
+/// products and their sum are evaluated in the 80-bit x87 registers and
+/// rounded to `GEOTYPE` (`float`) exactly once, where the value leaves
+/// the expression.  Two `f32` products need at most 48 mantissa bits, so
+/// evaluating them in `f64` reproduces those x87 intermediates exactly;
+/// rounding every product to `f32` — what a naive port does — does not.
+/// It matters because callers feed the result straight into sign tests
+/// on nearly (anti)parallel vectors, where the cancellation lets the
+/// per-product rounding decide the sign.
+#[inline]
+fn geo_dot(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    (f64::from(ax) * f64::from(bx) + f64::from(ay) * f64::from(by)) as f32
+}
+
+/// `SBGeoVector2D::Det` with the default aspect ratio
+/// (original-code/sblibng/SBGeoVector2D.cpp:158-161,
+/// `return ( ( mX * vect.mY - mY * vect.mX ) / fAspectRatio );`).
+///
+/// Same single-rounding contract as [`geo_dot`]; dividing by the default
+/// `1.0f` aspect ratio is exact and therefore elided.  The cancellation
+/// here is the sharp one: `RHElementActorNPC::RefreshView`
+/// (original-code/RHelementactornpc.cpp:1795-1841) compares this
+/// determinant against zero to decide whether the swept gaze has passed
+/// the stare vector, and by construction the two products agree to
+/// within a few ULPs exactly when it has.
+#[inline]
+fn geo_det(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    (f64::from(ax) * f64::from(by) - f64::from(ay) * f64::from(bx)) as f32
+}
+
 /// Signed angle between two 2D vectors.
 ///
-/// Original `SBGeoVector2D::Angle` computes the dot, determinant, and
-/// their quotient in f32 but evaluates the arctangent in double
-/// (`atan((double)(fDet / fDot))`) before rounding back to f32.
+/// `SBGeoVector2D::Angle` (original-code/sblibng/SBGeoVector2D.cpp:431-464)
+/// stores the dot and the determinant into `FLOAT` locals — each rounded
+/// once, see [`geo_dot`] / [`geo_det`] — then evaluates
+/// `(FLOAT) atan( (double) ( fDet / fDot ) )`.  The quotient of the two
+/// `FLOAT`s is itself formed in the x87 registers before the cast to
+/// `double`, so the division must not be rounded to `f32` either.
 fn vec_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-    let dot = ax * bx + ay * by;
-    let det = ax * by - ay * bx;
+    let dot = geo_dot(ax, ay, bx, by);
+    let det = geo_det(ax, ay, bx, by);
     if det == 0.0 {
         return if dot > 0.0 { 0.0 } else { std::f32::consts::PI };
     }
-    let angle = f64::from(det / dot).atan() as f32;
+    let angle = (f64::from(det) / f64::from(dot)).atan() as f32;
     if dot >= 0.0 {
         angle
     } else if det > 0.0 {
