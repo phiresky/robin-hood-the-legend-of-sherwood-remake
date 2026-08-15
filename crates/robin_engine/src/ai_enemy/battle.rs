@@ -3493,6 +3493,27 @@ impl EnemyAi {
             let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
             if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
                 if debug_decision_path {
+                    // TMP: dump the two sub-checks and the corridor candidates.
+                    let dest_box = ctx.move_box.translated(pt_goal);
+                    let dest_ok = g.is_position_authorized(&dest_box, my_pos.level);
+                    let half_diag = crate::coordinates::MoveBoxHalfDiagonal::new(
+                        ctx.move_box.x_max(),
+                        ctx.move_box.y_max(),
+                    );
+                    let thick_ok = g.is_reachable_thick(pt_me, pt_goal, my_pos.level, half_diag);
+                    eprintln!(
+                        "TMPRIDER dest_ok={dest_ok} thick_ok={thick_ok} dest_box={dest_box:?} half_diag=({:08x},{:08x})",
+                        half_diag.x.to_bits(),
+                        half_diag.y.to_bits(),
+                    );
+                    g.trace_reachable_thick_decision(
+                        ctx.frame,
+                        pt_me,
+                        pt_goal,
+                        my_pos.level,
+                        half_diag,
+                        thick_ok,
+                    );
                     eprintln!(
                         "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_straight goal=({:08x},{:08x}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x}",
                         ctx.frame,

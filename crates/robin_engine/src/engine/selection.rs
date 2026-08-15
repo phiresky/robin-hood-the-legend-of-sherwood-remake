@@ -959,6 +959,12 @@ impl EngineInner {
             return;
         }
 
+        if std::env::var_os("ROBIN_TMP_EQUIPBOW_DEBUG").is_some() {
+            eprintln!(
+                "TMPEQUIP frame={} site=manage_input_pre_action_bow pc={:?} action_state={:?}",
+                self.control.frame_counter, pc_id, action_state,
+            );
+        }
         self.stop_owner(pc_id, SequencePriority::Preference);
         let elem = SequenceElement::new(1, Command::EquipBow, Some(pc_id));
         let mut sequence = crate::sequence::Sequence::new();
