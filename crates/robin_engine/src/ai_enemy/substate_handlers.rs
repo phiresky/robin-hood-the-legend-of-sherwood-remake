@@ -4708,7 +4708,28 @@ impl EnemyAi {
                                 self.base.say_with_flags(Remark::TellsOfficerOther, speech);
                             }
                         }
-                        self.base.launch_timer(150, ctx.frame);
+                        // `RHartificialmalignity.cpp:3350` runs this
+                        // `LaunchTimer(150)` *after* the `Say(...,
+                        // SPEECH_MYTALK_1 | SPEECH_EMERGENCY)` above has
+                        // fully returned. When that Say is rejected -- the
+                        // common case here, because the reporting soldier is
+                        // still blipped (`RHartificialintelligence.cpp:5924`)
+                        // -- `InformAIOnFinishedRemark`
+                        // (`RHartificialintelligence.cpp:6264`) re-enters
+                        // `Think(EVENT_MYTALK_1)` on this same call stack.
+                        // That nested Think walks the report-start substate
+                        // into ..._POINT and launches its own 100-frame timer
+                        // (`RHartificialmalignity.cpp:3398`), and only then
+                        // does this statement overwrite it with 150. Rust
+                        // settles speech at the owner return boundary, so the
+                        // timer has to ride the same owner-work FIFO to land
+                        // behind the nested Think instead of ahead of it.
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::LaunchTimer {
+                                frames: 150,
+                                current_frame: ctx.frame,
+                            },
+                        );
                     }
                     _ => {
                         self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
