@@ -14578,6 +14578,21 @@ impl EngineInner {
                     npc = npc_id.index(),
                     "self-stimulus recursion exceeded the original 111-call guard"
                 );
+                // The cascade is being force-abandoned with events still
+                // queued, so no innermost EndThink will unwind the open
+                // ancestor frames (`open_end_think_frames`) — close them
+                // here so the depth cannot leak across frames.
+                if let Some(ai) = self
+                    .world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::ai_controller_mut)
+                {
+                    let open = std::mem::take(&mut ai.open_end_think_frames);
+                    if open > 0 {
+                        ai.think_recursion_depth = ai.think_recursion_depth.saturating_sub(open);
+                    }
+                }
                 break;
             }
 

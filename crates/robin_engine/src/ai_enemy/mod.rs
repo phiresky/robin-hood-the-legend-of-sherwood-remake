@@ -3639,10 +3639,12 @@ impl EnemyAi {
             decision_path_debug_enabled() && decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
             eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=think_enter stimulus={:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} list_them={:?} owner_work={:?}",
+                "AIDECISION frame={} owner={} co={:?} stage=think_enter depth={}/open={} stimulus={:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} list_them={:?} owner_work={:?}",
                 ctx.frame,
                 self.base.me,
                 ctx.original_creation_order,
+                self.base.think_recursion_depth,
+                self.base.open_end_think_frames,
                 stimulus.stimulus_type,
                 self.base.current_state,
                 self.base.current_substate,
@@ -4028,6 +4030,8 @@ impl EnemyAi {
         // that filter without re-entering the script VM through this
         // borrowed AI object.
 
+        let mut queued_completion = false;
+
         // Post CouldntReachPoint event if a GoTo failed
         if self.base.couldnt_reachpoint {
             self.base.couldnt_reachpoint = false;
@@ -4037,6 +4041,7 @@ impl EnemyAi {
                     .reentrant
                     .self_stimuli
                     .push(StimulusType::EventCouldntReachPoint);
+                queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
@@ -4053,6 +4058,7 @@ impl EnemyAi {
                     .reentrant
                     .self_stimuli
                     .push(StimulusType::EventReachPoint);
+                queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
@@ -4069,6 +4075,7 @@ impl EnemyAi {
                     .reentrant
                     .self_stimuli
                     .push(StimulusType::EventDone);
+                queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
@@ -4076,7 +4083,27 @@ impl EnemyAi {
             }
         }
 
-        self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_sub(1);
+        if queued_completion {
+            // Original EndThink dispatches the completion Think recursively
+            // *before* its decrement, so the cascade's ancestor frames stay
+            // open and the recursion depth climbs one per nested Think —
+            // that climb is what makes the 100.. ReturnToDuty failsafe
+            // reachable. This frame stays open until the cascade ends (see
+            // `open_end_think_frames`).
+            self.base.open_end_think_frames = self.base.open_end_think_frames.saturating_add(1);
+        } else {
+            // No continuation was queued: this is the innermost Think of the
+            // cascade, so the entire chain of still-open ancestor frames
+            // unwinds with it — the deferred equivalent of the stacked
+            // EndThink decrements the Original performs while returning out
+            // of the nested calls.
+            let open = std::mem::take(&mut self.base.open_end_think_frames);
+            self.base.think_recursion_depth = self
+                .base
+                .think_recursion_depth
+                .saturating_sub(1)
+                .saturating_sub(open);
+        }
     }
 
     // -----------------------------------------------------------------------
