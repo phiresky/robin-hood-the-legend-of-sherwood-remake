@@ -2741,6 +2741,45 @@ impl EngineInner {
                 };
                 let strike_frames = attacker_anim_frames as u32 + 10;
 
+                // Opt-in trace for the reactive-parade heartbeat timer.
+                //
+                // `SUBSTATE_ATTACKING_SWORDFIGHT_PARADE` is only left again on
+                // `EVENT_TIMER`, so this single duration decides how long a
+                // parrying soldier stays out of the ordinary
+                // `ReconsiderSwordfight` heartbeat. When a parity frontier
+                // shows one fighter running (or skipping) a reconsideration
+                // group, this dumps every operand of
+                // `RHSprite::GetFramesFromStartTillActionDone`
+                // (`original-code/RHsprite.cpp:1283`) for the attacker so the
+                // ring frame can be reconstructed by hand.
+                if std::env::var_os("PARITY_DEBUG_PARADE_TIMER").is_some() {
+                    let anim = strike_to_animation(animation_strike);
+                    let sprite = &self
+                        .get_entity(attacker_id)
+                        .unwrap_or_else(|| {
+                            panic!("parade timer diagnostic attacker {attacker_id:?} disappeared")
+                        })
+                        .element_data()
+                        .sprite;
+                    let row = sprite.current_conversion()[anim as usize];
+                    let waits = |r: u16| {
+                        (0..sprite.num_frames_for_row(r))
+                            .map(|i| sprite.wait_time(r, i))
+                            .collect::<Vec<_>>()
+                    };
+                    eprintln!(
+                        "[PARADE_TIMER] frame={} victim_co={:?} attacker_co={:?} animation={anim:?} conversion_row={row} action_done={} num_frames={} waits={:?} live_row={} live_frame={} frames={attacker_anim_frames} ring_in={strike_frames}",
+                        self.control.frame_counter,
+                        self.world.original_creation_order(victim_id),
+                        self.world.original_creation_order(attacker_id),
+                        sprite.action_done_for_row(row),
+                        sprite.num_frames_for_row(row),
+                        waits(row),
+                        sprite.current_row,
+                        sprite.current_frame,
+                    );
+                }
+
                 // Set substate to parade
                 if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
                     && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
