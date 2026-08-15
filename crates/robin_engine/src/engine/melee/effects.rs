@@ -45,7 +45,13 @@ fn push_flight_vector(
             attacker_dir.1 * remaining_distance,
         ),
         WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
-            let distance = dx.hypot(dy);
+            // SBGeoVector2D::Norm first rounds the squared sum as GEOTYPE
+            // (f32), runs sqrt in double precision, then stores the result
+            // back to GEOTYPE before Normalize divides each component.  The
+            // platform `hypotf` sequence differs by an ULP for some live
+            // combat vectors, which then shifts the retained flight goal.
+            let squared_norm = dx * dx + dy * dy;
+            let distance = f64::from(squared_norm).sqrt() as f32;
             if distance < 0.01 {
                 (0.0, 0.0)
             } else {
@@ -187,20 +193,12 @@ impl EngineInner {
                 let dir_angle = sector_to_angle(attacker_dir);
                 let (begin_sector, end_sector) = match thrust.direction {
                     crate::profiles::WeaponThrustDirection::RightToLeft => (
-                        angle_to_sector(
-                            dir_angle - thrust.final_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
-                        angle_to_sector(
-                            dir_angle + thrust.initial_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
+                        angle_to_sector(dir_angle - strike_profile_angle(thrust.final_angle)),
+                        angle_to_sector(dir_angle + strike_profile_angle(thrust.initial_angle)),
                     ),
                     _ => (
-                        angle_to_sector(
-                            dir_angle - thrust.initial_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
-                        angle_to_sector(
-                            dir_angle + thrust.final_angle as f32 * std::f32::consts::PI / 180.0,
-                        ),
+                        angle_to_sector(dir_angle - strike_profile_angle(thrust.initial_angle)),
+                        angle_to_sector(dir_angle + strike_profile_angle(thrust.final_angle)),
                     ),
                 };
                 collect_lateral_warning_victims(
@@ -213,41 +211,34 @@ impl EngineInner {
                     end_sector,
                 )
             }
-            WeaponThrustKind::PushAside => {
-                let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
-                let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
-                collect_push_victims(
-                    &self.world.entities,
-                    &PushStrikeParams {
-                        attacker_id,
-                        attacker_pos: (attacker_pos.x, attacker_pos.y),
-                        attacker_elevation: attacker.position_iface().get_elevation(),
-                        position_space: PushStrikePositionSpace::Map,
-                        dir_x,
-                        dir_y,
-                        min_distance: min_dist,
-                        max_distance: max_dist,
-                        half_width: thrust.repulsion as f32 / 2.0,
-                    },
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                )
-            }
+            WeaponThrustKind::PushAside => collect_push_victims(
+                &self.world.entities,
+                &PushStrikeParams {
+                    attacker_id,
+                    attacker_pos: (attacker_pos.x, attacker_pos.y),
+                    attacker_elevation: attacker.position_iface().get_elevation(),
+                    position_space: PushStrikePositionSpace::Map,
+                    attacker_direction: attacker_dir,
+                    min_distance: min_dist,
+                    max_distance: max_dist,
+                    half_width: push_strike_half_width(thrust.repulsion),
+                },
+                &assets.profile_manager,
+                &self.world.fast_grid,
+                obstacles,
+            ),
             WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
                 let dir_angle = sector_to_angle(attacker_dir);
                 let (begin_sector, end_sector) = match thrust.direction {
                     crate::profiles::WeaponThrustDirection::RightToLeft => {
-                        let initial =
-                            dir_angle + thrust.initial_angle as f32 * std::f32::consts::PI / 180.0;
+                        let initial = dir_angle + strike_profile_angle(thrust.initial_angle);
                         (
                             angle_to_sector(initial - std::f32::consts::PI),
                             angle_to_sector(initial),
                         )
                     }
                     _ => {
-                        let initial =
-                            dir_angle - thrust.initial_angle as f32 * std::f32::consts::PI / 180.0;
+                        let initial = dir_angle - strike_profile_angle(thrust.initial_angle);
                         (
                             angle_to_sector(initial),
                             angle_to_sector(initial + std::f32::consts::PI),
@@ -273,8 +264,12 @@ impl EngineInner {
                     attacker_id,
                     (attacker_pos.x, attacker_pos.y),
                     attacker_dir,
-                    max_dist,
+                    thrust.maximal_distance,
                     thrust.rotation_angle,
+                    |target_id| {
+                        self.live_actor_animation(target_id)
+                            == Some(crate::order::OrderType::WalkingWithSword)
+                    },
                     &assets.profile_manager,
                     &self.world.fast_grid,
                     obstacles,
@@ -1406,13 +1401,6 @@ impl EngineInner {
             None => return Vec::new(),
         };
 
-        let attacker_pos = self
-            .get_entity(attacker_id)
-            .map(|e| {
-                let p = e.element_data().position_map();
-                (p.x, p.y)
-            })
-            .unwrap_or((0.0, 0.0));
         let attacker_dir = self
             .get_entity(attacker_id)
             .map(|e| e.element_data().direction())
@@ -1440,25 +1428,13 @@ impl EngineInner {
                 let strike_dir = thrust.direction;
                 let (begin_sector, end_sector) = match strike_dir {
                     crate::profiles::WeaponThrustDirection::RightToLeft => {
-                        let initial = dir_angle
-                            + profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
-                        let final_a = dir_angle
-                            - profile.thrusts[strike as usize].final_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle + strike_profile_angle(thrust.initial_angle);
+                        let final_a = dir_angle - strike_profile_angle(thrust.final_angle);
                         (angle_to_sector(final_a), angle_to_sector(initial))
                     }
                     _ => {
-                        let initial = dir_angle
-                            - profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
-                        let final_a = dir_angle
-                            + profile.thrusts[strike as usize].final_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle - strike_profile_angle(thrust.initial_angle);
+                        let final_a = dir_angle + strike_profile_angle(thrust.final_angle);
                         (angle_to_sector(initial), angle_to_sector(final_a))
                     }
                 };
@@ -1488,9 +1464,7 @@ impl EngineInner {
                 // Using the ordinary unit-circle helper here rotates the
                 // narrow push rectangle in map space and can reject actors
                 // that Original includes near a side boundary.
-                let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
-                let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
-                let half_width = thrust.repulsion as f32 / 2.0;
+                let half_width = push_strike_half_width(thrust.repulsion);
                 let attacker = self
                     .get_entity(attacker_id)
                     .unwrap_or_else(|| panic!("push-strike attacker {attacker_id:?} is missing"));
@@ -1503,8 +1477,7 @@ impl EngineInner {
                         attacker_pos: (attacker_ground.x, attacker_ground.y),
                         attacker_elevation,
                         position_space: PushStrikePositionSpace::Ground,
-                        dir_x,
-                        dir_y,
+                        attacker_direction: attacker_dir,
                         min_distance: min_dist,
                         max_distance: max_dist,
                         half_width,
@@ -1520,26 +1493,26 @@ impl EngineInner {
                 let strike_dir = thrust.direction;
                 let (begin_sector, end_sector) = match strike_dir {
                     crate::profiles::WeaponThrustDirection::RightToLeft => {
-                        let initial = dir_angle
-                            + profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle + strike_profile_angle(thrust.initial_angle);
                         let final_a = initial - std::f32::consts::PI;
                         (angle_to_sector(final_a), angle_to_sector(initial))
                     }
                     _ => {
-                        let initial = dir_angle
-                            - profile.thrusts[strike as usize].initial_angle as f32
-                                * std::f32::consts::PI
-                                / 180.0;
+                        let initial = dir_angle - strike_profile_angle(thrust.initial_angle);
                         let final_a = initial + std::f32::consts::PI;
                         (angle_to_sector(initial), angle_to_sector(final_a))
                     }
                 };
-                collect_arc_victims(
+                let attacker_position = self
+                    .get_entity(attacker_id)
+                    .map(|entity| entity.element_data().position())
+                    .unwrap_or_else(|| {
+                        panic!("half-circle strike attacker {attacker_id:?} is missing")
+                    });
+                collect_half_circle_strike_victims(
                     &self.world.entities,
                     attacker_id,
-                    attacker_pos,
+                    attacker_position,
                     min_dist,
                     max_dist,
                     begin_sector,
@@ -1549,18 +1522,24 @@ impl EngineInner {
                     obstacles,
                 )
             }
-            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => collect_arc_victims(
-                &self.world.entities,
-                attacker_id,
-                attacker_pos,
-                min_dist,
-                max_dist,
-                0,
-                15,
-                &assets.profile_manager,
-                &self.world.fast_grid,
-                obstacles,
-            ),
+            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
+                let attacker_position = self
+                    .get_entity(attacker_id)
+                    .map(|entity| entity.element_data().position())
+                    .unwrap_or_else(|| {
+                        panic!("full-circle strike attacker {attacker_id:?} is missing")
+                    });
+                collect_full_circle_strike_victims(
+                    &self.world.entities,
+                    attacker_id,
+                    attacker_position,
+                    min_dist,
+                    max_dist,
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                )
+            }
         };
 
         // Original seeds every multi-target strike by walking
@@ -1617,6 +1596,30 @@ mod tests {
                 "{kind:?} moves radially but uses the attacker-direction projection"
             );
         }
+    }
+
+    #[test]
+    fn circle_push_uses_original_geotype_norm_rounding() {
+        let attacker = MapPoint::new(0.0, 0.0);
+        let victim = MapPoint::new(46.609222, 53.838055);
+
+        let vector = push_flight_vector(
+            WeaponThrustKind::TrueCircle,
+            (1.0, 0.0),
+            attacker,
+            victim,
+            100.0,
+        );
+
+        assert_eq!(vector.0.to_bits(), 0x420b_c85a);
+        assert_eq!(vector.1.to_bits(), 0x4221_764e);
+        let hypot_distance = (victim.x - attacker.x).hypot(victim.y - attacker.y);
+        let remaining = 100.0 - (victim.x - attacker.x);
+        assert_eq!(
+            ((victim.x - attacker.x) / hypot_distance * remaining).to_bits(),
+            0x420b_c85b,
+            "control must distinguish the platform hypot rounding"
+        );
     }
 
     #[test]

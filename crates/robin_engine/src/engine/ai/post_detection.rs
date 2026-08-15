@@ -161,6 +161,39 @@ fn take_enemy_detection_tick_data(
 use crate::element::EntityId;
 
 impl EngineInner {
+    fn bored_owner_boundary_debug(&self, npc_id: EntityId, phase: &str) {
+        let frame = self.control.frame_counter;
+        let owner = npc_id.index();
+        // Keep the disabled path ahead of all diagnostic-only world and queue reads.
+        if !crate::ai::AiController::bored_boundary_debug_matches(frame, owner) {
+            return;
+        }
+        let command = self.actor_command(npc_id);
+        let entity =
+            self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!("BORED_BOUNDARY owner {} disappeared during {phase}", owner)
+            });
+        let ai = entity
+            .ai_controller()
+            .unwrap_or_else(|| panic!("BORED_BOUNDARY owner {} has no AI during {phase}", owner));
+        eprintln!(
+            "BORED_BOUNDARY frame={} owner={} phase={} command={:?} state={:?} substate={:?} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}",
+            frame,
+            owner,
+            phase,
+            command,
+            ai.current_state,
+            ai.current_substate,
+            ai.timer_is_running,
+            ai.when_does_timer_ring,
+            ai.outbox.reentrant.self_stimuli.len(),
+            ai.outbox.reentrant.owner_work.len(),
+            ai.outbox.actor.orders.len(),
+        );
+    }
+}
+
+impl EngineInner {
     /// Creation-ordered tail of `RHElementActorNPC::Hourglass`.
     ///
     /// This is entered immediately after the owner's complete
@@ -172,6 +205,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
+        self.bored_owner_boundary_debug(npc_id, "entry");
         let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
                 "creation-ordered post-detection owner {} disappeared",
@@ -224,6 +258,7 @@ impl EngineInner {
         #[cfg(not(test))]
         observe_npc_post_detection_tail_phase(npc_id, ());
         if self.tick_npc_lock_gate_for_npc(npc_id) {
+            self.bored_owner_boundary_debug(npc_id, "lock_gate_return");
             return;
         }
 
@@ -232,12 +267,14 @@ impl EngineInner {
         #[cfg(not(test))]
         observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_periodic_ai_for_npc(sim, npc_id, assets);
+        self.bored_owner_boundary_debug(npc_id, "after_periodic");
 
         #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::NormalTimer);
         #[cfg(not(test))]
         observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_ai_normal_timer_for_npc(sim, npc_id, assets);
+        self.bored_owner_boundary_debug(npc_id, "after_normal_timer");
 
         #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::MacroTimer);
@@ -256,6 +293,7 @@ impl EngineInner {
         #[cfg(not(test))]
         observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
+        self.bored_owner_boundary_debug(npc_id, "exit");
     }
 
     /// Per-owner normal-timer phase. Carries the owner span for the

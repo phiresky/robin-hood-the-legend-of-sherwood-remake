@@ -13,6 +13,15 @@ use crate::parameters_ai::{
     AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE,
 };
 
+/// Caller tail to run only when both synchronous `AlertSoldier` route
+/// attempts fail.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum AlertSoldierFailureContinuation {
+    PanicWithRemark,
+    Panic,
+    ReturnToDuty,
+}
+
 // ---------------------------------------------------------------------------
 // Civilian-specific constants
 // ---------------------------------------------------------------------------
@@ -760,6 +769,11 @@ impl FriendlyAi {
             self.base.already_turned = false;
             if let Some(event) = event {
                 self.base.outbox.reentrant.self_stimuli.push(event);
+                // Original dispatches this event recursively before the
+                // decrement, so the frame stays open until the cascade's
+                // innermost Think unwinds (see `open_end_think_frames`).
+                self.base.open_end_think_frames = self.base.open_end_think_frames.saturating_add(1);
+                return;
             }
         } else {
             // The deep-recursion fallback runs `ReturnToDuty` instead of a
@@ -776,7 +790,16 @@ impl FriendlyAi {
                 }
             }
         }
-        self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_sub(1);
+        // No continuation was queued: the innermost Think of a completion
+        // cascade unwinds the whole chain of still-open ancestor frames —
+        // the deferred equivalent of the stacked EndThink decrements the
+        // Original performs while returning out of the nested calls.
+        let open = std::mem::take(&mut self.base.open_end_think_frames);
+        self.base.think_recursion_depth = self
+            .base
+            .think_recursion_depth
+            .saturating_sub(1)
+            .saturating_sub(open);
     }
 
     /// Civilian-side new-task-priority hook is intentionally empty.
@@ -889,7 +912,15 @@ impl FriendlyAi {
             Substate::WonderingCivilianEnemyReactiontime => {
                 if stimulus_type == StimulusType::EventTimer {
                     let seek_pos = self.base.seek_position;
-                    if !self.alert_soldier(sim, seek_pos, 0, ctx, grid, doors) {
+                    if !self.alert_soldier(
+                        sim,
+                        seek_pos,
+                        0,
+                        AlertSoldierFailureContinuation::PanicWithRemark,
+                        ctx,
+                        grid,
+                        doors,
+                    ) {
                         self.base.say(Remark::CivPanic);
                         let pos = self.base.seek_position;
                         self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
@@ -900,7 +931,15 @@ impl FriendlyAi {
             Substate::WonderingCivilianBodyReactiontime => {
                 if stimulus_type == StimulusType::EventTimer {
                     let seek_pos = self.base.seek_position;
-                    if !self.alert_soldier(sim, seek_pos, 0, ctx, grid, doors) {
+                    if !self.alert_soldier(
+                        sim,
+                        seek_pos,
+                        0,
+                        AlertSoldierFailureContinuation::PanicWithRemark,
+                        ctx,
+                        grid,
+                        doors,
+                    ) {
                         self.base.say(Remark::CivPanic);
                         let pos = self.base.seek_position;
                         self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
@@ -992,7 +1031,15 @@ impl FriendlyAi {
                             // interrupted) — look for another soldier and,
                             // on failure, fall back to `ReturnToDuty`.
                             let seek_pos = self.base.seek_position;
-                            if !self.alert_soldier(sim, seek_pos, 0, ctx, grid, doors) {
+                            if !self.alert_soldier(
+                                sim,
+                                seek_pos,
+                                0,
+                                AlertSoldierFailureContinuation::ReturnToDuty,
+                                ctx,
+                                grid,
+                                doors,
+                            ) {
                                 self.return_to_duty(sim, DutyFlags::empty(), ctx);
                             }
                         }
@@ -1779,7 +1826,17 @@ impl FriendlyAi {
                 // also Royalist) soldier.
                 let is_royalist = ctx.camp == crate::element::Camp::Royalists;
 
-                if is_royalist || !self.alert_soldier(sim, noise.origin, 0, ctx, grid, doors) {
+                if is_royalist
+                    || !self.alert_soldier(
+                        sim,
+                        noise.origin,
+                        0,
+                        AlertSoldierFailureContinuation::Panic,
+                        ctx,
+                        grid,
+                        doors,
+                    )
+                {
                     let pos = self.base.seek_position;
                     self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
                 }
@@ -1839,11 +1896,12 @@ impl FriendlyAi {
     ///    SEEKING_CIVILIAN_RUNNING_TO_SOLDIER.
     pub const ALERTFLAG_CHECK_DOOR_PATH: u16 = 0x0001;
 
-    pub fn alert_soldier(
+    pub(crate) fn alert_soldier(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         center: Position,
         flags: u16,
+        failure: AlertSoldierFailureContinuation,
         ctx: &AiContext,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
@@ -1857,7 +1915,7 @@ impl FriendlyAi {
         const OO: u32 = u32::MAX;
 
         let mut best: Option<(NpcHandle, u32, Position)> = None;
-        let mut detectables_to_add: Vec<(
+        let mut detectables_to_append: Vec<(
             crate::element::EntityId,
             crate::element::DetectableType,
         )> = Vec::new();
@@ -1889,7 +1947,7 @@ impl FriendlyAi {
             // a friend-detectable so the follow-up "someone alerted
             // me" checks later find it.
             if !check_door_path {
-                detectables_to_add.push((
+                detectables_to_append.push((
                     crate::element::EntityId::Soldier(crate::entity_id::SoldierId(handle)),
                     crate::element::DetectableType::Friend,
                 ));
@@ -2044,14 +2102,17 @@ impl FriendlyAi {
             }
         }
 
-        // Queue the friend-detectable adds we accumulated above.
+        // Queue the friend-detectable adds we accumulated above. Original
+        // calls AddDetectable directly here: its uniqueness check is an
+        // assert, so the retail build appends even when the friend is already
+        // present. Keep these calls on the duplicate-preserving lane.
         // Done here (not inline) so the early-return above doesn't
         // add detectables we're about to drop.
         self.base
             .outbox
             .actor
-            .add_detectables
-            .extend(detectables_to_add);
+            .append_detectables
+            .extend(detectables_to_append);
 
         let Some((target_handle, _, target_pos)) = best else {
             // No candidate found — clear friend list and give up.
@@ -2087,6 +2148,7 @@ impl FriendlyAi {
                     sim,
                     center,
                     Self::ALERTFLAG_CHECK_DOOR_PATH,
+                    failure,
                     ctx,
                     grid,
                     doors,
@@ -2100,8 +2162,76 @@ impl FriendlyAi {
             return false;
         }
 
-        self.base.say(Remark::CivPanic);
+        // Original path construction is synchronous. Close the GoNear actor
+        // prefix, then let the engine-owned continuation inspect its result,
+        // retry with CHECK_DOOR_PATH on failure, and only then execute the
+        // caller's failure tail or the successful remark.
+        self.base
+            .outbox
+            .reentrant
+            .owner_work
+            .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                &mut self.base.outbox.actor,
+            )));
+        self.base.outbox.reentrant.alert_soldier_completion_pending = true;
+        self.base.outbox.reentrant.owner_work.push(
+            crate::ai::AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+                center,
+                check_door_path,
+                failure,
+            },
+        );
         true
+    }
+
+    pub(crate) fn resume_alert_soldier_after_go_near(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        center: Position,
+        check_door_path: bool,
+        failure: AlertSoldierFailureContinuation,
+        ctx: &AiContext,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        doors: Option<&[crate::gate::Door]>,
+    ) {
+        self.base.outbox.reentrant.alert_soldier_completion_pending = false;
+        if !self.base.couldnt_reachpoint {
+            self.base.say(Remark::CivPanic);
+            return;
+        }
+        self.base.couldnt_reachpoint = false;
+        if !check_door_path
+            && self.alert_soldier(
+                sim,
+                center,
+                Self::ALERTFLAG_CHECK_DOOR_PATH,
+                failure,
+                ctx,
+                grid,
+                doors,
+            )
+        {
+            return;
+        }
+        if check_door_path {
+            self.base
+                .outbox
+                .actor
+                .delete_detectables
+                .push(crate::element::DetectableType::Friend);
+        }
+        match failure {
+            AlertSoldierFailureContinuation::PanicWithRemark => {
+                self.base.say(Remark::CivPanic);
+                self.panic_from_position(center, AI_STANDARD_PANIC_RUNS as u8, ctx);
+            }
+            AlertSoldierFailureContinuation::Panic => {
+                self.panic_from_position(center, AI_STANDARD_PANIC_RUNS as u8, ctx);
+            }
+            AlertSoldierFailureContinuation::ReturnToDuty => {
+                self.return_to_duty(sim, DutyFlags::empty(), ctx);
+            }
+        }
     }
 
     /// Random ambient speech for civilians.
@@ -3396,7 +3526,15 @@ mod tests {
             ..AiContext::default()
         };
 
-        let ok = ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None);
+        let ok = ai.alert_soldier(
+            sim,
+            ctx.position,
+            0,
+            AlertSoldierFailureContinuation::Panic,
+            &ctx,
+            None,
+            None,
+        );
         assert!(
             !ok,
             "alert_soldier must return false when alerted friend nearby"
@@ -3452,7 +3590,15 @@ mod tests {
         };
 
         crate::sim_rng::with_seed(1, |sim| {
-            let ok = ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None);
+            let ok = ai.alert_soldier(
+                sim,
+                ctx.position,
+                0,
+                AlertSoldierFailureContinuation::Panic,
+                &ctx,
+                None,
+                None,
+            );
             assert!(ok, "alert_soldier must succeed when at least one candidate");
             // Antagonist must be the same-layer one despite being farther.
             assert_eq!(ai.base.antagonist, 20);
@@ -3512,7 +3658,15 @@ mod tests {
             ..AiContext::default()
         };
 
-        assert!(ai.alert_soldier(sim, owner, 0, &ctx, None, None));
+        assert!(ai.alert_soldier(
+            sim,
+            owner,
+            0,
+            AlertSoldierFailureContinuation::Panic,
+            &ctx,
+            None,
+            None,
+        ));
         assert_eq!(ai.base.antagonist, 130);
     }
 
@@ -3578,7 +3732,15 @@ mod tests {
             ..AiContext::default()
         };
 
-        assert!(ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None));
+        assert!(ai.alert_soldier(
+            sim,
+            ctx.position,
+            0,
+            AlertSoldierFailureContinuation::Panic,
+            &ctx,
+            None,
+            None,
+        ));
         // Raw 3D MaxNorm distances are 400, 900, and 900. Reconstructing the
         // owner from the gate-snapped planning position would choose 20;
         // dropping the nonzero Z component while retaining raw X would choose
@@ -3640,7 +3802,15 @@ mod tests {
         };
 
         crate::sim_rng::with_seed(1, |sim| {
-            ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None);
+            ai.alert_soldier(
+                sim,
+                ctx.position,
+                0,
+                AlertSoldierFailureContinuation::Panic,
+                &ctx,
+                None,
+                None,
+            );
             let notification = ai
                 .base
                 .outbox
@@ -3657,7 +3827,7 @@ mod tests {
                 .as_ref()
                 .expect("friend detectables must precede the Friendly state callback");
             let friends: Vec<_> = effects
-                .add_detectables
+                .append_detectables
                 .iter()
                 .filter(|(_, t)| *t == DetectableType::Friend)
                 .map(|(entity, _)| entity.index())
@@ -3668,6 +3838,180 @@ mod tests {
                 "friend detectables must preserve the soldier registry order"
             );
         });
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // AlertSoldier synchronous route-result continuation
+    // ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn alert_soldier_first_route_success_delays_then_emits_success_remark() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = FriendlyAi::new(1);
+        ai.base.outbox.reentrant.alert_soldier_completion_pending = true;
+        ai.resume_alert_soldier_after_go_near(
+            &sim,
+            Position::default(),
+            false,
+            AlertSoldierFailureContinuation::PanicWithRemark,
+            &AiContext::default(),
+            None,
+            None,
+        );
+        assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
+        assert!(ai.base.outbox.actor.begin_panic.is_none());
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::Speech(AiSpeechAttempt {
+                remark: Remark::CivPanic,
+                ..
+            })]
+        ));
+    }
+
+    #[test]
+    fn alert_soldier_second_route_failure_runs_each_caller_tail_once() {
+        let sim = crate::sim_rng::test_context();
+        for failure in [
+            AlertSoldierFailureContinuation::PanicWithRemark,
+            AlertSoldierFailureContinuation::Panic,
+            AlertSoldierFailureContinuation::ReturnToDuty,
+        ] {
+            let mut ai = FriendlyAi::new(1);
+            ai.base.couldnt_reachpoint = true;
+            ai.base.outbox.reentrant.alert_soldier_completion_pending = true;
+            ai.resume_alert_soldier_after_go_near(
+                &sim,
+                Position::default(),
+                true,
+                failure,
+                &AiContext::default(),
+                None,
+                None,
+            );
+            assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
+            let live_deletes = ai
+                .base
+                .outbox
+                .actor
+                .delete_detectables
+                .iter()
+                .filter(|&&kind| kind == crate::element::DetectableType::Friend)
+                .count();
+            let callback_prefix_deletes = ai
+                .base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .filter_map(|work| match work {
+                    AiOwnerWork::StateChange(change) => {
+                        change.actor_effects_before_callback.as_ref()
+                    }
+                    _ => None,
+                })
+                .flat_map(|effects| effects.delete_detectables.iter())
+                .filter(|&&kind| kind == crate::element::DetectableType::Friend)
+                .count();
+            assert_eq!(live_deletes + callback_prefix_deletes, 1);
+            match failure {
+                AlertSoldierFailureContinuation::PanicWithRemark => {
+                    assert!(ai.base.outbox.actor.begin_panic.is_some());
+                    assert!(matches!(
+                        ai.base.outbox.reentrant.owner_work.first(),
+                        Some(AiOwnerWork::Speech(AiSpeechAttempt {
+                            remark: Remark::CivPanic,
+                            ..
+                        }))
+                    ));
+                }
+                AlertSoldierFailureContinuation::Panic => {
+                    assert!(ai.base.outbox.actor.begin_panic.is_some());
+                    assert!(
+                        !ai.base
+                            .outbox
+                            .reentrant
+                            .owner_work
+                            .iter()
+                            .any(|work| matches!(work, AiOwnerWork::Speech(_)))
+                    );
+                }
+                AlertSoldierFailureContinuation::ReturnToDuty => {
+                    assert!(ai.base.outbox.actor.begin_panic.is_none());
+                    assert_eq!(ai.base.current_state, AiState::Default);
+                    assert_ne!(
+                        ai.base.current_substate,
+                        Substate::SeekingCivilianRunningToSoldier
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn alert_soldier_first_failure_then_retry_success_avoids_failure_tail() {
+        use crate::ai_entity_view::{AiEntityViewMap, shared_entity_views};
+        use crate::element::Camp;
+        let sim = crate::sim_rng::test_context();
+        let mut views = AiEntityViewMap::new();
+        views.insert(
+            20,
+            make_soldier_view(
+                Position {
+                    x: 100.0,
+                    y: 0.0,
+                    ..Position::default()
+                },
+                Camp::Royalists,
+                AiState::Default,
+            ),
+        );
+        let ctx = AiContext {
+            camp: Camp::Royalists,
+            all_soldier_handles: std::sync::Arc::new(vec![20]),
+            entity_views: shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut ai = FriendlyAi::new(1);
+        ai.base.couldnt_reachpoint = true;
+        ai.base.outbox.reentrant.alert_soldier_completion_pending = true;
+        ai.resume_alert_soldier_after_go_near(
+            &sim,
+            Position::default(),
+            false,
+            AlertSoldierFailureContinuation::Panic,
+            &ctx,
+            None,
+            None,
+        );
+        assert!(ai.base.outbox.reentrant.alert_soldier_completion_pending);
+        assert!(ai.base.outbox.actor.begin_panic.is_none());
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.last(),
+            Some(AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+                check_door_path: true,
+                ..
+            })
+        ));
+        ai.base.outbox.reentrant.owner_work.clear();
+        ai.resume_alert_soldier_after_go_near(
+            &sim,
+            Position::default(),
+            true,
+            AlertSoldierFailureContinuation::Panic,
+            &ctx,
+            None,
+            None,
+        );
+        assert!(!ai.base.outbox.reentrant.alert_soldier_completion_pending);
+        assert!(ai.base.outbox.actor.begin_panic.is_none());
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::Speech(AiSpeechAttempt {
+                remark: Remark::CivPanic,
+                ..
+            })]
+        ));
     }
 
     // ──────────────────────────────────────────────────────────

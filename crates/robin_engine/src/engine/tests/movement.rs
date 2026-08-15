@@ -32,6 +32,252 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
+fn completed_step_back_publishes_history_at_motion_terminal() {
+    use crate::element::{ActionState, Camp};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+    let mut engine = EngineInner::new();
+    let start = MapPoint::new(100.0, 100.0);
+    let destination = MapPoint::new(107.2, 100.0);
+    let mut mover = make_test_ai_soldier(Camp::Royalists);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().set_position_map(start);
+    let mover_id = engine.add_entity(mover);
+    let mut opponent = make_test_pc(crate::element::Posture::Upright);
+    opponent.element_data_mut().active = true;
+    opponent
+        .element_data_mut()
+        .set_position_map(MapPoint::new(200.0, 100.0));
+    let opponent_id = engine.add_entity(opponent);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(opponent_id);
+    engine
+        .get_entity_mut(opponent_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(mover_id);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let action = OrderType::WalkingWithSword;
+    let script = SpriteScript {
+        action_id: OrderType::WalkingBackwardsSword as u16,
+        action_done: 0,
+        average_speed: 12.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 12,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![12],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let conversion = vec![0; NONANIMATION_END];
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    sprite.position_iface.set_anti_collision_on(false);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(start);
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut movement = SequenceElement::new_movement(1, Command::MoveOk, Some(mover_id), action);
+    movement
+        .orders
+        .push_back(Order::new(action, destination.x, destination.y, order_id));
+    let SequenceElementData::Movement {
+        destination: stored_destination,
+        flags,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!()
+    };
+    *stored_destination = destination;
+    *flags = MoveFlags::STEP_BACK_IN_COMBAT;
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    let actor = engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.action_state = ActionState::MovingSword;
+    actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
+    let sim = crate::sim_rng::test_context();
+    for _ in 0..8 {
+        engine.tick_entity_movement(&sim, &assets);
+    }
+
+    assert_eq!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        destination,
+        "the step-back fixture must reach its terminal movement goal"
+    );
+    assert!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .last_motion_was_step_back_in_combat,
+        "a genuinely terminated step-back must publish completed-step history"
+    );
+}
+
+#[test]
+fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history() {
+    use crate::element::{ActionState, Camp};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+    let mut engine = EngineInner::new();
+    let start = MapPoint::new(100.0, 100.0);
+    let destination = MapPoint::new(112.0, 100.0);
+    let mut mover = make_test_ai_soldier(Camp::Royalists);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().set_position_map(start);
+    let mover_id = engine.add_entity(mover);
+    let mut opponent = make_test_pc(crate::element::Posture::Upright);
+    opponent.element_data_mut().active = true;
+    opponent
+        .element_data_mut()
+        .set_position_map(MapPoint::new(200.0, 100.0));
+    let opponent_id = engine.add_entity(opponent);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(opponent_id);
+    engine
+        .get_entity_mut(opponent_id)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(mover_id);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let action = OrderType::WalkingWithSword;
+    let script = SpriteScript {
+        action_id: OrderType::WalkingBackwardsSword as u16,
+        action_done: 0,
+        average_speed: 12.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 12,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![12],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let conversion = vec![0; NONANIMATION_END];
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    sprite.position_iface.set_anti_collision_on(false);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(start);
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut movement = SequenceElement::new_movement(1, Command::MoveOk, Some(mover_id), action);
+    movement
+        .orders
+        .push_back(Order::new(action, destination.x, destination.y, order_id));
+    let SequenceElementData::Movement {
+        destination: stored_destination,
+        flags,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!()
+    };
+    *stored_destination = destination;
+    *flags = MoveFlags::STEP_BACK_IN_COMBAT;
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    let actor = engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.action_state = ActionState::MovingSword;
+    actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
+    let sim = crate::sim_rng::test_context();
+    for _ in 0..8 {
+        engine.tick_entity_movement(&sim, &assets);
+    }
+
+    assert_eq!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        MapPoint::new(107.2, 100.0),
+        "the final-waypoint transition must terminate before reaching the movement goal"
+    );
+    engine
+        .orders
+        .sequence_manager
+        .element_impossible(sequence_id, 0);
+    assert!(
+        !engine
+            .get_entity(mover_id)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .last_motion_was_step_back_in_combat,
+        "a final-waypoint transition that is aborted before movement termination must not publish completed-step history"
+    );
+}
+
+#[test]
 fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
     use crate::coordinates::{MapPoint, SpriteFrameOffset};
     use crate::element::{
@@ -400,6 +646,141 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         capture_locked_camera(false),
         MapPoint::new(1298.0, 539.0),
         "indirect traversal faces point_out, the gate exit"
+    );
+}
+
+/// `RHPathFinder::ProcessPathRequests` never looks at the requesting
+/// sequence element (`original-code/RHpathfinder.cpp:806-820,891-901`): a
+/// queued request whose element has since been interrupted is still computed
+/// and still consumes one delivery slot. Only the delivery is a no-op,
+/// because `SetCommand( RHCOMMAND_MOVE_OK )` then writes to an element the
+/// actor no longer executes (`original-code/RHengine.cpp:8410`).
+#[test]
+fn dead_path_request_still_consumes_its_scheduling_slot() {
+    use crate::element::Camp;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut config = crate::engine::SimConfig::default();
+    config.synchronous_pathfinding = true;
+    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
+
+    let mut engine = EngineInner::new();
+    let first_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let dead_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let last_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    // The fixture graph has no nodes, so every A* search fails; it still needs
+    // the request's sector in its conversion table to be searched at all.
+    {
+        let graph = std::sync::Arc::make_mut(&mut assets.pathfinder_graph);
+        graph.layers.push(vec![Vec::new()]);
+        graph.alternative_layers.push(vec![Vec::new()]);
+        graph.states.push(vec![0]);
+        let graph_static = graph.static_mut();
+        graph_static
+            .sector_conversion
+            .push(crate::pathfinder::SectorToArea { sector: 0, area: 0 });
+        graph_static
+            .half_diagonals
+            .push(crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 4.0));
+    }
+    engine.world.pathfinder.states = vec![vec![0x5555_5555]];
+
+    let mut launch_waiting_move = |engine: &mut EngineInner, owner| {
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveWaiting,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.orders.push_back(Order::new(
+            OrderType::Freezing,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        ));
+        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+        let _ = engine.orders.sequence_manager.hourglass();
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        sequence_id
+    };
+    let first_sequence = launch_waiting_move(&mut engine, first_owner);
+    let dead_sequence = launch_waiting_move(&mut engine, dead_owner);
+    let last_sequence = launch_waiting_move(&mut engine, last_owner);
+
+    // Original's interrupting arbitration leaves the outgoing element behind
+    // with `RHCOMMAND_MOVE`; its already-queued request stays in the list.
+    let dead = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(dead_sequence, 0)
+        .expect("interrupted movement stays registered");
+    dead.command = Command::Move;
+    dead.state = SequenceState::Interrupted;
+
+    engine.orders.pending_path_requests = PendingPathRequestQueue::restore_v48_waiting(vec![
+        PendingPathRequest::test_request(first_owner, first_sequence, 0),
+        PendingPathRequest::test_request(dead_owner, dead_sequence, 0),
+        PendingPathRequest::test_request(last_owner, last_sequence, 0),
+    ]);
+
+    // First barrier: the WAITING arm computes and delivers the head, then
+    // starts the interrupted element's request and parks it.
+    engine.hourglass_phase_paths(&sim, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .failed_path_requests
+            .iter()
+            .map(|failed| failed.owner)
+            .collect::<Vec<_>>(),
+        vec![first_owner],
+        "only the live head is delivered at the first barrier"
+    );
+    assert!(
+        engine.orders.pending_path_requests.has_in_flight(),
+        "the interrupted element's request must still occupy the pipeline"
+    );
+
+    // Second barrier: that delivery is a no-op for the interrupted element,
+    // so the last request only *starts* here and is delivered a frame later.
+    engine.hourglass_phase_paths(&sim, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .failed_path_requests
+            .iter()
+            .map(|failed| failed.owner)
+            .collect::<Vec<_>>(),
+        vec![first_owner],
+        "the dead request consumes the second barrier's single result slot"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(last_sequence, 0)
+            .expect("last movement stays registered")
+            .command,
+        Command::MoveWaiting,
+        "the trailing request must not be delivered a frame early"
+    );
+
+    engine.hourglass_phase_paths(&sim, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .failed_path_requests
+            .iter()
+            .map(|failed| failed.owner)
+            .collect::<Vec<_>>(),
+        vec![first_owner, last_owner],
+        "the trailing request is delivered one barrier later"
     );
 }
 
@@ -2020,6 +2401,121 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
         Some(OrderType::RunningUpright),
         "Actor::Hourglass consumes the Terminated charge order"
     );
+}
+
+#[test]
+fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
+    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, old_id) =
+        install_rider_charge_fixture(&mut engine, &mut assets, OrderType::RiderCharging, vec![0]);
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("rider movement remains installed");
+    let charge = movement
+        .orders
+        .front_mut()
+        .expect("fixture installs a charge order");
+    charge.target_x = 102.0;
+    charge.target_y = 100.0;
+    charge.tolerance = 0.0;
+
+    let rewritten_id = std::rc::Rc::new(std::cell::Cell::new(None));
+    let observed_id = rewritten_id.clone();
+    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
+        if owner == rider {
+            observed_id.set(
+                engine
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(owner)
+                    .map(|(_, _, order)| order.order_id),
+            );
+        }
+    })));
+
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    set_post_execute_crossing_observer(None);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("terminated movement remains registered for inspection");
+    assert_eq!(element.state, crate::sequence::SequenceState::Terminated);
+    assert!(element.orders.is_empty());
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        MapPoint::ZERO,
+        "SendCondolationCard clears the completed selected movement goal"
+    );
+    assert_ne!(
+        rewritten_id
+            .get()
+            .expect("post-Execute crossing must observe the rewritten order"),
+        old_id,
+        "the completed order was legitimately assigned a fresh ID during Execute"
+    );
+}
+
+#[test]
+fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
+    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, _) =
+        install_rider_charge_fixture(&mut engine, &mut assets, OrderType::RiderCharging, vec![0]);
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("rider movement remains installed");
+    let charge = movement
+        .orders
+        .front_mut()
+        .expect("fixture installs a charge order");
+    charge.target_x = 102.0;
+    charge.target_y = 100.0;
+    charge.tolerance = 0.0;
+
+    let replacement_id = engine.orders.allocate_order_id();
+    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
+        if owner != rider {
+            return;
+        }
+        let replacement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .and_then(|element| element.orders.front_mut())
+            .expect("post-Execute replacement retains the selected element");
+        assert_eq!(replacement.order_type, OrderType::RunningUpright);
+        replacement.order_type = OrderType::WaitingUpright;
+        replacement.order_id = replacement_id;
+    })));
+
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    set_post_execute_crossing_observer(None);
+
+    let current = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .and_then(|element| element.current_order())
+        .expect("callback replacement must remain selected");
+    assert_eq!(current.order_id, replacement_id);
+    assert_eq!(current.order_type, OrderType::WaitingUpright);
 }
 
 #[test]

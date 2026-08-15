@@ -218,7 +218,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_terminated(sequence_id, element_index);
-            self.start_post_seek_sequence(owner, None);
+            self.start_post_seek_sequence(sim, assets, owner, None);
             return OwnerActionBarrier::Skip;
         }
 
@@ -313,6 +313,8 @@ impl EngineInner {
                         actor.seek_refresh_wait = 25;
                     }
                     if self.try_handle_same_sector_actor_seek_wait(
+                        sim,
+                        assets,
                         owner,
                         sequence_id,
                         element_index,
@@ -321,9 +323,12 @@ impl EngineInner {
                     ) {
                         // Original resumes Translate after RefreshSeek's
                         // no-order return, rewrites SEEK to MOVE, and then
-                        // Instruct immediately terminates the empty element.
-                        // That selected MOVE condolence is authoritative for
-                        // NPC EventReachPoint (notably return-to-post facing).
+                        // Actor::Instruct publishes IN_PROGRESS before it
+                        // discovers the empty order list. It clears
+                        // mpSequenceElement before SetState(TERMINATED), so
+                        // this element's condolence must not erase the goal
+                        // retained from the movement it replaced
+                        // (`RHelementactor.cpp:965-990,3150-3182,6217-6241`).
                         if let Some(element) = self
                             .orders
                             .sequence_manager
@@ -337,6 +342,14 @@ impl EngineInner {
                             })
                         {
                             element.command = Command::Move;
+                            self.world
+                                .entities
+                                .get_mut(owner)
+                                .and_then(Entity::actor_data_mut)
+                                .expect("accepted empty building Seek lost its actor")
+                                .continuation
+                                .motion_state = crate::sprite::MotionState::InProgress;
+                            self.orders.sequence_manager.set_translating_element(None);
                             self.orders
                                 .sequence_manager
                                 .element_terminated(sequence_id, element_index);
@@ -469,7 +482,12 @@ impl EngineInner {
                 .and_then(|entity| entity.actor_data())
                 .is_some_and(|actor| actor.post_seek_sequence.is_some());
             if has_post_seek && target_element.is_none() {
-                self.start_post_seek_sequence(owner, Some((sequence_id, element_index)));
+                self.start_post_seek_sequence(
+                    sim,
+                    assets,
+                    owner,
+                    Some((sequence_id, element_index)),
+                );
                 return OwnerActionBarrier::Skip;
             }
 
@@ -812,7 +830,30 @@ impl EngineInner {
                                 Some((seq_id, elem_idx)),
                             );
                         }
+                        let trace_path_owner = matches!(
+                            command,
+                            Some(crate::element::Command::Move)
+                                | Some(crate::element::Command::Seek)
+                        );
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                "before_instruct_arbitration",
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         let arbitration_accepted = self.arbitrate_instruct(seq_id, elem_idx);
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                if arbitration_accepted {
+                                    "after_instruct_arbitration_accepted"
+                                } else {
+                                    "after_instruct_arbitration_rejected"
+                                },
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         if trace_reactive_topology {
                             self.trace_reactive_sword_topology(
                                 if arbitration_accepted {
@@ -849,6 +890,13 @@ impl EngineInner {
                         self.orders
                             .sequence_manager
                             .end_instruct_callback(owner, seq_id, elem_idx);
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                "after_instruct_callback",
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         // Skip elements whose state moved to terminal /
                         // interrupted while an earlier action in this batch
                         // arbitrated against them. Without this, the loop
@@ -1280,12 +1328,34 @@ impl EngineInner {
                             Command::EnterAttentiveMode
                             | Command::LeaveAttentiveMode
                             | Command::LeaveAttentiveModeOfficer => {
+                                self.trace_attentive_owner_handoff(
+                                    "translate_before",
+                                    owner,
+                                    Some((seq_id, elem_idx)),
+                                    format_args!("before attentive translator"),
+                                );
                                 let barrier = NpcAttentionCommandContext {
                                     entities: &mut self.world.entities,
                                     sequence_manager: &mut self.orders.sequence_manager,
                                     next_order_id: &mut self.orders.next_order_id,
                                 }
                                 .dispatch(owner, cmd, seq_id, elem_idx);
+                                self.trace_attentive_owner_handoff(
+                                    "translate_after",
+                                    owner,
+                                    Some((seq_id, elem_idx)),
+                                    format_args!(
+                                        "{}",
+                                        match barrier {
+                                            OwnerActionBarrier::Reach => {
+                                                "attentive translator queued transition"
+                                            }
+                                            OwnerActionBarrier::Skip => {
+                                                "attentive translator terminalized inline"
+                                            }
+                                        }
+                                    ),
+                                );
                                 if barrier == OwnerActionBarrier::Skip {
                                     break 'action;
                                 }
@@ -2882,6 +2952,13 @@ impl EngineInner {
                         // dispatch boundary rather than inferring it later from
                         // whichever element happens to be selected.
                         self.publish_selected_order_for_instruct_owner(owner);
+                        if trace_path_owner {
+                            self.trace_path_owner_lifecycle(
+                                "after_instruct_translation",
+                                owner,
+                                Some((seq_id, elem_idx)),
+                            );
+                        }
                         if self
                             .world
                             .entities

@@ -782,7 +782,12 @@ impl EngineInner {
                     .map(|(id, _)| id.into())
                     .collect();
                 for id in soldier_ids {
-                    self.set_soldier_attentive_mode(id, true, false);
+                    self.set_soldier_attentive_mode_from(
+                        id,
+                        true,
+                        false,
+                        crate::engine::soldier_helpers::AttentiveModeCaller::ConsoleCheat,
+                    );
                 }
                 ConsoleResponse::Ok(String::new())
             }

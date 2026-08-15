@@ -2242,6 +2242,11 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
 /// etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct ExecuteSideOutcomes {
+    /// Soldiers executing WAITING_ALERTED while their requested attentive
+    /// state is false. Original launches LEAVE_ATTENTIVE_MODE from inside
+    /// that Execute arm unless an equivalent element is already waiting in
+    /// the sequence-manager launch queue.
+    pub waiting_alerted_leave: Vec<EntityId>,
     /// PCs whose DROPPING_ALE animation reached DONE. Original creates the
     /// bottle and consumes one ale at this action point, before the order's
     /// later TERMINATED edge advances the sequence.
@@ -2313,6 +2318,14 @@ pub(super) struct ExecuteSideOutcomes {
     /// entering the aiming state, restoring the PC's remembered action (and
     /// the messenger action when that PC is selected).
     pub pc_bow_equip_action: Vec<EntityId>,
+    /// PC bow-unequip transitions that reached START, with the element's
+    /// script-driven flag. Original's Human Execute arm
+    /// (`RHelementactorhuman.cpp` `TRANSITION_UNEQUIP_BOW` START) disables
+    /// the Bow action when the quiver is empty, and otherwise forwards
+    /// `MSG_UNSELECT_ACTION(BOW)` for non-script elements — clearing the
+    /// messenger-selected action and the PC's remembered action when Bow is
+    /// the currently selected UI action.
+    pub pc_bow_unequip_action: Vec<(EntityId, bool)>,
     /// PCs whose helping-to-climb entry transition reached DONE. Original
     /// forwards `MSG_SELECT_ACTION(HELP_TO_CLIMB)` right after setting the
     /// stance, which reselects the already-current action and therefore
@@ -4433,6 +4446,12 @@ impl EngineInner {
         Option<ActorExecuteResult>,
     ) {
         let globally_frozen = self.actors_frozen();
+        let diagnostic_frame = self.control.frame_counter;
+        let diagnostic_creation_order =
+            crate::sprite::sprite_row_diagnostic_creation_order(diagnostic_frame, || {
+                self.world.original_creation_order(entity_id)
+            });
+        let sprite_row_diagnostic = diagnostic_creation_order.is_some();
 
         // Production enters through the owner coordinator, which stamps this
         // before choosing a specialized arm. Keep this helper self-contained
@@ -5802,14 +5821,31 @@ impl EngineInner {
                             }
                             let elem = entity.element_data_mut();
                             let sprite = &mut elem.sprite;
-                            Some(sprite.perform_action(
+                            let diagnostic_pre = sprite_row_diagnostic
+                                .then(|| sprite.sprite_row_diagnostic_pre());
+                            let raw_motion = sprite.perform_action(
                                 sim,
                                 order_id,
                                 played,
                                 row,
                                 progression,
                                 false,
-                            ))
+                            );
+                            if let Some(pre) = diagnostic_pre {
+                                sprite.emit_sprite_row_diagnostic(
+                                    "perform_action",
+                                    diagnostic_frame,
+                                    diagnostic_creation_order.expect("enabled diagnostic has owner"),
+                                    entity_id.index(),
+                                    anim_type,
+                                    played,
+                                    row,
+                                    progression,
+                                    pre,
+                                    raw_motion,
+                                );
+                            }
+                            Some(raw_motion)
                         });
                         // While still turning, the arm returns
                         // InProgress regardless of what the
@@ -5887,6 +5923,19 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
+                        if anim_type == OrderType::WaitingAlerted
+                            && let Entity::Soldier(soldier) = entity
+                        {
+                            let enemy = soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                                panic!("WaitingAlerted soldier {entity_id:?} has no enemy AI state")
+                            });
+                            if !enemy.will_be_attentive {
+                                completion_outcomes
+                                    .execute_sides
+                                    .waiting_alerted_leave
+                                    .push(entity_id);
+                            }
+                        }
                         if entity.is_pc()
                             && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
                             && motion_state == MotionState::Terminated
@@ -5949,6 +5998,24 @@ impl EngineInner {
                                 .execute_sides
                                 .pc_bow_equip_action
                                 .push(entity_id);
+                        }
+                        // Original `TRANSITION_UNEQUIP_BOW` START (PC arm):
+                        // empty quiver disables the Bow action regardless of
+                        // the script flag; otherwise only non-script elements
+                        // forward MSG_UNSELECT_ACTION(BOW). The ammo read
+                        // needs `&mut self`, so defer the whole decision.
+                        if entity.is_pc()
+                            && motion_state == MotionState::Start
+                            && matches!(
+                                anim_type,
+                                OrderType::TransitionUnequipBow
+                                    | OrderType::TransitionUnequipBowAnonymous
+                            )
+                        {
+                            completion_outcomes
+                                .execute_sides
+                                .pc_bow_unequip_action
+                                .push((entity_id, current_element_script_driven));
                         }
                         if entity.is_pc() && motion_state == MotionState::Done {
                             match anim_type {

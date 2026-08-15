@@ -25,6 +25,38 @@ use crate::ai::*;
 use crate::entity_id::PcId;
 use crate::parameters_ai;
 
+/// Master switch for the opt-in AI decision/path diagnostic used by the
+/// Save020/Save055 substate-only parity cohort. Keep this check separate so
+/// disabled runs return before reading frame, owner, AI, or geometry state.
+pub(crate) fn decision_path_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_AI_DECISION_PATH").is_some()
+}
+
+/// Exact frame/owner gate for the AI decision/path diagnostic. Enabling the
+/// master switch without both filters is an operator error: broad traces make
+/// same-frame re-entrant state ownership impossible to attribute reliably.
+pub(crate) fn decision_path_debug_matches(frame: u32, owner: HumanHandle) -> bool {
+    decision_path_debug_matches_raw(frame, u32::from(owner))
+}
+
+pub(crate) fn decision_path_debug_matches_raw(frame: u32, owner: u32) -> bool {
+    static FILTER: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+    let &(expected_frame, expected_owner) = FILTER.get_or_init(|| {
+        let parse_required = |name: &str| {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| panic!("{name} is required for AI_DECISION_PATH diagnostic"));
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for AI_DECISION_PATH diagnostic: {error}")
+            })
+        };
+        (
+            parse_required("PARITY_DEBUG_AI_DECISION_PATH_FRAME"),
+            parse_required("PARITY_DEBUG_AI_DECISION_PATH_OWNER"),
+        )
+    });
+    frame == expected_frame && owner == expected_owner
+}
+
 /// Opt-in, process-local tracing for the Save018 Them-list lifecycle cohort.
 /// Environment reads and stderr output deliberately stay outside serialized AI
 /// state and do not consume simulation RNG.
@@ -42,6 +74,29 @@ pub(super) fn them_lifecycle_debug_matches(ctx: &AiContext) -> bool {
     parse_filter("PARITY_DEBUG_THEM_FRAME").is_none_or(|frame| frame == ctx.frame)
         && parse_filter("PARITY_DEBUG_THEM_CREATION_ORDER")
             .is_none_or(|creation_order| ctx.original_creation_order == Some(creation_order))
+}
+
+/// Master switch for the opt-in primary-target selection/swap diagnostic.
+///
+/// Keep this separate from [`primary_swap_debug_matches`] so every call site
+/// can return before reading AI/entity state when diagnostics are disabled.
+pub(crate) fn primary_swap_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_PRIMARY_SWAP").is_some()
+}
+
+/// Apply the required exact frame/owner gate for primary-target diagnostics.
+/// Invalid or incomplete enabled configurations fail loudly rather than
+/// accidentally producing a broad trace.
+pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool {
+    let parse_required = |name: &str| {
+        let value = std::env::var(name)
+            .unwrap_or_else(|_| panic!("{name} is required for PRIMARY_SWAP diagnostic"));
+        value.parse::<u32>().unwrap_or_else(|error| {
+            panic!("invalid {name}={value:?} for PRIMARY_SWAP diagnostic: {error}")
+        })
+    };
+    frame == parse_required("PARITY_DEBUG_PRIMARY_SWAP_FRAME")
+        && u32::from(owner) == parse_required("PARITY_DEBUG_PRIMARY_SWAP_OWNER")
 }
 use crate::position_interface::ASPECT_RATIO;
 use util::soldier_detects_position_180;
@@ -2438,16 +2493,16 @@ fn detects_180_degrees(viewer: &Viewer180, target: HumanHandle, ctx: &AiContext)
     let viewer_eye_z = viewer.eye_z;
     // ComputeDetectionPoint starts from the raw element position. The
     // AI-facing `view.position` may be a substituted door endpoint/carrier.
-    let target_detection_xy = crate::stealth::detection_point_xy(
-        view.detection_position,
+    let target_detection_world = crate::stealth::detection_point_world(
+        view.detection_position_world,
         view.posture,
         view.direction as i16,
+        view.is_rider,
     );
-    let target_detection_z =
-        view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+    let target_detection_z = target_detection_world.z;
     let viewer_eye_ground = viewer.eye_ground;
     let target_detection_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
+        crate::coordinates::GroundPoint::new(target_detection_world.x, target_detection_world.y);
 
     // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
     // on the Y component), from viewer eye to target detection point.
@@ -2958,7 +3013,23 @@ impl EnemyAi {
         });
     }
 
+    #[track_caller]
     pub fn set_state(&mut self, state: AiState, substate: Substate) {
+        let debug_decision_path = decision_path_debug_enabled()
+            && decision_path_debug_matches(self.base.cached_frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=set_state caller={} from={:?}/{:?} to={state:?}/{substate:?} couldnt={} already={} owner_work_before={:?}",
+                self.base.cached_frame,
+                self.base.me,
+                std::panic::Location::caller(),
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         debug_assert_eq!(
             substate.ai_state_family(),
             Some(state),
@@ -3318,6 +3389,19 @@ impl EnemyAi {
         };
         self.set_alert_status(alert);
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=set_state_done now={:?}/{:?} couldnt={} already={} owner_work_after={:?}",
+                self.base.cached_frame,
+                self.base.me,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
+
         self.finish_set_state(substate)
     }
 
@@ -3356,6 +3440,14 @@ impl EnemyAi {
     /// path.
     pub fn reconcile_special_strike(&mut self, has_active_strike: bool, frame: u32) {
         if !self.pending_special_strike {
+            return;
+        }
+        // This reconciler stands in for the Original's synchronous
+        // Think(EVENT_DONE) only when that Think is admissible. StartThink
+        // retains EventDone under every non-script AI lock (including the
+        // AILOCK_FREEZE held by a Strangle victim), so the observable
+        // special-strike substate must remain unchanged until unlock.
+        if self.base.ai_is_locked() {
             return;
         }
         // A synchronous combat reaction may legitimately replace the
@@ -3412,6 +3504,7 @@ impl EnemyAi {
 
     /// Transition to `(state, substate)` and queue a movement to `destination`.
     /// See the section comment above for why state+substate are required.
+    #[track_caller]
     pub fn go_to(
         &mut self,
         state: AiState,
@@ -3425,6 +3518,7 @@ impl EnemyAi {
     }
 
     /// Like [`EnemyAi::go_to`] but with a speed modifier.
+    #[track_caller]
     pub fn go_to_speed(
         &mut self,
         state: AiState,
@@ -3440,6 +3534,7 @@ impl EnemyAi {
 
     /// Transition to `(state, substate)` and queue a "go near" movement
     /// (stops within `distance` of the destination).
+    #[track_caller]
     pub fn go_near(
         &mut self,
         state: AiState,
@@ -3489,7 +3584,7 @@ impl EnemyAi {
                     speed_factor,
                     ctx,
                 );
-                self.hold_new_patrol_orders_behind_attentive(first_new_order);
+                self.hold_new_orders_behind_attentive(first_new_order);
             }
             PatrolCoordinateAction::Run { target } => {
                 let first_new_order = self.base.outbox.actor.orders.len();
@@ -3500,7 +3595,7 @@ impl EnemyAi {
                     GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
                     ctx,
                 );
-                self.hold_new_patrol_orders_behind_attentive(first_new_order);
+                self.hold_new_orders_behind_attentive(first_new_order);
             }
         }
     }
@@ -3509,7 +3604,7 @@ impl EnemyAi {
     /// following `GoTo`. Only hold the movement when that call actually
     /// changes `will_be_attentive`; Original's no-change call returns without
     /// launching a transition element.
-    fn hold_new_patrol_orders_behind_attentive(&mut self, first_new_order: usize) {
+    fn hold_new_orders_behind_attentive(&mut self, first_new_order: usize) {
         let launches_transition = self
             .base
             .outbox
@@ -3540,7 +3635,31 @@ impl EnemyAi {
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
 
+        let debug_decision_path =
+            decision_path_debug_enabled() && decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=think_enter depth={}/open={} stimulus={:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} list_them={:?} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.think_recursion_depth,
+                self.base.open_end_think_frames,
+                stimulus.stimulus_type,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.self_is_rider,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.list_them,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
+
         let stimulus_type = stimulus.stimulus_type;
+        self.base
+            .debug_macro_lifecycle(ctx, "think_enter", stimulus_type);
 
         tracing::trace!(
             me = self.base.me,
@@ -3560,6 +3679,8 @@ impl EnemyAi {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
             self.end_think(sim, global, ctx, tick, grid);
+            self.base
+                .debug_macro_lifecycle(ctx, "think_rejected_return", stimulus_type);
             return true;
         }
 
@@ -3674,6 +3795,8 @@ impl EnemyAi {
         {
             self.end_think(sim, global, ctx, tick, grid);
         }
+        self.base
+            .debug_macro_lifecycle(ctx, "think_return", stimulus_type);
         return_value
     }
 
@@ -3907,6 +4030,8 @@ impl EnemyAi {
         // that filter without re-entering the script VM through this
         // borrowed AI object.
 
+        let mut queued_completion = false;
+
         // Post CouldntReachPoint event if a GoTo failed
         if self.base.couldnt_reachpoint {
             self.base.couldnt_reachpoint = false;
@@ -3916,6 +4041,7 @@ impl EnemyAi {
                     .reentrant
                     .self_stimuli
                     .push(StimulusType::EventCouldntReachPoint);
+                queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
@@ -3932,6 +4058,7 @@ impl EnemyAi {
                     .reentrant
                     .self_stimuli
                     .push(StimulusType::EventReachPoint);
+                queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
@@ -3948,6 +4075,7 @@ impl EnemyAi {
                     .reentrant
                     .self_stimuli
                     .push(StimulusType::EventDone);
+                queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
@@ -3955,7 +4083,27 @@ impl EnemyAi {
             }
         }
 
-        self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_sub(1);
+        if queued_completion {
+            // Original EndThink dispatches the completion Think recursively
+            // *before* its decrement, so the cascade's ancestor frames stay
+            // open and the recursion depth climbs one per nested Think —
+            // that climb is what makes the 100.. ReturnToDuty failsafe
+            // reachable. This frame stays open until the cascade ends (see
+            // `open_end_think_frames`).
+            self.base.open_end_think_frames = self.base.open_end_think_frames.saturating_add(1);
+        } else {
+            // No continuation was queued: this is the innermost Think of the
+            // cascade, so the entire chain of still-open ancestor frames
+            // unwinds with it — the deferred equivalent of the stacked
+            // EndThink decrements the Original performs while returning out
+            // of the nested calls.
+            let open = std::mem::take(&mut self.base.open_end_think_frames);
+            self.base.think_recursion_depth = self
+                .base
+                .think_recursion_depth
+                .saturating_sub(1)
+                .saturating_sub(open);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -4215,16 +4363,15 @@ impl EnemyAi {
     ) {
         let outgoing_state = self.base.current_state;
         let outgoing_substate = self.base.current_substate;
+        let first_new_order = self.base.outbox.actor.orders.len();
+
+        // `ReturnToDutyCommonStuff` enters through virtual Enemy `SetState` in
+        // Original. That override forgets the old timer before the common tail
+        // decides whether to launch a fresh bored timer.
+        self.base.timer_is_running = false;
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
         let incoming_state = self.base.current_state;
         let incoming_substate = self.base.current_substate;
-
-        // `ReturnToDutyCommonStuff` reaches this pair through virtual Enemy
-        // `SetState`, whose first side effect is `mbTimerIsRunning = false`
-        // (`RHartificialmalignity.cpp:9145-9159`). The shared base setter does
-        // not own that subclass field, so restore it at the same resumed
-        // virtual boundary before any caller tail observes the new state.
-        self.base.timer_is_running = false;
 
         // ReturnToDutyCommonStuff calls the virtual Enemy SetState in Original.
         // When an archer leaves the bow substates, that override clears
@@ -4263,13 +4410,22 @@ impl EnemyAi {
         // C++. The shared Rust base performs the state assignment directly.
         // Restore the Enemy override's attentive-mode tail: every Default
         // substate requests ordinary (or forced) attention, which may launch
-        // LeaveAttentiveMode alongside the return route. This is deliberately
-        // queued after the common routine has built that route, matching the
-        // observable sequence-manager registration order of the virtual call.
+        // LeaveAttentiveMode alongside the return route. The shared common
+        // routine has already built the route because it cannot invoke the
+        // Enemy override directly, so restore Original's authored
+        // SetState-before-GoTo barrier on only the orders emitted by this
+        // return-to-duty tail.
         self.base
             .outbox
             .actor
             .queue_set_attentive_mode(AttentiveModeEffect::new(self.forced_attentive, false));
+        self.hold_new_orders_behind_attentive(first_new_order);
+
+        // TODO: move the complete Enemy virtual SetState boundary into the
+        // shared return-to-duty routine. This closes final owner-boundary
+        // publication, but the deferred Rust model still queues the earlier
+        // ReturnToDuty actor prefix after owner-work StateChange callbacks;
+        // scripted callback observation order is not claimed exact here.
 
         // Preserve the corresponding script callback item explicitly.
         // Without this final FIFO entry, an older queued transition (notably
@@ -5048,6 +5204,59 @@ mod tests {
     }
 
     #[test]
+    fn detection_180_los_uses_stored_world_point_without_projection_round_trip() {
+        let ai = EnemyAi::new(1);
+        let mut viewer = soldier_view(test_position(1373.0, 595.0));
+        viewer.direction = 4;
+
+        // These are representative moving-actor coordinates where
+        // `(world_y - z) + z` rounds one ULP away from the stored world Y.
+        // Original passes ComputeDetectionPoint's stored 3D point verbatim
+        // to FastFindGrid::IsReachable.
+        let raw = crate::coordinates::WorldPoint3D::new(
+            1555.961_5,
+            f32::from_bits(1_143_810_793),
+            46.786_65,
+        );
+        let mut target = soldier_view(test_position(raw.x, raw.y - raw.z));
+        target.detection_position = MapPoint::from_world_xyz(raw.x, raw.y, raw.z);
+        target.detection_position_world = raw;
+        target.elevation = raw.z;
+        assert_ne!(
+            (target.detection_position.y + target.elevation).to_bits(),
+            raw.y.to_bits(),
+            "fixture must distinguish projection round-trip Y from stored world Y"
+        );
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, viewer);
+        views.insert(2, target);
+        let ctx = AiContext {
+            direction: 4,
+            self_eye_position: MapPoint::new(1373.0, 595.0),
+            self_eye_z: 45.0,
+            elevation: 45.0,
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            self_view_direction: [1.0, 0.0],
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(ai.is_detecting_180_degrees(2, &ctx));
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].destination[0].to_bits(), raw.x.to_bits());
+        assert_eq!(queries[0].destination[1].to_bits(), raw.y.to_bits());
+        assert_eq!(
+            queries[0].destination[2].to_bits(),
+            (raw.z + crate::stealth::detection_z_for_posture(Posture::Upright, false)).to_bits()
+        );
+    }
+
+    #[test]
     fn detection_180_accepts_an_active_unconscious_target() {
         let ai = EnemyAi::new(1);
         let mut viewer = soldier_view(test_position(0.0, 0.0));
@@ -5753,10 +5962,67 @@ mod tests {
             Substate::AttackingSwordfightSpecialStrike
         );
 
+        for locks in [
+            crate::ai::AiLockFlags::BUSY,
+            crate::ai::AiLockFlags::FREEZE,
+            crate::ai::AiLockFlags::BUSY | crate::ai::AiLockFlags::FREEZE,
+        ] {
+            let mut locked = EnemyAi::new(1);
+            locked.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+            locked.base.outbox.reentrant.owner_work.clear();
+            locked.begin_special_strike();
+            locked.base.locks_flag_field = locks;
+            locked.reconcile_special_strike(false, 41);
+            assert!(locked.pending_special_strike, "locks={locks:?}");
+            assert_eq!(
+                locked.base.current_substate,
+                Substate::AttackingSwordfightSpecialStrike,
+                "all non-script AI locks must retain the EventDone-driven substate edge: {locks:?}"
+            );
+        }
+
+        ai.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
+        let sim = crate::sim_rng::test_context();
+        let mut global = AiGlobalState::default();
+        let ctx = AiContext {
+            frame: 41,
+            ..AiContext::default()
+        };
+        let tick = AiPerTickData::stub();
+        ai.think(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &mut global,
+            &ctx,
+            &tick,
+            None,
+        );
         ai.reconcile_special_strike(false, 41);
+        assert!(ai.pending_special_strike);
+        assert_eq!(
+            ai.base
+                .stimulus_queue
+                .iter()
+                .map(|stimulus| stimulus.stimulus_type)
+                .collect::<Vec<_>>(),
+            vec![StimulusType::EventDone],
+            "StartThink must retain the terminal event while Strangle holds FREEZE"
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightSpecialStrike,
+            "AILOCK_FREEZE must retain the EventDone-driven substate edge"
+        );
+        ai.base.non_script_unlock(crate::ai::AiLockFlags::FREEZE);
+        let retained = ai.base.stimulus_queue.remove(0);
+        let ctx = AiContext {
+            frame: 42,
+            ..AiContext::default()
+        };
+        ai.think(&sim, &retained, &mut global, &ctx, &tick, None);
         assert!(!ai.pending_special_strike);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert_eq!(ai.next_sword_strike_frame, 61);
+        assert_eq!(ai.next_sword_strike_frame, 62);
 
         ai.begin_special_strike();
         ai.set_state(AiState::Attacking, Substate::AttackingSwordfightParade);
@@ -5829,6 +6095,106 @@ mod tests {
         ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
+    }
+
+    #[test]
+    fn return_to_duty_virtual_timer_reset_precedes_common_bored_timer_launch() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.timer_is_running = true;
+        ai.base.when_does_timer_ring = 999;
+        ai.base.likes_to_sit_around = true;
+        let ctx = AiContext {
+            frame: 254,
+            posture: Posture::Sitting,
+            position: ai.base.initial_position,
+            ..AiContext::default()
+        };
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx);
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
+        assert!(
+            ai.base.timer_is_running,
+            "the common tail's later LaunchTimer must win over virtual SetState's reset"
+        );
+        assert!((324..394).contains(&ai.base.when_does_timer_ring));
+    }
+
+    #[test]
+    fn return_to_duty_virtual_timer_reset_stays_cleared_without_common_launch() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.timer_is_running = true;
+        ai.base.when_does_timer_ring = 999;
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &AiContext::default());
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+        assert!(
+            !ai.base.timer_is_running,
+            "virtual SetState must still clear the old timer when the common tail launches none"
+        );
+    }
+
+    #[test]
+    fn return_to_duty_marks_only_its_new_orders_behind_real_attentive_transition() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.attentive = true;
+        ai.will_be_attentive = true;
+        let post = Position {
+            x: 200.0,
+            y: 100.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        };
+        let here = Position { x: 100.0, ..post };
+        ai.base.initial_position = post;
+        ai.base
+            .outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                OrderType::Turning,
+                10.0,
+                0.0,
+            ));
+        let ctx = AiContext {
+            position: here,
+            self_animation: OrderType::WaitingAlerted,
+            ..AiContext::default()
+        };
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx);
+
+        let [preexisting, return_to_post] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("expected the pre-existing control and one return-to-duty move")
+        };
+        assert!(!preexisting.after_attentive_mode);
+        assert_eq!(return_to_post.order_type, OrderType::WalkingUpright);
+        assert!(
+            return_to_post.after_attentive_mode,
+            "Original virtual SetState launches LeaveAttentiveMode before its following GoTo"
+        );
+
+        let mut already_unalerted = EnemyAi::new(1);
+        already_unalerted.base.initial_position = post;
+        already_unalerted.resume_return_to_duty_after_patrol_init(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext {
+                position: here,
+                ..AiContext::default()
+            },
+        );
+        let [order] = already_unalerted.base.outbox.actor.orders.as_slice() else {
+            panic!("already-unalerted return must still author its move")
+        };
+        assert!(
+            !order.after_attentive_mode,
+            "a no-change SetAttentiveMode call launches no transition to wait behind"
+        );
     }
 
     #[test]

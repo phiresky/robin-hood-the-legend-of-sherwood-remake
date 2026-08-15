@@ -4,6 +4,28 @@
 
 use super::*;
 
+#[inline]
+fn provoke_roll_succeeds(roll: u32, fighting_ability: u16) -> bool {
+    (roll as f32) < 0.2_f32 * f32::from(fighting_ability)
+}
+
+fn good_strike_lifecycle_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_some()
+}
+
+fn good_strike_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool {
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for GOOD_STRIKE diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_GOOD_STRIKE_FRAME").is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER")
+            .is_none_or(|expected| expected == creation_order)
+}
+
 /// Match `SBGeoVector2D::operator*=(30.0 / vtFlight.Norm())` for FallingHit's
 /// sector vectors and live antagonist deltas. The vector's squared sum is
 /// stored as `GEOTYPE` (`f32`), while `sqrt` and the unsuffixed `30.0`
@@ -480,6 +502,34 @@ impl EngineInner {
             .get_entity(victim_id)
             .map(get_life_points)
             .unwrap_or(raw_life_points_after);
+
+        // Human::SetLifePoints invokes virtual Kill synchronously, before
+        // ReceiveSwordDamage returns to TranslateSwordDamage.  In
+        // particular, Kill clears an unconscious victim before the later
+        // virtual SayOuch call, so a lethal hit says DIES rather than taking
+        // SayOuch's unconscious early return.  Push strikes already close
+        // this boundary below because their translator owns the sole falling
+        // order; close it here for ordinary strikes while leaving the dying
+        // animation/roll to the later translation phase.
+        let push_strike = combat::strike_has_push_effect(&attacker_profile, strike);
+        let fresh_lethal_ordinary =
+            !push_strike && !coma_saved && life_points_before > 0 && life_points_after <= 0;
+        if fresh_lethal_ordinary {
+            let killer_is_pc = attacker_id
+                .map(|id| {
+                    self.expect_entity(id, "lethal sword attacker")
+                        .kind()
+                        .is_pc()
+                })
+                .unwrap_or(false);
+            self.apply_nonvisual_death_cascade(
+                sim,
+                assets,
+                victim_id,
+                damage_element,
+                killer_is_pc,
+            );
+        }
         let victim_went_unconscious = !victim_was_unconscious
             && self
                 .expect_entity(victim_id, "sword-damage concussion victim")
@@ -640,7 +690,6 @@ impl EngineInner {
         // ReceiveSwordDamage returns to TranslatePushDamage. Apply that
         // nonvisual cascade first; the push translator below remains the sole
         // owner of the falling order.
-        let push_strike = combat::strike_has_push_effect(&attacker_profile, strike);
         let fresh_lethal_push = push_strike
             && attacker_id.is_some()
             && !coma_saved
@@ -696,30 +745,59 @@ impl EngineInner {
         // mmotionState=IN_PROGRESS epilogue. This is observably different
         // from a true accepted-empty translation such as an already-held
         // parry, which publishes InProgress before detaching the element.
-        let grounded_translation_terminates = if pushed || result.is_empty() {
-            false
+        let (grounded_translation_terminates, grounded_posture, is_rider) = if pushed
+            || result.is_empty()
+        {
+            (false, Posture::Upright, false)
         } else {
             let victim = self.get_entity(victim_id).unwrap_or_else(|| {
-                panic!(
-                    "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
-                )
-            });
+                    panic!(
+                        "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
+                    )
+                });
             let posture = victim.element_data().posture;
-            let dead_rider =
-                matches!(victim, Entity::Soldier(s) if s.soldier.rider) && life_points_after <= 0;
-            matches!(
+            let is_rider = matches!(victim, Entity::Soldier(s) if s.soldier.rider);
+            let dead_rider = is_rider && life_points_after <= 0;
+            (
+                matches!(
+                    posture,
+                    Posture::Lying
+                        | Posture::StuckUnderNet
+                        | Posture::Flying
+                        | Posture::Carried
+                        | Posture::OnShoulders
+                        | Posture::Tied
+                        | Posture::Dead
+                        | Posture::DeadBack
+                ) && !dead_rider,
                 posture,
-                Posture::Lying
-                    | Posture::StuckUnderNet
-                    | Posture::Flying
-                    | Posture::Carried
-                    | Posture::OnShoulders
-                    | Posture::Tied
-                    | Posture::Dead
-                    | Posture::DeadBack
-            ) && !dead_rider
+                is_rider,
+            )
         };
         if grounded_translation_terminates {
+            // TranslateSwordDamage changes a dead, grounded non-rider to the
+            // canonical Dead posture before falling through to the common
+            // terminating arm. This publication is observable even though no
+            // replacement animation/order is authored.
+            if life_points_after <= 0
+                && !is_rider
+                && matches!(
+                    grounded_posture,
+                    Posture::Lying
+                        | Posture::StuckUnderNet
+                        | Posture::Flying
+                        | Posture::Carried
+                        | Posture::OnShoulders
+                        | Posture::Tied
+                )
+            {
+                self.expect_entity_mut(
+                    victim_id,
+                    "ReceiveSwordDamage grounded lethal posture publication",
+                )
+                .element_data_mut()
+                .posture = Posture::Dead;
+            }
             let (dseq, didx) = damage_element;
             self.orders.sequence_manager.element_terminated(dseq, didx);
         }
@@ -756,7 +834,6 @@ impl EngineInner {
             // Original evaluates the random chance before its selected-PC
             // suppression clause.  A controlled attacker therefore still
             // owns one global draw even though it can never launch Provoke.
-            let provoke_chance = (0.2 * attacker_ctx.fighting_ability as f32) as u32;
             let provoke_roll =
                 crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeProvoke, 0..100);
 
@@ -767,7 +844,9 @@ impl EngineInner {
                 .kind()
                 .is_pc()
                 && self.selected_pc_ids().contains(&atk_id);
-            if provoke_roll < provoke_chance && !attacker_is_selected_pc {
+            if provoke_roll_succeeds(provoke_roll, attacker_ctx.fighting_ability)
+                && !attacker_is_selected_pc
+            {
                 self.launch_provoke(atk_id);
             }
         }
@@ -910,7 +989,18 @@ impl EngineInner {
             let posture = victim.element_data().posture;
             let is_dead_rider =
                 matches!(victim, Entity::Soldier(s) if s.soldier.rider) && victim_died;
-            matches!(
+            // RHElementActorPC overrides TranslateSwordDamage and routes all
+            // shoulder-lifecycle postures directly through
+            // TranslateShoulderDamage. It therefore never reaches the base
+            // human implementation's EventGoodStrike dispatch. Non-PC
+            // humans inherit the base implementation, whose posture switch
+            // does admit the carrier-side postures.
+            let pc_uses_shoulder_translation = matches!(victim, Entity::Pc(_))
+                && matches!(
+                    posture,
+                    Posture::HelpingToClimb | Posture::CarryingOnShoulders
+                );
+            (matches!(
                 posture,
                 Posture::Upright
                     | Posture::Spy
@@ -925,7 +1015,8 @@ impl EngineInner {
                     | Posture::Crouched
                     | Posture::Tree
                     | Posture::SimulatingBeggar
-            ) || is_dead_rider
+            ) && !pc_uses_shoulder_translation)
+                || is_dead_rider
         };
         let soldier_attacker = attacker_id.is_some_and(|id| {
             matches!(
@@ -956,6 +1047,41 @@ impl EngineInner {
             if soldier_attacker
                 && let (Some(atk_id), Some(stimulus_type)) = (attacker_id, stimulus_type)
             {
+                if stimulus_type == crate::ai::StimulusType::EventGoodStrike
+                    && good_strike_lifecycle_debug_enabled()
+                {
+                    let creation_order = self.world.original_creation_order(atk_id);
+                    if good_strike_lifecycle_debug_matches(
+                        self.control.frame_counter,
+                        creation_order,
+                    ) {
+                        let attacker = self
+                            .get_entity(atk_id)
+                            .unwrap_or_else(|| panic!("GOOD_STRIKE attacker {atk_id:?} vanished"));
+                        let enemy = attacker.enemy_ai().unwrap_or_else(|| {
+                            panic!("GOOD_STRIKE attacker {atk_id:?} has no enemy AI")
+                        });
+                        let victim = self
+                            .get_entity(victim_id)
+                            .unwrap_or_else(|| panic!("GOOD_STRIKE victim {victim_id:?} vanished"));
+                        eprintln!(
+                            "[GOOD_STRIKE frame={} owner={} owner_co={} phase=translate_before_dispatch victim={} result={:?} victim_dead={} victim_unconscious={} victim_posture={:?} owner_state={:?} owner_substate={:?} owner_installed_order={:?}]",
+                            self.control.frame_counter,
+                            atk_id.index(),
+                            creation_order,
+                            victim_id.index(),
+                            result,
+                            victim_died,
+                            victim.human_data().is_some_and(|human| human.unconscious),
+                            victim.element_data().posture,
+                            enemy.base.current_state,
+                            enemy.base.current_substate,
+                            attacker
+                                .actor_data()
+                                .and_then(|actor| actor.installed_order),
+                        );
+                    }
+                }
                 self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
                 self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets, None, None);
             }
@@ -1042,16 +1168,25 @@ impl EngineInner {
                     self.queue_knockout_orders(assets, victim_id, damage_element);
                 }
             } else {
-                self.handle_post_damage(
-                    sim,
-                    assets,
-                    victim_id,
-                    life_points_before,
-                    attacker_id,
-                    false,
-                    damage_element,
-                    dying_anim_override,
-                );
+                if fresh_lethal_ordinary {
+                    self.queue_death_visuals_with_damage_element(
+                        assets,
+                        victim_id,
+                        damage_element,
+                        dying_anim_override,
+                    );
+                } else {
+                    self.handle_post_damage(
+                        sim,
+                        assets,
+                        victim_id,
+                        life_points_before,
+                        attacker_id,
+                        false,
+                        damage_element,
+                        dying_anim_override,
+                    );
+                }
             }
         }
         self.trace_sword_damage_lifecycle(
@@ -2639,25 +2774,11 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
         dying_anim_override: Option<crate::order::OrderType>,
     ) {
-        tracing::info!(entity = ?victim_id, "Entity died");
-
-        // Select dying animation (None when posture is already
-        // Lying/Dead/Carried — the "already on the ground" case).
-        // When the caller supplied an override (sword strike with a
-        // positive stunning effect against a non-rider), use it in
-        // place of the default `dying_forward`; the override is
-        // itself None when the selector returns None for the
-        // posture.
-        let dying_anim = self.get_entity(victim_id).and_then(|e| {
-            let posture = e.element_data().posture;
-            let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
-            select_combat_animations(posture, action)
-                .map(|a| dying_anim_override.unwrap_or(a.dying_forward))
-        });
-
-        if let Some(anim) = dying_anim {
-            self.queue_damage_anim(victim_id, damage_element, anim);
-        }
+        self.queue_death_animation_with_damage_element(
+            victim_id,
+            damage_element,
+            dying_anim_override,
+        );
 
         // Read the killer from the damage element so we can set the
         // `inform_my_friends` flag below (true when the killer is a
@@ -2677,8 +2798,47 @@ impl EngineInner {
 
         self.apply_nonvisual_death_cascade(sim, assets, victim_id, damage_element, killer_is_pc);
 
-        // Queue roll if on a slope.
+        // Queue roll only after virtual Kill has synchronously completed.
         self.try_queue_roll(assets, victim_id, damage_element);
+    }
+
+    /// Finish the TranslateDamage-owned visual half of a death.  This is
+    /// separate from virtual Kill because SetLifePoints completes the
+    /// nonvisual cascade synchronously before translation resumes.
+    fn queue_death_visuals_with_damage_element(
+        &mut self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        damage_element: (crate::sequence::SequenceId, usize),
+        dying_anim_override: Option<crate::order::OrderType>,
+    ) {
+        self.queue_death_animation_with_damage_element(
+            victim_id,
+            damage_element,
+            dying_anim_override,
+        );
+        self.try_queue_roll(assets, victim_id, damage_element);
+    }
+
+    fn queue_death_animation_with_damage_element(
+        &mut self,
+        victim_id: EntityId,
+        damage_element: (crate::sequence::SequenceId, usize),
+        dying_anim_override: Option<crate::order::OrderType>,
+    ) {
+        tracing::info!(entity = ?victim_id, "Entity died");
+
+        // Select dying animation (None when posture is already
+        // Lying/Dead/Carried — the "already on the ground" case).
+        let dying_anim = self.get_entity(victim_id).and_then(|e| {
+            let posture = e.element_data().posture;
+            let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+            select_combat_animations(posture, action)
+                .map(|a| dying_anim_override.unwrap_or(a.dying_forward))
+        });
+        if let Some(anim) = dying_anim {
+            self.queue_damage_anim(victim_id, damage_element, anim);
+        }
     }
 
     /// Apply the synchronous virtual `Kill` cascade without translating a
@@ -3005,5 +3165,22 @@ impl EngineInner {
         if set_lying_now && !victim.element_data().posture.is_lying() {
             victim.set_posture(Posture::Lying);
         }
+    }
+}
+
+#[cfg(test)]
+mod provoke_tests {
+    use super::provoke_roll_succeeds;
+
+    #[test]
+    fn fractional_provoke_threshold_is_not_truncated_before_comparison() {
+        assert!(provoke_roll_succeeds(10, 51));
+        assert!(provoke_roll_succeeds(0, 1));
+    }
+
+    #[test]
+    fn exact_provoke_threshold_remains_exclusive() {
+        assert!(provoke_roll_succeeds(9, 50));
+        assert!(!provoke_roll_succeeds(10, 50));
     }
 }

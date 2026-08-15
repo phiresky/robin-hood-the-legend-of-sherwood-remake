@@ -105,6 +105,11 @@ impl EngineInner {
                         base.current_remark != crate::ai::Remark::TheSoundOfSilence
                     });
                 if was_speaking {
+                    self.debug_speech_lifecycle(
+                        entity_id.index(),
+                        "unconscious_cancel_before",
+                        "say_ouch",
+                    );
                     self.feedback.pending_side_effects.sounds.push(
                         super::SoundCommand::StopExclamation {
                             actor_id: entity_id,
@@ -121,6 +126,11 @@ impl EngineInner {
                     base.current_remark = crate::ai::Remark::TheSoundOfSilence;
                     base.current_remark_flags = 0;
                     self.cancel_exclamation_callbacks(entity_id.index());
+                    self.debug_speech_lifecycle(
+                        entity_id.index(),
+                        "unconscious_cancel_after",
+                        "say_ouch",
+                    );
                 }
             }
             return;
@@ -640,7 +650,11 @@ impl EngineInner {
     /// Apply the human tiredness tail for one live owner.
     pub(crate) fn tick_tiredness_for(&mut self, id: EntityId, assets: &LevelAssets) {
         let frame = self.control.frame_counter;
-        if (frame & 63) != (id.index() & 31) {
+        // Original staggers this tail by RHElement::mulCreationOrder, not by
+        // the port's kind-local entity slot. Saved games can restore an
+        // authored creation order which differs from `EntityId::index()`.
+        let creation_order = self.world.original_creation_order(id);
+        if (frame & 63) != (creation_order & 31) {
             return;
         }
         let entity = self.world.entities.get_mut(id).unwrap_or_else(|| {

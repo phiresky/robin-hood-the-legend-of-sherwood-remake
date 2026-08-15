@@ -7,7 +7,7 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::{ai_square_distance, resolve_seek_point_id, vec_to_sector};
+use super::util::{ai_max_norm_distance, ai_square_distance, resolve_seek_point_id, vec_to_sector};
 use super::{
     AlertSoldiersFailureContinuation, EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags,
     UNDEFINED_DIRECTION, archer, combat, task_priority,
@@ -2825,14 +2825,18 @@ impl EnemyAi {
                     // If body is further than
                     // OFFICER_EXAMINE_BODY_HIMSELF_DISTANCE,
                     // delegate via ShallISendOutSoldier.
-                    let dist = ctx
-                        .entity_view(body)
-                        .map(|v| {
-                            let dx = (v.position.x - ctx.position.x).abs();
-                            let dy = (v.position.y - ctx.position.y).abs();
-                            dx.max(dy)
-                        })
-                        .unwrap_or(0.0);
+                    let body_view = ctx.entity_view(body).unwrap_or_else(|| {
+                        panic!(
+                            "officer {} cannot react to missing body {}",
+                            self.base.me, body
+                        )
+                    });
+                    let dist = ai_max_norm_distance(
+                        &body_view.position,
+                        body_view.elevation,
+                        &ctx.position,
+                        ctx.elevation,
+                    );
                     if dist > combat::OFFICER_EXAMINE_BODY_HIMSELF_DISTANCE as f32 {
                         look_for_soldiers =
                             self.answer_question(Question::ShallISendOutSoldier, ctx);
@@ -5516,7 +5520,12 @@ impl EnemyAi {
 
     fn seeking_charly_get_lecture_by_officer(&mut self, stimulus_type: StimulusType) -> bool {
         if stimulus_type == StimulusType::CallYourTalk1 {
-            self.base.say(Remark::CharlyDefendsHimself);
+            // Original tags Charly's defence as MYTALK_1. Its sound-finished
+            // callback must therefore emit EventMyTalk1, which stage 2 relays
+            // to the officer so the officer can speak the lecture's final
+            // line (OfficerRebukesCharlyEnd).
+            self.base
+                .say_with_flags(Remark::CharlyDefendsHimself, SpeechFlags::MYTALK_1);
             self.set_state(
                 AiState::Seeking,
                 Substate::SeekingCharlyGetLectureByOfficer2,
@@ -6283,12 +6292,42 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=reactiontime_running_event stimulus={stimulus_type:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} owner_work_before={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.self_is_rider,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         if stimulus_type == StimulusType::EventTimer
             || stimulus_type == StimulusType::EventReachPoint
         {
             self.base.stop_all();
             self.i_am_in_trouble(self.base.primary_target);
             self.battle_decisions(sim, global, ctx, tick, grid);
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reactiontime_running_done state={:?}/{:?} primary={} couldnt={} already={} owner_work_after={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.current_state,
+                    self.base.current_substate,
+                    self.base.primary_target,
+                    self.base.couldnt_reachpoint,
+                    self.base.already_on_point,
+                    self.base.outbox.reentrant.owner_work,
+                );
+            }
         }
         false
     }
@@ -7034,6 +7073,16 @@ impl EnemyAi {
             }
             StimulusType::EventTimer => {
                 // Re-evaluate: normally shoot at primary target.
+                if super::them_lifecycle_debug_matches(ctx) {
+                    eprintln!(
+                        "[THEM frame={} co={:?} me={} phase=timer_entry state={:?} substate={:?} route=bow_behind_shield]",
+                        ctx.frame,
+                        ctx.original_creation_order,
+                        self.base.me,
+                        self.base.current_state,
+                        self.base.current_substate,
+                    );
+                }
                 self.reinitialize_them_list(ctx, tick);
                 self.battle_decisions(sim, global, ctx, tick, grid);
             }
@@ -7093,6 +7142,16 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
+            if super::them_lifecycle_debug_matches(ctx) {
+                eprintln!(
+                    "[THEM frame={} co={:?} me={} phase=timer_entry state={:?} substate={:?} route=officer_orders_waiting]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    self.base.current_state,
+                    self.base.current_substate,
+                );
+            }
             self.reinitialize_them_list(ctx, tick);
             self.battle_decisions(sim, global, ctx, tick, grid);
         }
@@ -7670,19 +7729,41 @@ impl EnemyAi {
                 // BattleDecisions, then if the resulting substate is a
                 // swordfight (VIP variant says VIP_REMARK, otherwise
                 // REMARK_PROUD_FINALLY_FIGHT).
+                //
+                // Original's `BattleDecisions()` is fully synchronous, so
+                // `mCurrentSubstate` is only read once every nested decision
+                // has committed. Rust splits `ReconsiderEnemyApproach` around
+                // its `GoNear` and finishes it from the owner FIFO — and that
+                // continuation can still leave the any-swordfight set for
+                // `SUBSTATE_ATTACKING_RUN_TO_AVENGER_ON_ROOF`. Queue the test
+                // behind those continuations instead of reading a substate
+                // that Original never observes.
                 self.battle_decisions(sim, global, ctx, tick, grid);
-                if self.base.current_substate.is_any_swordfight() {
-                    let remark = if self.is_vip {
-                        Remark::VipProudFinallyFight
-                    } else {
-                        Remark::ProudFinallyFight
-                    };
-                    self.base.say(remark);
-                }
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::TooProudOverviewFinallyFightRemark);
             }
             _ => {}
         }
         false
+    }
+
+    /// Owner-boundary tail of
+    /// `SUBSTATE_ATTACKING_TOO_PROUD_TO_ATTACK_OVERVIEW`'s `EVENT_TIMER`
+    /// arm (`RHartificialmalignity.cpp:4231-4245`): once `BattleDecisions()`
+    /// has fully returned, a substate inside `_ANY_SWORDFIGHT_SUBSTATE_`
+    /// earns the "finally, a fight" remark.
+    pub(crate) fn too_proud_overview_finally_fight_remark(&mut self) {
+        if self.base.current_substate.is_any_swordfight() {
+            let remark = if self.is_vip {
+                Remark::VipProudFinallyFight
+            } else {
+                Remark::ProudFinallyFight
+            };
+            self.base.say(remark);
+        }
     }
 
     // Retiring: reach point triggers fast face-turn to seek
@@ -9592,6 +9673,199 @@ mod tests {
         )
     }
 
+    fn alert_candidate(handle: u32, position: Position) -> crate::ai_enemy::CampSoldierInfo {
+        crate::ai_enemy::CampSoldierInfo {
+            handle,
+            active: true,
+            position,
+            position_world: crate::coordinates::WorldPoint3D::new(position.x, position.y, 0.0),
+            direction: 0,
+            rank: ProfileRank::Soldier,
+            ai_state: AiState::Default,
+            ai_substate: Substate::DefaultOnPost,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            detected_body: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 300,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        }
+    }
+
+    #[test]
+    fn officer_body_reaction_uses_stretched_max_norm_to_delegate() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(185);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBodyReactiontime;
+        ai.base.detected_body = 179;
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        ai.soldier_profile_initiative = 0;
+
+        let mut body = pc_view(crate::element::Posture::Lying);
+        body.kind = crate::ai_entity_view::EntityKind::Soldier;
+        body.is_pc = false;
+        body.position = Position {
+            x: 50.0,
+            y: 149.5,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(179, body);
+        let mut friend = soldier_view_with_substate(181, Substate::DefaultOnPost);
+        friend.position = Position {
+            x: 20.0,
+            ..Position::default()
+        };
+        views.insert(181, friend);
+        let ctx = AiContext {
+            frame: 1_200,
+            position: Position::default(),
+            direction: 7,
+            self_is_active: true,
+            in_building: false,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(alert_candidate(
+            181,
+            Position {
+                x: 20.0,
+                ..Position::default()
+            },
+        ));
+
+        let raw_max_norm = 50.0_f32.max(149.5);
+        let stretched_max_norm = ai_max_norm_distance(
+            &ctx.entity_view(179).unwrap().position,
+            0.0,
+            &ctx.position,
+            0.0,
+        );
+        assert!(raw_max_norm < 150.0);
+        assert!(stretched_max_norm > 150.0);
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingOfficerLookingForSoldiers1
+        );
+        assert_eq!(ai.base.when_does_timer_ring, 1_220);
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .iter()
+                .any(|order| { order.order_type == crate::order::OrderType::Turning })
+        );
+        let friend = (
+            crate::element::EntityId::Soldier(crate::entity_id::SoldierId(181)),
+            crate::element::DetectableType::Friend,
+        );
+        assert!(
+            ai.base.outbox.actor.add_detectables.contains(&friend)
+                || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+                    matches!(work, AiOwnerWork::StateChange(change)
+                    if change.actor_effects_before_callback.as_ref().is_some_and(
+                        |effects| effects.add_detectables.contains(&friend)
+                    ))
+                })
+        );
+    }
+
+    #[test]
+    fn officer_body_reaction_examines_body_within_stretched_threshold() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(185);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBodyReactiontime;
+        ai.base.detected_body = 179;
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        ai.soldier_profile_initiative = 0;
+
+        let mut body = pc_view(crate::element::Posture::Lying);
+        body.kind = crate::ai_entity_view::EntityKind::Soldier;
+        body.is_pc = false;
+        body.position = Position {
+            x: 50.0,
+            y: 80.0,
+            ..Position::default()
+        };
+        let destination = body.position;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(179, body);
+        let ctx = AiContext {
+            frame: 1_200,
+            position: Position::default(),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        assert!(ai_max_norm_distance(&destination, 0.0, &ctx.position, 0.0) <= 150.0);
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingBody);
+        assert_eq!(ai.base.seek_position, destination);
+        assert!(
+            ai.base.outbox.actor.focus == Some(179)
+                || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+                    matches!(work, AiOwnerWork::StateChange(change)
+                    if change.actor_effects_before_callback.as_ref().is_some_and(
+                        |effects| effects.focus == Some(179)
+                    ))
+                })
+        );
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .iter()
+                .any(|order| { order.order_type == crate::order::OrderType::RunningUpright })
+        );
+        assert!(ai.base.outbox.actor.add_detectables.is_empty());
+    }
+
     fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(94);
@@ -10339,6 +10613,73 @@ mod tests {
             &AiContext::default(),
             &AiPerTickData::stub(),
             None,
+        );
+    }
+
+    #[test]
+    fn charly_defence_completion_relays_talk_to_officer() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(55);
+        ai.base.antagonist = 90;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingCharlyGetLectureByOfficer;
+
+        ai.seeking_charly_get_lecture_by_officer(StimulusType::CallYourTalk1);
+
+        let speech_attempts = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .filter_map(|work| match work {
+                AiOwnerWork::Speech(attempt) => Some(attempt),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [attempt] = speech_attempts.as_slice() else {
+            panic!("Charly must queue exactly one defence line");
+        };
+        assert_eq!(attempt.remark, Remark::CharlyDefendsHimself);
+        assert_eq!(
+            SpeechFlags::from_bits_truncate(attempt.flags),
+            SpeechFlags::MYTALK_1
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingCharlyGetLectureByOfficer2
+        );
+
+        ai.seeking_charly_get_lecture_by_officer2(
+            &sim,
+            StimulusType::EventMyTalk1,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [CrossNpcAction::SendStimulus {
+                target: 90,
+                stimulus_type: StimulusType::CallYourTalk1,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn charly_lecture_ignores_unrelated_stimulus() {
+        let mut ai = EnemyAi::new(55);
+        ai.base.antagonist = 90;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingCharlyGetLectureByOfficer;
+
+        ai.seeking_charly_get_lecture_by_officer(StimulusType::EventTimer);
+
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingCharlyGetLectureByOfficer
         );
     }
 }

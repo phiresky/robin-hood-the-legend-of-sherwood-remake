@@ -25,6 +25,62 @@ fn strike_effect_debug_matches(
         && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_VICTIM_CREATION_ORDER")
             .is_none_or(|expected| expected == victim_creation_order)
 }
+
+fn special_strike_lifecycle_debug_matches(frame: u32, owner: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_SPECIAL_STRIKE_LIFECYCLE").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for special-strike diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_FRAME").is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_OWNER_HANDLE")
+            .is_none_or(|expected| expected == owner)
+}
+
+fn opponent_sprite_timing_debug_matches(frame: u32, owner: u32, target: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_OPPONENT_SPRITE_TIMING").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for opponent-sprite-timing diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_FRAME")
+        .is_none_or(|expected| expected == frame)
+        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_OWNER")
+            .is_none_or(|expected| expected == owner)
+        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_TARGET")
+            .is_none_or(|expected| expected == target)
+}
+
+fn special_strike_selected_snapshot(
+    manager: &crate::sequence::SequenceManager,
+    owner: EntityId,
+) -> String {
+    let selected = manager.current_element_for_actor(owner);
+    let element = selected.and_then(|(sequence, index)| {
+        manager.get_element(sequence, index).map(|element| {
+            (
+                sequence,
+                index,
+                element.command,
+                element.state,
+                element.priority,
+                element.cross_postponed,
+                element.orders.len(),
+            )
+        })
+    });
+    format!("{element:?}")
+}
 use crate::combat::{self};
 use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::profiles::WeaponThrustKind;
@@ -731,7 +787,7 @@ impl EngineInner {
                 if let Some(entity) = self.get_entity_mut(actor_id)
                     && let Some(human) = entity.human_data_mut()
                 {
-                    human.tiredness = human.tiredness.saturating_add(energy);
+                    human.tiredness = combat::add_strike_tiredness(human.tiredness, energy);
                 }
             }
             None => tracing::warn!(
@@ -1267,8 +1323,7 @@ impl EngineInner {
         ) {
             return;
         }
-        let signed_rotation = (thrust.rotation_angle as f32)
-            * (std::f32::consts::PI / 180.0)
+        let signed_rotation = strike_profile_angle(thrust.rotation_angle)
             * if thrust.direction == crate::profiles::WeaponThrustDirection::RightToLeft {
                 -1.0
             } else {
@@ -1325,9 +1380,11 @@ impl EngineInner {
         };
         let thrust = &profile.thrusts[strike as usize];
         let direction = thrust.direction;
-        let initial_angle_deg = thrust.initial_angle as f32;
-        let final_angle_deg = thrust.final_angle as f32;
-        let rotation_angle_deg = thrust.rotation_angle as f32;
+        // RHSword's GetStrike*Angle getters evaluate their authored-degree
+        // expression in double precision and narrow only at the FLOAT return.
+        let initial_angle = strike_profile_angle(thrust.initial_angle);
+        let final_angle = strike_profile_angle(thrust.final_angle);
+        let rotation_per_frame = strike_profile_angle(thrust.rotation_angle);
 
         let attacker_dir = self
             .get_entity(attacker_id)
@@ -1335,45 +1392,42 @@ impl EngineInner {
             .unwrap_or(0);
         let dir_angle = sector_to_angle(attacker_dir);
 
-        let deg_to_rad = std::f32::consts::PI / 180.0;
-        let rotation_per_frame = rotation_angle_deg * deg_to_rad;
-
         use crate::profiles::WeaponThrustDirection;
 
         let (initial, final_a, signed_rotation) = match strike_kind {
             WeaponThrustKind::Lateral => match direction {
                 WeaponThrustDirection::RightToLeft => {
-                    let init = dir_angle + initial_angle_deg * deg_to_rad;
-                    let fin = dir_angle - final_angle_deg * deg_to_rad;
+                    let init = dir_angle + initial_angle;
+                    let fin = dir_angle - final_angle;
                     (init, fin, -rotation_per_frame)
                 }
                 _ => {
-                    let init = dir_angle - initial_angle_deg * deg_to_rad;
-                    let fin = dir_angle + final_angle_deg * deg_to_rad;
+                    let init = dir_angle - initial_angle;
+                    let fin = dir_angle + final_angle;
                     (init, fin, rotation_per_frame)
                 }
             },
             WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => match direction
             {
                 WeaponThrustDirection::RightToLeft => {
-                    let init = dir_angle + initial_angle_deg * deg_to_rad;
+                    let init = dir_angle + initial_angle;
                     let fin = init - std::f32::consts::PI;
                     (init, fin, -rotation_per_frame)
                 }
                 _ => {
-                    let init = dir_angle - initial_angle_deg * deg_to_rad;
+                    let init = dir_angle - initial_angle;
                     let fin = init + std::f32::consts::PI;
                     (init, fin, rotation_per_frame)
                 }
             },
             WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => match direction {
                 WeaponThrustDirection::RightToLeft => {
-                    let init = dir_angle + initial_angle_deg * deg_to_rad;
+                    let init = dir_angle + initial_angle;
                     let fin = dir_angle - 2.0 * std::f32::consts::PI;
                     (init, fin, -rotation_per_frame)
                 }
                 _ => {
-                    let init = dir_angle - initial_angle_deg * deg_to_rad;
+                    let init = dir_angle - initial_angle;
                     let fin = dir_angle + 2.0 * std::f32::consts::PI;
                     (init, fin, rotation_per_frame)
                 }
@@ -2465,6 +2519,27 @@ impl EngineInner {
                     .then_some(EntityId::from(npc_id))
             })
             .collect();
+        for &owner in &pending_considerations {
+            if special_strike_lifecycle_debug_matches(current_frame, owner.index()) {
+                let ai = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .unwrap_or_else(|| panic!("special-strike owner {owner:?} lost Enemy AI"));
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=authorization_consumed pending_consideration={} pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    owner.index(),
+                    ai.pending_sword_strike_consideration,
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(&self.orders.sequence_manager, owner),
+                );
+            }
+        }
 
         // Collect pending attacks
         struct PendingAttack {
@@ -2596,6 +2671,20 @@ impl EngineInner {
         // elements as Interaction(1, command, this,
         // principal_opponent).
         for mut attack in attacks {
+            let special_debug =
+                special_strike_lifecycle_debug_matches(current_frame, attack.soldier_id.index());
+            if special_debug {
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=before_proposal target={} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    attack.target_id.index(),
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
             let distance =
                 entity_distance(&self.world.entities, attack.soldier_id, attack.target_id);
 
@@ -2616,10 +2705,47 @@ impl EngineInner {
             // time_limit = 1000 (permissive).  Otherwise, take the
             // sprite's frames-from-now-till-action-done (or 1000 if
             // unavailable).
+            let sprite_timing_debug = opponent_sprite_timing_debug_matches(
+                current_frame,
+                attack.soldier_id.index(),
+                attack.target_id.index(),
+            );
+            let sprite_timing_creation_orders = sprite_timing_debug.then(|| {
+                (
+                    self.world.original_creation_order(attack.soldier_id),
+                    self.world.original_creation_order(attack.target_id),
+                )
+            });
             let opponent_time_limit: Option<i16> =
                 self.get_entity(attack.target_id).and_then(|e| {
                     let animation = self.live_actor_animation(attack.target_id)?;
                     let sprite = &e.element_data().sprite;
+                    if let Some((owner_creation_order, target_creation_order)) =
+                        sprite_timing_creation_orders
+                    {
+                        let script_len = sprite
+                            .current_scripts_opt()
+                            .and_then(|scripts| scripts.get(sprite.current_row as usize))
+                            .map(|script| script.frame_ids.len());
+                        eprintln!(
+                            "OPPONENT_SPRITE_TIMING frame={} owner={} owner_co={} target={} target_co={} caller={:?} animation={animation:?} profile={:?} primary={:?} alternate={:?} use_alternate={} row={} sprite_frame={} frame_count={} action_done_frame={} action_done_counter={} script_len={script_len:?}",
+                            current_frame,
+                            attack.soldier_id.index(),
+                            owner_creation_order,
+                            attack.target_id.index(),
+                            target_creation_order,
+                            only_owner.map(EntityId::index),
+                            sprite.frame_profile_name,
+                            sprite.profile_cache_key,
+                            sprite.alternate_profile_cache_key,
+                            sprite.use_alternate_profile,
+                            sprite.current_row,
+                            sprite.current_frame,
+                            sprite.frame_count,
+                            sprite.action_done_frame,
+                            sprite.action_done_counter,
+                        );
+                    }
                     Some(super::evaluate::opponent_sword_strike_time_limit(
                         Some(animation),
                         || sprite.frames_from_now_till_action_done(),
@@ -2773,6 +2899,18 @@ impl EngineInner {
                 false,
                 debug,
             );
+            if special_debug {
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_proposal result={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    proposed,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
             if let Some(debug) = debug {
                 eprintln!(
                     "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=enemy_reconsider rng_before={:?} rng_after={:?} result={:?}]",
@@ -2842,6 +2980,21 @@ impl EngineInner {
                 0
             };
 
+            if special_debug {
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=before_begin strike={:?} command={:?} wait_time={} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    strike,
+                    command,
+                    wait_time,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
+
             // Flag the pending special strike and cancel movement so
             // the soldier stands still during the delay.
             // `begin_special_strike` sets the lifecycle latch and enters the
@@ -2854,9 +3007,51 @@ impl EngineInner {
                 ai.begin_special_strike();
                 ai.base.stop_all();
             }
+            if special_debug {
+                let ai = self
+                    .world
+                    .entities
+                    .get(attack.soldier_id)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .expect("special-strike owner lost Enemy AI after begin");
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_begin pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
             self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
             self.apply_pending_ai_halt(attack.soldier_id);
             self.dispatch_condolations_for_owner_boundary(sim, attack.soldier_id, assets);
+            if special_debug {
+                let ai = self
+                    .world
+                    .entities
+                    .get(attack.soldier_id)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .expect("special-strike owner lost Enemy AI after drain");
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_begin_drain pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
 
             // War-cry remarks for thrusts C/F/G/H/I.  Placed after
             // the state-set + stop-all so the say-order is correct.
@@ -2908,6 +3103,28 @@ impl EngineInner {
             seq.append_element(strike_elem);
 
             self.launch_sequence(seq);
+
+            if special_debug {
+                let ai = self
+                    .world
+                    .entities
+                    .get(attack.soldier_id)
+                    .and_then(|entity| entity.npc_data())
+                    .and_then(|npc| npc.ai_brain.enemy())
+                    .expect("special-strike owner lost Enemy AI after launch");
+                eprintln!(
+                    "SPECIAL_STRIKE frame={} owner={} phase=after_launch pending_special={} state={:?} substate={:?} selected={}",
+                    current_frame,
+                    attack.soldier_id.index(),
+                    ai.pending_special_strike,
+                    ai.base.current_state,
+                    ai.base.current_substate,
+                    special_strike_selected_snapshot(
+                        &self.orders.sequence_manager,
+                        attack.soldier_id
+                    ),
+                );
+            }
 
             tracing::debug!(
                 soldier = ?attack.soldier_id,

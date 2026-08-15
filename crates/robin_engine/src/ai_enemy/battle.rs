@@ -752,6 +752,18 @@ impl EnemyAi {
             tick,
             Some(&decision_target_multiplicity),
         );
+        if super::primary_swap_debug_enabled()
+            && super::primary_swap_debug_matches(ctx.frame, self.base.me)
+        {
+            eprintln!(
+                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=battle_primary_selected list_them={:?} selected={}]",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+                self.list_them,
+                self.base.primary_target,
+            );
+        }
 
         // Continue the same Original friend loop after primary-target
         // selection: attacking friends already committed to a swordfight
@@ -1487,41 +1499,45 @@ impl EnemyAi {
                         // movement in SetState's synchronous actor-effect
                         // prefix so a preceding StopAll and its walking
                         // replacement settle before FilterAIEvent.
+                        let first_new_order = self.base.outbox.actor.orders.len();
                         self.base.go_near(
                             target_pos,
                             observe_distance as i32,
                             GotoFlags::empty(),
                             ctx,
                         );
-                        self.base.set_emoticon(EmoticonType::XMark);
-                        self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
-                        self.base.launch_timer(50, ctx.frame);
-
-                        // Couldn't-reachpoint avenger-on-roof fallback,
-                        // resolved against the target this arm just
-                        // re-picked. Returning from the whole decision
-                        // routine here also skips the decision log line.
-                        if self.base.couldnt_reachpoint
-                            && let Some(wait_pos) = tick.avenger_wait_position_for(target)
-                        {
-                            self.base.couldnt_reachpoint = false;
-                            self.go_near(
-                                AiState::Attacking,
-                                Substate::AttackingRunToAvengerOnRoof,
-                                wait_pos,
-                                50,
-                                GotoFlags::RUN,
+                        if self.base.outbox.actor.orders.len() > first_new_order {
+                            // Original GoNear constructs the route before the
+                            // following SetEmoticon/SetState/timer statements
+                            // and inline mbCouldntReachpoint test. Rust's path
+                            // construction is engine-owned, so suspend that
+                            // exact tail behind the movement actor boundary.
+                            let route_effects = std::mem::take(&mut self.base.outbox.actor);
+                            self.base
+                                .outbox
+                                .reentrant
+                                .owner_work
+                                .push(crate::ai::AiOwnerWork::ActorEffects(route_effects));
+                            self.base.outbox.reentrant.battle_observe_completion_pending = true;
+                            self.base.outbox.reentrant.owner_work.push(
+                                crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                                    target,
+                                    target_position: target_pos,
+                                },
+                            );
+                        } else {
+                            // Local GoNear fast exits already own their result,
+                            // so no engine round trip is required.
+                            self.resume_battle_observe_after_go_near(
+                                target,
+                                target_pos,
+                                tick.avenger_wait_position_for(target),
                                 ctx,
                             );
-                            if let Some(target_pos) = self
-                                .find_fighter(target, tick)
-                                .map(|f| f.position)
-                                .or_else(|| ctx.entity_view(target).map(|view| view.position))
-                            {
-                                self.base.seek_position = target_pos;
-                            }
-                            return false;
                         }
+                        // The typed continuation owns normal logging and the
+                        // roof-fallback early return in both paths.
+                        return false;
                     }
                 }
 
@@ -2379,6 +2395,29 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=reconsider_enter reachpoint={} distance_arg_bits={:08x} state={:?}/{:?} primary={} seek=({:08x},{:08x},sector={:?},level={}) rider={} couldnt={} already={} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                reachpoint,
+                _distance_arg.to_bits(),
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                self.base.seek_position.x.to_bits(),
+                self.base.seek_position.y.to_bits(),
+                self.base.seek_position.sector,
+                self.base.seek_position.level,
+                ctx.self_is_rider,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         let standard_sword_range = self.sword_range as f32;
         // sword_range = standard sword range + 10.
         let sword_range: f32 = standard_sword_range + 10.0;
@@ -2475,13 +2514,39 @@ impl EnemyAi {
         // truncates it through UWORD. Do not use the usual isometric Y stretch.
         let distance = reconsider_approach_distance(live_target_pos, ctx.position);
 
-        // Pre-computed line-jump for table swordfight.
-        // The precomputed line belongs to the snapshotted target. A newly
-        // selected target must never inherit it; the ordinary same-sector
-        // approach remains valid and a later dispatch rebuilds full metadata.
-        let my_line_jump = target_snapshot_is_current
-            .then_some(tick.primary_target_jump_line)
-            .flatten();
+        // Line-jump for table swordfight. `RHArtificialMalignity::
+        // ReconsiderEnemyApproach` (RHartificialmalignity.cpp:6746) evaluates
+        // `mpMe->IsTableSwordfightNeeded( mpPrimaryTarget )` live against the
+        // primary target as it stands on entry — after any synchronous
+        // retarget by the calling decision, and before the friend-swap loop
+        // below can move the pointer again.
+        //
+        // The per-tick snapshot answers exactly that question while it still
+        // describes the same target. After a synchronous retarget it belongs
+        // to the previous target, so recompute the pair for the replacement
+        // instead of dropping the line: Original never leaves `mpMyLineJump`
+        // NULL just because the pointer changed, and a dropped line sends the
+        // approach at the victim's own sector across the level topology.
+        let my_line_jump = if target_snapshot_is_current {
+            tick.primary_target_jump_line
+        } else {
+            // `IsTableSwordfightNeeded` measures with the aggressor's maximal
+            // hand-to-hand weapon range (`weapon.distance[Maximal]`), which the
+            // fighter snapshot carries as `sword_range_maximal`.
+            let my_max_range = self
+                .find_fighter(self.base.me, tick)
+                .map(|f| f.sword_range_maximal)
+                .unwrap_or(self.sword_range);
+            grid.and_then(|g| {
+                crate::engine::melee::table_swordfight_jump_line(
+                    g,
+                    ctx.position.sector.map(i16::from).unwrap_or(-1),
+                    live_target_pos.sector.map(i16::from).unwrap_or(-1),
+                    crate::coordinates::MapPoint::new(live_target_pos.x, live_target_pos.y),
+                    my_max_range as f32,
+                )
+            })
+        };
         let target_animation = if target_snapshot_is_current {
             tick.primary_target_animation
         } else {
@@ -2500,15 +2565,34 @@ impl EnemyAi {
         let mut working_target = self.base.primary_target;
         let mut working_target_pos = live_target_pos;
         let mut working_distance = distance;
+        let debug_primary_swap = super::primary_swap_debug_enabled()
+            && super::primary_swap_debug_matches(ctx.frame, self.base.me);
         // Iterate friends only when we have our own target —
         // Position(primary_target) would crash on NULL otherwise. Skip
         // the swap heuristic if our primary_target is unset so we never
         // hand 0 to a friend via `friend_primary_target_swaps`.
         for cand in &tick.friend_swap_candidates {
             if working_target == 0 {
+                if debug_primary_swap {
+                    eprintln!(
+                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_stop_zero friend={:?}]",
+                        ctx.frame, ctx.original_creation_order, self.base.me, cand.friend_id,
+                    );
+                }
                 break;
             }
             if cand.friend_primary_target == working_target {
+                if debug_primary_swap {
+                    eprintln!(
+                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_skip_same friend={:?} owner_target={} friend_target={}]",
+                        ctx.frame,
+                        ctx.original_creation_order,
+                        self.base.me,
+                        cand.friend_id,
+                        working_target,
+                        cand.friend_primary_target,
+                    );
+                }
                 continue;
             }
             let me_to_friend_target = {
@@ -2526,9 +2610,36 @@ impl EnemyAi {
                 let dy = cand.friend_position.y - cand.friend_primary_target_position.y;
                 (dx * dx + dy * dy).sqrt()
             };
-            if me_to_friend_target + friend_to_my_target
-                < working_distance + friend_to_friend_target
-            {
+            let left = me_to_friend_target + friend_to_my_target;
+            let right = working_distance + friend_to_friend_target;
+            let swap = left < right;
+            if debug_primary_swap {
+                eprintln!(
+                    "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_test friend={:?} owner_target={} friend_target={} owner_pos=({:08x},{:08x}) owner_target_pos=({:08x},{:08x}) friend_pos=({:08x},{:08x}) friend_target_pos=({:08x},{:08x}) working_distance={:08x} me_to_friend_target={:08x} friend_to_my_target={:08x} friend_to_friend_target={:08x} left={:08x} right={:08x} swap={}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    cand.friend_id,
+                    working_target,
+                    cand.friend_primary_target,
+                    ctx.position.x.to_bits(),
+                    ctx.position.y.to_bits(),
+                    working_target_pos.x.to_bits(),
+                    working_target_pos.y.to_bits(),
+                    cand.friend_position.x.to_bits(),
+                    cand.friend_position.y.to_bits(),
+                    cand.friend_primary_target_position.x.to_bits(),
+                    cand.friend_primary_target_position.y.to_bits(),
+                    working_distance.to_bits(),
+                    me_to_friend_target.to_bits(),
+                    friend_to_my_target.to_bits(),
+                    friend_to_friend_target.to_bits(),
+                    left.to_bits(),
+                    right.to_bits(),
+                    swap,
+                );
+            }
+            if swap {
                 // Each improving friend is retargeted immediately: the
                 // reference writes the friend's new primary target on the
                 // spot, so several friends can be swapped in a single
@@ -2545,6 +2656,19 @@ impl EnemyAi {
                     reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
                 self.base.primary_target = working_target;
             }
+        }
+        if debug_primary_swap {
+            eprintln!(
+                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_final target={} target_pos=({:08x},{:08x}) distance={:08x} queued_swaps={:?}]",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+                working_target,
+                working_target_pos.x.to_bits(),
+                working_target_pos.y.to_bits(),
+                working_distance.to_bits(),
+                self.base.outbox.actor.friend_primary_target_swaps,
+            );
         }
 
         // Original tests the `posPrimTarget` that remains after every
@@ -2694,6 +2818,11 @@ impl EnemyAi {
         // Re-focus (redundant but mirrored for parity).
         self.base.outbox.actor.set_focus(working_target);
 
+        // Only a StateChange appended by the approach selected below may own
+        // this GoNear prefix. An older matching notification can legitimately
+        // still be queued by a recursive caller.
+        let owner_work_before_approach = self.base.outbox.reentrant.owner_work.len();
+
         // Not below run distance: charge or run.
         if !b_below_run_distance {
             if b_charge {
@@ -2791,6 +2920,71 @@ impl EnemyAi {
                 ctx,
             );
         } else {
+            // Original GoNear constructs its route before control reaches the
+            // following SetState and the `mbCouldntReachpoint` test
+            // (RHartificialmalignity.cpp:6888-6910). SetState captures that
+            // actor prefix for its callback barrier; lift it into an explicit
+            // earlier owner boundary so route construction is not deferred
+            // with ordinary sequence instruction.
+            let state_change_index = self
+                .base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .enumerate()
+                .skip(owner_work_before_approach)
+                .rev()
+                .find_map(|(index, work)| {
+                    matches!(
+                        work,
+                        crate::ai::AiOwnerWork::StateChange(notification)
+                            if notification.incoming_state == self.base.current_state
+                                && notification.incoming_substate == self.base.current_substate
+                    )
+                    .then_some(index)
+                });
+            if let Some(state_change_index) = state_change_index {
+                let route_effects =
+                    match &mut self.base.outbox.reentrant.owner_work[state_change_index] {
+                        crate::ai::AiOwnerWork::StateChange(notification) => notification
+                            .actor_effects_before_callback
+                            .take()
+                            .expect("reconsider approach GoNear was not captured before SetState"),
+                        _ => unreachable!(),
+                    };
+                self.base.outbox.reentrant.owner_work.insert(
+                    state_change_index,
+                    crate::ai::AiOwnerWork::ActorEffects(route_effects),
+                );
+            } else {
+                // SetState deliberately omits FilterAIEvent when the selected
+                // substate is unchanged. GoNear therefore remains in the live
+                // actor outbox, but Original still constructs it synchronously
+                // before testing mbCouldntReachpoint.
+                assert!(
+                    self.base.outbox.actor.has_boundary_work(),
+                    "reconsider approach same-substate GoNear lost its actor effects"
+                );
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                        &mut self.base.outbox.actor,
+                    )));
+            }
+            // SetState's virtual attentive-mode tail also precedes the return
+            // to `mbCouldntReachpoint`.
+            if self.base.outbox.actor.has_boundary_work() {
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                        &mut self.base.outbox.actor,
+                    )));
+            }
             self.base
                 .outbox
                 .reentrant
@@ -2801,6 +2995,23 @@ impl EnemyAi {
                     target_position: working_target_pos,
                 },
             );
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reconsider_deferred state={:?}/{:?} primary={} target_position=({:08x},{:08x},sector={:?},level={}) couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.current_state,
+                    self.base.current_substate,
+                    self.base.primary_target,
+                    working_target_pos.x.to_bits(),
+                    working_target_pos.y.to_bits(),
+                    working_target_pos.sector,
+                    working_target_pos.level,
+                    self.base.couldnt_reachpoint,
+                    self.base.already_on_point,
+                    self.base.outbox.reentrant.owner_work,
+                );
+            }
         }
     }
 
@@ -2810,12 +3021,44 @@ impl EnemyAi {
         avenger_wait_position: Option<Position>,
         ctx: &AiContext,
     ) {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=reconsider_resume_enter state={:?}/{:?} couldnt={} already={} target_position=({:08x},{:08x},sector={:?},level={}) avenger_wait={:?} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                target_position.x.to_bits(),
+                target_position.y.to_bits(),
+                target_position.sector,
+                target_position.level,
+                avenger_wait_position,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
         if !self.base.couldnt_reachpoint {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reconsider_resume_result result=route_ok state={:?}/{:?}",
+                    ctx.frame, self.base.me, self.base.current_state, self.base.current_substate,
+                );
+            }
             return;
         }
         let Some(wait_pos) = avenger_wait_position else {
             // Original returns without clearing mbCouldntReachpoint when the
             // reverse gate walk cannot find a blocking gate.
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=reconsider_resume_result result=failed_without_wait_position couldnt=true",
+                    ctx.frame, self.base.me,
+                );
+            }
             return;
         };
 
@@ -2831,6 +3074,58 @@ impl EnemyAi {
         // The wait position is only the reachable staging point. Original
         // keeps the actual avenger position for the later face/wait behavior.
         self.base.seek_position = target_position;
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=reconsider_resume_result result=avenger_fallback state={:?}/{:?} couldnt={} already={} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
+    }
+
+    /// Resume Original's `DECISION_OBSERVE` statement immediately after its
+    /// first synchronous `GoNear`. A successful/no-roof path registers the
+    /// decision once; the avenger-on-roof branch returns before that log.
+    pub(crate) fn resume_battle_observe_after_go_near(
+        &mut self,
+        target: HumanHandle,
+        target_position: Position,
+        avenger_wait_position: Option<Position>,
+        ctx: &AiContext,
+    ) {
+        assert_ne!(target, 0, "DECISION_OBSERVE continuation requires a target");
+        assert_eq!(
+            self.base.primary_target, target,
+            "DECISION_OBSERVE continuation target ownership changed"
+        );
+
+        self.base.set_emoticon(EmoticonType::XMark);
+        self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
+        self.base.launch_timer(50, ctx.frame);
+
+        if self.base.couldnt_reachpoint
+            && let Some(wait_pos) = avenger_wait_position
+        {
+            self.base.couldnt_reachpoint = false;
+            self.go_near(
+                AiState::Attacking,
+                Substate::AttackingRunToAvengerOnRoof,
+                wait_pos,
+                50,
+                GotoFlags::RUN,
+                ctx,
+            );
+            self.base.seek_position = target_position;
+            return;
+        }
+
+        self.base
+            .register_log_line(LogLineType::BattleDecision, Decision::Observe as u16);
     }
 
     /// Compute the approach point on `line_idx` closest to the victim.
@@ -2885,6 +3180,27 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} co={:?} stage=rider_attack_enter state={:?}/{:?} primary={} rider={} position=({:08x},{:08x},sector={:?},level={}) direction={} list_them={:?} fighters={}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.primary_target,
+                ctx.self_is_rider,
+                ctx.position.x.to_bits(),
+                ctx.position.y.to_bits(),
+                ctx.position.sector,
+                ctx.position.level,
+                ctx.direction,
+                self.list_them,
+                tick.nearby_fighters.len(),
+            );
+        }
         assert!(ctx.self_is_rider);
 
         let my_pos = ctx.position;
@@ -2896,11 +3212,13 @@ impl EnemyAi {
         let mut begin_charge = false;
         let mut ok = false;
 
-        // Find primary target position from fighter snapshots.
-        let target_pos = tick
-            .nearby_fighters
-            .iter()
-            .find(|f| f.handle == target && !f.is_friendly)
+        // Find primary target position from fighter snapshots. Original
+        // dereferences the raw `mpPrimaryTarget` pointer, which is not
+        // radius-limited, so fall back to the full fighter registry when the
+        // target is outside the 500-unit `nearby_fighters` window.
+        let target_pos = self
+            .find_fighter(target, tick)
+            .filter(|f| !f.is_friendly)
             .map(|f| f.position);
 
         if target != 0
@@ -2911,15 +3229,14 @@ impl EnemyAi {
             // explicit `is_tied` check separates the bound posture
             // (where the engine still has the entity active so
             // `is_able_to_fight` could return true).
-            let target_alive = tick
-                .nearby_fighters
-                .iter()
-                .find(|f| f.handle == target)
+            let target_alive = self
+                .find_fighter(target, tick)
                 .map(|f| f.is_able_to_fight && !f.is_tied)
                 .unwrap_or(false);
 
             if target_alive
                 && let Some((d, bc)) = self.get_good_rider_attack_destination(
+                    target,
                     my_pos,
                     my_dir,
                     tpos,
@@ -2940,16 +3257,18 @@ impl EnemyAi {
                 if *enemy == target {
                     continue;
                 }
-                let epos = match tick
-                    .nearby_fighters
-                    .iter()
-                    .find(|f| f.handle == *enemy && !f.is_friendly && f.is_able_to_fight)
-                    .map(|f| f.position)
-                {
+                // Original's fallback scan walks `mlistThem` and calls
+                // GetGoodRiderAttackDestination on every non-primary entry
+                // with no liveness or radius prefilter — the list is already
+                // maintained as the fight-capable enemy set. Resolve the
+                // entry through the full fighter registry so enemies beyond
+                // the 500-unit `nearby_fighters` window still get evaluated.
+                let epos = match self.find_fighter(*enemy, tick).map(|f| f.position) {
                     Some(p) => p,
                     None => continue,
                 };
                 if let Some((d, bc)) = self.get_good_rider_attack_destination(
+                    *enemy,
                     my_pos,
                     my_dir,
                     epos,
@@ -2977,6 +3296,17 @@ impl EnemyAi {
             "RiderCharge: destination search"
         );
         if !ok {
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=rider_attack_result result=no_destination final_primary={} couldnt={} already={} owner_work={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    self.base.primary_target,
+                    self.base.couldnt_reachpoint,
+                    self.base.already_on_point,
+                    self.base.outbox.reentrant.owner_work,
+                );
+            }
             return false;
         }
 
@@ -3020,6 +3350,25 @@ impl EnemyAi {
             );
         }
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=rider_attack_result result=accepted target={} destination=({:08x},{:08x},sector={:?},level={}) begin_charge={} state={:?}/{:?} couldnt={} already={} owner_work={:?}",
+                ctx.frame,
+                self.base.me,
+                target,
+                dest.x.to_bits(),
+                dest.y.to_bits(),
+                dest.sector,
+                dest.level,
+                begin_charge,
+                self.base.current_state,
+                self.base.current_substate,
+                self.base.couldnt_reachpoint,
+                self.base.already_on_point,
+                self.base.outbox.reentrant.owner_work,
+            );
+        }
+
         true
     }
 
@@ -3029,6 +3378,7 @@ impl EnemyAi {
     /// polygon sweeps across the enemy. Returns `(destination, begin_charge_anim)`.
     fn get_good_rider_attack_destination(
         &self,
+        candidate: HumanHandle,
         my_pos: Position,
         my_dir: u16,
         enemy_pos: Position,
@@ -3036,74 +3386,102 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         nearby_fighters: &[FighterSnapshot],
     ) -> Option<(Position, bool)> {
-        // Get vectors
-        let nose = sector_to_vector_iso(my_dir, ASPECT_RATIO);
-
-        // Vector to enemy (with Y stretched by inverse aspect ratio for isometric)
-        let me_to_enemy_sy = (
-            enemy_pos.x - my_pos.x,
-            (enemy_pos.y - my_pos.y) * INVERSE_ASPECT_RATIO,
-        );
-
-        // Is the enemy in front of us?
-        let nose_sy = (nose.0, nose.1 * INVERSE_ASPECT_RATIO);
-        if dot2(nose_sy, me_to_enemy_sy) < 0.0 {
-            return None;
+        let debug_decision_path = super::decision_path_debug_enabled()
+            && super::decision_path_debug_matches(ctx.frame, self.base.me);
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=rider_candidate_enter candidate={} me=({:08x},{:08x},level={}) enemy=({:08x},{:08x},level={}) direction={} move_box={:?}",
+                ctx.frame,
+                self.base.me,
+                candidate,
+                my_pos.x.to_bits(),
+                my_pos.y.to_bits(),
+                my_pos.level,
+                enemy_pos.x.to_bits(),
+                enemy_pos.y.to_bits(),
+                enemy_pos.level,
+                my_dir,
+                ctx.move_box,
+            );
         }
-
-        // Compute distance.
-        let sq_norm = me_to_enemy_sy.0 * me_to_enemy_sy.0 + me_to_enemy_sy.1 * me_to_enemy_sy.1;
-        let norm = sq_norm.sqrt();
-
-        if norm < Self::RIDER_CHARGE_LATERAL_DISTANCE {
-            return None;
-        }
-
-        // Compute cos(alpha) — angle we must ride to pass at lateral offset
-        let cos_alpha = (1.0 - Self::RIDER_CHARGE_SQR_LATERAL_DISTANCE / sq_norm).sqrt();
-
-        // Compute orthogonal vector (perpendicular to me→enemy)
-        // GetNormal(false) with AR=1 yields (mY, -mX) — 90° clockwise.
-        let ortho = (me_to_enemy_sy.1, -me_to_enemy_sy.0);
-        let ortho_len = (ortho.0 * ortho.0 + ortho.1 * ortho.1).sqrt();
-        if ortho_len < f32::EPSILON {
-            return None;
-        }
-        let ortho_norm = (ortho.0 / ortho_len, ortho.1 / ortho_len);
-        let ortho_scaled = (
-            ortho_norm.0 * Self::RIDER_CHARGE_LATERAL_DISTANCE / cos_alpha,
-            ortho_norm.1 * Self::RIDER_CHARGE_LATERAL_DISTANCE / cos_alpha,
-        );
-
-        // Compute vector to hit point.
-        let hit_point_sy = (
-            me_to_enemy_sy.0 + ortho_scaled.0,
-            me_to_enemy_sy.1 + ortho_scaled.1,
-        );
-        let hp_len = (hit_point_sy.0 * hit_point_sy.0 + hit_point_sy.1 * hit_point_sy.1).sqrt();
-        if hp_len < f32::EPSILON {
-            return None;
-        }
-        let hp_norm = (hit_point_sy.0 / hp_len, hit_point_sy.1 / hp_len);
-        let hp_scaled = (hp_norm.0 * cos_alpha * norm, hp_norm.1 * cos_alpha * norm);
-
-        // Reapply aspect ratio.
-        let me_to_hit = (hp_scaled.0, hp_scaled.1 * ASPECT_RATIO);
-
-        // Compute goal = hit point + LOOP_DISTANCE forward.
-        let hit_norm_len = (me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1).sqrt();
-        if hit_norm_len < f32::EPSILON {
-            return None;
-        }
-        let hit_dir = (me_to_hit.0 / hit_norm_len, me_to_hit.1 / hit_norm_len);
-        let goal_x = my_pos.x + me_to_hit.0 + hit_dir.0 * Self::RIDER_CHARGE_LOOP_DISTANCE;
-        let goal_y = my_pos.y + me_to_hit.1 + hit_dir.1 * Self::RIDER_CHARGE_LOOP_DISTANCE;
+        let geometry = match rider_charge_goal_geometry(
+            (my_pos.x, my_pos.y),
+            my_dir,
+            (enemy_pos.x, enemy_pos.y),
+        ) {
+            Ok(geometry) => geometry,
+            Err(reject) => {
+                if debug_decision_path {
+                    match reject {
+                        RiderChargeReject::Behind { forward_dot } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_behind forward_dot_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            forward_dot.to_bits(),
+                        ),
+                        RiderChargeReject::TooNear { norm, sq_norm } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_too_near norm_bits={:08x} sq_norm_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            norm.to_bits(),
+                            sq_norm.to_bits(),
+                        ),
+                        RiderChargeReject::ZeroOrthogonal { ortho_len } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_orthogonal ortho_len_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            ortho_len.to_bits(),
+                        ),
+                        RiderChargeReject::ZeroHitVector { hp_len } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_vector hp_len_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            hp_len.to_bits(),
+                        ),
+                        RiderChargeReject::ZeroHitNorm { hit_norm_len } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_norm hit_norm_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            hit_norm_len.to_bits(),
+                        ),
+                    }
+                }
+                return None;
+            }
+        };
+        let RiderChargeGeometry {
+            forward_dot,
+            sq_norm,
+            cos_alpha,
+            me_to_hit,
+            hit_dir,
+            hit_norm_len,
+            goal: (goal_x, goal_y),
+        } = geometry;
 
         // Check if straight movement from me to goal is clear.
         if let Some(g) = grid {
             let pt_me = crate::coordinates::MapPoint::new(my_pos.x, my_pos.y);
             let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
             if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
+                if debug_decision_path {
+                    eprintln!(
+                        "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_straight goal=({:08x},{:08x}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x}",
+                        ctx.frame,
+                        self.base.me,
+                        candidate,
+                        goal_x.to_bits(),
+                        goal_y.to_bits(),
+                        forward_dot.to_bits(),
+                        sq_norm.to_bits(),
+                        cos_alpha.to_bits(),
+                    );
+                }
                 return None;
             }
         }
@@ -3178,6 +3556,20 @@ impl EnemyAi {
                     }
                     let fp = geo::Point::new(f.position.x as f64, f.position.y as f64);
                     if poly.contains(&fp) {
+                        if debug_decision_path {
+                            eprintln!(
+                                "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_friendly friendly={} friendly_position=({:08x},{:08x},level={}) goal=({:08x},{:08x})",
+                                ctx.frame,
+                                self.base.me,
+                                candidate,
+                                f.handle,
+                                f.position.x.to_bits(),
+                                f.position.y.to_bits(),
+                                f.position.level,
+                                goal_x.to_bits(),
+                                goal_y.to_bits(),
+                            );
+                        }
                         return None;
                     }
                 }
@@ -3194,6 +3586,24 @@ impl EnemyAi {
         // Near enough to begin strike?
         let sq_hit_dist = me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1;
         let begin_charge_anim = sq_hit_dist < Self::RIDER_CHARGE_SQR_LOOP_DISTANCE;
+
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=accepted goal=({:08x},{:08x},sector={:?},level={}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x} sq_hit_bits={:08x} begin_charge={}",
+                ctx.frame,
+                self.base.me,
+                candidate,
+                destination.x.to_bits(),
+                destination.y.to_bits(),
+                destination.sector,
+                destination.level,
+                forward_dot.to_bits(),
+                sq_norm.to_bits(),
+                cos_alpha.to_bits(),
+                sq_hit_dist.to_bits(),
+                begin_charge_anim,
+            );
+        }
 
         Some((destination, begin_charge_anim))
     }
@@ -3369,9 +3779,165 @@ impl EnemyAi {
     }
 }
 
+/// Accepted output of [`rider_charge_goal_geometry`].
+pub(crate) struct RiderChargeGeometry {
+    pub forward_dot: f32,
+    pub sq_norm: f32,
+    pub cos_alpha: f32,
+    /// `vMeToHitPoint` — map-space vector from the rider to the hit point.
+    pub me_to_hit: (f32, f32),
+    /// `vMeToHitPointNormalized` — `me_to_hit / hit_norm_len`.
+    pub hit_dir: (f32, f32),
+    /// `fMeToHitPointNorm`.
+    pub hit_norm_len: f32,
+    /// `ptGoal` — charge destination past the hit point.
+    pub goal: (f32, f32),
+}
+
+/// Rejection reasons, carrying the value each debug print reports.
+pub(crate) enum RiderChargeReject {
+    Behind { forward_dot: f32 },
+    TooNear { norm: f32, sq_norm: f32 },
+    ZeroOrthogonal { ortho_len: f32 },
+    ZeroHitVector { hp_len: f32 },
+    ZeroHitNorm { hit_norm_len: f32 },
+}
+
+/// Pure geometry core of `RHArtificialMalignity::GetGoodRiderAttackDestination`
+/// (RHartificialmalignity.cpp:19796).
+///
+/// The charge goal feeds the movement order verbatim, so this math is
+/// save-observable to the last bit. Two shapes are easy to get wrong:
+///
+/// * The nose vector is `SetSector0to15( GetDirection() )` with the
+///   **default** aspect ratio `1.0f` (SBGeoVector2D.h:79) — the raw
+///   stretched-space table entry. Applying `ASPECT_RATIO` and then
+///   unapplying `INVERSE_ASPECT_RATIO` lands an ULP off and can flip the
+///   forward half-plane test for boundary vectors.
+/// * Both `SBGeoVector2D::operator*=( GEOTYPE k )` sites round their
+///   scalar **once** before touching the components (`Set(k*mX, k*mY)`,
+///   SBGeoVector2D.cpp:97-102): `k1 = RIDER_CHARGE_LATERAL_DISTANCE /
+///   fCosAlpha` (RHartificialmalignity.cpp:19871) and `k2 = fCosAlpha *
+///   fMeToEnemyNorm` (:19878). Distributing the multiply per component
+///   (`n.x * 40.0 / cos`) double-rounds differently; nicouzouf
+///   Savegame_047 Soldier51's frame-563 charge goal came out one ULP low
+///   in Y that way, which shifted the spliced running-order goal, its
+///   normalized increment, and every subsequent walk step.
+///
+/// The `f32::EPSILON` degenerate-input rejections have no Original
+/// counterpart (it would divide by zero and assert in debug); they are
+/// unreachable for the finite, >= 40-unit vectors that pass the earlier
+/// gates.
+pub(crate) fn rider_charge_goal_geometry(
+    my_pos: (f32, f32),
+    my_dir: u16,
+    enemy_pos: (f32, f32),
+) -> Result<RiderChargeGeometry, RiderChargeReject> {
+    // vMeToEnemyStretchedY = ptEnemy - ptMe;  .mY *= INVERSE_ASPECT_RATIO
+    let me_to_enemy_sy = (
+        enemy_pos.0 - my_pos.0,
+        (enemy_pos.1 - my_pos.1) * INVERSE_ASPECT_RATIO,
+    );
+
+    // vNoseVectorStretchedY.SetSector0to15( direction ) — default aspect 1.0.
+    let nose_sy = sector_to_vector_iso(my_dir, 1.0);
+
+    // Is the enemy before me?
+    let forward_dot = dot2(nose_sy, me_to_enemy_sy);
+    if forward_dot < 0.0 {
+        return Err(RiderChargeReject::Behind { forward_dot });
+    }
+
+    // fMeToEnemySquareNorm / fMeToEnemyNorm.
+    let sq_norm = me_to_enemy_sy.0 * me_to_enemy_sy.0 + me_to_enemy_sy.1 * me_to_enemy_sy.1;
+    let norm = sq_norm.sqrt();
+    if norm < EnemyAi::RIDER_CHARGE_LATERAL_DISTANCE {
+        return Err(RiderChargeReject::TooNear { norm, sq_norm });
+    }
+
+    // fCosAlpha = sqrt( 1.0f - RIDER_CHARGE_SQR_LATERAL_DISTANCE / fMeToEnemySquareNorm )
+    let cos_alpha = (1.0 - EnemyAi::RIDER_CHARGE_SQR_LATERAL_DISTANCE / sq_norm).sqrt();
+
+    // GetNormal( false ) with aspect 1.0 yields (mY, -mX); then Normalize().
+    let ortho = (me_to_enemy_sy.1, -me_to_enemy_sy.0);
+    let ortho_len = (ortho.0 * ortho.0 + ortho.1 * ortho.1).sqrt();
+    if ortho_len < f32::EPSILON {
+        return Err(RiderChargeReject::ZeroOrthogonal { ortho_len });
+    }
+    let ortho_norm = (ortho.0 / ortho_len, ortho.1 / ortho_len);
+    // operator*=: one rounded scalar, then k1 * component.
+    let k1 = EnemyAi::RIDER_CHARGE_LATERAL_DISTANCE / cos_alpha;
+    let ortho_scaled = (k1 * ortho_norm.0, k1 * ortho_norm.1);
+
+    // vMeToHitPointStretchedY = vMeToEnemyStretchedY + orthogonal; Normalize().
+    let hit_point_sy = (
+        me_to_enemy_sy.0 + ortho_scaled.0,
+        me_to_enemy_sy.1 + ortho_scaled.1,
+    );
+    let hp_len = (hit_point_sy.0 * hit_point_sy.0 + hit_point_sy.1 * hit_point_sy.1).sqrt();
+    if hp_len < f32::EPSILON {
+        return Err(RiderChargeReject::ZeroHitVector { hp_len });
+    }
+    let hp_norm = (hit_point_sy.0 / hp_len, hit_point_sy.1 / hp_len);
+    // operator*=: one rounded scalar, then k2 * component.
+    let k2 = cos_alpha * norm;
+    let hp_scaled = (k2 * hp_norm.0, k2 * hp_norm.1);
+
+    // vMeToHitPoint — reapply the aspect ratio to Y.
+    let me_to_hit = (hp_scaled.0, hp_scaled.1 * ASPECT_RATIO);
+
+    // vHitPointToGoal = GetNormalized() * RIDER_CHARGE_LOOP_DISTANCE;
+    // ptGoal = ptMe + vMeToHitPoint + vHitPointToGoal.
+    let hit_norm_len = (me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1).sqrt();
+    if hit_norm_len < f32::EPSILON {
+        return Err(RiderChargeReject::ZeroHitNorm { hit_norm_len });
+    }
+    let hit_dir = (me_to_hit.0 / hit_norm_len, me_to_hit.1 / hit_norm_len);
+    let goal = (
+        my_pos.0 + me_to_hit.0 + hit_dir.0 * EnemyAi::RIDER_CHARGE_LOOP_DISTANCE,
+        my_pos.1 + me_to_hit.1 + hit_dir.1 * EnemyAi::RIDER_CHARGE_LOOP_DISTANCE,
+    );
+
+    Ok(RiderChargeGeometry {
+        forward_dot,
+        sq_norm,
+        cos_alpha,
+        me_to_hit,
+        hit_dir,
+        hit_norm_len,
+        goal,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// nicouzouf Savegame_047 replay-004, frame 563: Soldier51 (a rider in
+    /// AttackingReactiontimeRunning) plans a charge approach against Pc76.
+    /// Inputs captured bit-exact from the parity replay. The Original's
+    /// `operator*=` sites round `RIDER_CHARGE_LATERAL_DISTANCE / fCosAlpha`
+    /// and `fCosAlpha * fMeToEnemyNorm` once before the component
+    /// multiplies; the per-component `n * 40.0 / cos` order previously
+    /// produced goal.y = 0x4425e9c8 (one ULP low), which propagated
+    /// through the stop-transition splice into the running order's goal,
+    /// its normalized increment, and the frame-564 movement_map drift.
+    #[test]
+    fn rider_charge_goal_matches_original_scalar_rounding() {
+        let me = (f32::from_bits(0x448f_3c66), f32::from_bits(0x43dc_a7ea));
+        let enemy = (f32::from_bits(0x443a_7ea7), f32::from_bits(0x4418_a6d2));
+
+        let geometry = match rider_charge_goal_geometry(me, 11, enemy) {
+            Ok(geometry) => geometry,
+            Err(_) => panic!("frame-563 fixture must produce a charge goal"),
+        };
+
+        assert_eq!(geometry.goal.0.to_bits(), 0x442f_2b23);
+        assert_eq!(geometry.goal.1.to_bits(), 0x4425_e9c9);
+        // The strike-zone / begin-charge inputs the caller consumes.
+        assert_eq!(geometry.me_to_hit.0.to_bits(), 0xc3ba_d233);
+        assert_eq!(geometry.hit_norm_len.to_bits(), 0x43d0_d28f);
+    }
 
     fn pc_view() -> crate::ai_entity_view::AiEntityView {
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {
@@ -4034,6 +4600,7 @@ mod tests {
                         .actor_effects_before_callback
                         .as_ref()
                         .and_then(|effects| effects.orders.first()),
+                    crate::ai::AiOwnerWork::ActorEffects(effects) => effects.orders.first(),
                     _ => None,
                 })
         });
@@ -4087,10 +4654,30 @@ mod tests {
                 _ => None,
             })
             .expect("running approach must queue its state-change callback");
-        let prefix = transition
-            .actor_effects_before_callback
-            .as_ref()
-            .expect("GoNear must be visible before the state-change callback");
+        assert!(transition.actor_effects_before_callback.is_none());
+        let work = &ai.base.outbox.reentrant.owner_work;
+        let actor_effects_index = work
+            .iter()
+            .position(|work| matches!(work, crate::ai::AiOwnerWork::ActorEffects(_)))
+            .expect("GoNear must be sealed as an actor-effects owner boundary");
+        let resume_index = work
+            .iter()
+            .position(|work| {
+                matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear { .. }
+                )
+            })
+            .expect("failed-route continuation must remain queued");
+        assert!(actor_effects_index < resume_index);
+        let state_change_index = work
+            .iter()
+            .position(|work| matches!(work, crate::ai::AiOwnerWork::StateChange(_)))
+            .expect("approach SetState remains queued after its route prefix");
+        assert!(actor_effects_index < state_change_index);
+        let crate::ai::AiOwnerWork::ActorEffects(prefix) = &work[actor_effects_index] else {
+            unreachable!()
+        };
         assert_eq!(prefix.orders.len(), 1);
         assert_eq!(
             prefix.orders[0].order_type,
@@ -4098,13 +4685,14 @@ mod tests {
         );
         assert_eq!(prefix.orders[0].tolerance, 50.0);
         assert!(ai.base.outbox.actor.orders.is_empty());
-        assert_eq!(
-            ai.base
-                .outbox
-                .actor
-                .set_attentive_mode
-                .map(|effect| effect.target),
-            Some(true)
+        assert!(
+            work[state_change_index + 1..resume_index]
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ActorEffects(effects)
+                        if effects.set_attentive_mode.map(|effect| effect.target) == Some(true)
+                ))
         );
         assert!(
             ai.base
@@ -4121,6 +4709,95 @@ mod tests {
                 } if *queued_target == target_position
             )
         }));
+    }
+
+    #[test]
+    fn reconsider_approach_same_substate_seals_live_move_without_stealing_old_callback() {
+        let mut ai = EnemyAi::new(180);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.primary_target = 198;
+        ai.base.think_recursion_depth = 1;
+        ai.sword_range = 50;
+        ai.base
+            .outbox
+            .reentrant
+            .owner_work
+            .push(crate::ai::AiOwnerWork::StateChange(
+                crate::ai::AiStateChangeNotification {
+                    outgoing_state: AiState::Attacking,
+                    outgoing_substate: Substate::AttackingTooProudToAttackApproach,
+                    incoming_state: AiState::Attacking,
+                    incoming_substate: Substate::AttackingRunningToEnemy,
+                    source: crate::ai::AiStateChangeSource::from_optional_human(198),
+                    actor_effects_before_callback: None,
+                },
+            ));
+
+        let target_position = Position {
+            x: 1731.4956,
+            y: 2379.8796,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            position: Position {
+                x: 1773.7925,
+                y: 2523.631,
+                ..Position::default()
+            },
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 198;
+        tick.primary_target_position = Some(target_position);
+
+        ai.reconsider_enemy_approach(true, 0.0, &ctx, &tick, None);
+
+        let work = &ai.base.outbox.reentrant.owner_work;
+        let crate::ai::AiOwnerWork::StateChange(old_notification) = &work[0] else {
+            panic!("older matching callback must retain its owner slot")
+        };
+        assert!(old_notification.actor_effects_before_callback.is_none());
+        assert_eq!(
+            work.iter()
+                .filter(|work| matches!(work, crate::ai::AiOwnerWork::StateChange(_)))
+                .count(),
+            1,
+            "same-substate SetState must not manufacture a callback"
+        );
+        let actor_effects_index = work
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(index, work)| match work {
+                crate::ai::AiOwnerWork::ActorEffects(effects)
+                    if effects.orders.iter().any(|order| {
+                        order.order_type == crate::order::OrderType::RunningUpright
+                            && order.tolerance == 50.0
+                    }) =>
+                {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .expect("same-substate GoNear must become real actor owner work");
+        let resume_index = work
+            .iter()
+            .position(|work| {
+                matches!(
+                    work,
+                    crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear { .. }
+                )
+            })
+            .expect("route completion must resume the source statement");
+        assert!(actor_effects_index < resume_index);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .reconsider_approach_completion_pending
+        );
     }
 
     #[test]
@@ -4308,7 +4985,7 @@ mod tests {
         // target can lie just outside that 500-unit decision snapshot.
         let tick = AiPerTickData::stub();
 
-        assert!(ai.execute_battle_decision(
+        assert!(!ai.execute_battle_decision(
             &sim,
             Decision::Observe,
             Substate::AttackingReactiontimeRunning,
@@ -4320,26 +4997,32 @@ mod tests {
             None,
         ));
 
-        let prefix = ai
-            .base
-            .outbox
-            .reentrant
-            .owner_work
-            .iter()
-            .find_map(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => {
-                    notification.actor_effects_before_callback.as_ref()
-                }
-                _ => None,
-            })
-            .expect("Observe SetState must capture StopAll and GoNear");
-        assert!(prefix.halt);
-        assert_eq!(prefix.orders.len(), 1);
+        let [
+            crate::ai::AiOwnerWork::ActorEffects(route),
+            crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                target,
+                target_position: queued_target_position,
+            },
+        ] = ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!(
+                "routed Observe must settle movement before resuming its source-ordered tail: {:?}",
+                ai.base.outbox.reentrant.owner_work
+            );
+        };
+        assert!(route.halt);
+        assert_eq!(route.orders.len(), 1);
         assert_eq!(
-            prefix.orders[0].order_type,
+            route.orders[0].order_type,
             crate::order::OrderType::WalkingUpright
         );
+        assert_eq!(*target, 198);
+        assert_eq!(*queued_target_position, target_position);
+        assert!(ai.base.outbox.reentrant.battle_observe_completion_pending);
         assert!(ai.base.outbox.actor.orders.is_empty());
+        // `battle_observe_route_settles_before_source_ordered_tail` exercises
+        // the engine drain that consumes this continuation and performs the
+        // following SetState callback at Original's synchronous boundary.
     }
 
     fn proud_decision_speech(

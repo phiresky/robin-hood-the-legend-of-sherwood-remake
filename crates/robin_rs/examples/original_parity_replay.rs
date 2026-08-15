@@ -1653,14 +1653,22 @@ struct TraceFailedPathRequest {
     time: u32,
 }
 
+fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
+    match schema {
+        12 | 14 => frame.campaign.is_none() && frame.engine_state.is_none(),
+        13 => frame.campaign.is_some() && frame.engine_state.is_some(),
+        _ => unreachable!("trace schema was validated before frame parsing"),
+    }
+}
+
 fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     match schema {
         12 | 14 => assert!(
-            frame.campaign.is_none() && frame.engine_state.is_none(),
+            trace_frame_envelope_matches(schema, frame),
             "schema-{schema} frame unexpectedly contains schema-13 authoritative state"
         ),
         13 => assert!(
-            frame.campaign.is_some() && frame.engine_state.is_some(),
+            trace_frame_envelope_matches(schema, frame),
             "schema-13 frame is missing campaign or engine_state"
         ),
         _ => unreachable!("trace schema was validated before frame parsing"),
@@ -2543,6 +2551,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }
         print_debug_element("after", &engine, &frame);
         map.extend_runtime_entities(&engine, &frame);
+        record_arrow_publication_before_compare(&engine, &frame, map);
         if debug_stage_timing {
             eprintln!(
                 "parity stage: extended runtime identity through frame {}",
@@ -4698,6 +4707,79 @@ fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFrame) {
         actor.execute_order_initialising,
         actor.last_execute_order_id,
     );
+}
+
+/// Opt-in lifecycle diagnostic paired with Original's
+/// `record_frame_pre_serialize` hook. It observes, but never changes, the
+/// projectile state that the parity comparison is about to publish.
+fn record_arrow_publication_before_compare(
+    engine: &Engine,
+    frame: &TraceFrame,
+    entity_map: &EntityMap,
+) {
+    if std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").is_none() {
+        return;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for arrow publication diagnostic: {error}")
+            })
+        })
+    };
+    if parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")
+        .is_some_and(|value| u64::from(value) != frame.frame_after)
+    {
+        return;
+    }
+    let projectile_filter =
+        parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER");
+    let shooter_filter = parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER");
+
+    for original in frame.elements.iter().filter(|element| {
+        element.kind == TraceEntityKind::Projectile
+            && projectile_filter.is_none_or(|value| value == element.creation_order)
+    }) {
+        let id = entity_map.translate(original.entity_id);
+        let entity = engine
+            .get_entity(id)
+            .unwrap_or_else(|| panic!("mapped diagnostic projectile {id:?} is missing"));
+        let Entity::Projectile(arrow) = entity else {
+            panic!("mapped diagnostic projectile {id:?} changed entity kind");
+        };
+        if arrow.object.object_type != robin_engine::element_kinds::ObjectType::Arrow {
+            continue;
+        }
+        let shooter = arrow
+            .projectile
+            .shooter
+            .expect("diagnostic arrow is missing its required shooter");
+        let shooter_creation_order = engine.original_creation_order(shooter);
+        if shooter_filter.is_some_and(|value| value != shooter_creation_order) {
+            continue;
+        }
+        let sprite = &arrow.element.sprite;
+        let position = sprite.position_iface.get_position();
+        eprintln!(
+            "PARITY_ARROW_PUBLICATION_RUST stage=record_frame_pre_compare frame_after={} \
+             projectile_creation_order={} shooter_creation_order={} active={} flying={} \
+             falling={} trajectory_size={} row={} frame={} frame_count={} \
+             position_bits=[{:08x},{:08x},{:08x}]",
+            frame.frame_after,
+            original.creation_order,
+            shooter_creation_order,
+            arrow.element.active,
+            arrow.projectile.flying,
+            arrow.projectile.falling,
+            arrow.projectile.trajectory.len(),
+            sprite.current_row,
+            sprite.current_frame,
+            sprite.frame_count,
+            position.x.to_bits(),
+            position.y.to_bits(),
+            position.z.to_bits(),
+        );
+    }
 }
 
 fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) {
@@ -7208,10 +7290,8 @@ mod tests {
     #[test]
     fn schema_twelve_and_thirteen_frame_envelopes_are_distinct() {
         let schema_twelve: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
-        validate_trace_frame_envelope(12, &schema_twelve);
-        assert!(
-            std::panic::catch_unwind(|| validate_trace_frame_envelope(13, &schema_twelve)).is_err()
-        );
+        assert!(trace_frame_envelope_matches(12, &schema_twelve));
+        assert!(!trace_frame_envelope_matches(13, &schema_twelve));
 
         let mut schema_thirteen_json = minimal_frame_json();
         schema_thirteen_json["campaign"] = serde_json::json!({
@@ -7323,11 +7403,8 @@ mod tests {
             "failed_path_requests": []
         });
         let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();
-        validate_trace_frame_envelope(13, &schema_thirteen);
-        assert!(
-            std::panic::catch_unwind(|| validate_trace_frame_envelope(12, &schema_thirteen))
-                .is_err()
-        );
+        assert!(trace_frame_envelope_matches(13, &schema_thirteen));
+        assert!(!trace_frame_envelope_matches(12, &schema_thirteen));
     }
 
     #[test]

@@ -6,6 +6,31 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
+#[derive(Clone, Copy)]
+struct ThinkStimulusDebugFilter {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn think_stimulus_debug_filter() -> Option<ThinkStimulusDebugFilter> {
+    static FILTER: std::sync::OnceLock<Option<ThinkStimulusDebugFilter>> =
+        std::sync::OnceLock::new();
+    *FILTER.get_or_init(|| {
+        std::env::var_os("PARITY_DEBUG_THINK_STIMULUS")?;
+        let parse = |name: &str| {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| panic!("{name} is required for THINK_STIMULUS diagnostic"));
+            value
+                .parse::<u32>()
+                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
+        };
+        Some(ThinkStimulusDebugFilter {
+            frame: parse("PARITY_DEBUG_THINK_STIMULUS_FRAME"),
+            creation_order: parse("PARITY_DEBUG_THINK_STIMULUS_CREATION_ORDER"),
+        })
+    })
+}
+
 #[cfg(test)]
 std::thread_local! {
     static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -642,13 +667,25 @@ impl EngineInner {
                     level: data.layer(),
                 };
                 let current_direction = entity.position_iface().get_direction().as_u8() as u16;
+                // The AssignPath native routes through Original's
+                // `AssignNewPatrolPath(RHHikingPath*)` pointer overload,
+                // whose valid-path arm — unlike the waypoint-macro index
+                // overload — does not clear `mbSpecialAction`. `ScriptWay`
+                // carries that distinction.
+                //
+                // todo: the pointer overload's NULL / (void*)-1 arms write
+                // `mbLikesToSitAround` / `mbSpecialAction` only *after* the
+                // synchronous Think(EVENT_RETURN_TO_DUTY), so that Think
+                // observes the pre-assignment flags. Rust defers the think to
+                // the owner drain, which sees the post-assignment flags
+                // instead; no known trace exercises the difference yet.
                 let assignment = if way == 0 {
                     crate::ai::PatrolAssignment::ClearPath
                 } else if way == -1 {
                     crate::ai::PatrolAssignment::ClearPathSitAround
                 } else {
                     crate::ai::PathId::new(way as u16)
-                        .map(crate::ai::PatrolAssignment::Index)
+                        .map(crate::ai::PatrolAssignment::ScriptWay)
                         .unwrap_or(crate::ai::PatrolAssignment::ClearPath)
                 };
                 let ai = self
@@ -2959,8 +2996,84 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) -> bool {
+        // Original StartThink runs FilterAIEvent before the Think body
+        // (`RHArtificialintelligence.cpp:1258`). Keep this diagnostic at that
+        // exact engine boundary. The master/frame gates deliberately precede
+        // creation-order and AI-state reads so the disabled path is inert.
+        let think_debug = think_stimulus_debug_filter().is_some_and(|filter| {
+            self.control.frame_counter == filter.frame
+                && self.world.original_creation_order(entity_id) == filter.creation_order
+        });
+        let debug_snapshot = |engine: &Self, phase: &str| {
+            if !think_debug {
+                return;
+            }
+            let rng_cursor = engine.control.rng.original_replay_cursor();
+            let ai = engine
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::ai_controller)
+                .unwrap_or_else(|| {
+                    panic!("THINK_STIMULUS owner {} lost its AI", entity_id.index())
+                });
+            let source = match stimulus.info {
+                crate::ai::StimulusInfo::Human(human) => Some(human),
+                _ => None,
+            };
+            let expected_class = matches!(
+                stimulus.stimulus_type,
+                crate::ai::StimulusType::EventReachPoint
+                    | crate::ai::StimulusType::EventDone
+                    | crate::ai::StimulusType::EventTimer
+                    | crate::ai::StimulusType::EventSyncCharly
+                    | crate::ai::StimulusType::CallCoordinate
+                    | crate::ai::StimulusType::CallInstruction
+                    | crate::ai::StimulusType::CallReport
+                    | crate::ai::StimulusType::EventGaloppLoopEnd
+                    | crate::ai::StimulusType::EventMyTalk0
+                    | crate::ai::StimulusType::EventMyTalk1
+                    | crate::ai::StimulusType::EventMyTalk2
+                    | crate::ai::StimulusType::EventMyTalk3
+                    | crate::ai::StimulusType::CallYourTalk0
+                    | crate::ai::StimulusType::CallYourTalk1
+                    | crate::ai::StimulusType::CallYourTalk2
+                    | crate::ai::StimulusType::CallYourTalk3
+            );
+            eprintln!(
+                "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={} context_antagonist={:?} ai_antagonist={} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} self_stimuli={:?} owner_work={:?} begin_panic={} rng_cursor={rng_cursor:?}",
+                engine.control.frame_counter,
+                entity_id.index(),
+                engine.world.original_creation_order(entity_id),
+                stimulus.stimulus_type,
+                crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type).unwrap_or(-2),
+                expected_class,
+                stimulus.owner,
+                ctx.antagonist,
+                ai.antagonist,
+                ai.current_state,
+                ai.current_substate,
+                ai.locks_flag_field,
+                ai.script_locked,
+                ai.think_recursion_depth,
+                ai.stimulus_queue,
+                ai.outbox.reentrant.self_stimuli,
+                ai.outbox.reentrant.owner_work,
+                ai.outbox.actor.begin_panic.is_some(),
+            );
+        };
+        debug_snapshot(self, "before_filter");
         let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
-        if !self.filter_stimulus(sim, assets, handle, stimulus) {
+        let filter_allowed = self.filter_stimulus(sim, assets, handle, stimulus);
+        debug_snapshot(
+            self,
+            if filter_allowed {
+                "after_filter_allowed"
+            } else {
+                "after_filter_rejected"
+            },
+        );
+        if !filter_allowed {
             return false;
         }
         // Original `FilterAIEvent` returns synchronously before the virtual
@@ -3076,6 +3189,14 @@ impl EngineInner {
                 return false;
             }
         };
+        debug_snapshot(
+            self,
+            if handled {
+                "after_think_handled"
+            } else {
+                "after_think_unhandled"
+            },
+        );
         let after_script_suspended = stimulus.stimulus_type
             == crate::ai::StimulusType::EventAfterScriptGoOn
             && self
@@ -3255,33 +3376,11 @@ impl EngineInner {
         handled
     }
 
-    fn dispatch_state_change_attentive_mode(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
-        owner: crate::element::EntityId,
-        request: Option<crate::ai::AttentiveModeEffect>,
-    ) {
-        let Some(request) = request else {
-            return;
-        };
-        // Original SetAttentiveMode launches the sequence and immediately
-        // writes mbWillBeAttentive, but ordinary attentive commands only
-        // register with RHSequenceManager. Their Go/Instruct happens in the
-        // manager Hourglass after every actor's Hourglass has completed
-        // (RHelementactorsoldier.cpp:2082-2114,
-        // RHsequence.cpp:235-287, RHengine.cpp:3737-3746).
-        self.set_soldier_attentive_mode(owner, request.target, request.fast_officer_variant);
-        if request.forget_after
-            && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(owner)
-            && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
-        {
-            // ForgetAttentiveMode is the statement immediately after
-            // SetAttentiveMode. It resets the flags after registration while
-            // preserving the still-deferred launched element.
-            enemy.attentive = false;
-            enemy.will_be_attentive = false;
-        }
+    pub(super) fn debug_think_stimulus_matches(&self, owner: crate::element::EntityId) -> bool {
+        think_stimulus_debug_filter().is_some_and(|filter| {
+            self.control.frame_counter == filter.frame
+                && self.world.original_creation_order(owner) == filter.creation_order
+        })
     }
 
     /// Drain one AI owner's queued `SetState` callbacks in FIFO order.
@@ -3467,6 +3566,116 @@ impl EngineInner {
                     enemy.base.outbox.reentrant.look_for_help_completion_pending = false;
                     enemy.resume_battle_look_for_help_after_alert_officer(
                         sim, ai_global, &ctx, &tick,
+                    );
+                    continue;
+                }
+                crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer { center, radius } => {
+                    // Original resumes DeadBodyAlert immediately after
+                    // AlertOfficer's synchronous GoNear and consumes its
+                    // route result before EndThink may surface an event.
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let tick =
+                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!("dead-body-alert owner {} disappeared", owner.index())
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let ai_global = &mut self.ai.global;
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!("dead-body-alert owner {} lost Enemy AI", owner.index())
+                        });
+                    enemy
+                        .base
+                        .outbox
+                        .reentrant
+                        .dead_body_alert_completion_pending = false;
+                    enemy.resume_dead_body_alert_after_alert_officer(
+                        sim, center, radius, ai_global, &ctx, &tick,
+                    );
+                    continue;
+                }
+                crate::ai::AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
+                    center,
+                    check_door_path,
+                    failure,
+                } => {
+                    // Original AlertSoldier observes GoNear's route result in
+                    // the same call, retries once with CHECK_DOOR_PATH, and
+                    // returns that final verdict to its caller. Rebuild the
+                    // live context after path construction, but consume the
+                    // failure latch here rather than emitting an independent
+                    // EVENT_COULDNT_REACHPOINT.
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!("AlertSoldier owner {} disappeared", owner.index())
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let doors = self.script_domains.interactables.doors.as_slice();
+                    let friendly = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::friendly_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!("AlertSoldier owner {} lost Friendly AI", owner.index())
+                        });
+                    friendly.resume_alert_soldier_after_go_near(
+                        sim,
+                        center,
+                        check_door_path,
+                        failure,
+                        &ctx,
+                        Some(&self.world.fast_grid),
+                        Some(doors),
                     );
                     continue;
                 }
@@ -3785,10 +3994,110 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                    target,
+                    target_position,
+                } => {
+                    let couldnt_reachpoint = self
+                        .world
+                        .entities
+                        .get(owner)
+                        .and_then(Entity::enemy_ai)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "battle-observe continuation owner {} lost Enemy AI",
+                                owner.index()
+                            )
+                        })
+                        .base
+                        .couldnt_reachpoint;
+                    let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+                        panic!(
+                            "battle-observe continuation owner {} has stale target {}",
+                            owner.index(),
+                            target
+                        )
+                    });
+                    let avenger_wait_position = if couldnt_reachpoint {
+                        assert!(
+                            self.scripts.mission.is_some(),
+                            "battle-observe roof recovery requires an installed mission script"
+                        );
+                        crate::engine::ai::precompute_avenger_on_roof_wait_position(
+                            &self.world.entities,
+                            self.script_domains.interactables.doors.as_slice(),
+                            &self.orders.sequence_manager,
+                            owner,
+                            target_id,
+                            &|sector| self.building_sector_is_authorized(sector),
+                            &|sector| self.get_sector_lift_type(sector),
+                        )
+                    } else {
+                        None
+                    };
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!(
+                                "battle-observe continuation owner {} disappeared",
+                                owner.index()
+                            )
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "battle-observe continuation owner {} lost Enemy AI",
+                                owner.index()
+                            )
+                        });
+                    enemy
+                        .base
+                        .outbox
+                        .reentrant
+                        .battle_observe_completion_pending = false;
+                    enemy.resume_battle_observe_after_go_near(
+                        target,
+                        target_position,
+                        avenger_wait_position,
+                        &ctx,
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
                     target,
                     target_position,
                 } => {
+                    let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+                        && crate::ai_enemy::decision_path_debug_matches_raw(
+                            self.control.frame_counter,
+                            owner.index(),
+                        );
                     let couldnt_reachpoint = self
                         .world
                         .entities
@@ -3802,6 +4111,29 @@ impl EngineInner {
                         })
                         .base
                         .couldnt_reachpoint;
+                    if debug_decision_path {
+                        let owner_work = self
+                            .world
+                            .entities
+                            .get(owner)
+                            .and_then(Entity::ai_controller)
+                            .map(|ai| format!("{:?}", ai.outbox.reentrant.owner_work))
+                            .unwrap_or_else(|| {
+                                panic!("diagnostic owner {} lost AI", owner.index())
+                            });
+                        eprintln!(
+                            "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider target={} target_position=({:08x},{:08x},sector={:?},level={}) couldnt={} remaining_owner_work={}",
+                            self.control.frame_counter,
+                            owner.index(),
+                            target,
+                            target_position.x.to_bits(),
+                            target_position.y.to_bits(),
+                            target_position.sector,
+                            target_position.level,
+                            couldnt_reachpoint,
+                            owner_work,
+                        );
+                    }
                     let avenger_wait_position = if couldnt_reachpoint {
                         assert!(
                             self.scripts.mission.is_some(),
@@ -3826,6 +4158,13 @@ impl EngineInner {
                     } else {
                         None
                     };
+                    if debug_decision_path {
+                        eprintln!(
+                            "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider_wait_position value={avenger_wait_position:?}",
+                            self.control.frame_counter,
+                            owner.index(),
+                        );
+                    }
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
@@ -3924,6 +4263,23 @@ impl EngineInner {
                 }
                 crate::ai::AiOwnerWork::InformResurrection => {
                     self.broadcast_resurrection(owner);
+                    continue;
+                }
+                crate::ai::AiOwnerWork::TooProudOverviewFinallyFightRemark => {
+                    // Original reads `mCurrentSubstate` here, after
+                    // `BattleDecisions()` and every continuation it queued
+                    // have committed.
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "too-proud overview owner {} lost its Enemy AI before the finally-fight remark",
+                                owner.index()
+                            )
+                        })
+                        .too_proud_overview_finally_fight_remark();
                     continue;
                 }
                 crate::ai::AiOwnerWork::LaunchTimer {
@@ -4052,7 +4408,7 @@ impl EngineInner {
                 is_scripted,
                 caller_tail_state,
                 later_work,
-                mut later_actor_effects,
+                later_actor_effects,
                 later_self_stimuli,
                 later_cross_npc_actions,
             ) = {
@@ -4120,10 +4476,6 @@ impl EngineInner {
                     later_cross_npc_actions,
                 )
             };
-
-            let state_change_attentive = later_actor_effects
-                .as_mut()
-                .and_then(|effects| effects.set_attentive_mode.take());
 
             let mut caller_tail_completion_flags = None;
 
@@ -4217,12 +4569,6 @@ impl EngineInner {
                 // direct state mutation after SetState returned (Original's
                 // one-point macro completion does this before re-entering
                 // EVENT_REACHPOINT).
-                self.dispatch_state_change_attentive_mode(
-                    sim,
-                    assets,
-                    owner,
-                    state_change_attentive,
-                );
                 let ai = self
                     .world
                     .entities
@@ -4396,8 +4742,6 @@ impl EngineInner {
                 ai.set_ai_state(caller_tail_state.0);
                 ai.current_substate = caller_tail_state.1;
             }
-
-            self.dispatch_state_change_attentive_mode(sim, assets, owner, state_change_attentive);
 
             let ai = self
                 .world

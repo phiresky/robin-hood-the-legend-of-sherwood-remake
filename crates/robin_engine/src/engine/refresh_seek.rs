@@ -530,7 +530,9 @@ impl crate::engine::EngineInner {
                     "entity-target RefreshSeek owner {owner:?} has no positive base seek distance"
                 )
             });
-        if self.try_handle_same_sector_actor_seek_wait(owner, seq_id, elem_idx, target, flags) {
+        if self.try_handle_same_sector_actor_seek_wait(
+            sim, assets, owner, seq_id, elem_idx, target, flags,
+        ) {
             return;
         }
 
@@ -608,6 +610,8 @@ impl crate::engine::EngineInner {
     /// re-resolution.
     pub(super) fn try_handle_same_sector_actor_seek_wait(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -640,7 +644,7 @@ impl crate::engine::EngineInner {
                 && let Some(owner_e) = self.get_entity_mut(owner)
             {
                 owner_e.position_iface_mut().set_map_position(pos);
-                self.start_post_seek_sequence(owner, Some((seq_id, elem_idx)));
+                self.start_post_seek_sequence(sim, assets, owner, Some((seq_id, elem_idx)));
             }
             return true;
         }
@@ -817,7 +821,7 @@ impl crate::engine::EngineInner {
             // loses it when the next RefreshSeek interrupts that route.
             Vec::new(),
             false,
-            true,
+            false,
         );
 
         tracing::trace!(
@@ -972,7 +976,7 @@ impl crate::engine::EngineInner {
             // keeps it.
             Vec::new(),
             false,
-            true,
+            false,
         );
 
         tracing::trace!(
@@ -1067,6 +1071,178 @@ mod tests {
         soldier.element.set_position(position);
         soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
         Entity::Soldier(soldier)
+    }
+
+    fn minimal_mission() -> crate::engine::MissionScript {
+        use crate::scb::{ClassEntry, Function, SCB_VERSION, ScbFile};
+        use crate::vm::{Opcode, Quad};
+
+        crate::engine::MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![ClassEntry {
+                source_file: "refresh_seek_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: vec![Function {
+                    name: "Initialize".into(),
+                    address: 0,
+                    num_parameters: 0,
+                    size_of_return_value: 0,
+                    size_of_parameters: 0,
+                    size_of_volatile: 0,
+                    size_of_temporary: 0,
+                }],
+                quads: vec![
+                    Quad {
+                        operation: Opcode::BeginFunction as u8,
+                        operands: [0; 8],
+                    },
+                    Quad {
+                        operation: Opcode::Return as u8,
+                        operands: [0; 8],
+                    },
+                ],
+            }],
+        })
+        .expect("minimal mission script")
+    }
+
+    #[test]
+    fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
+        use crate::gate::Door;
+        use crate::sector::SectorNumber;
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = crate::engine::EngineInner::new();
+        engine.scripts.mission = Some(minimal_mission());
+        engine.script_domains.interactables.doors = vec![Door {
+            point_out: MapPoint::new(20.0, 0.0),
+            point_in: MapPoint::new(30.0, 0.0),
+            sector_out: SectorNumber::new(1),
+            sector_in: SectorNumber::new(2),
+            ..Door::default()
+        }];
+
+        let mut owner_entity = test_pc_at(0.0, 0.0, 1);
+        owner_entity.element_data_mut().posture = Posture::HelpingToClimb;
+        owner_entity
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        let owner = engine.add_entity(owner_entity);
+        let mut target_entity = test_pc_at(50.0, 0.0, 2);
+        target_entity
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                46.0, -4.0, 54.0, 4.0,
+            ));
+        let target = engine.add_entity(target_entity);
+
+        let mut seek =
+            SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+        if let SequenceElementData::Movement {
+            element,
+            flags,
+            tolerance,
+            ..
+        } = &mut seek.data
+        {
+            *element = Some(target);
+            *flags = MoveFlags::SEEK;
+            *tolerance = 10.0;
+        }
+        let seek_id = engine.orders.sequence_manager.launch_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(seek_id, 0);
+
+        assert!(engine.try_dispatch_cross_sector_entity_seek(
+            &sim,
+            &LevelAssets::new(),
+            owner,
+            seek_id,
+            0,
+            target,
+            OrderType::WalkingUpright,
+            MoveFlags::SEEK,
+            10.0,
+        ));
+
+        let replacement = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .find(|sequence| {
+                sequence.elements.iter().any(|element| {
+                    element.owner == Some(owner) && element.command == Command::PassDoor
+                })
+            })
+            .expect("cross-sector RefreshSeek must build a gate route");
+        assert!(
+            replacement
+                .elements
+                .iter()
+                .all(|element| element.command != Command::EnterHelpingClimb),
+            "Original RefreshSeek calls AppendMoveToSequence directly and does not append PC posture recovery"
+        );
+    }
+
+    #[test]
+    fn ordinary_cross_sector_pc_move_still_appends_posture_recovery() {
+        use crate::gate::{Door, DoorIndex, GatePathStep};
+        use crate::sector::SectorNumber;
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = crate::engine::EngineInner::new();
+        engine.scripts.mission = Some(minimal_mission());
+        engine.script_domains.interactables.doors = vec![Door {
+            point_out: MapPoint::new(20.0, 0.0),
+            point_in: MapPoint::new(30.0, 0.0),
+            sector_out: SectorNumber::new(1),
+            sector_in: SectorNumber::new(2),
+            ..Door::default()
+        }];
+        let mut owner_entity = test_pc_at(0.0, 0.0, 1);
+        owner_entity.element_data_mut().posture = Posture::HelpingToClimb;
+        let owner = engine.add_entity(owner_entity);
+
+        let sequence_id = engine
+            .build_gate_movement_sequence(
+                &sim,
+                owner,
+                vec![GatePathStep {
+                    door_index: DoorIndex(0),
+                    direct: true,
+                }],
+                GoalShape::Point {
+                    point: MapPoint::new(50.0, 0.0),
+                    tolerance: 0.0,
+                },
+                0,
+                OrderType::WalkingUpright,
+                true,
+                1.0,
+                MoveFlags::empty(),
+                Vec::new(),
+                Vec::new(),
+                true,
+                true,
+            )
+            .expect("ordinary cross-sector move route");
+        let route = engine
+            .orders
+            .sequence_manager
+            .get_sequence(sequence_id)
+            .expect("ordinary route remains queued");
+        assert!(
+            route
+                .elements
+                .iter()
+                .any(|element| element.command == Command::EnterHelpingClimb)
+        );
     }
 
     fn resolve_stop_npc_seek_with_target_at(

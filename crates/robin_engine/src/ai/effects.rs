@@ -112,6 +112,12 @@ pub struct AiReentrantOutbox {
     /// latch for the typed owner continuation instead of translating it into
     /// an independent `EVENT_COULDNT_REACHPOINT`.
     pub reconsider_approach_completion_pending: bool,
+    /// `DECISION_OBSERVE` has issued its synchronous `GoNear`, but the
+    /// following ApproachToObserve state write and avenger-on-roof fallback
+    /// have not run yet. Retain a deferred route failure for that exact owner
+    /// continuation instead of surfacing an early EventCouldntReachPoint.
+    #[serde(default)]
+    pub battle_observe_completion_pending: bool,
     /// `AlertOfficer` has issued its synchronous `GoNear`, but the enclosing
     /// `DECISION_LOOK_4_HELP` statement has not inspected the resulting
     /// `mbCouldntReachpoint` latch yet. Original performs that test before
@@ -119,6 +125,17 @@ pub struct AiReentrantOutbox {
     /// failure must not become an independent `EVENT_COULDNT_REACHPOINT`.
     pub look_for_help_completion_pending: bool,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
+    /// `FriendlyAi::AlertSoldier` is waiting for its synchronous `GoNear`
+    /// path result. The typed continuation consumes route failure and retries
+    /// with the door-path flag before the enclosing Think may see it.
+    #[serde(default)]
+    pub alert_soldier_completion_pending: bool,
+    /// `DeadBodyAlert` has issued `AlertOfficer`'s synchronous `GoNear`, but
+    /// the enclosing soldier fallback has not inspected the route result.
+    /// Retain route failure for that typed continuation instead of surfacing
+    /// an independent `EVENT_COULDNT_REACHPOINT`.
+    #[serde(default)]
+    pub dead_body_alert_completion_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -191,6 +208,13 @@ pub enum AiOwnerWork {
         target: HumanHandle,
         target_position: Position,
     },
+    /// Continue `DECISION_OBSERVE` after its first `GoNear` has synchronously
+    /// succeeded or set `mbCouldntReachpoint`. The continuation owns both the
+    /// ordinary battle-decision log and the roof-fallback early return.
+    ResumeBattleObserveAfterGoNear {
+        target: HumanHandle,
+        target_position: Position,
+    },
     Speech(AiSpeechAttempt),
     RestoreDetectableObjects {
         knocked_out_in_money_fight: bool,
@@ -222,6 +246,30 @@ pub enum AiOwnerWork {
     ConsiderToBeginParade {
         attacker: HumanHandle,
     },
+    /// Resume `FriendlyAi::AlertSoldier` after synchronous route construction.
+    /// Appended to preserve serialized discriminants of existing work.
+    ResumeFriendlyAlertSoldierAfterGoNear {
+        center: Position,
+        check_door_path: bool,
+        failure: crate::ai_friendly::AlertSoldierFailureContinuation,
+    },
+    /// Continue the soldier `DeadBodyAlert` statement after `AlertOfficer`'s
+    /// synchronous `GoNear` has settled. Appended to preserve existing
+    /// serialized discriminants.
+    ResumeDeadBodyAlertAfterAlertOfficer {
+        center: Position,
+        radius: u16,
+    },
+    /// Evaluate the `SUBSTATE_ATTACKING_TOO_PROUD_TO_ATTACK_OVERVIEW`
+    /// `EVENT_TIMER` remark test that follows `BattleDecisions()`
+    /// (`RHartificialmalignity.cpp:4231-4245`). Original reads
+    /// `mCurrentSubstate` only after the whole synchronous decision has
+    /// returned, including `ReconsiderEnemyApproach`'s `GoNear` result and
+    /// its avenger-on-the-roof fallback, which both leave the
+    /// any-swordfight set. Rust runs those on this same owner FIFO, so the
+    /// test has to be taken from this position rather than inline.
+    /// Appended to preserve existing serialized discriminants.
+    TooProudOverviewFinallyFightRemark,
 }
 
 #[derive(

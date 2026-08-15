@@ -1727,8 +1727,19 @@ pub enum PatrolAssignment {
     /// Sentinel `-2` / `(void*)-1` — drop the path but set
     /// `likes_to_sit_around = true`.
     ClearPathSitAround,
-    /// Valid-index branch.
+    /// Valid-index branch of `AssignNewPatrolPath(UWORD)` (waypoint-macro
+    /// opcodes `CMD_CHANGE_WAY` / `CMD_STAY_HERE`). Clears both
+    /// `likes_to_sit_around` and `special_action`.
     Index(PathId),
+    /// Valid-pointer branch of `AssignNewPatrolPath(RHHikingPath*)` — the
+    /// `AssignPath` script native (RHScript.cpp:5254). Unlike the index
+    /// overload, Original's pointer overload
+    /// (RHartificialintelligence.cpp:5764-5769) only clears
+    /// `mbLikesToSitAround`; an NPC authored with a Special/leisure
+    /// initial action keeps `mbSpecialAction = true` while walking the
+    /// scripted route, which later disables GoTo's already-on-point
+    /// shortcut when it returns to duty.
+    ScriptWay(PathId),
 }
 
 // ---------------------------------------------------------------------------
@@ -2365,14 +2376,58 @@ impl SeekPoint {
         let dy = (dir.position.y - self.position.y).abs();
         let max_norm = dx.max(dy);
         if max_norm <= crate::parameters_ai::SEEK_POINT_UNIFY_TOLERANCE as f32 {
-            // Unconditionally append the incoming direction — duplicates
-            // are intentional, they bias the seek sweep toward
-            // repeatedly-hinted compass directions.
-            self.directions.push(dir.direction);
+            // Original stores these in `SBArrayUnique<UWORD>`: a near
+            // duplicate is handled successfully, but is not inserted again.
+            if !self.directions.contains(&dir.direction) {
+                self.directions.push(dir.direction);
+            }
             true
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod seek_point_tests {
+    use super::{Position, SeekPoint, SeekPointDirection};
+
+    fn direction(x: f32, y: f32, value: u16) -> SeekPointDirection {
+        SeekPointDirection {
+            position: Position {
+                x,
+                y,
+                ..Position::default()
+            },
+            direction: value,
+        }
+    }
+
+    #[test]
+    fn add_if_near_handles_duplicate_without_growing_unique_directions() {
+        let first = direction(100.0, 200.0, 7);
+        let mut point = SeekPoint::from_direction(&first);
+
+        assert!(point.add_if_near(&direction(110.0, 190.0, 7)));
+        assert_eq!(point.directions, vec![7]);
+    }
+
+    #[test]
+    fn add_if_near_appends_distinct_direction() {
+        let first = direction(100.0, 200.0, 7);
+        let mut point = SeekPoint::from_direction(&first);
+
+        assert!(point.add_if_near(&direction(110.0, 190.0, 12)));
+        assert_eq!(point.directions, vec![7, 12]);
+    }
+
+    #[test]
+    fn add_if_near_rejects_direction_outside_tolerance() {
+        let first = direction(100.0, 200.0, 7);
+        let mut point = SeekPoint::from_direction(&first);
+
+        assert!(!point.add_if_near(&direction(111.0, 200.0, 12)));
+        assert_eq!(point.directions, vec![7]);
     }
 }
 

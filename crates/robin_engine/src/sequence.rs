@@ -1871,6 +1871,62 @@ impl Default for Sequence {
 //  State change logic
 // ═══════════════════════════════════════════════════════════════════
 
+/// Process-local provenance captured at the terminal `SetState` boundary for
+/// the opt-in movement-goal ownership diagnostic. This deliberately lives
+/// outside serialized manager state and is consumed by the engine when it
+/// dispatches the corresponding condolence card.
+#[derive(Debug, Clone)]
+pub(crate) struct GoalOwnerTerminalProvenance {
+    pub site: &'static str,
+    pub selected: Option<(SequenceId, usize)>,
+    pub translating: Option<(EntityId, SequenceElementRef)>,
+}
+
+thread_local! {
+    static GOAL_OWNER_TERMINAL_PROVENANCE:
+        std::cell::RefCell<BTreeMap<(SequenceId, u16), GoalOwnerTerminalProvenance>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+fn goal_owner_debug_enabled() -> bool {
+    std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_some()
+}
+
+fn goal_owner_debug_matches(owner: EntityId) -> bool {
+    if !goal_owner_debug_enabled() {
+        return false;
+    }
+    let filter = std::env::var("PARITY_DEBUG_GOAL_OWNER").unwrap_or_else(|_| {
+        panic!(
+            "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER=pc|soldier|civilian:INDEX"
+        )
+    });
+    let (kind, index) = filter.split_once(':').unwrap_or_else(|| {
+        panic!("PARITY_DEBUG_GOAL_OWNER must look like pc|soldier|civilian:INDEX")
+    });
+    let index = index
+        .parse::<u32>()
+        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER={filter:?}: {error}"));
+    match (kind, owner) {
+        ("pc", EntityId::Pc(_))
+        | ("soldier", EntityId::Soldier(_))
+        | ("civilian", EntityId::Civilian(_)) => owner.index() == index,
+        ("pc" | "soldier" | "civilian", _) => false,
+        _ => panic!("PARITY_DEBUG_GOAL_OWNER has unsupported kind {kind:?}"),
+    }
+}
+
+pub(crate) fn take_goal_owner_terminal_provenance(
+    owner: EntityId,
+    seq_id: SequenceId,
+    elem_idx: u16,
+) -> Option<GoalOwnerTerminalProvenance> {
+    if !goal_owner_debug_matches(owner) {
+        return None;
+    }
+    GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| records.borrow_mut().remove(&(seq_id, elem_idx)))
+}
+
 /// Result of a state change on a sequence element.
 /// The caller (SequenceManager) must process these effects.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -3148,6 +3204,11 @@ impl SequenceManager {
         self.actor_translating = selection;
     }
 
+    /// Read-only exposure for the opt-in goal/condolence ownership trace.
+    pub(crate) fn goal_owner_debug_translating(&self) -> Option<(EntityId, SequenceElementRef)> {
+        self.actor_translating
+    }
+
     /// Select an incoming element while the outgoing element's synchronous
     /// interruption callback runs. Nested Instruct calls use a stack because
     /// Original temporarily replaces the actor pointer at each recursive
@@ -3885,7 +3946,7 @@ impl SequenceManager {
             CascadeFlags::NEXT_LEVEL,
         );
 
-        self.process_effects(seq_id, effects);
+        self.process_effects(seq_id, effects, "element_terminated");
     }
 
     /// Called when an element becomes impossible.
@@ -3924,7 +3985,7 @@ impl SequenceManager {
             CascadeFlags::NEXT_LEVEL,
         );
 
-        self.process_effects(seq_id, effects);
+        self.process_effects(seq_id, effects, "element_impossible");
     }
 
     /// Set the priority of a specific sequence element.
@@ -3958,7 +4019,7 @@ impl SequenceManager {
             CascadeFlags::NEXT_LEVEL,
         );
 
-        self.process_effects(seq_id, effects);
+        self.process_effects(seq_id, effects, "element_in_progress");
     }
 
     /// Called when an element is interrupted.
@@ -3974,7 +4035,7 @@ impl SequenceManager {
 
         let effects = seq.set_element_state(elem_idx, SequenceState::Interrupted, flags);
 
-        self.process_effects(seq_id, effects);
+        self.process_effects(seq_id, effects, "element_interrupted");
     }
 
     /// Interrupt an element after its actor has already selected an incoming
@@ -4063,7 +4124,7 @@ impl SequenceManager {
                 SequenceState::Interrupted,
                 CascadeFlags::NEXT_LEVEL,
             );
-            self.process_effects(seq_id, effects);
+            self.process_effects(seq_id, effects, "kill_owner_sequences");
         }
     }
 
@@ -4083,7 +4144,7 @@ impl SequenceManager {
         };
         let effects =
             seq.set_element_state(elem_idx, SequenceState::Postponed, CascadeFlags::empty());
-        self.process_effects(seq_id, effects);
+        self.process_effects(seq_id, effects, "postpone_element");
 
         // Original calls Postpone from inside the element's Instruct/Go
         // boundary, after SequenceManager::Hourglass has already removed
@@ -4164,7 +4225,12 @@ impl SequenceManager {
     }
 
     /// Process effects from a state change.
-    fn process_effects(&mut self, seq_id: SequenceId, mut effects: StateChangeEffects) {
+    fn process_effects(
+        &mut self,
+        seq_id: SequenceId,
+        mut effects: StateChangeEffects,
+        terminal_site: &'static str,
+    ) {
         // RHSequenceElementMovement's override interrupts its exact linked
         // Seek before delegating to the base element's Interrupted handling.
         // Process the cross-sequence target before bookkeeping or queuing the
@@ -4211,12 +4277,28 @@ impl SequenceManager {
                     card.cancel_path_request_owner = Some(cancel_owner);
                 }
             }
-            self.process_effects(linked.sequence_id, linked_effects);
+            self.process_effects(
+                linked.sequence_id,
+                linked_effects,
+                "linked_movement_seek_interrupt",
+            );
         }
 
         if let Some(card) = effects.condolation.as_mut() {
             card.was_selected = self.current_element_for_actor(card.owner)
                 == Some((card.seq_id, usize::from(card.elem_idx)));
+            if goal_owner_debug_matches(card.owner) {
+                let provenance = GoalOwnerTerminalProvenance {
+                    site: terminal_site,
+                    selected: self.current_element_for_actor(card.owner),
+                    translating: self.actor_translating,
+                };
+                GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| {
+                    records
+                        .borrow_mut()
+                        .insert((card.seq_id, card.elem_idx), provenance);
+                });
+            }
             tracing::trace!(
                 target: "parity_owner_handoff",
                 owner = ?card.owner,
@@ -4330,7 +4412,7 @@ impl SequenceManager {
                 seq.set_element_state(cascade_elem_idx, cascade_state, cascade_flags)
             };
             // Recursively process sub-effects
-            self.process_effects(seq_id, sub_effects);
+            self.process_effects(seq_id, sub_effects, "terminal_state_cascade");
         }
 
         // Signal ready (element finished) — advance to next level
@@ -4433,7 +4515,7 @@ impl SequenceManager {
         assert!(!seq.is_empty());
         let effects =
             seq.set_element_state(0, SequenceState::Interrupted, CascadeFlags::NEXT_LEVEL);
-        self.process_effects(seq_id, effects);
+        self.process_effects(seq_id, effects, "terminate_sequence");
         true
     }
 
@@ -4521,7 +4603,7 @@ impl SequenceManager {
                 SequenceState::Impossible,
                 CascadeFlags::NEXT_LEVEL,
             );
-            self.process_effects(*seq_id, effects);
+            self.process_effects(*seq_id, effects, "cancel_pending_move_commands");
         }
 
         // Pass 3: drop the cancelled entries from the queue.
@@ -4664,7 +4746,7 @@ impl SequenceManager {
                     effect_index,
                     "manager before process_effects"
                 );
-                self.process_effects(seq_id, effects);
+                self.process_effects(seq_id, effects, "stop_owner");
                 tracing::trace!(
                     target: "parity_stop",
                     ?owner,
@@ -4841,7 +4923,7 @@ impl SequenceManager {
                 }
             }
             for effects in effects_vec {
-                self.process_effects(seq_id, effects);
+                self.process_effects(seq_id, effects, "stop_pending_elements");
             }
         }
 
@@ -4901,7 +4983,7 @@ impl SequenceManager {
                 .map(|seq| seq.stop_element(elem_idx, stop_priority, resolver))
                 .unwrap_or_default();
             for effects in effects_vec {
-                self.process_effects(seq_id, effects);
+                self.process_effects(seq_id, effects, "stop_pending_elements_matching");
             }
 
             if let Some(seq) = self.sequences.get(&seq_id)
@@ -4937,7 +5019,7 @@ impl SequenceManager {
                 .map(|seq| seq.stop_element(elem_idx, stop_priority, resolver))
                 .unwrap_or_default();
             for effects in effects_vec {
-                self.process_effects(seq_id, effects);
+                self.process_effects(seq_id, effects, "stop_postponed_elements_matching");
             }
 
             if let Some(seq) = self.sequences.get(&seq_id)
@@ -5398,7 +5480,7 @@ impl SequenceManager {
                     CascadeFlags::NEXT_LEVEL,
                 )
             };
-            self.process_effects(seq_id, effects);
+            self.process_effects(seq_id, effects, "interrupt_move_towards");
             changed = true;
         }
         changed
@@ -7806,6 +7888,48 @@ mod tests {
         assert_eq!(
             elem.orders[2].order_type,
             OrderType::TransitionWalkingUprightWaitingUpright
+        );
+    }
+
+    /// nicouzouf Savegame_047 replay-004, frame 563: Soldier51's rider-charge
+    /// destination (see `ai_enemy::battle::rider_charge_goal_geometry`) is
+    /// spliced with the ~26-unit running→waiting stop transition from the
+    /// rider's position. The resulting RunningUpright order goal is the value
+    /// the Original trace records as `position_goal_map` at frame 564; a
+    /// one-ULP-lower destination Y (0x4425e9c8) lands the spliced goal at
+    /// 0x44230254 instead.
+    #[test]
+    fn insert_transition_end_matches_frame563_rider_charge_fixture() {
+        let mut elem = movement_elem(
+            EntityId::Soldier(crate::entity_id::SoldierId(51)),
+            OrderType::RunningUpright,
+        );
+        elem.push_order(Order::test_new(
+            OrderType::RunningUpright,
+            f32::from_bits(0x442f_2b23),
+            f32::from_bits(0x4425_e9c9),
+        ));
+
+        let mut next_order_id = 1u32;
+        elem.insert_transition_end(
+            OrderType::TransitionRunningUprightWaitingUpright,
+            OrderType::RunningUpright,
+            26.0,
+            crate::coordinates::MapPoint {
+                x: f32::from_bits(0x448f_3c66),
+                y: f32::from_bits(0x43dc_a7ea),
+            },
+            1.0,
+            &mut next_order_id,
+        );
+
+        assert_eq!(elem.orders.len(), 2);
+        assert_eq!(elem.orders[0].order_type, OrderType::RunningUpright);
+        assert_eq!(elem.orders[0].target_x.to_bits(), 0x4434_fbd2);
+        assert_eq!(elem.orders[0].target_y.to_bits(), 0x4423_0255);
+        assert_eq!(
+            elem.orders[1].order_type,
+            OrderType::TransitionRunningUprightWaitingUpright
         );
     }
 

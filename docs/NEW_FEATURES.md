@@ -25,21 +25,6 @@ A list of which additional features we have added, which ones we might still wan
   every shipped mission using the full-game profile mapping and human-readable
   mission titles as filenames.
 
-- **Full-map and scheduled HTTP screenshots.** `/screenshot` accepts
-  `full_map=1` for a 1:1 complete-level capture and `frame=N` to wait until an
-  absolute simulation frame. `hide_ui=1` now suppresses all screen-space HUD
-  passes, including portraits and information bars, before readback.
-
-- **Pathfinder `LinkSource` relaxed-grid retry**
-  (`crates/robin_engine/src/pathfinder.rs`). When the strict pass links zero
-  candidate nodes and `object_position_authorized(source)` is true, the
-  pathfinder re-runs the link pass with `relax_grid = true`, skipping the
-  `is_reachable_grid` check on the source-to-docking-point corridor. This
-  avoids stalling an actor for the 100-frame `IMPOSSIBLE` timeout in narrow
-  pockets where the actor's 1-px-shrunk bbox fits between motion lines but
-  every full-corridor sweep clips. Per-frame motion-line collision in
-  `engine/movement.rs` still clamps any detail the relaxed check glossed over.
-
 - **Local script-RPC HTTP server** (`crates/robin_rs/src/http_server.rs`).
   Loopback-only blocking-IO server (`tiny_http`) that exposes the script VM
   and engine internals to external tooling: debug shells, test harnesses, AI
@@ -71,12 +56,19 @@ A list of which additional features we have added, which ones we might still wan
     after `run_engine_tick`, so HTTP-driven side effects land on the
     same frame as normal script-native side effects.
 
-- **Upscaling — shipped modes**. Options -> Graphics -> Scaling is wired
+- **Upscaling**. Options -> Graphics -> Scaling is wired
   through `crates/robin_rs/src/gpu_upscale.rs`, `shaders/*.wgsl`, and
   `build.rs`. Currently shipped in the UI: Nearest, PixelArt, Linear
   via wgpu, plus single-pass WGSL shaders: **Sharp-Bilinear**,
   **Bicubic**, **Lanczos**, and **CUT3**, plus **RetroArch Shader** preset
   selection.
+  - Multi-pass shader runner candidates:
+    **xBRZ**, **hqx**, **super-xbr**, **Anime4K v4**, **ScaleNX with artifact
+    removal**, and CRT shaders (as a separate `TextureEffect` enum).
+  - References:
+    - https://github.com/libretro/slang-shaders
+    - https://github.com/libretro/common-shaders
+    - https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms
 
 - **Deterministic replay and rollback checking**. Sessions can be recorded to
   JSONL, replayed from disk or compact `rhrec-...` strings, and checked with
@@ -99,13 +91,6 @@ A list of which additional features we have added, which ones we might still wan
   typed entity state using exact floating-point bits. Unsupported legacy
   command values and malformed/non-contiguous traces fail loudly; the first
   divergent frame is reported field-by-field.
-  Newly recorded schema-13 traces additionally snapshot the mutable campaign,
-  mission/global engine flags, script-global array, and ordered failed-path
-  timeout list on every frame. The comparator retains schema-12 ingestion for
-  the existing corpus and enables these comparisons only when the schema-13
-  `per_frame_v1` contract is declared. Rust-only restart checkpoints and
-  level-derived production geometry are intentionally outside the
-  cross-engine campaign payload.
 
 - **Basic multiplayer**. Native host/client networking, wasm WebSocket clients,
   seat IDs, input delay, rollback for late inputs, mission seed sync,
@@ -145,22 +130,6 @@ A list of which additional features we have added, which ones we might still wan
     cannot see far enough and sounds are localized too small. Basically,
     1024x768 should be the max a player can see at 1x zoom.
 
-- **Upscaling follow-ups**
-  - **Scale2x / Scale3x / xBR-lv1** are implemented in `shaders/` and
-    compiled into the binary but removed from `TextureScaleMode::ALL` because
-    they reproducibly GPU-reset during presentation on Mesa/RADV Vulkan.
-    Bicubic and Lanczos with the same texture/sampler binding layout work
-    fine, so it is not the descriptor layout. Still unknown whether the
-    underlying bug is driver-specific, a render-target-as-sampler layout
-    transition issue, or a specific shader instruction pattern. Re-add these
-    modes once someone reproduces and validates them with the wgpu backend.
-  - Multi-pass shader runner candidates:
-    **xBRZ**, **hqx**, **super-xbr**, **Anime4K v4**, **ScaleNX with artifact
-    removal**, and CRT shaders (as a separate `TextureEffect` enum).
-  - References:
-    - https://github.com/libretro/slang-shaders
-    - https://github.com/libretro/common-shaders
-    - https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms
 
 - **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
   sprite, but old software-cursor post-effects are not represented.
@@ -225,7 +194,9 @@ A list of which additional features we have added, which ones we might still wan
 - cloaking - the ability to put the cloak back on (as you have at the start of many levels) so you are invisible but maybe only to certain enemies
 - timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time
 - improvements to quick actions: shift-click should queue an action
-
+- Most items seem useless, like the apple throw. Maybe rebalance items to be
+  more useful.
+  
 ### Code Quality
 
 - Finish moving legacy sentinels to typed runtime boundaries. Entity IDs,
@@ -236,10 +207,6 @@ A list of which additional features we have added, which ones we might still wan
   runtime fields only when their semantics are proven; keep asset-reader
   translation at the binary boundary instead of spreading sentinel checks.
 
-### Rebalancing
-
-- Most items seem useless, like the apple throw. Maybe rebalance items to be
-  more useful.
 
 ## Not-Todos
 

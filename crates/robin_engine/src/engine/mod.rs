@@ -9,6 +9,7 @@
 //! flow, and state transitions.
 
 mod ai;
+pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod ale;
 mod animation;
 pub(crate) mod anti_collision;
@@ -97,6 +98,34 @@ use state::{
     AiRuntime, FeedbackRuntime, MissionDomain, OrderRuntime, PlayerRuntime, ScriptRuntime,
     SimulationControl, WorldState,
 };
+
+#[derive(Debug)]
+struct AttentiveOwnerHandoffDebugConfig {
+    frame: u32,
+    creation_order: u32,
+}
+
+fn attentive_owner_handoff_debug_config() -> Option<&'static AttentiveOwnerHandoffDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<AttentiveOwnerHandoffDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_ATTENTIVE_OWNER_HANDOFF")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when attentive-owner handoff debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for attentive-owner handoff diagnostic: {error}")
+                })
+            };
+            Some(AttentiveOwnerHandoffDebugConfig {
+                frame: parse("PARITY_DEBUG_ATTENTIVE_OWNER_FRAME"),
+                creation_order: parse("PARITY_DEBUG_ATTENTIVE_OWNER_CREATION_ORDER"),
+            })
+        })
+        .as_ref()
+}
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -361,6 +390,7 @@ impl EngineInner {
     /// an unresolved entry exists only in `pending_exclamations`.  Later
     /// requests for the same actor must retain their list order.
     pub(super) fn cancel_exclamation_callbacks(&mut self, actor_id: u32) {
+        self.debug_speech_lifecycle(actor_id, "cancel_callbacks_enter", "StopExclamation");
         let sound = &mut self.feedback.sound_sim;
         if let Some(index) = sound
             .playing_exclamations
@@ -368,6 +398,11 @@ impl EngineInner {
             .position(|playing| playing.actor_id == actor_id)
         {
             sound.playing_exclamations.remove(index);
+            self.debug_speech_lifecycle(
+                actor_id,
+                "cancel_callbacks_playing_removed",
+                "StopExclamation",
+            );
             return;
         }
 
@@ -376,6 +411,7 @@ impl EngineInner {
             .iter()
             .position(|pending| pending.actor_id == actor_id)
         else {
+            self.debug_speech_lifecycle(actor_id, "cancel_callbacks_no_pending", "StopExclamation");
             return;
         };
         let pending = sound.pending_exclamations.remove(index);
@@ -391,6 +427,11 @@ impl EngineInner {
         }) {
             sound.resolved_exclamations.remove(index);
         }
+        self.debug_speech_lifecycle(
+            actor_id,
+            "cancel_callbacks_pending_removed",
+            "StopExclamation",
+        );
     }
 
     pub(crate) fn engine_locked(&self) -> bool {
@@ -1534,6 +1575,101 @@ impl EngineInner {
         }
     }
 
+    /// Emit the exact owner topology needed to distinguish an attentive
+    /// request/translation bug from a postponed-chain publication bug. The
+    /// master gate is checked before any entity or sequence state is read.
+    pub(super) fn trace_attentive_owner_handoff(
+        &self,
+        stage: &str,
+        owner: EntityId,
+        focus: Option<(crate::sequence::SequenceId, usize)>,
+        detail: std::fmt::Arguments<'_>,
+    ) {
+        let Some(config) = attentive_owner_handoff_debug_config() else {
+            return;
+        };
+        if self.control.frame_counter != config.frame
+            || self.world.original_creation_order(owner) != config.creation_order
+        {
+            return;
+        }
+
+        let manager = &self.orders.sequence_manager;
+        let selected = manager.current_element_for_actor(owner);
+        let translating = manager
+            .goal_owner_debug_translating()
+            .filter(|(translating_owner, _)| *translating_owner == owner);
+        let deferred = manager
+            .deferred_elements_to_go()
+            .into_iter()
+            .filter(|(seq_id, elem_idx)| {
+                manager
+                    .get_element(*seq_id, *elem_idx)
+                    .is_some_and(|element| element.owner == Some(owner))
+            })
+            .collect::<Vec<_>>();
+        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+            panic!(
+                "attentive-owner diagnostic target {} disappeared",
+                owner.index()
+            )
+        });
+        let enemy = entity.enemy_ai().unwrap_or_else(|| {
+            panic!(
+                "attentive-owner diagnostic target {} has no Enemy AI",
+                owner.index()
+            )
+        });
+        let actor = entity.actor_data().unwrap_or_else(|| {
+            panic!(
+                "attentive-owner diagnostic target {} has no actor state",
+                owner.index()
+            )
+        });
+        eprintln!(
+            "PARITY_ATTENTIVE_OWNER frame={} owner={} owner_co={} stage={} detail={} attentive={} will_be_attentive={} ai_state={:?} ai_substate={:?} action_state={:?} sequence_started={} installed_order={:?} sprite_motion={:?} sprite_action={:?} selected={selected:?} translating={translating:?} deferred={deferred:?} focus={focus:?}",
+            self.control.frame_counter,
+            owner.index(),
+            config.creation_order,
+            stage,
+            detail,
+            enemy.attentive,
+            enemy.will_be_attentive,
+            enemy.base.current_state,
+            enemy.base.current_substate,
+            actor.action_state,
+            actor.sequence_element_started,
+            actor.installed_order,
+            entity.sprite().last_motion_state,
+            entity.sprite().last_action,
+        );
+        for sequence in manager.sequences_iter() {
+            for (elem_idx, element) in sequence.elements.iter().enumerate() {
+                if element.owner != Some(owner) {
+                    continue;
+                }
+                eprintln!(
+                    "PARITY_ATTENTIVE_OWNER frame={} owner={} stage=element seq={} elem={} id={} command={:?} state={:?} priority={:?} postponed={:?} cross_postponed={:?} orders={:?}",
+                    self.control.frame_counter,
+                    owner.index(),
+                    sequence.id.0,
+                    elem_idx,
+                    element.id,
+                    element.command,
+                    element.state,
+                    element.priority,
+                    element.postponed_element_index,
+                    element.cross_postponed,
+                    element
+                        .orders
+                        .iter()
+                        .map(|order| (order.order_type, order.order_id, order.done))
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+
     /// Register one element through Original's `LaunchSequenceElement`
     /// boundary.
     ///
@@ -1548,7 +1684,32 @@ impl EngineInner {
         &mut self,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
-        self.orders.sequence_manager.launch_element(elem)
+        let attentive_owner = elem.owner.filter(|_| {
+            matches!(
+                elem.command,
+                crate::element::Command::EnterAttentiveMode
+                    | crate::element::Command::LeaveAttentiveMode
+                    | crate::element::Command::LeaveAttentiveModeOfficer
+            )
+        });
+        if let Some(owner) = attentive_owner {
+            self.trace_attentive_owner_handoff(
+                "launch_before",
+                owner,
+                None,
+                format_args!("attentive command registration"),
+            );
+        }
+        let seq_id = self.orders.sequence_manager.launch_element(elem);
+        if let Some(owner) = attentive_owner {
+            self.trace_attentive_owner_handoff(
+                "launch_after",
+                owner,
+                Some((seq_id, 0)),
+                format_args!("attentive command registered"),
+            );
+        }
+        seq_id
     }
 
     /// Register an owned element without running its `Instruct` boundary
@@ -2410,6 +2571,12 @@ impl EngineInner {
             // No owner: nothing to arbitrate against, let it through.
             return true;
         };
+        self.trace_attentive_owner_handoff(
+            "instruct_entry",
+            owner,
+            Some((new_seq, new_idx)),
+            format_args!("before admission and priority arbitration"),
+        );
         // Idempotency guard.  Owned launches now arbitrate
         // synchronously inside `launch_element_for_owner`, but legacy
         // callsites that explicitly arbitrate after an owned launch still hit
@@ -2591,6 +2758,15 @@ impl EngineInner {
             .unwrap_or(crate::sequence::SequencePriority::None);
 
         let decision = crate::sequence::decide_priorities(cur_priority, new_priority);
+
+        self.trace_attentive_owner_handoff(
+            "instruct_decision",
+            owner,
+            Some((new_seq, new_idx)),
+            format_args!(
+                "current={cur_seq:?}/{cur_idx} current_priority={cur_priority:?} incoming_command={new_command:?} incoming_priority={new_priority:?} decision={decision:?}"
+            ),
+        );
 
         tracing::trace!(
             ?owner,
@@ -3429,6 +3605,8 @@ impl EngineInner {
     /// seek element, and launches the stored sequence at info priority.
     pub(crate) fn start_post_seek_sequence(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seek_element: Option<(crate::sequence::SequenceId, usize)>,
     ) -> bool {
@@ -3475,6 +3653,16 @@ impl EngineInner {
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
         }
+
+        // Original SetState(TERMINATED) closes SendCondolationCard and then
+        // Ready() synchronously before StartPostSeekSequence calls
+        // LaunchSequence (`RHsequenceelement.cpp:281-389`,
+        // `RHelementactor.cpp:7510-7524`). Ready can register the parent's
+        // next command level on the manager FIFO; the post-seek sequence must
+        // be registered after that successor. Rust defers condolence cards to
+        // avoid re-entrant borrows, so explicitly close this owner's terminal
+        // stack before launching the post-seek tail.
+        self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         self.launch_sequence(*post_seek);
         true
     }

@@ -1470,7 +1470,8 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     assert_eq!(carried_entity.element_data().direction(), 9);
     assert_eq!(
         i16::from(carried_entity.position_iface().get_direction_goal()),
-        13
+        13,
+        "DropCorpse must preserve SetCarrier(NULL)'s distinct carrier-facing goal"
     );
     let (_, _, selected) = engine
         .orders
@@ -1483,8 +1484,9 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
 
 fn corpse_exit_initialization_fixture(
     active_drop: bool,
+    command: crate::element::Command,
 ) -> (EngineInner, EntityId, EntityId, crate::sequence::SequenceId) {
-    use crate::element::{Command, Posture};
+    use crate::element::Posture;
     use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -1496,6 +1498,10 @@ fn corpse_exit_initialization_fixture(
     {
         let carrier_entity = engine.get_entity_mut(carrier).unwrap();
         carrier_entity.pc_data_mut().unwrap().carried = Some(body);
+        carrier_entity
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Lying);
         carrier_entity
             .element_data_mut()
             .set_direction_instantly(13);
@@ -1537,10 +1543,19 @@ fn corpse_exit_initialization_fixture(
         .set_direction_instantly(13);
 
     let order_id = engine.orders.allocate_order_id();
-    let mut element = SequenceElement::new(1, Command::WhistleCmd, Some(carrier));
+    let mut element = SequenceElement::new(1, command, Some(carrier));
     let mut transition_order = Order::new(transition, 0.0, 0.0, order_id);
     transition_order.compute_direction = false;
     element.orders.push_back(transition_order);
+    if command == crate::element::Command::EnterSwordfight {
+        let raising_id = engine.orders.allocate_order_id();
+        element.orders.push_back(Order::new(
+            OrderType::TransitionRaisingSword,
+            0.0,
+            0.0,
+            raising_id,
+        ));
+    }
     let sequence = engine.orders.sequence_manager.launch_element(element);
     engine
         .orders
@@ -1566,11 +1581,67 @@ fn corpse_exit_initialization_fixture(
 }
 
 #[test]
+fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+
+    let (mut engine, carrier, body, _) =
+        corpse_exit_initialization_fixture(false, Command::EnterSwordfight);
+
+    assert_eq!(
+        engine.get_entity(carrier).unwrap().posture(),
+        Posture::CarryingCorpse
+    );
+    assert_eq!(engine.get_entity(body).unwrap().posture(), Posture::Carried);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(carrier)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionCarryingCorpseWaitingUpright),
+        "translation frame must retain the registered corpse-exit owner"
+    );
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+
+    let carrier_entity = engine.get_entity(carrier).unwrap();
+    assert_eq!(carrier_entity.posture(), Posture::Upright);
+    assert_eq!(carrier_entity.pc_data().unwrap().carried, None);
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.posture(), Posture::Lying);
+    assert_eq!(body_entity.human_data().unwrap().carrier, None);
+    assert!(!body_entity.actor_data().unwrap().execution_frozen);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(carrier)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionRaisingSword),
+        "first Execute must terminate the corpse-exit prefix and expose the sword order"
+    );
+    assert_eq!(
+        carrier_entity
+            .actor_data()
+            .unwrap()
+            .installed_order
+            .map(|order| order.order_type),
+        Some(OrderType::TransitionRaisingSword),
+        "DoNextOrder must publish the successor in the same owner boundary"
+    );
+}
+
+#[test]
 fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
     use crate::movement::AbilityKind;
     use crate::order::OrderType;
 
-    let (mut engine, carrier, body, _) = corpse_exit_initialization_fixture(false);
+    let (mut engine, carrier, body, _) =
+        corpse_exit_initialization_fixture(false, crate::element::Command::WhistleCmd);
     let body_position = engine
         .get_entity(body)
         .unwrap()
@@ -1630,7 +1701,8 @@ fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
 fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
     use crate::movement::AbilityKind;
 
-    let (mut engine, carrier, body, _) = corpse_exit_initialization_fixture(true);
+    let (mut engine, carrier, body, _) =
+        corpse_exit_initialization_fixture(true, crate::element::Command::WhistleCmd);
     assert_eq!(
         engine
             .get_entity(carrier)
@@ -5788,6 +5860,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     });
     assets.profile_manager = std::sync::Arc::new(profiles);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.players.seats[0].selection.push(owner);
     let enter_seq =
         engine.launch_element(SequenceElement::new(1, Command::EnterListen, Some(owner)));
     let mut display = HostDisplayState::default();
@@ -5923,6 +5996,71 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
             .action_state,
         crate::element::ActionState::Waiting
     );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .current_action,
+        crate::profiles::Action::NoAction,
+        "selected Listen DONE must synchronously apply MSG_UNSELECT_ACTION"
+    );
+    let listen_done_waits_before_reselection: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .map(move |element| (sequence.id, element.owner, element.state, element.command))
+        })
+        .filter(|(_, element_owner, _, command)| {
+            *element_owner == Some(owner) && *command == Command::Wait
+        })
+        .filter(|(_, _, state, _)| {
+            matches!(
+                state,
+                SequenceState::Todo | SequenceState::Postponed | SequenceState::InProgress
+            )
+        })
+        .collect();
+    assert_eq!(
+        listen_done_waits_before_reselection.len(),
+        1,
+        "Listen DONE must synchronously publish exactly one priority-Wait successor"
+    );
+    assert!(
+        matches!(
+            listen_done_waits_before_reselection[0].2,
+            SequenceState::Todo | SequenceState::Postponed | SequenceState::InProgress
+        ),
+        "Listen DONE Wait must remain live before terminal advance"
+    );
+    engine.select_pc(&assets, 0, owner, false, false);
+    let listen_done_waits_after_reselection: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner) && element.command == Command::Wait)
+        .filter(|element| {
+            matches!(
+                element.state,
+                SequenceState::Todo | SequenceState::Postponed | SequenceState::InProgress
+            )
+        })
+        .map(|element| element.state)
+        .collect();
+    assert_eq!(
+        listen_done_waits_after_reselection,
+        listen_done_waits_before_reselection
+            .iter()
+            .map(|(_, _, state, _)| *state)
+            .collect::<Vec<_>>(),
+        "same-frame SelectPC restitution of cleared NOACTION must not Stop the Listen DONE Wait"
+    );
     // The enter chain's terminal condolence releases the postponed leave
     // back through the production to-go queue. Depending on where in the
     // frame the release lands, the same frame's manager drain may already
@@ -5981,6 +6119,49 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
             .is_active(),
         "released LeaveListen must not install stale ability ownership"
     );
+}
+
+#[test]
+fn unselected_listen_done_clears_action_without_dispatching_leave_listen() {
+    use crate::element::{ActionState, Command, Posture};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let pc = engine.get_entity_mut(owner).unwrap();
+        pc.actor_data_mut().unwrap().action_state = ActionState::Listening;
+        pc.pc_data_mut().unwrap().current_action = crate::profiles::Action::Listen;
+    }
+
+    engine.apply_listen_done_action_handoff(owner);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .current_action,
+        crate::profiles::Action::NoAction
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .all(|element| element.command != Command::LeaveListen),
+        "Original's unselected branch calls SetCurrentAction directly, not UnSelectAction"
+    );
+}
+
+#[test]
+#[should_panic(expected = "is not a PC")]
+fn listen_done_rejects_non_pc_owner() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    engine.apply_listen_done_action_handoff(owner);
 }
 
 fn install_owner_selected_test_melee(

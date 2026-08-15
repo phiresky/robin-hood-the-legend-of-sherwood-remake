@@ -12,6 +12,22 @@ use crate::parameters_ai;
 use super::util::{ai_max_norm_distance, ai_square_distance, enemy_is_below_me};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
+fn good_strike_lifecycle_debug_matches(ctx: &AiContext) -> bool {
+    if std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for GOOD_STRIKE diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_GOOD_STRIKE_FRAME").is_none_or(|expected| expected == ctx.frame)
+        && parse_filter("PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER")
+            .is_none_or(|expected| ctx.original_creation_order == Some(expected))
+}
+
 impl EnemyAi {
     /// Standard "I see the friend I was looking for" reaction.
     ///
@@ -682,7 +698,13 @@ impl EnemyAi {
                                 return false;
                             }
                             self.base.antagonist = civilian;
-                            self.base.stop_all();
+                            // Original CALL_ALERT's civilian arm calls the actor's
+                            // `Halt()` directly, not AI `StopAll()`.  The actor work
+                            // must be interrupted before the state callback, while an
+                            // in-flight waypoint macro and its macro timer survive.
+                            // See RHartificialmalignity.cpp, ThinkUnexpectedEvent's
+                            // CALL_ALERT / civilian branch.
+                            self.base.outbox.actor.queue_halt();
                             self.base.face_entity(civilian, ctx);
                             self.set_state(
                                 AiState::Seeking,
@@ -920,13 +942,34 @@ impl EnemyAi {
             // Special-strike gloating remark. Original guards on the
             // observable special-strike substate.
             StimulusType::EventGoodStrike => {
-                if self.base.current_substate == Substate::AttackingSwordfightSpecialStrike {
+                let will_say =
+                    self.base.current_substate == Substate::AttackingSwordfightSpecialStrike;
+                let debug = good_strike_lifecycle_debug_matches(ctx);
+                if debug {
+                    eprintln!(
+                        "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=think_entry state={:?} substate={:?} will_say={} vip={}]",
+                        ctx.frame,
+                        self.base.me,
+                        ctx.original_creation_order,
+                        self.base.current_state,
+                        self.base.current_substate,
+                        will_say,
+                        self.is_vip,
+                    );
+                }
+                if will_say {
                     let remark = if self.is_vip {
                         Remark::VipGoodStrikeCombat
                     } else {
                         Remark::GoodStrikeCombat
                     };
                     self.base.say(remark);
+                    if debug {
+                        eprintln!(
+                            "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=say_queued remark={:?}]",
+                            ctx.frame, self.base.me, ctx.original_creation_order, remark,
+                        );
+                    }
                 }
             }
             // Kill remark.
@@ -2111,6 +2154,13 @@ impl EnemyAi {
             self.base.object_of_desire = 0;
         }
 
+        // EventHearStandardProcedure passes `noise.posOrigin` to the
+        // RHposition overload of Face. That overload ignores RHnoise's
+        // separately stored elevation and projects the position's sector
+        // through PositionToPoint3D before subtracting the owner's live 3D
+        // point. This matters even for an ordinary sector with no projection
+        // plane: substituting the producer's actor elevation changes the
+        // facing sector at angular boundaries.
         match noise.noise_type {
             NoiseType::Pfiiit => {
                 // Whistling.
@@ -2128,11 +2178,7 @@ impl EnemyAi {
                     self.base.seek_position = noise.origin;
                     self.base.stop_all();
                     if self.base.current_state != AiState::Sleeping {
-                        self.base.face_position_at_elevation_with_ctx(
-                            noise.origin,
-                            noise.elevation as f32,
-                            ctx,
-                        );
+                        self.base.face_position_3d_with_ctx(noise.origin, ctx);
                     }
                     self.base.say(Remark::HearsNoise);
                     self.base
@@ -2155,11 +2201,7 @@ impl EnemyAi {
                     // the middle of a seek).
                     self.set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
                     self.base.say(Remark::HearsNoise);
-                    self.base.face_position_at_elevation_with_ctx(
-                        noise.origin,
-                        noise.elevation as f32,
-                        ctx,
-                    );
+                    self.base.face_position_3d_with_ctx(noise.origin, ctx);
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     // Idle / officer → curious-react into the wondering
@@ -2210,11 +2252,7 @@ impl EnemyAi {
                     if noise.noise_type != NoiseType::Aaargh {
                         self.base.say(Remark::HearsNoise);
                     }
-                    self.base.face_position_at_elevation_with_ctx(
-                        noise.origin,
-                        noise.elevation as f32,
-                        ctx,
-                    );
+                    self.base.face_position_3d_with_ctx(noise.origin, ctx);
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     if noise.noise_type != NoiseType::Aaargh {
@@ -2240,11 +2278,7 @@ impl EnemyAi {
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position_at_elevation_with_ctx(
-                    noise.origin,
-                    noise.elevation as f32,
-                    ctx,
-                );
+                self.base.face_position_3d_with_ctx(noise.origin, ctx);
                 self.base.launch_timer(50, ctx.frame);
             }
 
@@ -2254,11 +2288,7 @@ impl EnemyAi {
                 self.base.stop_all();
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position_at_elevation_with_ctx(
-                    noise.origin,
-                    noise.elevation as f32,
-                    ctx,
-                );
+                self.base.face_position_3d_with_ctx(noise.origin, ctx);
                 self.base.launch_timer(
                     70 + crate::sim_rng::u32(
                         sim,
@@ -2809,6 +2839,21 @@ impl EnemyAi {
             }
             // Dead-body sweep around the actor.
             AiState::Seeking => {
+                if Self::seek_area_phase6_caller_debug_enabled()
+                    && Self::seek_area_phase6_caller_debug_matches(
+                        ctx.frame,
+                        ctx.original_creation_order,
+                    )
+                {
+                    eprintln!(
+                        "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"couldnt_reach_emergency\",\"stimulus\":\"event_couldnt_reach_point\"}}",
+                        ctx.frame,
+                        self.base.me,
+                        ctx.original_creation_order.expect(
+                            "phase6 caller diagnostic matched an owner without creation order"
+                        ),
+                    );
+                }
                 self.seek_area(
                     sim,
                     ctx.position,
@@ -3837,6 +3882,67 @@ mod tests {
     }
 
     #[test]
+    fn civilian_call_alert_halts_actor_without_breaking_running_macro() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(44);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultInMacro;
+        ai.base.macro_in_progress = true;
+        ai.base.macro_timer_is_running = true;
+        ai.base.when_does_macro_timer_ring = 10_054;
+
+        let mut civilian = object_view(ObjectType::None);
+        civilian.kind = EntityKind::Civilian;
+        civilian.position = Position {
+            x: 100.0,
+            y: 20.0,
+            sector: None,
+            level: 0,
+        };
+        let mut views = AiEntityViewMap::new();
+        views.insert(91, civilian);
+        let ctx = AiContext {
+            frame: 9_768,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let accepted = ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::CallAlert, 91),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(accepted);
+        let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                crate::ai::AiOwnerWork::StateChange(notification)
+                    if notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .is_some_and(|effects| effects.halt)
+            )
+        });
+        assert!(halted_before_state_change);
+        assert!(ai.base.macro_in_progress);
+        assert!(ai.base.macro_timer_is_running);
+        assert_eq!(ai.base.when_does_macro_timer_ring, 10_054);
+        assert_eq!(ai.base.antagonist, 91);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingWaitForAlertingCivilian
+        );
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 9_788);
+    }
+
+    #[test]
     fn soldier_call_alert_halts_officer_without_breaking_running_macro() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(44);
@@ -4032,5 +4138,75 @@ mod tests {
         assert_eq!(ai.actual_seek_point, Some(0));
         assert_eq!(ai.base.last_goto_destination, actor_seek_point);
         assert_ne!(ai.base.last_goto_destination, stale_body_seek_point);
+    }
+
+    #[test]
+    fn event_hear_faces_noise_position_projection_not_recorded_actor_elevation() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(70);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSeekpoint;
+
+        // Trace-shaped boundary from SuN/Profile_004/Savegame_016 r013
+        // frame 895. Sector 0 has no projection area, so PositionToPoint3D
+        // leaves the noise at z=0 even though the producing PC recorded its
+        // own elevation (36) on RHnoise.
+        let noise = Noise {
+            origin: Position {
+                x: f32::from_bits(0x428b_1027),
+                y: f32::from_bits(0x43af_c940),
+                sector: crate::position_interface::SectorHandle::new(0),
+                level: 0,
+            },
+            noise_type: NoiseType::ZingZing,
+            volume: 200,
+            elevation: 36,
+            element_id: 133,
+        };
+        let ctx = AiContext {
+            position: Position {
+                x: f32::from_bits(0x4326_9901),
+                y: f32::from_bits(0x438f_54f0),
+                sector: crate::position_interface::SectorHandle::new(0),
+                level: 0,
+            },
+            self_body_position_world: crate::coordinates::WorldPoint3D::new(
+                f32::from_bits(0x4326_9901),
+                f32::from_bits(0x43a1_5511),
+                f32::from_bits(0x4210_0107),
+            ),
+            elevation: f32::from_bits(0x4210_0107),
+            direction: 4,
+            ..AiContext::default()
+        };
+
+        let scalar_dx = noise.origin.x - ctx.position.x;
+        let scalar_dy =
+            (noise.origin.y - ctx.position.y) + (noise.elevation as f32 - ctx.elevation);
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_with_aspect(
+                scalar_dx,
+                scalar_dy,
+                crate::position_interface::ASPECT_RATIO,
+            ),
+            10,
+            "the replaced scalar-elevation shortcut must select the adjacent sector"
+        );
+
+        ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
+
+        let turn = ai
+            .base
+            .outbox
+            .actor
+            .orders
+            .iter()
+            .find(|intent| intent.order_type == OrderType::Turning)
+            .expect("the seeking EventHear arm must author a Turn");
+        assert_eq!(turn.explicit_direction, Some(11));
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingHeardstepsReactiontime
+        );
     }
 }
