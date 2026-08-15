@@ -430,6 +430,12 @@ could cause. Include a sample (>= 300) of currently-PASSING traces as a regressi
 - `198f7a6da` rewrote 465 lines of `sight_obstacle.rs` (`IsReachableImpact` semantics), used beyond projectiles
 - `f0c371b84` changes Think recursion depth for ALL AI, reviving two previously-dead depth-gated behaviours
 - `906cd1cf3` changes path-request scheduling for every actor
+- `9f4284669` replaces "last AI move intent wins" with FIFO in `launch_ai_move`, so every `GoTo` of one
+  Think becomes its own sequence (Original `ReconsiderSwordfightObservation` deliberately falls through
+  with no `return`, issuing a step-back GoTo *and* a chase GoNear — `RHartificialmalignity.cpp:15502-15570`).
+  It also REMOVES `OrderRuntime::validate_invariants`' duplicate-owner rejection, which encoded the wrong
+  model, and inverts that invariant's unit test. Affects every AI movement; removing an invariant means
+  the sweep is the first broad check that nothing depended on it.
 - `ee0ad7b62` **is mislabelled**: its message says "Trace swordfight reconsider stimulus" (diagnostics
   only) but it also rewrites `calculate_opponent_nearest_to_rene` (`ai_enemy/util.rs`) to resolve
   Maurice's opponents through the full fighter registry instead of the 500-unit `IsAbleToFight`-filtered
