@@ -3378,115 +3378,65 @@ impl EnemyAi {
                 ctx.move_box,
             );
         }
-        // Get vectors
-        let nose = sector_to_vector_iso(my_dir, ASPECT_RATIO);
-
-        // Vector to enemy (with Y stretched by inverse aspect ratio for isometric)
-        let me_to_enemy_sy = (
-            enemy_pos.x - my_pos.x,
-            (enemy_pos.y - my_pos.y) * INVERSE_ASPECT_RATIO,
-        );
-
-        // Is the enemy in front of us?
-        let nose_sy = (nose.0, nose.1 * INVERSE_ASPECT_RATIO);
-        let forward_dot = dot2(nose_sy, me_to_enemy_sy);
-        if forward_dot < 0.0 {
-            if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_behind forward_dot_bits={:08x}",
-                    ctx.frame,
-                    self.base.me,
-                    candidate,
-                    forward_dot.to_bits(),
-                );
+        let geometry = match rider_charge_goal_geometry(
+            (my_pos.x, my_pos.y),
+            my_dir,
+            (enemy_pos.x, enemy_pos.y),
+        ) {
+            Ok(geometry) => geometry,
+            Err(reject) => {
+                if debug_decision_path {
+                    match reject {
+                        RiderChargeReject::Behind { forward_dot } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_behind forward_dot_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            forward_dot.to_bits(),
+                        ),
+                        RiderChargeReject::TooNear { norm, sq_norm } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_too_near norm_bits={:08x} sq_norm_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            norm.to_bits(),
+                            sq_norm.to_bits(),
+                        ),
+                        RiderChargeReject::ZeroOrthogonal { ortho_len } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_orthogonal ortho_len_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            ortho_len.to_bits(),
+                        ),
+                        RiderChargeReject::ZeroHitVector { hp_len } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_vector hp_len_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            hp_len.to_bits(),
+                        ),
+                        RiderChargeReject::ZeroHitNorm { hit_norm_len } => eprintln!(
+                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_norm hit_norm_bits={:08x}",
+                            ctx.frame,
+                            self.base.me,
+                            candidate,
+                            hit_norm_len.to_bits(),
+                        ),
+                    }
+                }
+                return None;
             }
-            return None;
-        }
-
-        // Compute distance.
-        let sq_norm = me_to_enemy_sy.0 * me_to_enemy_sy.0 + me_to_enemy_sy.1 * me_to_enemy_sy.1;
-        let norm = sq_norm.sqrt();
-
-        if norm < Self::RIDER_CHARGE_LATERAL_DISTANCE {
-            if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_too_near norm_bits={:08x} sq_norm_bits={:08x}",
-                    ctx.frame,
-                    self.base.me,
-                    candidate,
-                    norm.to_bits(),
-                    sq_norm.to_bits(),
-                );
-            }
-            return None;
-        }
-
-        // Compute cos(alpha) — angle we must ride to pass at lateral offset
-        let cos_alpha = (1.0 - Self::RIDER_CHARGE_SQR_LATERAL_DISTANCE / sq_norm).sqrt();
-
-        // Compute orthogonal vector (perpendicular to me→enemy)
-        // GetNormal(false) with AR=1 yields (mY, -mX) — 90° clockwise.
-        let ortho = (me_to_enemy_sy.1, -me_to_enemy_sy.0);
-        let ortho_len = (ortho.0 * ortho.0 + ortho.1 * ortho.1).sqrt();
-        if ortho_len < f32::EPSILON {
-            if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_orthogonal ortho_len_bits={:08x}",
-                    ctx.frame,
-                    self.base.me,
-                    candidate,
-                    ortho_len.to_bits(),
-                );
-            }
-            return None;
-        }
-        let ortho_norm = (ortho.0 / ortho_len, ortho.1 / ortho_len);
-        let ortho_scaled = (
-            ortho_norm.0 * Self::RIDER_CHARGE_LATERAL_DISTANCE / cos_alpha,
-            ortho_norm.1 * Self::RIDER_CHARGE_LATERAL_DISTANCE / cos_alpha,
-        );
-
-        // Compute vector to hit point.
-        let hit_point_sy = (
-            me_to_enemy_sy.0 + ortho_scaled.0,
-            me_to_enemy_sy.1 + ortho_scaled.1,
-        );
-        let hp_len = (hit_point_sy.0 * hit_point_sy.0 + hit_point_sy.1 * hit_point_sy.1).sqrt();
-        if hp_len < f32::EPSILON {
-            if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_vector hp_len_bits={:08x}",
-                    ctx.frame,
-                    self.base.me,
-                    candidate,
-                    hp_len.to_bits(),
-                );
-            }
-            return None;
-        }
-        let hp_norm = (hit_point_sy.0 / hp_len, hit_point_sy.1 / hp_len);
-        let hp_scaled = (hp_norm.0 * cos_alpha * norm, hp_norm.1 * cos_alpha * norm);
-
-        // Reapply aspect ratio.
-        let me_to_hit = (hp_scaled.0, hp_scaled.1 * ASPECT_RATIO);
-
-        // Compute goal = hit point + LOOP_DISTANCE forward.
-        let hit_norm_len = (me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1).sqrt();
-        if hit_norm_len < f32::EPSILON {
-            if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_norm hit_norm_bits={:08x}",
-                    ctx.frame,
-                    self.base.me,
-                    candidate,
-                    hit_norm_len.to_bits(),
-                );
-            }
-            return None;
-        }
-        let hit_dir = (me_to_hit.0 / hit_norm_len, me_to_hit.1 / hit_norm_len);
-        let goal_x = my_pos.x + me_to_hit.0 + hit_dir.0 * Self::RIDER_CHARGE_LOOP_DISTANCE;
-        let goal_y = my_pos.y + me_to_hit.1 + hit_dir.1 * Self::RIDER_CHARGE_LOOP_DISTANCE;
+        };
+        let RiderChargeGeometry {
+            forward_dot,
+            sq_norm,
+            cos_alpha,
+            me_to_hit,
+            hit_dir,
+            hit_norm_len,
+            goal: (goal_x, goal_y),
+        } = geometry;
 
         // Check if straight movement from me to goal is clear.
         if let Some(g) = grid {
@@ -3824,9 +3774,165 @@ impl EnemyAi {
     }
 }
 
+/// Accepted output of [`rider_charge_goal_geometry`].
+pub(crate) struct RiderChargeGeometry {
+    pub forward_dot: f32,
+    pub sq_norm: f32,
+    pub cos_alpha: f32,
+    /// `vMeToHitPoint` — map-space vector from the rider to the hit point.
+    pub me_to_hit: (f32, f32),
+    /// `vMeToHitPointNormalized` — `me_to_hit / hit_norm_len`.
+    pub hit_dir: (f32, f32),
+    /// `fMeToHitPointNorm`.
+    pub hit_norm_len: f32,
+    /// `ptGoal` — charge destination past the hit point.
+    pub goal: (f32, f32),
+}
+
+/// Rejection reasons, carrying the value each debug print reports.
+pub(crate) enum RiderChargeReject {
+    Behind { forward_dot: f32 },
+    TooNear { norm: f32, sq_norm: f32 },
+    ZeroOrthogonal { ortho_len: f32 },
+    ZeroHitVector { hp_len: f32 },
+    ZeroHitNorm { hit_norm_len: f32 },
+}
+
+/// Pure geometry core of `RHArtificialMalignity::GetGoodRiderAttackDestination`
+/// (RHartificialmalignity.cpp:19796).
+///
+/// The charge goal feeds the movement order verbatim, so this math is
+/// save-observable to the last bit. Two shapes are easy to get wrong:
+///
+/// * The nose vector is `SetSector0to15( GetDirection() )` with the
+///   **default** aspect ratio `1.0f` (SBGeoVector2D.h:79) — the raw
+///   stretched-space table entry. Applying `ASPECT_RATIO` and then
+///   unapplying `INVERSE_ASPECT_RATIO` lands an ULP off and can flip the
+///   forward half-plane test for boundary vectors.
+/// * Both `SBGeoVector2D::operator*=( GEOTYPE k )` sites round their
+///   scalar **once** before touching the components (`Set(k*mX, k*mY)`,
+///   SBGeoVector2D.cpp:97-102): `k1 = RIDER_CHARGE_LATERAL_DISTANCE /
+///   fCosAlpha` (RHartificialmalignity.cpp:19871) and `k2 = fCosAlpha *
+///   fMeToEnemyNorm` (:19878). Distributing the multiply per component
+///   (`n.x * 40.0 / cos`) double-rounds differently; nicouzouf
+///   Savegame_047 Soldier51's frame-563 charge goal came out one ULP low
+///   in Y that way, which shifted the spliced running-order goal, its
+///   normalized increment, and every subsequent walk step.
+///
+/// The `f32::EPSILON` degenerate-input rejections have no Original
+/// counterpart (it would divide by zero and assert in debug); they are
+/// unreachable for the finite, >= 40-unit vectors that pass the earlier
+/// gates.
+pub(crate) fn rider_charge_goal_geometry(
+    my_pos: (f32, f32),
+    my_dir: u16,
+    enemy_pos: (f32, f32),
+) -> Result<RiderChargeGeometry, RiderChargeReject> {
+    // vMeToEnemyStretchedY = ptEnemy - ptMe;  .mY *= INVERSE_ASPECT_RATIO
+    let me_to_enemy_sy = (
+        enemy_pos.0 - my_pos.0,
+        (enemy_pos.1 - my_pos.1) * INVERSE_ASPECT_RATIO,
+    );
+
+    // vNoseVectorStretchedY.SetSector0to15( direction ) — default aspect 1.0.
+    let nose_sy = sector_to_vector_iso(my_dir, 1.0);
+
+    // Is the enemy before me?
+    let forward_dot = dot2(nose_sy, me_to_enemy_sy);
+    if forward_dot < 0.0 {
+        return Err(RiderChargeReject::Behind { forward_dot });
+    }
+
+    // fMeToEnemySquareNorm / fMeToEnemyNorm.
+    let sq_norm = me_to_enemy_sy.0 * me_to_enemy_sy.0 + me_to_enemy_sy.1 * me_to_enemy_sy.1;
+    let norm = sq_norm.sqrt();
+    if norm < EnemyAi::RIDER_CHARGE_LATERAL_DISTANCE {
+        return Err(RiderChargeReject::TooNear { norm, sq_norm });
+    }
+
+    // fCosAlpha = sqrt( 1.0f - RIDER_CHARGE_SQR_LATERAL_DISTANCE / fMeToEnemySquareNorm )
+    let cos_alpha = (1.0 - EnemyAi::RIDER_CHARGE_SQR_LATERAL_DISTANCE / sq_norm).sqrt();
+
+    // GetNormal( false ) with aspect 1.0 yields (mY, -mX); then Normalize().
+    let ortho = (me_to_enemy_sy.1, -me_to_enemy_sy.0);
+    let ortho_len = (ortho.0 * ortho.0 + ortho.1 * ortho.1).sqrt();
+    if ortho_len < f32::EPSILON {
+        return Err(RiderChargeReject::ZeroOrthogonal { ortho_len });
+    }
+    let ortho_norm = (ortho.0 / ortho_len, ortho.1 / ortho_len);
+    // operator*=: one rounded scalar, then k1 * component.
+    let k1 = EnemyAi::RIDER_CHARGE_LATERAL_DISTANCE / cos_alpha;
+    let ortho_scaled = (k1 * ortho_norm.0, k1 * ortho_norm.1);
+
+    // vMeToHitPointStretchedY = vMeToEnemyStretchedY + orthogonal; Normalize().
+    let hit_point_sy = (
+        me_to_enemy_sy.0 + ortho_scaled.0,
+        me_to_enemy_sy.1 + ortho_scaled.1,
+    );
+    let hp_len = (hit_point_sy.0 * hit_point_sy.0 + hit_point_sy.1 * hit_point_sy.1).sqrt();
+    if hp_len < f32::EPSILON {
+        return Err(RiderChargeReject::ZeroHitVector { hp_len });
+    }
+    let hp_norm = (hit_point_sy.0 / hp_len, hit_point_sy.1 / hp_len);
+    // operator*=: one rounded scalar, then k2 * component.
+    let k2 = cos_alpha * norm;
+    let hp_scaled = (k2 * hp_norm.0, k2 * hp_norm.1);
+
+    // vMeToHitPoint — reapply the aspect ratio to Y.
+    let me_to_hit = (hp_scaled.0, hp_scaled.1 * ASPECT_RATIO);
+
+    // vHitPointToGoal = GetNormalized() * RIDER_CHARGE_LOOP_DISTANCE;
+    // ptGoal = ptMe + vMeToHitPoint + vHitPointToGoal.
+    let hit_norm_len = (me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1).sqrt();
+    if hit_norm_len < f32::EPSILON {
+        return Err(RiderChargeReject::ZeroHitNorm { hit_norm_len });
+    }
+    let hit_dir = (me_to_hit.0 / hit_norm_len, me_to_hit.1 / hit_norm_len);
+    let goal = (
+        my_pos.0 + me_to_hit.0 + hit_dir.0 * EnemyAi::RIDER_CHARGE_LOOP_DISTANCE,
+        my_pos.1 + me_to_hit.1 + hit_dir.1 * EnemyAi::RIDER_CHARGE_LOOP_DISTANCE,
+    );
+
+    Ok(RiderChargeGeometry {
+        forward_dot,
+        sq_norm,
+        cos_alpha,
+        me_to_hit,
+        hit_dir,
+        hit_norm_len,
+        goal,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// nicouzouf Savegame_047 replay-004, frame 563: Soldier51 (a rider in
+    /// AttackingReactiontimeRunning) plans a charge approach against Pc76.
+    /// Inputs captured bit-exact from the parity replay. The Original's
+    /// `operator*=` sites round `RIDER_CHARGE_LATERAL_DISTANCE / fCosAlpha`
+    /// and `fCosAlpha * fMeToEnemyNorm` once before the component
+    /// multiplies; the per-component `n * 40.0 / cos` order previously
+    /// produced goal.y = 0x4425e9c8 (one ULP low), which propagated
+    /// through the stop-transition splice into the running order's goal,
+    /// its normalized increment, and the frame-564 movement_map drift.
+    #[test]
+    fn rider_charge_goal_matches_original_scalar_rounding() {
+        let me = (f32::from_bits(0x448f_3c66), f32::from_bits(0x43dc_a7ea));
+        let enemy = (f32::from_bits(0x443a_7ea7), f32::from_bits(0x4418_a6d2));
+
+        let geometry = match rider_charge_goal_geometry(me, 11, enemy) {
+            Ok(geometry) => geometry,
+            Err(_) => panic!("frame-563 fixture must produce a charge goal"),
+        };
+
+        assert_eq!(geometry.goal.0.to_bits(), 0x442f_2b23);
+        assert_eq!(geometry.goal.1.to_bits(), 0x4425_e9c9);
+        // The strike-zone / begin-charge inputs the caller consumes.
+        assert_eq!(geometry.me_to_hit.0.to_bits(), 0xc3ba_d233);
+        assert_eq!(geometry.hit_norm_len.to_bits(), 0x43d0_d28f);
+    }
 
     fn pc_view() -> crate::ai_entity_view::AiEntityView {
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {
