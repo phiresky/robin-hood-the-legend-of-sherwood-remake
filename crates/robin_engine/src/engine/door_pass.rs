@@ -540,6 +540,17 @@ struct BuiltDoorPass {
     pass: ActiveDoorPass,
     root_action: OrderType,
     post_chain_action_recursive: Option<OrderType>,
+    /// Whether this door type's translation writes `mbPassingDoorDirectly`.
+    ///
+    /// Original assigns that latch only inside `TranslatePassDoorBuilding`,
+    /// `TranslatePassDoorLadder`, `TranslatePassDoorWall` and
+    /// `TranslatePassDoorStairs` (`original-code/RHelementactor.cpp:4751`,
+    /// `:4911`, `:5161`, `:5400`). The `DOOR_REINFORCEMENT / DOOR_DEFAULT /
+    /// DOOR_GATE / DOOR_TRAP` arm of `RHElementActor::Translate`
+    /// (`RHelementactor.cpp:4224-4330`) builds its order chain inline and
+    /// never touches it, so the latch keeps whatever the actor's previous
+    /// building or lift pass left behind.
+    sets_passing_door_directly: bool,
 }
 
 /// Whether PassDoor launch reaches the synchronous-successor splice in the
@@ -762,6 +773,7 @@ impl<'a> PassDoorLaunchContext<'a> {
             compute_direction,
             tolerance,
             built.pass,
+            built.sets_passing_door_directly,
         );
         self.sequence_manager.element_in_progress(seq_id, elem_idx);
         tracing::debug!(
@@ -1014,6 +1026,18 @@ impl PassDoorLaunchContext<'_> {
         // here — the patch's applied-ness *is* the gate's state.
         let _ = door_type;
 
+        // Only the building and lift arms of `RHElementActor::Translate`
+        // delegate to a `TranslatePassDoorXxx` helper, and only those helpers
+        // assign `mbPassingDoorDirectly`.
+        let sets_passing_door_directly = matches!(
+            door_type,
+            DoorType::Building
+                | DoorType::BuildingTrap
+                | DoorType::LiftHigh
+                | DoorType::LiftHighCrenel
+                | DoorType::LiftLow
+        );
+
         let steps = match door_type {
             DoorType::Building | DoorType::BuildingTrap => translate_building(&ctx),
             DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::LiftLow => match lift_type {
@@ -1054,6 +1078,7 @@ impl PassDoorLaunchContext<'_> {
             },
             root_action: action,
             post_chain_action_recursive,
+            sets_passing_door_directly,
         }
     }
 
@@ -1069,6 +1094,7 @@ impl PassDoorLaunchContext<'_> {
         compute_direction: bool,
         tolerance: f32,
         active_door_pass: ActiveDoorPass,
+        sets_passing_door_directly: bool,
     ) {
         let door_handle = crate::position_interface::DoorHandle(active_door_pass.door_index.0);
         let door_direction = active_door_pass.direct;
@@ -1097,7 +1123,9 @@ impl PassDoorLaunchContext<'_> {
             )
         });
         actor.active_movement = crate::movement::ActiveMovement::new(seq_id, elem_idx);
-        actor.passing_door_directly = active_door_pass.position_direct;
+        if sets_passing_door_directly {
+            actor.passing_door_directly = active_door_pass.position_direct;
+        }
         actor.active_door_pass = Some(active_door_pass);
         actor.sequence_element_started = true;
     }
@@ -3714,5 +3742,59 @@ mod tests {
             &mut engine.orders.next_order_id,
         )
         .dispatch(owner, seq_id, 0);
+    }
+
+    /// `RHElementActor::Translate` only assigns `mbPassingDoorDirectly` inside
+    /// the `TranslatePassDoorBuilding` / `Ladder` / `Wall` / `Stairs` helpers
+    /// (`original-code/RHelementactor.cpp:4751`, `:4911`, `:5161`, `:5400`).
+    /// The `DOOR_REINFORCEMENT / DOOR_DEFAULT / DOOR_GATE / DOOR_TRAP` arm
+    /// (`RHelementactor.cpp:4224-4330`) inlines its own order chain and leaves
+    /// the latch alone, so `ForecastDestinationForIA` keeps reading the value
+    /// the actor's last building or lift pass wrote.
+    #[test]
+    fn only_building_and_lift_passes_write_passing_door_directly() {
+        for (door_type, expect_latch_written) in [
+            (DoorType::Building, true),
+            (DoorType::BuildingTrap, true),
+            (DoorType::Default, false),
+            (DoorType::Gate, false),
+            (DoorType::Trap, false),
+        ] {
+            let mut engine = EngineInner::new();
+            // Enter through `sector_out`, which is the `direct == true` side.
+            let owner = engine.add_entity(make_pc(7));
+            engine
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap()
+                .passing_door_directly = false;
+            let door = crate::gate::Door {
+                door_type,
+                ..default_door()
+            };
+
+            dispatch_pass(&mut engine, &[door], owner);
+
+            let actor = engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap();
+            assert_eq!(
+                actor.active_door_pass.as_ref().map(|pass| pass.direct),
+                Some(true),
+                "{door_type:?} must still record a direct traversal"
+            );
+            assert_eq!(
+                actor.passing_door_directly, expect_latch_written,
+                "{door_type:?} wrote mbPassingDoorDirectly = {}",
+                actor.passing_door_directly
+            );
+        }
     }
 }
