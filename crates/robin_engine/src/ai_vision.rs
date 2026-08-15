@@ -1342,18 +1342,34 @@ fn night_fog_light_reference_points(
 /// Unit forward vector for a 16-sector compass direction (0 = north,
 /// CW).  Plain unit vector in true world space (no aspect-ratio
 /// stretch).
+///
+/// Original `SBGeoVector2D::SetSector0to15` reads the literal
+/// `marraySectorX/Y` constant tables rather than evaluating trig, and
+/// downstream sign tests (stare-gaze snap, cone determinants) suffer
+/// catastrophic cancellation, so the last ULP of these components is
+/// observable.  Delegate to the shared exact table.
 pub fn sector_to_forward(sector: i16) -> (f32, f32) {
-    let s = sector.rem_euclid(16);
-    let angle = (s as f32) * (std::f32::consts::TAU / 16.0) - std::f32::consts::FRAC_PI_2;
-    (angle.cos(), angle.sin())
+    let [x, y] = crate::shadow_polygon::sector_to_direction(sector);
+    (x, y)
 }
 
-/// Rotate the unit vector `(x, y)` by `theta` radians.
+/// Rotate the vector `(x, y)` by `theta` radians.
 /// CCW for positive θ in standard math convention, which corresponds
 /// to screen-clockwise since the game's Y axis points down.
+///
+/// Original `SBGeoVector2D::GetRotated` calls the double-precision
+/// libm `cos`/`sin` (the FLOAT angle promotes to double) and keeps the
+/// products and sums in double, rounding to f32 only once per
+/// component.  The stare/follow gaze compares the rotated vector
+/// against the stare vector with catastrophic cancellation, so that
+/// final ULP decides whether the view direction snaps to the raw
+/// stare vector (Savegame_SuN1Sh1nE replay-013 frame 975: f32 trig
+/// left the rotated gaze one ULP short of the crossing, adding a
+/// night-light barycentre `IsReachable` the Original never issued).
 fn rotate_unit(x: f32, y: f32, theta: f32) -> (f32, f32) {
-    let (s, c) = theta.sin_cos();
-    (x * c - y * s, x * s + y * c)
+    let (s, c) = (theta as f64).sin_cos();
+    let (x, y) = (x as f64, y as f64);
+    ((x * c - y * s) as f32, (x * s + y * c) as f32)
 }
 
 /// LOS query: ask the grid for obstacles crossed by the ray, then run
@@ -1907,13 +1923,17 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
 }
 
 /// Signed angle between two 2D vectors.
+///
+/// Original `SBGeoVector2D::Angle` computes the dot, determinant, and
+/// their quotient in f32 but evaluates the arctangent in double
+/// (`atan((double)(fDet / fDot))`) before rounding back to f32.
 fn vec_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
     let dot = ax * bx + ay * by;
     let det = ax * by - ay * bx;
     if det == 0.0 {
         return if dot > 0.0 { 0.0 } else { std::f32::consts::PI };
     }
-    let angle = (det / dot).atan();
+    let angle = f64::from(det / dot).atan() as f32;
     if dot >= 0.0 {
         angle
     } else if det > 0.0 {
