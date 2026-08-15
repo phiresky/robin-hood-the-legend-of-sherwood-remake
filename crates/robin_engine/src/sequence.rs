@@ -7891,6 +7891,48 @@ mod tests {
         );
     }
 
+    /// nicouzouf Savegame_047 replay-004, frame 563: Soldier51's rider-charge
+    /// destination (see `ai_enemy::battle::rider_charge_goal_geometry`) is
+    /// spliced with the ~26-unit running→waiting stop transition from the
+    /// rider's position. The resulting RunningUpright order goal is the value
+    /// the Original trace records as `position_goal_map` at frame 564; a
+    /// one-ULP-lower destination Y (0x4425e9c8) lands the spliced goal at
+    /// 0x44230254 instead.
+    #[test]
+    fn insert_transition_end_matches_frame563_rider_charge_fixture() {
+        let mut elem = movement_elem(
+            EntityId::Soldier(crate::entity_id::SoldierId(51)),
+            OrderType::RunningUpright,
+        );
+        elem.push_order(Order::test_new(
+            OrderType::RunningUpright,
+            f32::from_bits(0x442f_2b23),
+            f32::from_bits(0x4425_e9c9),
+        ));
+
+        let mut next_order_id = 1u32;
+        elem.insert_transition_end(
+            OrderType::TransitionRunningUprightWaitingUpright,
+            OrderType::RunningUpright,
+            26.0,
+            crate::coordinates::MapPoint {
+                x: f32::from_bits(0x448f_3c66),
+                y: f32::from_bits(0x43dc_a7ea),
+            },
+            1.0,
+            &mut next_order_id,
+        );
+
+        assert_eq!(elem.orders.len(), 2);
+        assert_eq!(elem.orders[0].order_type, OrderType::RunningUpright);
+        assert_eq!(elem.orders[0].target_x.to_bits(), 0x4434_fbd2);
+        assert_eq!(elem.orders[0].target_y.to_bits(), 0x4423_0255);
+        assert_eq!(
+            elem.orders[1].order_type,
+            OrderType::TransitionRunningUprightWaitingUpright
+        );
+    }
+
     #[test]
     fn cleanup_duplicate_orders_removes_consecutive_matches() {
         let mut elem = movement_elem(
