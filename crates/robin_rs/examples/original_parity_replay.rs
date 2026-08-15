@@ -2369,6 +2369,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     robin_engine::sight_obstacle::begin_parity_visibility_capture();
     robin_engine::pathfinder::begin_parity_path_capture();
 
+    // Correlate Original RNG callsite return-address offsets with the Rust
+    // site labels observed at the same draw indices while the streams still
+    // agree. On a cursor mismatch the accumulated map names the Original
+    // callsites of the frame, which identifies the draw Rust skipped or
+    // invented even when Rust never reached that site.
+    let debug_rng_site_map = std::env::var_os("PARITY_DEBUG_RNG_SITE_MAP").is_some();
+    let mut rng_site_map: BTreeMap<u32, BTreeSet<String>> = BTreeMap::new();
+
     let mut line_index = 0_usize;
     let terminator = loop {
         let mut frame = match records.read_record() {
@@ -2730,9 +2738,60 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 },
             );
         }
+        // Diagnostic: correlate the Original binary's per-draw callsite
+        // offsets with the Rust `RngSite` names. Only meaningful while the
+        // two streams still agree on the draw count for the frame, which is
+        // exactly when the pairing is positional and unambiguous.
+        if std::env::var_os("PARITY_DEBUG_RNG_SITE_MAP").is_some() {
+            let offsets = frame.rng_draws.gameplay_callsite_offsets();
+            eprintln!(
+                "RNG_FRAME frame={} start={rng_start} original_offsets={offsets:?} rust_sites={rust_rng_sites:?}",
+                frame.frame_before,
+            );
+            if actual_rng_end == rng_end && offsets.len() == rust_rng_sites.len() {
+                for (offset, site) in offsets.iter().zip(rust_rng_sites.iter()) {
+                    eprintln!("RNG_SITE_MAP offset={offset} site={site:?}");
+                }
+            }
+        }
         // Preserve the complete divergent frame in --dump-jsonl before
         // stopping on an RNG cursor mismatch. RNG ordering failures are often
         // precisely where the broad engine snapshot is most useful.
+        if debug_rng_site_map {
+            let offsets = frame.rng_draws.gameplay_callsite_offsets();
+            if actual_rng_end == rng_end && offsets.len() == rust_rng_sites.len() {
+                for (offset, site) in offsets.iter().copied().zip(rust_rng_sites.iter()) {
+                    rng_site_map
+                        .entry(offset)
+                        .or_default()
+                        .insert(format!("{site:?}"));
+                }
+            } else {
+                eprintln!(
+                    "original callsite offsets for frame {}: {:?}",
+                    frame.frame_before, offsets
+                );
+                for (index, offset) in offsets.iter().copied().enumerate() {
+                    let known = rng_site_map
+                        .get(&offset)
+                        .map(|sites| sites.iter().cloned().collect::<Vec<_>>().join("|"))
+                        .unwrap_or_else(|| "<unseen>".to_string());
+                    eprintln!("  original draw {index}: offset {offset} -> {known}");
+                }
+                for (index, site) in rust_rng_sites.iter().enumerate() {
+                    eprintln!("  rust draw {index}: {site:?}");
+                }
+                for difference in &differences {
+                    eprintln!("  state difference: {difference}");
+                }
+                for (offset, sites) in &rng_site_map {
+                    eprintln!(
+                        "rng site map: {offset} {}",
+                        sites.iter().cloned().collect::<Vec<_>>().join("|")
+                    );
+                }
+            }
+        }
         if actual_rng_end != rng_end {
             if automatic_dump_enabled {
                 write_automatic_rolling_dump(
