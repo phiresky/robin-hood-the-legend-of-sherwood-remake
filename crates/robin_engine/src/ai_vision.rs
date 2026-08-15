@@ -72,6 +72,18 @@ pub(crate) fn view_radius_cache_debug_enabled() -> bool {
     view_radius_cache_debug_config().enabled
 }
 
+pub(crate) static DEBUG_CURRENT_FRAME: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+pub(crate) fn debug_set_current_frame(frame: u32) {
+    DEBUG_CURRENT_FRAME.store(frame, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn view_radius_debug_frame_enabled(frame: u32) -> bool {
+    let config = view_radius_cache_debug_config();
+    config.enabled && frame >= config.from_frame && frame <= config.through_frame
+}
+
 #[derive(Clone, Copy)]
 struct ViewRadiusSectorDebugContext {
     viewer: EntityId,
@@ -1232,6 +1244,47 @@ pub fn compute_view_radius(
 
     let shadow_sectors = night_fog_shadow_sector_indices(fast_grid, pt_ref, shadow_layer);
 
+    if std::env::var_os("PARITY_DEBUG_VR_SECTORS").is_some() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let mut idx = 0usize;
+            while let Some(o) = sight_obstacles.get(idx) {
+                if o.layer != u16::MAX {
+                    eprintln!(
+                        "VROBST idx={idx} layer={} sector={} box3d={:?}..{:?}",
+                        o.layer, o.sector, o.box_3d_min, o.box_3d_max
+                    );
+                }
+                idx += 1;
+            }
+        });
+        eprintln!(
+            "VRSECT frame={} fwd=({:.5},{:.5}) caller={} eye=({:.3},{:.3},{:.3}) base_r={:.3} obstacle={:?} layer={} ptref=({:.3},{:.3}) sectors={:?}",
+            DEBUG_CURRENT_FRAME.load(std::sync::atomic::Ordering::Relaxed),
+            view_forward.0,
+            view_forward.1,
+            std::panic::Location::caller(),
+            eye_world.x,
+            eye_world.y,
+            eye_world.z,
+            base_radius,
+            target_obstacle.map(|o| (o.layer, o.id)),
+            shadow_layer,
+            pt_ref.x,
+            pt_ref.y,
+            shadow_sectors
+                .iter()
+                .map(|i| {
+                    let s = level.shadow_data.get(i);
+                    (
+                        *i,
+                        s.map(|s| (s.barycentre_3d_x, s.barycentre_3d_y, s.barycentre_3d_z)),
+                    )
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+
     tracing::trace!(
         eye_x = eye_world.x,
         eye_y = eye_world.y,
@@ -1544,6 +1597,23 @@ pub struct RefreshViewContext {
 /// of [`refresh_view_look`] still clears a stale look-status the
 /// moment the animation is no longer playing.
 pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
+    if std::env::var_os("PARITY_DEBUG_VR_STARE").is_some()
+        && (ctx.own_position.x - 795.054).abs() < 0.01
+        && (ctx.own_position.y - 1670.011).abs() < 0.01
+    {
+        eprintln!(
+            "VRVIEW frame={} status={:?} body_dir={} dir_old={} angle={} dir=({},{}) posture={:?} anim={:?}",
+            DEBUG_CURRENT_FRAME.load(std::sync::atomic::Ordering::Relaxed),
+            npc.eye_status,
+            ctx.body_direction,
+            npc.direction_old,
+            npc.view_angle,
+            npc.view_direction[0],
+            npc.view_direction[1],
+            ctx.posture,
+            ctx.animation,
+        );
+    }
     // Symptom therapy: unconscious/tied/dead NPCs that somehow have
     // a non-closed status get forced to Closed.
     if npc.eye_status != EyeStatus::DieOrGetUnconscious
@@ -1807,6 +1877,28 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
 
 /// Handler for `Stare` and `Follow` (after stare-point update).
 fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &GroundPoint) {
+    let dbg = std::env::var_os("PARITY_DEBUG_VR_STARE").is_some()
+        && (own_position.x - 795.054).abs() < 0.01
+        && (own_position.y - 1670.011).abs() < 0.01;
+    if dbg {
+        eprintln!(
+            "VRSTARE frame={} own=({},{}) stare=({},{}) vd=({},{}) dir_in=({},{}) angle={} half_range={} step={} status={:?} transition={}",
+            DEBUG_CURRENT_FRAME.load(std::sync::atomic::Ordering::Relaxed),
+            own_position.x,
+            own_position.y,
+            npc.stare_point.x,
+            npc.stare_point.y,
+            vdx,
+            vdy,
+            npc.view_direction[0],
+            npc.view_direction[1],
+            npc.view_angle,
+            npc.view_half_angle_range,
+            npc.view_angle_step,
+            npc.eye_status,
+            npc.view_transition,
+        );
+    }
     // Stare vector from own position to stare point.
     let mut svx = npc.stare_point.x - own_position.x;
     let mut svy = npc.stare_point.y - own_position.y;
@@ -1901,6 +1993,12 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
             let (rx, ry) = rotate_unit(vdx, vdy, npc.view_angle);
             npc.view_direction = [rx, ry];
         }
+    }
+    if dbg {
+        eprintln!(
+            "VRSTARE   -> sv=({},{}) dir_out=({},{}) angle={}",
+            svx, svy, npc.view_direction[0], npc.view_direction[1], npc.view_angle
+        );
     }
 }
 
