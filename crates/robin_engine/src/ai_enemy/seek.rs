@@ -1421,11 +1421,20 @@ impl EnemyAi {
             // tactical nearby-fighter list filters those actors out before AI
             // dispatch, so absence there does not mean the body recovered.
             // Use the complete handle-indexed entity snapshot, matching the
-            // Original's direct `IsOutOfOrder()` call.
+            // Original's direct `IsOutOfOrder()` call
+            // (`RHartificialmalignity.cpp:20128`). `IsAbleToFight` is a
+            // different predicate and must not stand in for it: civilians
+            // never report able-to-fight, so a woken civilian sleeper would
+            // stay queued forever and get re-examined on the spot.
             let still_down = ctx
                 .entity_view(first)
-                .map(|view| !view.is_able_to_fight)
-                .unwrap_or(false);
+                .unwrap_or_else(|| {
+                    panic!(
+                        "soldier {} cannot prune missing queued body {first}",
+                        self.base.me
+                    )
+                })
+                .is_out_of_order();
             if still_down {
                 break;
             }
