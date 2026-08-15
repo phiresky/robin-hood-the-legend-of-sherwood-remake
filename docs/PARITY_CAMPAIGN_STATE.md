@@ -456,13 +456,42 @@ when free disk drops under its 30 GB floor + 9 GB/job reservation; delete that f
 captures are compressed under `traces/`; `.capture-attempts/` is disposable scratch (it once held 29 GB).
 
 ### Agents in flight at checkpoint (8) — worktrees under .claude/worktrees/
-seek flood (16) · light-sector `ComputeViewRadius` raycasts (7+2) · residual +-4 sector rotation (14) ·
+seek flood (16) · light-sector `ComputeViewRadius` raycasts (7+2) · 
 seek-refresh extra movement element (6) · detection/alert escalation (4) · Wait-completion-vs-interruption
 (~20, largest open lead) · plus two finished-and-merged. Their branches are `worktree-agent-<id>`;
 check `git rev-list --count main..<branch>` before assuming work is unmerged.
 **UNREVIEWED**: branch `worktree-agent-a0a0cb7befe82f927` carries `e447d2b50` "Charge a weak enemy on the
 AI's stretched 3D distance" committed AFTER its report was merged — it is unvalidated by the coordinator
 and must be reviewed/validated before merging.
+
+### The "+-4 sector rotation" cluster is DISPROVEN — re-split it (agent returned no fix, 2026-08-15)
+A dedicated agent examined 3 of the 14 members in depth and found Rust computes **exactly the same
+sector the Original computes** in every one; the divergence is always *whether/when the turn is issued*,
+never the sector math. Lead (a) confirmed: `vector_to_sector_0_to_15_with_aspect` is a faithful port.
+Lead (b) is a dead end: `RHartificialintelligence.cpp:1670` and `:2001` are faithfully ported and are not
+on any examined member's path. Do not re-open this as a rotation bug. Correct split:
+- **One real sub-bug, 5 traces — `anim 140 vs 50`**: Savegame_071 r003 (Soldier104), Savegame_032 r006
+  (Soldier87), Savegame_030 r005/r006/r011 (Soldier240). In substate 97
+  (`SeekingSoldierGiveAlertingReportToOfficerPoint`) Rust `PointTo`s at entry+100 while Original does it at
+  entry+150 (measured on three independent saves). The direction Rust picks is the one the Original later
+  uses, so `PointTo`'s sector math is right. Ruled out: AI lock, `IsFrozenAll`, skipped sim frames,
+  `mSubstateAtLastTimerLaunch`. **Best candidate:** `RHElementActor::Instruct`
+  (`original-code/RHelementactor.cpp:1333+`) postpones the `PointTo` TURN element against the looping
+  `WaitingAlerted` wait via `DecidePriorities -> RHPRIORITY_DECISION_POSTPONE`, so the turn starts only at
+  the wait's next completion boundary; Rust instructs it immediately (installed order flips to `Turning`
+  at exactly +100). Testing that should clear all five at once.
+- **Separate, 1 trace** — Savegame_022 r012 (Civilian60, f1413): the interaction's `TurnElement` never
+  reaches the actor. Rust routes every AI Turning intent through the always-deferred arm
+  (`engine/movement.rs:11715` -> `launch_turn_sequence_deferred_no_transitions`), while Original `FaceTo`
+  (`RHartificialintelligence.cpp:2739-2779`) `Halt()`s and `LaunchSequence` **synchronously**. That
+  defer-everything asymmetry is the prime suspect.
+- **Separate, 1 trace** — Savegame_071 r015 (Pc342, f5392): Original's `direction_goal` legitimately
+  oscillates 3<->7 every frame while walking (7 when position advanced, 3 when not); Rust is one frame out
+  of phase. Transient direction-goal write in the anti-collision/deviation path
+  (`RHpositioninterface.cpp:1570/1574/2071/2109/2118`) — adjacent to `60327ada4`.
+- **Unclassified, 7 traces** (not examined; three-for-three heterogeneity means do NOT assume a shared
+  cause): Savegame_000 r001, Savegame_051 r004, Savegame_008 r013, Savegame_040 r001/r010/r011,
+  Savegame_024 r014, Savegame_055 r001/r012, Savegame_038 r004/r015.
 
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
