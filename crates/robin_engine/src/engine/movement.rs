@@ -9123,20 +9123,26 @@ impl EngineInner {
                 provenance_frame,
                 "perform_motion:return",
             );
-            // A generated stop transition can begin exactly where an
-            // anti-collision deviation ended. The shipped Linux game
-            // retains the stable deviation request across that
-            // zero-distance START tick, so its following Execute rotates
-            // immediately. The available C++ source does not expose the
-            // latch update responsible for this save-observable detail.
-            // TODO: identify whether the shipping build performs this in
-            // movement interruption or in transition initialization.
+            // A generated transition can begin exactly where an
+            // anti-collision deviation ended (destination == current map
+            // position). The shipped Linux game drops the deviation latch on
+            // that zero-distance START tick, so every following in-place
+            // `Turn()` rotates immediately in *both* directions — a
+            // counter-clockwise first-call rotation from a +2 count
+            // (Savegame_010 replay-014 frame 1030) rules out the previous
+            // count-priming model from task #545. The available C++ source
+            // does not expose the latch update responsible for this
+            // save-observable detail; see
+            // `clear_deviated_for_aligned_transition_start` for the trace
+            // evidence bounding it to exactly this initialization.
             if execute_order_initialising
                 && is_transition_anim
                 && sprite.position_iface.is_deviated()
                 && sprite.position_iface.map_position() == goal
             {
-                sprite.position_iface.prime_deviated_turn_for_current_goal();
+                sprite
+                    .position_iface
+                    .clear_deviated_for_aligned_transition_start();
             }
             result
         };
