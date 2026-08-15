@@ -42,7 +42,7 @@ fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
 /// Opt-in trace for the event-driven swordfight reposition decision. Keep the
 /// gate process-local and evaluate it before touching any proposal data so the
 /// disabled path cannot add lookups, RNG draws, or simulation state.
-fn reconsider_position_debug_matches(
+pub(super) fn reconsider_position_debug_matches(
     frame: impl FnOnce() -> u32,
     creation_order: impl FnOnce() -> Option<u32>,
     owner: impl FnOnce() -> u32,
@@ -2931,20 +2931,61 @@ impl EnemyAi {
         // help while a friend is fighting solo, swap to the solo fighter's
         // nearest enemy.
         let primary_outnumbered = primary.number_of_opponents > 1;
+        if reconsider_debug {
+            eprintln!(
+                "[RECONSIDER_ENTRY] frame={} owner={} phase=rebalance_gate primary={} primary_opponents={} outnumbered={} nearest_friend_solo={}",
+                ctx.frame,
+                self.base.me,
+                self.base.primary_target,
+                primary.number_of_opponents,
+                primary_outnumbered,
+                nearest_friend_solo,
+            );
+        }
         if primary_outnumbered && nearest_friend_solo != 0 {
             let nearest_enemy_of_solo = calculate_opponent_nearest_to_rene(
-                &tick.nearby_fighters,
+                |handle| self.find_fighter(handle, tick),
                 nearest_friend_solo,
                 &me_pos,
             );
+            if reconsider_debug {
+                let maurice = tick
+                    .nearby_fighters
+                    .iter()
+                    .find(|f| f.handle == nearest_friend_solo);
+                eprintln!(
+                    "[RECONSIDER_ENTRY] frame={} owner={} phase=rebalance_maurice maurice={} present={} opponents={:?} nearby={:?} nearest_enemy_of_solo={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest_friend_solo,
+                    maurice.is_some(),
+                    maurice.map(|m| m.opponent_handles.clone()),
+                    tick.nearby_fighters
+                        .iter()
+                        .map(|f| f.handle)
+                        .collect::<Vec<_>>(),
+                    nearest_enemy_of_solo,
+                );
+            }
             if nearest_enemy_of_solo != 0 {
-                let i_should_take_him = calculate_opponent_nearest_to_rene(
-                    &tick.nearby_fighters,
+                let nearest_to_that_enemy = calculate_opponent_nearest_to_rene(
+                    |handle| self.find_fighter(handle, tick),
                     self.base.primary_target,
                     self.find_fighter(nearest_enemy_of_solo, tick)
                         .map(|f| &f.position)
                         .unwrap_or(&me_pos),
-                ) == self.base.me;
+                );
+                let i_should_take_him = nearest_to_that_enemy == self.base.me;
+                if reconsider_debug {
+                    eprintln!(
+                        "[RECONSIDER_ENTRY] frame={} owner={} phase=rebalance_pick nearest_enemy_of_solo={} nearest_to_that_enemy={} i_should_take_him={}",
+                        ctx.frame,
+                        self.base.me,
+                        nearest_enemy_of_solo,
+                        nearest_to_that_enemy,
+                        i_should_take_him,
+                    );
+                }
                 if i_should_take_him {
                     // Original calls RHElementActorHuman::EnterSwordFight
                     // directly here. It does not launch another

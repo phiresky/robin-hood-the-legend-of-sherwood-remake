@@ -2830,7 +2830,7 @@ impl EngineInner {
     ///
     /// For circular hits (H, I), dispatches the experience to all
     /// nearby soldier friends with sufficient IQ.
-    pub(super) fn make_bad_sword_strike_experience(
+    pub(in crate::engine) fn make_bad_sword_strike_experience(
         &mut self,
         assets: &LevelAssets,
         soldier_id: EntityId,
@@ -2880,7 +2880,7 @@ impl EngineInner {
                 .npc_ids()
                 .filter(|&id| id != soldier_id)
                 .filter(|&id| {
-                    let Some(Entity::Soldier(s)) = self.world.entities.get(id) else {
+                    let Some(entity @ Entity::Soldier(s)) = self.world.entities.get(id) else {
                         return false;
                     };
                     if s.soldier.cached_camp != camp {
@@ -2890,17 +2890,23 @@ impl EngineInner {
                     if s.npc.ai_state() != crate::ai::AiState::Attacking {
                         return false;
                     }
-                    // IQ check
-                    let friend_ability = assets
-                        .profile_manager
-                        .get_soldier(s.soldier.soldier_profile_index)
-                        .map(|p| p.fighting)
-                        .unwrap_or(0);
+                    // Skill check. Original calls the virtual
+                    // `GetFightingAbility()`, which applies the active
+                    // difficulty modifier for Lacklandist soldiers — not the
+                    // raw profile capacity.
+                    let friend_ability = fighting_ability_from_profile(
+                        entity,
+                        &assets.profile_manager,
+                        self.control.sim_config.difficulty,
+                    );
                     if friend_ability < MIN_CAPACITY_LEARNING_BY_LOOKING {
                         return false;
                     }
-                    // Distance check (bounding box)
-                    let fpos = s.element.position_map();
+                    // Distance check (bounding box). Original centers the box
+                    // on the learner's `GetPositionMap()` but tests the
+                    // friend's `GetPositionGround()` (world x/y, i.e. map y
+                    // plus elevation).
+                    let fpos = s.element.position();
                     (fpos.x - my_pos.x).abs() <= MAX_DISTANCE_LEARNING_BY_LOOKING
                         && (fpos.y - my_pos.y).abs() <= MAX_DISTANCE_LEARNING_BY_LOOKING
                 })
@@ -2924,6 +2930,18 @@ impl EngineInner {
             })
             .unwrap_or(0);
 
+        let bad_experience_debug = std::env::var_os("PARITY_DEBUG_BAD_EXPERIENCE").is_some();
+        if bad_experience_debug {
+            let creation_order = self.world.original_creation_order(soldier_id);
+            eprintln!(
+                "[BAD_EXPERIENCE frame={} co={} soldier={} strike={:?} ability={}]",
+                self.control.frame_counter,
+                creation_order,
+                soldier_id.index(),
+                strike,
+                fighting_ability,
+            );
+        }
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(soldier_id)
             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
         {

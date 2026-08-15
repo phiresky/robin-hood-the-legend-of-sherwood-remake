@@ -6536,6 +6536,16 @@ impl EnemyAi {
             StimulusType::EventTimer | StimulusType::EventDone | StimulusType::EventReachPoint
         ) && !self.pending_special_strike
         {
+            if crate::ai_enemy::combat_positions::reconsider_position_debug_matches(
+                || ctx.frame,
+                || ctx.original_creation_order,
+                || self.base.me,
+            ) {
+                eprintln!(
+                    "[RECONSIDER_STIMULUS] frame={} owner={} creation_order={:?} stimulus={stimulus_type:?}",
+                    ctx.frame, self.base.me, ctx.original_creation_order,
+                );
+            }
             // SetEmoticon(None).
             self.base.set_emoticon(EmoticonType::None);
             self.reconsider_swordfight(sim, false, global, ctx, tick, grid);
