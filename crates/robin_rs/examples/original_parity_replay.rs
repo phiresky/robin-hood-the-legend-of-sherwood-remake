@@ -2730,6 +2730,22 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 },
             );
         }
+        // Diagnostic: correlate the Original binary's per-draw callsite
+        // offsets with the Rust `RngSite` names. Only meaningful while the
+        // two streams still agree on the draw count for the frame, which is
+        // exactly when the pairing is positional and unambiguous.
+        if std::env::var_os("PARITY_DEBUG_RNG_SITE_MAP").is_some() {
+            let offsets = frame.rng_draws.gameplay_callsite_offsets();
+            eprintln!(
+                "RNG_FRAME frame={} start={rng_start} original_offsets={offsets:?} rust_sites={rust_rng_sites:?}",
+                frame.frame_before,
+            );
+            if actual_rng_end == rng_end && offsets.len() == rust_rng_sites.len() {
+                for (offset, site) in offsets.iter().zip(rust_rng_sites.iter()) {
+                    eprintln!("RNG_SITE_MAP offset={offset} site={site:?}");
+                }
+            }
+        }
         // Preserve the complete divergent frame in --dump-jsonl before
         // stopping on an RNG cursor mismatch. RNG ordering failures are often
         // precisely where the broad engine snapshot is most useful.
