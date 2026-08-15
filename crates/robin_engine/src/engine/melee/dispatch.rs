@@ -317,12 +317,17 @@ impl EngineInner {
         }
 
         // Table swordfight positioning: when entering a swordfight
-        // whose opponent sits in a different sector, walk the
-        // jump-line graph to find a free slot among any fighters
-        // already engaged from our side.  If the jump line already has
-        // 3+ fighters on our side, interrupt.  Otherwise launch a
-        // movement element to nudge ourselves to the free slot before
-        // raising the sword.
+        // whose opponent sits in a different sector, count the fighters
+        // already engaging the opponent from our sector.  If 3+ fighters
+        // already crowd our side, interrupt.  With a jump line, also walk
+        // the jump-line graph to find a free slot and launch a movement
+        // element to nudge ourselves there before raising the sword.
+        //
+        // Original RHElementActorHuman::Translate (RHCOMMAND_ENTER_SWORDFIGHT)
+        // runs the sector/occupancy gate whenever an unprepared element has an
+        // opponent — the jump line only guards the slot-finding half — and all
+        // three abort branches use `SetState(RHSEQ_INTERRUPTED)`, which
+        // (unlike Impossible/Terminated) abandons any postponed successor.
         let swordfight_prepared = self
             .orders
             .sequence_manager
@@ -331,21 +336,23 @@ impl EngineInner {
         if !swordfight_prepared
             && let Some(opp) = opponent
             && opp != owner
-            && let Some(jl_idx) = self
+        {
+            let jl_idx = self
                 .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .and_then(|e| e.get_property(crate::sequence::Field::JumplineDestination))
                 .and_then(|v| match v {
-                    crate::sequence::FieldValue::LineId(id) if id.get() != 0 => Some(*id),
+                    crate::sequence::FieldValue::LineId(id) if id.get() != 0 => Some(id.get()),
                     _ => None,
-                })
-        {
-            match self.try_launch_table_swordfight_move(owner, opp, jl_idx.get()) {
+                });
+            match self.try_launch_table_swordfight_move(owner, opp, jl_idx) {
                 TableFightMove::Abort => {
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(seq_id, elem_idx);
+                    self.orders.sequence_manager.element_interrupted(
+                        seq_id,
+                        elem_idx,
+                        crate::sequence::CascadeFlags::NEXT_LEVEL,
+                    );
                     return OwnerActionBarrier::Skip;
                 }
                 TableFightMove::Launched => {
@@ -438,7 +445,7 @@ impl EngineInner {
         &mut self,
         owner: EntityId,
         opp: EntityId,
-        jl_idx: u32,
+        jl_idx: Option<u32>,
     ) -> TableFightMove {
         let (owner_sector, owner_pos, owner_layer, owner_move_box) = {
             let Some(e) = self.get_entity(owner) else {
@@ -471,6 +478,13 @@ impl EngineInner {
         if table_count >= 3 {
             return TableFightMove::Abort;
         }
+
+        // Original only runs the slot search when the element carries a jump
+        // line (`pJumpLine != 0`); without one the occupancy gate above is
+        // all that happens and the swordfight entry proceeds normally.
+        let Some(jl_idx) = jl_idx else {
+            return TableFightMove::Ok;
+        };
 
         let jump_line = match self.world.fast_grid.level.jump_lines.get(jl_idx as usize) {
             Some(jl) => jl.clone(),

@@ -335,6 +335,62 @@ fn invalid_patrol_assignment_preserves_original_partial_mutation() {
 }
 
 #[test]
+fn script_way_assignment_keeps_special_action() {
+    // `AssignPath` (script native) routes through Original's
+    // `AssignNewPatrolPath(RHHikingPath*)` overload. Its valid-path arm
+    // clears only `mbLikesToSitAround`; `mbSpecialAction` survives, so a
+    // leisure-authored NPC on a scripted route later fails GoTo's
+    // already-on-point shortcut and runs a real zero-length move when
+    // returning to its route (RHartificialintelligence.cpp:5764-5769 vs the
+    // index overload at :5717).
+    use crate::ai::{PathId, PatrolAssignment};
+
+    let paths = vec![crate::level_data::RawHikingPath {
+        waypoints: vec![crate::level_data::RawWaypoint {
+            x: 10,
+            y: 20,
+            sector: 1,
+            level: 0,
+            command: crate::level_data::WaypointCommand::None,
+        }],
+    }];
+
+    let mut ai = AiController::new(17);
+    ai.special_action = true;
+    ai.likes_to_sit_around = true;
+    let assigned = ai.assign_new_patrol_path(
+        PatrolAssignment::ScriptWay(PathId::new(0).unwrap()),
+        Position::default(),
+        0,
+        &paths,
+    );
+    assert!(assigned);
+    assert!(ai.has_patrol_path);
+    assert!(
+        ai.special_action,
+        "the RHHikingPath* overload must not clear mbSpecialAction"
+    );
+    assert!(!ai.likes_to_sit_around);
+
+    // The waypoint-macro index overload clears both flags.
+    let mut ai = AiController::new(17);
+    ai.special_action = true;
+    ai.likes_to_sit_around = true;
+    let assigned = ai.assign_new_patrol_path(
+        PatrolAssignment::Index(PathId::new(0).unwrap()),
+        Position::default(),
+        0,
+        &paths,
+    );
+    assert!(assigned);
+    assert!(
+        !ai.special_action,
+        "the UWORD index overload clears mbSpecialAction"
+    );
+    assert!(!ai.likes_to_sit_around);
+}
+
+#[test]
 fn change_way_binds_assignment_callback_before_explicit_virtual_tail() {
     use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
