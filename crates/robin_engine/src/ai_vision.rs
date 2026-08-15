@@ -2111,6 +2111,96 @@ mod tests {
         assert!(wx < -0.99 && wy.abs() < 1e-5);
     }
 
+    /// `SBGeoVector2D::GetRotated` (SBGeoVector2D.cpp:413-422) evaluates
+    /// `cos`/`sin` on a `FLOAT` angle through the C `<math.h>` overloads,
+    /// so the angle promotes to `double`, the products and sums stay in
+    /// `double`, and only the final component is cast back to `GEOTYPE`
+    /// (`float`).  Doing the whole thing in `f32` lands one ULP away, and
+    /// the stare/follow gaze in `refresh_view_stare` feeds that vector
+    /// straight into a `Det` sign test with catastrophic cancellation —
+    /// one ULP decides whether the view direction snaps onto the raw
+    /// stare vector, which changes how many detectables get a
+    /// line-of-sight raycast that frame.
+    ///
+    /// Expected bit patterns produced by compiling the Original
+    /// expression verbatim against the same libm.
+    #[test]
+    fn rotate_unit_keeps_original_double_precision_trig() {
+        // (input x, input y, angle, expected x bits, expected y bits)
+        let cases: [(f32, f32, f32, u32, u32); 5] = [
+            (
+                sector_to_forward(1).0,
+                sector_to_forward(1).1,
+                0.05,
+                0x3edb_549c,
+                0xbf67_523e,
+            ),
+            (
+                sector_to_forward(1).0,
+                sector_to_forward(1).1,
+                -0.7,
+                0xbe9a_df96,
+                0xbf74_01dd,
+            ),
+            (
+                sector_to_forward(2).0,
+                sector_to_forward(2).1,
+                0.7,
+                0x3f7f_112c,
+                0xbdae_aed6,
+            ),
+            (0.6, -0.8, -0.25, 0x3ec4_5031, 0xbf6c_6f3c),
+            (-0.3, 0.95, 0.05, 0xbeb1_b7c9, 0x3f6f_0ec3),
+        ];
+
+        for (x, y, theta, want_x, want_y) in cases {
+            let (rx, ry) = rotate_unit(x, y, theta);
+            assert_eq!(
+                (rx.to_bits(), ry.to_bits()),
+                (want_x, want_y),
+                "rotate_unit({x}, {y}, {theta}) = ({rx:e}, {ry:e})"
+            );
+
+            // Guard the regression directly: the all-f32 formulation the
+            // port used before disagrees on at least one component of
+            // every case above.
+            let (s, c) = theta.sin_cos();
+            let naive = (x * c - y * s, x * s + y * c);
+            assert_ne!(
+                (naive.0.to_bits(), naive.1.to_bits()),
+                (want_x, want_y),
+                "case ({x}, {y}, {theta}) no longer distinguishes f32 from f64 trig"
+            );
+        }
+    }
+
+    /// `SBGeoVector2D::Angle` (SBGeoVector2D.cpp:431-464) forms the dot and
+    /// determinant in `FLOAT`, divides in `FLOAT`, but casts the quotient to
+    /// `double` for `atan` before rounding the result back to `FLOAT`.
+    #[test]
+    fn vec_angle_matches_original_atan() {
+        let cases: [(f32, f32, f32, f32, u32); 4] = [
+            (0.3, -0.9, 0.0, -1.0, 0xbea4_bc7d),
+            (1.0, 0.02, 0.707_106_8, -0.707_106_8, 0xbf4e_2e67),
+            (-0.4, 0.6, 0.1, 0.99, 0xbf30_4cc2),
+            // dot == 0 with det > 0 takes the `atan(+inf)` path.
+            (0.5, 0.5, -0.5, 0.5, 0x3fc9_0fdb),
+        ];
+
+        for (ax, ay, bx, by, want) in cases {
+            let got = vec_angle(ax, ay, bx, by);
+            assert_eq!(
+                got.to_bits(),
+                want,
+                "vec_angle({ax}, {ay}, {bx}, {by}) = {got}"
+            );
+        }
+
+        // det == 0 short-circuits without calling atan at all.
+        assert_eq!(vec_angle(1.0, 0.0, 2.0, 0.0), 0.0);
+        assert_eq!(vec_angle(1.0, 0.0, -2.0, 0.0), std::f32::consts::PI);
+    }
+
     #[test]
     fn auto_visible_within_20_units() {
         // Inside the 3D <400 check — always 1.0.
