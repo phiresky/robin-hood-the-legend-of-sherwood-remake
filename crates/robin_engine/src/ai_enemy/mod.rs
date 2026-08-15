@@ -3584,7 +3584,7 @@ impl EnemyAi {
                     speed_factor,
                     ctx,
                 );
-                self.hold_new_patrol_orders_behind_attentive(first_new_order);
+                self.hold_new_orders_behind_attentive(first_new_order);
             }
             PatrolCoordinateAction::Run { target } => {
                 let first_new_order = self.base.outbox.actor.orders.len();
@@ -3595,7 +3595,7 @@ impl EnemyAi {
                     GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
                     ctx,
                 );
-                self.hold_new_patrol_orders_behind_attentive(first_new_order);
+                self.hold_new_orders_behind_attentive(first_new_order);
             }
         }
     }
@@ -3604,7 +3604,7 @@ impl EnemyAi {
     /// following `GoTo`. Only hold the movement when that call actually
     /// changes `will_be_attentive`; Original's no-change call returns without
     /// launching a transition element.
-    fn hold_new_patrol_orders_behind_attentive(&mut self, first_new_order: usize) {
+    fn hold_new_orders_behind_attentive(&mut self, first_new_order: usize) {
         let launches_transition = self
             .base
             .outbox
@@ -4336,6 +4336,7 @@ impl EnemyAi {
     ) {
         let outgoing_state = self.base.current_state;
         let outgoing_substate = self.base.current_substate;
+        let first_new_order = self.base.outbox.actor.orders.len();
 
         // `ReturnToDutyCommonStuff` enters through virtual Enemy `SetState` in
         // Original. That override forgets the old timer before the common tail
@@ -4382,13 +4383,22 @@ impl EnemyAi {
         // C++. The shared Rust base performs the state assignment directly.
         // Restore the Enemy override's attentive-mode tail: every Default
         // substate requests ordinary (or forced) attention, which may launch
-        // LeaveAttentiveMode alongside the return route. This is deliberately
-        // queued after the common routine has built that route, matching the
-        // observable sequence-manager registration order of the virtual call.
+        // LeaveAttentiveMode alongside the return route. The shared common
+        // routine has already built the route because it cannot invoke the
+        // Enemy override directly, so restore Original's authored
+        // SetState-before-GoTo barrier on only the orders emitted by this
+        // return-to-duty tail.
         self.base
             .outbox
             .actor
             .queue_set_attentive_mode(AttentiveModeEffect::new(self.forced_attentive, false));
+        self.hold_new_orders_behind_attentive(first_new_order);
+
+        // TODO: move the complete Enemy virtual SetState boundary into the
+        // shared return-to-duty routine. This closes final owner-boundary
+        // publication, but the deferred Rust model still queues the earlier
+        // ReturnToDuty actor prefix after owner-work StateChange callbacks;
+        // scripted callback observation order is not claimed exact here.
 
         // Preserve the corresponding script callback item explicitly.
         // Without this final FIFO entry, an older queued transition (notably
@@ -6097,6 +6107,66 @@ mod tests {
         assert!(
             !ai.base.timer_is_running,
             "virtual SetState must still clear the old timer when the common tail launches none"
+        );
+    }
+
+    #[test]
+    fn return_to_duty_marks_only_its_new_orders_behind_real_attentive_transition() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.attentive = true;
+        ai.will_be_attentive = true;
+        let post = Position {
+            x: 200.0,
+            y: 100.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        };
+        let here = Position { x: 100.0, ..post };
+        ai.base.initial_position = post;
+        ai.base
+            .outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                OrderType::Turning,
+                10.0,
+                0.0,
+            ));
+        let ctx = AiContext {
+            position: here,
+            self_animation: OrderType::WaitingAlerted,
+            ..AiContext::default()
+        };
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx);
+
+        let [preexisting, return_to_post] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("expected the pre-existing control and one return-to-duty move")
+        };
+        assert!(!preexisting.after_attentive_mode);
+        assert_eq!(return_to_post.order_type, OrderType::WalkingUpright);
+        assert!(
+            return_to_post.after_attentive_mode,
+            "Original virtual SetState launches LeaveAttentiveMode before its following GoTo"
+        );
+
+        let mut already_unalerted = EnemyAi::new(1);
+        already_unalerted.base.initial_position = post;
+        already_unalerted.resume_return_to_duty_after_patrol_init(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext {
+                position: here,
+                ..AiContext::default()
+            },
+        );
+        let [order] = already_unalerted.base.outbox.actor.orders.as_slice() else {
+            panic!("already-unalerted return must still author its move")
+        };
+        assert!(
+            !order.after_attentive_mode,
+            "a no-change SetAttentiveMode call launches no transition to wait behind"
         );
     }
 

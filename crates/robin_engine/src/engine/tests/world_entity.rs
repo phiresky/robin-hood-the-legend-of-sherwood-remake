@@ -5258,6 +5258,247 @@ fn review2_context_and_tick(
 }
 
 #[test]
+fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
+    use crate::ai::{AiState, CrossNpcAction, Substate, ThinkResultContinuation};
+    use crate::element::{Command, Detectable, DetectableType};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    engine.drain_direct_ai_owner_boundary(&sim, soldier_id, &assets);
+
+    let sector = crate::position_interface::SectorHandle::new(1);
+    let officer = engine
+        .get_entity_mut(officer_id)
+        .expect("call-rejection officer exists");
+    officer
+        .element_data_mut()
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    officer.element_data_mut().set_sector(sector);
+    let officer_npc = officer.npc_data_mut().expect("officer remains NPC");
+    officer_npc.detectable_lists[DetectableType::Beggar as usize].push(Detectable {
+        element: Some(soldier_id),
+        detectable_type: DetectableType::Beggar,
+        ..Default::default()
+    });
+    let officer_ai = officer
+        .enemy_ai_mut()
+        .expect("call-rejection officer has EnemyAi");
+    officer_ai.base.antagonist = soldier_id.index();
+    officer_ai.base.initial_position = crate::ai::Position {
+        x: 200.0,
+        y: 100.0,
+        sector,
+        level: 0,
+    };
+    officer_ai.attentive = true;
+    officer_ai.will_be_attentive = true;
+    officer_ai.base.current_state = AiState::Seeking;
+    officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
+    officer_ai
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::RequestThinkResult {
+            target: soldier_id.index(),
+            caller: officer_id.index(),
+            stimulus_type: crate::ai::StimulusType::CallHey,
+            info: crate::ai::StimulusInfo::Human(officer_id.index()),
+            continuation: ThinkResultContinuation::OfficerCalledSoldier,
+        });
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("call rejector has EnemyAi")
+        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, officer_id, &assets, true, true);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .expect("call-rejection officer survives");
+    let ai = officer
+        .enemy_ai()
+        .expect("call-rejection officer retains EnemyAi");
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    assert!(
+        officer
+            .npc_data()
+            .expect("officer remains NPC")
+            .detectable_lists[DetectableType::Beggar as usize]
+            .is_empty(),
+        "ReturnToDuty's Beggar deletion must settle on the resumed caller stack"
+    );
+    assert!(!ai.base.outbox.actor.has_boundary_work());
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+
+    let commands: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(officer_id))
+        .map(|element| (element.command, element.state))
+        .collect();
+    let leave = commands
+        .iter()
+        .position(|(command, _)| *command == Command::LeaveAttentiveMode)
+        .expect("rejected call must publish LeaveAttentiveMode");
+    let movement = commands
+        .iter()
+        .position(|(command, _)| *command == Command::Move)
+        .expect("rejected call must publish the return-to-post movement");
+    assert!(
+        leave < movement,
+        "LeaveAttentiveMode must precede GoTo: {commands:?}"
+    );
+    assert_eq!(commands[leave].1, crate::sequence::SequenceState::Todo);
+    assert_eq!(commands[movement].1, crate::sequence::SequenceState::Todo);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(officer_id)
+            .is_none(),
+        "deferred owner mode must not instruct either element"
+    );
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    let current = engine
+        .orders
+        .sequence_manager
+        .current_element_for_actor(officer_id)
+        .and_then(|(sequence, index)| engine.orders.sequence_manager.get_element(sequence, index))
+        .expect("manager phase must select the attentive transition");
+    assert_eq!(current.command, Command::LeaveAttentiveMode);
+    assert_eq!(current.state, crate::sequence::SequenceState::InProgress);
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(officer_id)
+                    && element.command == Command::Move
+                    && element.state == crate::sequence::SequenceState::InProgress
+            }),
+        "return-to-post movement must remain behind LeaveAttentiveMode"
+    );
+}
+
+#[test]
+fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
+    use crate::ai::{AiState, CrossNpcAction, Substate, ThinkResultContinuation};
+    use crate::element::{Detectable, DetectableType};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    engine.drain_direct_ai_owner_boundary(&sim, soldier_id, &assets);
+    let officer = engine
+        .get_entity_mut(officer_id)
+        .expect("call-acceptance officer exists");
+    officer
+        .npc_data_mut()
+        .expect("officer remains NPC")
+        .detectable_lists[DetectableType::Beggar as usize]
+        .push(Detectable {
+            element: Some(soldier_id),
+            detectable_type: DetectableType::Beggar,
+            ..Default::default()
+        });
+    let officer_ai = officer
+        .enemy_ai_mut()
+        .expect("call-acceptance officer has EnemyAi");
+    officer_ai.base.antagonist = soldier_id.index();
+    officer_ai.attentive = true;
+    officer_ai.will_be_attentive = true;
+    officer_ai.base.current_state = AiState::Seeking;
+    officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
+    officer_ai
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::RequestThinkResult {
+            target: soldier_id.index(),
+            caller: officer_id.index(),
+            stimulus_type: crate::ai::StimulusType::CallHey,
+            info: crate::ai::StimulusInfo::Human(officer_id.index()),
+            continuation: ThinkResultContinuation::OfficerCalledSoldier,
+        });
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .expect("call-acceptance officer survives");
+    let ai = officer
+        .enemy_ai()
+        .expect("call-acceptance officer retains EnemyAi");
+    assert_eq!(ai.base.current_state, AiState::Seeking);
+    assert_eq!(
+        ai.base.current_substate,
+        Substate::SeekingOfficerWaitForSoldier
+    );
+    assert!(ai.base.timer_is_running);
+    assert_eq!(
+        ai.base.when_does_timer_ring,
+        engine.control.frame_counter + 20
+    );
+    assert_eq!(ai.base.antagonist, soldier_id.index());
+    assert_eq!(
+        officer
+            .npc_data()
+            .expect("officer remains NPC")
+            .detectable_lists[DetectableType::Beggar as usize]
+            .first()
+            .map(|detectable| (detectable.element, detectable.detectable_type)),
+        Some((Some(soldier_id), DetectableType::Beggar)),
+        "accepted CALL_HEY must not enter ReturnToDuty"
+    );
+    assert_eq!(
+        officer
+            .npc_data()
+            .expect("officer remains NPC")
+            .detectable_lists[DetectableType::Beggar as usize]
+            .len(),
+        1
+    );
+    assert!(!ai.base.outbox.actor.has_boundary_work());
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(officer_id)
+                    && element.command == crate::element::Command::LeaveAttentiveMode
+            }),
+        "accepted CALL_HEY must not publish a return-to-duty transition"
+    );
+    let soldier = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("accepted soldier retains EnemyAi");
+    assert_eq!(
+        soldier.base.current_substate,
+        Substate::SeekingSoldierCalledByOfficer
+    );
+    assert_eq!(soldier.base.antagonist, officer_id.index());
+}
+
+#[test]
 fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
     use crate::ai::{AiState, LogLineType, Stimulus, StimulusType, Substate};
 

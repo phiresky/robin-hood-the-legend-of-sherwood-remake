@@ -14220,11 +14220,33 @@ impl EngineInner {
                 );
 
             // The continuation is the caller's C++ stack frame resuming
-            // immediately after `target->Think(...)` returned. SetState,
-            // Say, and timer work emitted there must therefore close before
-            // the next queued group member is called (and certainly before
-            // this source owner's Hourglass slot returns).
-            self.drain_ai_owner_work_for_mode(sim, assets, source_id, true, defer_turn_instruction);
+            // immediately after `target->Think(...)` returned. The officer's
+            // single-soldier call can reject into ReturnToDuty, whose virtual
+            // SetState and following GoTo synchronously publish actor work as
+            // well as owner callbacks. Close that exact caller stack through
+            // the full owner-local fixed point. Other result continuations
+            // retain their narrower owner-work boundary because their outer
+            // loops still own subsequent member calls.
+            if matches!(
+                continuation,
+                crate::ai::ThinkResultContinuation::OfficerCalledSoldier
+            ) {
+                self.drain_direct_ai_owner_boundary_mode(
+                    sim,
+                    source_id,
+                    assets,
+                    true,
+                    defer_turn_instruction,
+                );
+            } else {
+                self.drain_ai_owner_work_for_mode(
+                    sim,
+                    assets,
+                    source_id,
+                    true,
+                    defer_turn_instruction,
+                );
+            }
         }
     }
 
@@ -15469,7 +15491,12 @@ impl EngineInner {
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.surface_synchronous_completion_events_for_owner(npc_id);
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for_mode(
+                sim,
+                npc_id,
+                assets,
+                defer_turn_instruction,
+            );
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
             // produced causally on this call stack and must close now.
