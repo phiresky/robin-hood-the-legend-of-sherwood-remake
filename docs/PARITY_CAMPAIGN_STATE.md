@@ -1195,6 +1195,58 @@ from `EngineInner` so `drain`/`dispatch_script_synchronous_action` can run betwe
 interleave is owed to the `process_effects` level-advance cascade. Changes every sequence launch in the
 game; needs a wide control set.
 
+### Open: PC produced-noise material never refreshes on a door pass (1 trace, decisively measured)
+schema14 linux3/P003/Savegame_005 replay-008, f55516. Both engines' hearing gate agrees bit-for-bit on
+listener world position, noise origin and elevation, but **Original `noise_volume` = 70, Rust = 150** —
+`NOISE_VOLUME_RUN_STANDARD` (Ground) vs RUN_WOOD/GRASS_DRY/BUSH. So the PC's produced-noise MATERIAL
+diverges. With 150 against a stretched-3D distance of 72.66, `GetHearVolume` returns 77 instead of 0 and
+the soldier hears 2 frames early (the Original hears at 55518). Bisected on the Original: PC 64's walk
+volume is 40 (Wood/Grass/Bush) through f54884 and 20 (Ground) by f54890 — the material flips during PC 64's
+**PassDoor at 54880-54889** (sector 0/layer 0 -> sector 53/layer 1). Rust never refreshes it:
+`RUST_LOG=robin_engine::engine::movement=trace` logs **zero** `dispatch_sound_line_crossing` events for
+PC 64 across the whole 900-frame replay, while soldiers 46/52/54/55 do cross lines 442/443.
+NOT `SetObstacleAndMaterial` — that is gated on `bFindPlane`, only set when leaving a building
+(`original-code/RHelementactor.cpp:7566-7570`), which Rust mirrors correctly.
+Next step: instrument `check_for_non_elevation_line_crossing` for PC 64 over f54878-54892 against the
+Original's `PARITY_DEBUG_MOVEMENT_OWNER`.
+
+### Audit owed: `PutActorInBulding` is the mirror of the teleport-occupant bug just fixed
+`EngineInner::put_actor_in_building` (`crates/robin_engine/src/engine/script.rs:5572`) pushes only the
+CARRIED actor into `buildings.occupants`/`actor_building` and never the primary actor, and never touches
+`ai.global.houses`. The Original's `RHScript::PutActorInBulding` (`original-code/RHScript.cpp:6286-6311`)
+calls `pBuilding->Enter(pActor)` -> `mlistOccupants.InsertLast(pActor)` (`RHsector.cpp:1805-1820`).
+Exact mirror image of the `CleanFromHisBuildingBeforeTeleport` bug fixed in `89a4d9b05` (where a
+script-teleported soldier stayed in the AI house list and was staged as a phantom second pursuer, costing
+8 extra `DoorFightDispersion` + 1 `DoorFightTarget`). No failing trace proves it yet.
+
+### More RNG callsite offsets learned (schema14 generation)
+`1144411`/`1144489` = `DoorFightDispersion` pair · `1145593` = `DoorFightTarget` ·
+`3435351`/`3435362` = `RuntimeBuildingExitWait` pair · `1665062` = `BoredAnimationChoice` ·
+`1408623` = `VipIdleRemark` · `1237317` = `SeekPointAcceptance` · `1740720`/`1740848` =
+`SwordDamageProtection` · `1845615` = `MeleeProvoke`.
+Remember offsets are NOT comparable across capture generations.
+
+### Open singletons handed between agents (each measured, none fixed)
+- **Lateral-strike collateral victim search** — schema12 nicouzouf/P001/Savegame_037 replay-005, f962. Rust
+  skips `SwordDamageProtection` x2 + `MeleeProvoke`. PC77 has NO opponents and is hit as a BYSTANDER by
+  Soldier51's `swordstrike_thrust_d` (a LATERAL strike) aimed at PC75. `ExecuteLateralSwordStrike`'s seed
+  loop (`original-code/RHelementactorhuman.cpp:9795-9828`) uses `GetPositionGround()` for the arc direction
+  and the **3D `GetPosition()` norm** for range, while the per-frame sweep uses `GetPositionMap()`. Rust's
+  `collect_arc_victims` (`crates/robin_engine/src/engine/melee/mod.rs:2046-2090`) uses `position_map()` for
+  both.
+- **Straight-move panic segment resolves Impossible** — schema12 SuN1Sh1nE/P004/Savegame_013 replay-006,
+  f1963. Movement, not melee. The `ask_obstacle` pre-flight
+  (`crates/robin_engine/src/engine/movement.rs:5853-5875`) passes `pi.map_position()` where the Original
+  passes `Point(mpMe)` = `PositionToPoint(Position(mpMe))` (`RHartificialintelligence.h:1178`) — i.e. the
+  SNAPPING `Position()`. That is the door-pass position class; unaudited here.
+- **Reactive step-back vs plain swordfight** — schema12 SuN1Sh1nE/P004/Savegame_024 replay-004, f912.
+  **RNG matches exactly** (3x `SwordStrikeSelection` + 5x `MeleeNonMutualGate`), so both sides ran
+  `ProposeGoodSwordStrike` the same number of times — it is NOT a missing/extra call. Rust's parade gate
+  was checked and is faithful, including `opponent_time_limit` timing the PRINCIPAL opponent rather than
+  the hitter. Remaining candidates: the `mcommandKnownEnemyStrike1/2/3` "do you know this strike?" gate
+  (`RHartificialmalignity.cpp:15272-15278`), `ProposeGoodStepBackGoal`, or an ordering difference between
+  the `EVENT_REACHPOINT`->`SetState(SWORDFIGHT)` transition and the `EVENT_SWORDSTRIKE` recursion.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
