@@ -186,6 +186,20 @@ pub(crate) enum PatrolCoordinateAction {
     FaceChief { target: Position },
 }
 
+/// The action-state teardown/setup elements `RHArtificialIntelligence::GoTo`
+/// inserts into the movement's own sequence ahead of the movement element
+/// (`original-code/RHartificialintelligence.cpp:2480-2528`). Each flag is
+/// carried on the resulting [`crate::order::AiOrderIntent`] so the deferred
+/// engine drain rebuilds one ordered sequence rather than several competing
+/// ones.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct GotoActionStateTeardown {
+    pub quit_swordfight_before_move: bool,
+    pub enter_swordfight_before_move: bool,
+    pub stop_menace_before_move: bool,
+    pub lower_shield_before_move: bool,
+}
+
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -3697,12 +3711,17 @@ impl AiController {
         // move is launched. Centralised here so every caller benefits
         // — the engine drain processes these intents before
         // `launch_pending_orders_for_npc` runs the move.
-        let (quit_swordfight_before_move, stop_menace_before_move, lower_shield_before_move) =
-            self.apply_goto_action_state_teardown(flags, ctx);
+        let GotoActionStateTeardown {
+            quit_swordfight_before_move,
+            enter_swordfight_before_move,
+            stop_menace_before_move,
+            lower_shield_before_move,
+        } = self.apply_goto_action_state_teardown(flags, ctx);
 
         let mut order = Self::make_move_order(&destination, flags);
         order.tolerance = near_tolerance;
         order.quit_swordfight_before_move = quit_swordfight_before_move;
+        order.enter_swordfight_before_move = enter_swordfight_before_move;
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
@@ -3733,22 +3752,24 @@ impl AiController {
     /// that receives a `GoTo` gets a `LowerShield` element ahead of the
     /// movement, inside the movement's own sequence.
     ///
-    /// Returns `(quit_swordfight_before_move, stop_menace_before_move,
-    /// lower_shield_before_move)`.
+    /// Every element lands in the movement's own sequence, as
+    /// `RHArtificialIntelligence::GoTo`
+    /// (`original-code/RHartificialintelligence.cpp:2480-2528`) inserts them
+    /// into `plistSequence` ahead of the movement element.
     fn apply_goto_action_state_teardown(
         &mut self,
         flags: GotoFlags,
         ctx: &AiContext,
-    ) -> (bool, bool, bool) {
+    ) -> GotoActionStateTeardown {
         let action_state = ctx.self_action_state;
         let mut quit_swordfight_before_move = false;
+        let mut enter_swordfight_before_move = false;
         let mut stop_menace_before_move = false;
         if flags.contains(GotoFlags::SWORD) {
             // GOTO_SWORD branch — already-in-sword is a no-op,
             // otherwise prepend ENTER_SWORDFIGHT without an opponent.
-            if !action_state.is_sword() && self.outbox.actor.enter_swordfight.is_none() {
-                self.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
-                self.outbox.actor.enter_swordfight_jump_line = None;
+            if !action_state.is_sword() {
+                enter_swordfight_before_move = true;
             }
         } else if action_state.is_sword() {
             // Leaving a sword fight to walk somewhere without GOTO_SWORD:
@@ -3769,11 +3790,12 @@ impl AiController {
         // move displacing it is an ordinary hand-off within one sequence
         // rather than a finished action worth telling the AI about.
         let lower_shield_before_move = action_state.is_shield();
-        (
+        GotoActionStateTeardown {
             quit_swordfight_before_move,
+            enter_swordfight_before_move,
             stop_menace_before_move,
             lower_shield_before_move,
-        )
+        }
     }
 
     /// Low-level movement primitive (speed variant) — see
@@ -3812,11 +3834,16 @@ impl AiController {
             self.finish_already_on_point();
             return;
         }
-        let (quit_swordfight_before_move, stop_menace_before_move, lower_shield_before_move) =
-            self.apply_goto_action_state_teardown(flags, ctx);
+        let GotoActionStateTeardown {
+            quit_swordfight_before_move,
+            enter_swordfight_before_move,
+            stop_menace_before_move,
+            lower_shield_before_move,
+        } = self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.speed_factor = speed;
         order.quit_swordfight_before_move = quit_swordfight_before_move;
+        order.enter_swordfight_before_move = enter_swordfight_before_move;
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
@@ -3914,11 +3941,16 @@ impl AiController {
             return;
         }
 
-        let (quit_swordfight_before_move, stop_menace_before_move, lower_shield_before_move) =
-            self.apply_goto_action_state_teardown(flags, ctx);
+        let GotoActionStateTeardown {
+            quit_swordfight_before_move,
+            enter_swordfight_before_move,
+            stop_menace_before_move,
+            lower_shield_before_move,
+        } = self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.tolerance = effective_distance as f32;
         order.quit_swordfight_before_move = quit_swordfight_before_move;
+        order.enter_swordfight_before_move = enter_swordfight_before_move;
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
