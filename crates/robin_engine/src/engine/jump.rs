@@ -259,26 +259,18 @@ pub fn build_jump_steps(
     // ── Straight long jump ────────────────────────────────────────
     // Forced long jump OR `|jump_height| < pc_height`.
     if source.long_jump_forced || jump_height.abs() < pc_height {
-        // Normal to the source line, facing the destination side.
-        // The normal must point toward the destination.
-        let normal = MapVec {
+        // `RHElementActorPC::TranslateJump` (RHelementactorpc.cpp:7877-7882)
+        // takes the direct normal of the normalized source line vector and
+        // only *asserts* that it points at the destination side; the release
+        // build never flips it, so neither may we.
+        // `SBGeoVector2D::GetNormal(bDirect = true)` is `(-y, x)`
+        // (sblibng/SBGeoVector2D.cpp:353-372).
+        let v_normal_src = MapVec {
             x: -v_line_n.y,
             y: v_line_n.x,
         };
-        // Ensure the normal points toward the destination line's B point.
-        let to_dest_x = destination.point_b.x - source.point_a.x;
-        let to_dest_y = destination.point_b.y - source.point_a.y;
-        let sign = if normal.x * to_dest_x + normal.y * to_dest_y >= 0.0 {
-            1.0
-        } else {
-            -1.0
-        };
-        let v_normal_src = MapVec {
-            x: normal.x * sign,
-            y: normal.y * sign,
-        };
 
-        // Launch point sits 15u inside the destination side of the line.
+        // Launch point sits 15u off the source line along that normal.
         let pt_source_jump = MapPoint {
             x: pt_source.x + 15.0 * v_normal_src.x,
             y: pt_source.y + 15.0 * v_normal_src.y,
@@ -388,24 +380,12 @@ pub fn build_jump_steps(
 
     // ── Jump up ────────────────────────────────────────────────────
     if jump_height > 0.0 {
-        let normal = MapVec {
+        // `RHelementactorpc.cpp:7970-7974`: the direct normal again, with the
+        // `normal · (source.A - destination.A) < 0` relationship only
+        // asserted, never enforced.
+        let v_normal_src = MapVec {
             x: -v_line_n.y,
             y: v_line_n.x,
-        };
-        // For jump-up the asserted sign is negative:
-        // `normal · (source.A - destination.A) < 0`.  Flip so the
-        // landing offset moves *away from* the destination edge (into
-        // the landing sector).
-        let to_src_x = source.point_a.x - destination.point_a.x;
-        let to_src_y = source.point_a.y - destination.point_a.y;
-        let sign = if normal.x * to_src_x + normal.y * to_src_y < 0.0 {
-            1.0
-        } else {
-            -1.0
-        };
-        let v_normal_src = MapVec {
-            x: normal.x * sign,
-            y: normal.y * sign,
         };
 
         let pt_destination_jump = MapPoint {
@@ -499,20 +479,10 @@ pub fn build_jump_steps(
     }
 
     // ── Jump down ──────────────────────────────────────────────────
-    let normal = MapVec {
+    // `RHelementactorpc.cpp:8041-8046`: direct normal, sign only asserted.
+    let v_normal_src = MapVec {
         x: -v_line_n.y,
         y: v_line_n.x,
-    };
-    let to_dest_x = destination.point_b.x - source.point_a.x;
-    let to_dest_y = destination.point_b.y - source.point_a.y;
-    let sign = if normal.x * to_dest_x + normal.y * to_dest_y > 0.0 {
-        1.0
-    } else {
-        -1.0
-    };
-    let v_normal_src = MapVec {
-        x: normal.x * sign,
-        y: normal.y * sign,
     };
     let pt_source_jump = MapPoint {
         x: pt_source.x + 15.0 * v_normal_src.x,
