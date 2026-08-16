@@ -5091,6 +5091,14 @@ impl EngineInner {
                     {
                         return Some(motion);
                     }
+                    // FaceOpponent / FaceDangerPoint run inside the Execute
+                    // arm *before* PerformSeek (RHelementactorhuman.cpp:3662,
+                    // RHelementactorpc.cpp:5514), so their facing write and
+                    // Turn still happen on the frame PerformSeek's
+                    // moved-target RefreshSeek branch preempts the motion.
+                    if engine.selected_seek_refresh_decision(owner).is_some() {
+                        engine.apply_pre_perform_seek_facing_prologue(owner);
+                    }
                     if engine.tick_refresh_seek_for_owner(sim, assets, owner) {
                         return Some(crate::sprite::MotionState::InProgress);
                     }
