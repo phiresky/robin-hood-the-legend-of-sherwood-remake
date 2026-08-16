@@ -4740,3 +4740,21 @@ objects.
   `classification.json` — **52 groups, largest only 6**, 28 of them singletons.
 - No regression guard in this run by design: it re-measures the known-failing set only. The guard result
   stands from batch-21 (781/781 clean); a full-universe sweep is still outstanding.
+
+## Batch-22 failing-only sweep — 2026-08-16, production runner 26f395142
+- Failures-only by request: the 97 traces left after batch-21 (100 minus 3 retired with fresh-capture
+  proof by the detection agent). Runner sha256 `a624082243bb7c2b13887ee1…`, release profile, clean tree.
+- **Result: 37 cleared (38%), 60 remain** — 49 state divergences, 11 RNG, 0 timeouts.
+- Wave that produced it: 9 parallel bundle agents, ~20 behaviour fixes. Notable root causes —
+  the sword-walk Execute arm has no `Turn()` of its own; three invented invariants removed (jump-line
+  normal flip, pass-door `sector_out` test, door-callback sector assert); AI-resolved position used where
+  the Original uses the raw element position (a whole bug CLASS, two sites fixed, more owed);
+  `MaxNormDistance` is a 3D stretched-Y Chebyshev norm; lift endpoint doors are chosen by extreme
+  `GetPointOut().mY`, not by door type; `SEEK_IN_BUILDINGS` missing on take-corpse clicks.
+- Remaining set: `remaining-60.snapshot`; per-group listing `groups.txt`; **37 groups, largest only 5**,
+  24 of them singletons. The long tail is now the whole story.
+- **No regression guard in this run** (failures-only by request). Guard evidence stands from batch-20 and
+  batch-21 (781/781 clean, twice) plus 162 clean guard traces measured in the aborted 878-trace batch-22
+  run. A FULL-UNIVERSE resweep — everything except the new schema14-seed1000000 corpus — is the agreed
+  next step and is the only thing that can verify the whole passing set after this wave's shared-code
+  changes.
