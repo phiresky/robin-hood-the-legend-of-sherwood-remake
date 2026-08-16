@@ -1111,6 +1111,52 @@ from the Original trace, no engine run needed:
 `scratchpad/tl.sh <trace.zst> <lo> <hi> <kind> <index>` (with `peek.py`). Much cheaper than a replay for
 first-pass triage. Note `zstd -dc --long=31` is required to read these traces by hand.
 
+### DISPROVED: the falling-arrow-at-spawn premise (stop chasing the falling branch)
+Three agents chased `RHElementArrow::Refresh`'s FALLING branch for the QuickSave f35731 arrow
+(`sprite_row 6 / frame 4` on its own creation frame). **That premise is wrong.** Row 6 / frame 4 comes
+from the **non-falling** branch (`original-code/RHElementArrow.cpp:344-353`): `swAzimut = -15` (the arrow
+descends 9.875 per 36.0 of ground travel, `acos(0.9644) = 15.3 deg`), and
+`(SWORD)(-15 * 0.0666666666667 + 0.5f)` truncates toward zero to `0`, `+4 = 4`; the row is just
+`ubSector` = 6. No `rand()` is involved — consistent with the frame showing no extra draw.
+**Decisive new fact:** two later arrows from the same soldier with bit-identical trajectories
+(creation_order 4943 @f35781, 4944 @f35931) record `0/0` on their creation frame and `6/4` from the next
+frame — exactly Rust's model. Only 4942, the FIRST arrow created after the save load, records `6/4` early.
+So it is not a render/record ordering bug; it is specific to the session's first arrow. Ruled out:
+`AddElement` deferral (`RHengine.cpp:10279`), the hourglass loop re-reading `marrayElements.Size()` (the
+arrow does get its second step in the creation frame, matching the recorded 2-step delta), and any writer
+other than `Refresh` (`muwCurrentSpriteRow/Frame` are only touched by `Force*`/`RestoreInfo`/`PopState`/
+anim advance). Remaining hypothesis: a nested `RHEngine::Draw()` — the only in-game one is
+`RHMenuScreen::CreateBkgndColorized` -> `pGame->Refresh(false,false)` (`RHMenuScreen.cpp:250`), which
+already carries a `RecordNestedMenuRefresh` probe. NOT retired.
+
+### Reframed: projectile 65535 layer/sector is NOT a landing-membership bug
+schema14 linux2/P002/Savegame_029 replay-013 f5265. Projectile 171 carries `layer=65535 sector=65535`
+from its **creation frame onward** (mid-flight at elevation 25, never a real layer) — so the divergence is
+not about which terminal obstacle the landing query finds. All three Original early-exits leave the
+`SetLayer((UWORD)-1); SetSector(0)` from `RHelementprojectile.cpp:379-380` untouched: non-projection
+terminal obstacle (`:783`), `!IsInsideGrid`, and impact inside an obstacle motion polygon. Rust reached the
+`pObstacle == 0 -> uwLayer = 0` path and found motion area 7.
+**Separate audit owed (not this member's cause):** Rust's `resolve_projectile_landing_impl`
+(`crates/robin_engine/src/fast_find_grid.rs:2046`) returns `layer: 0` on the non-projection-obstacle early
+return and returns `layer` unconditionally, whereas the Original never calls `SetLayer` on that path and
+otherwise only calls it `if (GetSector() != 0)`.
+
+### Quantified: bow-shot initial velocity differs by a TARGET-POINT scale, not a flight-time rounding
+schema14 linux3/P003/Savegame_029 replay-001 f12292, projectile 147. Same hand point in both
+(map (1549,101), elev 50). Per-step world velocities: Original `(-10.894043, 23.876312, 8.179687)`,
+Rust `(-7.184082, 15.745361, 12.663185)`. The XY ratio is 1.51642 / 1.51640 — identical bearing, pure
+scale — while z is NOT scaled by that factor (8.180 x 1.516 = 12.40 != 12.663). Since
+`velocity.xy = 0.5*V.xy/(T+1)`, an unchanged `V.xy` would force `(T_rust+1)/(T_orig+1) = 1.51642`, which is
+not a ratio of small integers. Therefore **`V.xy` itself differs by a scale factor: the target point
+differs along the same XY bearing** — a different lead (`GetForecastedMovement()` term) or a different
+belt/eyes point feeding `fHitDistance`, hence `uwTime` and `fApexHeight`.
+
+### Known gap: script-kill path skips ALL death relationship teardown
+`crates/robin_engine/src/engine/melee/mod.rs:965` (the script-kill path) does not run the death
+relationship teardown that `detach_npc_death_relationships` now performs for lethal damage — including the
+combat neighbours, not just the newly added archer/shield-bearer pairing. Pre-existing; no failing trace
+yet.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
