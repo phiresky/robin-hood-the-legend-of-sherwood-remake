@@ -5070,6 +5070,17 @@ impl EngineInner {
                 if execution_frozen {
                     return None;
                 }
+                // PerformSeek's "wait for the post seek sequence to be
+                // launched" arm runs ahead of every other seek step: Execute
+                // returns TERMINATED before any motion, countdown ageing, or
+                // RefreshSeek, and Actor::Hourglass then runs DoNextOrder.
+                if let Some(selection) = movement
+                    && super::refresh_seek::perform_seek_lost_actor_target(
+                        engine, owner, selection,
+                    )
+                {
+                    return Some(crate::sprite::MotionState::Terminated);
+                }
                 // RefreshSeek is part of this exact actor's PerformSeek
                 // Execute arm. Sampling here preserves creation-order
                 // visibility of the moving target, and a replacement does
