@@ -5822,12 +5822,17 @@ impl EngineInner {
         }
 
         // ── Anonymous timers ─────────────────────────────────────
-        // Decrement each timer; remove entries that reach 0 and
-        // mark the backing sequence element `Terminated` so the
-        // sequence advances.
+        // `RHEngine::Hourglass` (RHengine.cpp:3794-3810) terminates a timer
+        // element only when its `RHFIELD_TIMER` property is *exactly* 1, and
+        // otherwise decrements the `int` property. A timer recorded with 0
+        // frames — e.g. `RecordTimer( Rand( 25 ) )` rolling a zero — therefore
+        // counts down through negative values and NEVER terminates, stalling
+        // its sequence level for the rest of the mission. Match that exactly:
+        // an `expired if remaining <= 1` test would let the zero case fire a
+        // frame later and advance a sequence the Original leaves parked.
         let mut expired: Vec<crate::sequence::SequenceElementRef> = Vec::new();
         self.orders.timer_elements.retain_mut(|timer| {
-            if timer.remaining <= 1 {
+            if timer.remaining == 1 {
                 expired.push(timer.element_ref);
                 false
             } else {
