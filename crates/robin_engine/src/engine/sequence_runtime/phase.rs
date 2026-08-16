@@ -1209,17 +1209,26 @@ impl EngineInner {
                                     } => *antagonist,
                                     _ => None,
                                 };
-                                match target {
-                                    Some(target_id) => {
-                                        self.dispatch_sword_strike(
-                                            sim, assets, owner, target_id, strike, seq_id, elem_idx,
-                                        );
-                                    }
+                                // A strike whose translation ends in
+                                // RHSEQ_IMPOSSIBLE detaches mpSequenceElement
+                                // through SendCondolationCard, so Original's
+                                // Instruct returns at its pointer-change test
+                                // and never reaches the
+                                // `mmotionState = RHMOTION_IN_PROGRESS`
+                                // epilogue (`RHelementactor.cpp:1468-1476`).
+                                let barrier = match target {
+                                    Some(target_id) => self.dispatch_sword_strike(
+                                        sim, assets, owner, target_id, strike, seq_id, elem_idx,
+                                    ),
                                     None => {
                                         self.orders
                                             .sequence_manager
                                             .element_impossible(seq_id, elem_idx);
+                                        OwnerActionBarrier::Skip
                                     }
+                                };
+                                if barrier == OwnerActionBarrier::Skip {
+                                    break 'action;
                                 }
                             }
 
