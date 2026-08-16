@@ -1,0 +1,22 @@
+## state:actor.animation  (5)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_055/replay-007-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_037/replay-013-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_029/replay-006-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_036/replay-008-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_045/replay-004-session-0001.jsonl.zst
+
+## state:actor.motion_state  (4)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_034/replay-008-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_071/replay-015-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_randomguy/Profile_004/Restart/replay-006-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_046/replay-011-session-0001.jsonl.zst
+
+## state:actor.command:MoveOk->Wait  (2)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_036/replay-007-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_044/replay-003-session-0001.jsonl.zst
+
+## state:actor.command:WaitTimer->Wait  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_031/replay-015-session-0001.jsonl.zst
+
+## state:actor.command:Wait->MoveWaiting  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-006-session-0001.jsonl.zst
