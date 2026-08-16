@@ -1382,10 +1382,17 @@ pub fn find_path_into_door(
 ) -> Option<Vec<GatePathStep>> {
     let source = MapPoint::new(source.0, source.1);
     let goal_door = doors.get(usize::from(goal_door_index))?;
-    let goal_mid = MapPoint::new(
-        0.5 * (goal_door.point_in.x + goal_door.point_out.x),
-        0.5 * (goal_door.point_in.y + goal_door.point_out.y),
-    );
+    // `RHDoor::GetPointMid()` (`original-code/RHGate.h:198`) returns the
+    // level-authored `mptMid`, which `RHDoor::InitializeFromProtoStream`
+    // deserializes as a point of its own between `point_out` and `point_in`
+    // (`original-code/RHGate.cpp:542-578`).  It is NOT the average of
+    // `point_in` and `point_out`: on the shipped Leicester door table the two
+    // differ on essentially every gate (door 49 is `in=(378,1565)`
+    // `out=(362,1535)` `mid=(373,1546)`, not `(370,1550)`).  The A* heuristic
+    // in `FindPathIntoDoor` / `FindPathToDoorNodes` measures against the
+    // authored mid (`original-code/RHfastfindgrid.cpp:9896`, `:9905`,
+    // `:10022`, `:10032`, `:10045`, `:10055`).
+    let goal_mid = goal_door.point_mid;
 
     // Source sector is the goal door's own sector — the gate is
     // reachable directly; return a single-step path.
