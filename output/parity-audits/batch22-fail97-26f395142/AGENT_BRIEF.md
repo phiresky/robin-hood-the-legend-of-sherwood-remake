@@ -58,16 +58,24 @@ gdb against it works. Debug build prints `[DBG f=N …]` for `SendCondolationCar
 interrupted each frame (`state 6` = `RHSEQ_INTERRUPTED`).
 ```
 env ROBINHOOD_DATA_DIR=/home/phire/robinhood/datadirs/fullgame_linux SDL_AUDIODRIVER=dummy \
-  SDL_VIDEODRIVER=dummy LD_LIBRARY_PATH=/home/phire/robinhood/lib32:/home/phire/robinhood/lib32/pulseaudio \
+  SDL_VIDEODRIVER=dummy \
   /home/phire/robinhood/original-code/build/native-full/robin-schema14-capture \
   -PARITYSAVE <reference-save> -PARITYTRACE <out>.jsonl -PARITYSEED 1 -PARITYFRAMES 1500 \
   -PARITYRANDOMINPUT <trace header random_input_seed>
 ```
 Verify the save's sha256 against the trace header's `initial_save` first.
-**Caveats that have cost agents real time:** it does NOT reproduce schema-12 traces (no `Think` in its
-`[DBG]` stream on those frames); it PREDATES `PARITY_DEBUG_ORIGINAL_RECONSIDER_SWORDFIGHT`,
-`PARITY_DEBUG_ORIGINAL_PROJECTILE` and the seek-area debug flags, so those env vars do nothing against it;
-it has a symtab but **no DWARF**, so gdb needs `break *(&'<mangled>' + offset)` off hand-read disassembly
+**A REBUILT binary is now available and is the one to prefer:**
+`original-code/build/rebuild-20260816/robin` — built 2026-08-16 from current sources and **verified
+equivalent** to the pinned capture binary (300 frames of Savegame_linux3/Profile_001/Savegame_008 seed 14:
+every simulation field and RNG draw value identical; only `draws.callsite_offsets` differ, as raw code
+addresses must). It CONTAINS the hooks the pinned binary lacks — `PARITY_DEBUG_REACHABILITY` (8 sites),
+`PARITY_DEBUG_ORIGINAL_RECONSIDER_SWORDFIGHT` (3), `PARITY_DEBUG_ORIGINAL_PROJECTILE` (7). Use it for any
+Original-side reachability / route / reconsider / projectile question.
+**Run it WITHOUT `LD_LIBRARY_PATH`** — it links against the system i386 libraries. (The repo's bundled
+`lib32/` has been deleted; it was proven to make no difference to output.)
+**Caveats that still apply:** neither binary reproduces schema-12 traces (no `Think` in the `[DBG]` stream
+on those frames) — schema-14 only; both ship a symtab but **no DWARF**, so gdb needs
+`break *(&'<mangled>' + offset)` off hand-read disassembly
 (`RHArtificialIntelligence::mpUniversalFrameCounter` is the frame counter); and `set $sp = …` in a gdb
 script silently clobbers the stack pointer and segfaults the inferior.
 Callsite offsets are **not** comparable across capture generations and do not resolve against

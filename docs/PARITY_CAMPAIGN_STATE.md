@@ -578,7 +578,7 @@ Original cannot reproduce it. **That overstated the case and was disproven by a 
   leaking into the oracle) shows up as `state:visibility_queries.length` and accounts for exactly the 3
   known-stale 30s Savegame_023 traces — and **zero** of the 65.
 - Fresh-capture recipe (all 16 save sha256s verified against each trace header's `initial_save`):
-  `env ROBINHOOD_DATA_DIR=<repo>/datadirs/fullgame_linux SDL_AUDIODRIVER=dummy SDL_VIDEODRIVER=dummy LD_LIBRARY_PATH=<repo>/lib32:<repo>/lib32/pulseaudio <repo>/original-code/build/native-full/robin-schema14-capture -PARITYSAVE <save> -PARITYTRACE <out>.jsonl -PARITYSEED 1 -PARITYFRAMES 1500 -PARITYRANDOMINPUT <header.random_input_seed>`
+  `env ROBINHOOD_DATA_DIR=<repo>/datadirs/fullgame_linux SDL_AUDIODRIVER=dummy SDL_VIDEODRIVER=dummy <repo>/original-code/build/native-full/robin-schema14-capture -PARITYSAVE <save> -PARITYTRACE <out>.jsonl -PARITYSEED 1 -PARITYFRAMES 1500 -PARITYRANDOMINPUT <header.random_input_seed>`
 
 ### Task-4 "early-battle melee micro-gate" cluster: framing DISPROVEN, re-cluster it
 All 22 members were re-measured on merged main: **2 now pass, 6 advanced, 14 unchanged.** The two
