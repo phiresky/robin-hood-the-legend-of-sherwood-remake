@@ -6877,6 +6877,180 @@ impl EngineInner {
         true
     }
 
+    /// Resolve the point `RHElementActorHuman::FaceOpponent`
+    /// (RHelementactorhuman.cpp:7480) or `RHElementActorPC::FaceDangerPoint`
+    /// would face for this owner, plus whether that point is compared against
+    /// the actor's ground position rather than its map position.
+    ///
+    /// `None` reproduces FaceOpponent's non-soldier, non-swordfighting early
+    /// return, which yields `WALKING_SWORD` without touching the facing.
+    pub(super) fn combat_face_target_for_owner(&self, owner: EntityId) -> (Option<MapPoint>, bool) {
+        let mut combat_face_target = None;
+        let mut combat_face_target_is_ground = false;
+        for (_actor_id, entity) in self
+            .world
+            .entities
+            .actors()
+            .filter(|(id, _)| EntityId::from(*id) == owner)
+        {
+            let actor = entity
+                .actor_data()
+                .expect("entities.actors() yielded non-actor entity");
+            let is_shield_moving = matches!(
+                actor.action_state,
+                crate::element::ActionState::MovingShield
+            );
+            // Shield bearers face the stored danger point.
+            // Sword fighters face their principal opponent.
+            if is_shield_moving && let Some(pt) = actor.shield_face_point {
+                combat_face_target = Some(pt);
+                continue;
+            }
+            // Shield bearer with no danger point stored: face *away*
+            // from the protected ally.  Encode this as a target equal
+            // to `2 * self_pos - ally_pos` so the downstream
+            // `vector_to_sector_0_to_15(target - self)` math aims the
+            // shield-bearer away from the ally.
+            if is_shield_moving
+                && let Some(protected_id) = entity.pc_data().and_then(|pc| pc.shield_protected)
+                && let Some(ally) = self.world.entities.get(protected_id)
+            {
+                let self_pos = entity.element_data().position_map();
+                let ally_pos = ally.element_data().position_map();
+                combat_face_target = Some(crate::coordinates::MapPoint {
+                    x: 2.0 * self_pos.x - ally_pos.x,
+                    y: 2.0 * self_pos.y - ally_pos.y,
+                });
+                continue;
+            }
+            // FaceOpponent dispatch for sword movement:
+            //   swordfighting → principal opponent's ground position
+            //   else if soldier → primary target's ground position
+            //   else            → return WALKING_SWORD without facing change
+            //
+            // Build this even before `action_state` flips to MovingSword;
+            // forced sword movement can still be represented only by the
+            // movement element's FORCE_SWORD_MOVEMENT flag at this point.
+            //
+            // The non-soldier, non-swordfighting branch returns
+            // `WALKING_SWORD` immediately, without constructing a facing
+            // vector. Keep that distinct as `None`: using the actor's own
+            // position as a sentinel is not equivalent because Position and
+            // PositionGround can differ while cached projection state is
+            // refreshed, turning a nominally-zero vector into a small real
+            // angle and selecting a strafe row.
+            let is_swordfighting = entity
+                .human_data()
+                .map(|human| !human.opponents.is_empty())
+                .unwrap_or(false);
+            let opp_id_opt: Option<EntityId> = if is_swordfighting {
+                // Principal opponent = first in opponent list.
+                entity
+                    .human_data()
+                    .and_then(|h| h.opponents.first())
+                    .copied()
+            } else if entity.is_soldier() {
+                // GetPrimaryTarget — soldier's AI-picked priority target,
+                // which can differ from opponents[0]. The stored handle is a
+                // raw element slot and the occupant is any human, not just a
+                // PC: soldiers routinely keep an enemy soldier as their
+                // primary target once a swordfight has ended, and facing it
+                // is what keeps the fighter turned toward the melee.
+                entity
+                    .ai_controller()
+                    .map(|c| c.primary_target)
+                    .filter(|slot| *slot != 0)
+                    .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
+            } else {
+                None
+            };
+
+            if let Some(opp_id) = opp_id_opt
+                && let Some(opp) = self.world.entities.get(opp_id)
+            {
+                let position = opp.element_data().position();
+                combat_face_target =
+                    Some(crate::coordinates::MapPoint::new(position.x, position.y));
+                combat_face_target_is_ground = true;
+            }
+        }
+        (combat_face_target, combat_face_target_is_ground)
+    }
+
+    /// Run the sword-/shield-walking Execute arm's facing prologue for a frame
+    /// whose `PerformSeek` is about to take its moved-target `RefreshSeek`
+    /// branch.
+    ///
+    /// `RHElementActorHuman::Execute` calls `FaceOpponent` at
+    /// RHelementactorhuman.cpp:3662 and `RHElementActorPC::Execute` calls
+    /// `FaceDangerPoint` at RHelementactorpc.cpp:5514, both *before* entering
+    /// `RHElementActor::PerformSeek` (RHelementactorhuman.cpp:3667,
+    /// RHelementactorpc.cpp:5541).  PerformSeek's moved-target branch
+    /// (RHelementactor.cpp:7913) returns `RHMOTION_IN_PROGRESS` without ever
+    /// reaching `PerformMotion`, so `FaceOpponent`'s
+    /// `SetDirection( vDirection.GetSector0to15( ASPECT_RATIO ) )` and its
+    /// following `Turn()` (RHelementactorhuman.cpp:7511-7512) still land on the
+    /// RefreshSeek frame.  Rust evaluates RefreshSeek ahead of the movement
+    /// Execute arm, so without this the goal keeps its previous value for one
+    /// frame.
+    pub(super) fn apply_pre_perform_seek_facing_prologue(&mut self, owner: EntityId) {
+        let Some(entity) = self.world.entities.get(owner) else {
+            return;
+        };
+        let Some(actor) = entity.actor_data() else {
+            return;
+        };
+        if actor.execution_frozen {
+            return;
+        }
+        let action_state = actor.action_state;
+        let door_pass_anim: Option<OrderType> =
+            actor.active_door_pass.as_ref().map(|dp| dp.current_action);
+        let Some(seq_id) = actor.active_movement.sequence_id else {
+            return;
+        };
+        let elem_idx = actor.active_movement.element_index;
+        let Some(order_action) = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| element.orders.front())
+            .map(|order| order.order_type)
+        else {
+            return;
+        };
+        let is_shield_motion = matches!(action_state, crate::element::ActionState::MovingShield);
+        let is_sword_motion = is_sword_motion_context(action_state, door_pass_anim, order_action);
+        let (combat_target, target_is_ground) = self.combat_face_target_for_owner(owner);
+        // Human's arm always calls FaceOpponent; the PC shield arm always
+        // calls FaceDangerPoint. Both return without writing when no facing
+        // point exists, which is exactly `combat_target == None`.
+        if !((is_shield_motion && combat_target.is_some()) || is_sword_motion) {
+            return;
+        }
+        let Some(opp_pos) = combat_target else {
+            return;
+        };
+        let entity = self
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("facing-prologue owner disappeared between borrows");
+        let elem = entity.element_data_mut();
+        let face_origin = if target_is_ground {
+            let position = elem.position();
+            crate::coordinates::MapPoint::new(position.x, position.y)
+        } else {
+            elem.position_map()
+        };
+        let fdx = opp_pos.x - face_origin.x;
+        let fdy = opp_pos.y - face_origin.y;
+        elem.set_direction_goal(crate::position_interface::vector_to_sector_0_to_15_iso(
+            fdx, fdy,
+        ));
+        let _ = elem.sprite.position_iface.turn();
+    }
+
     pub(super) fn tick_entity_movement_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -7008,95 +7182,8 @@ impl EngineInner {
         // direction, and selects directional animations
         // (forward/backward/strafe) based on the angle between
         // movement and facing.
-        let mut combat_face_target = None;
-        let mut combat_face_target_is_ground = false;
-        for (_actor_id, entity) in self
-            .world
-            .entities
-            .actors()
-            .filter(|(id, _)| EntityId::from(*id) == owner)
-        {
-            let actor = entity
-                .actor_data()
-                .expect("entities.actors() yielded non-actor entity");
-            let is_shield_moving = matches!(
-                actor.action_state,
-                crate::element::ActionState::MovingShield
-            );
-            // Shield bearers face the stored danger point.
-            // Sword fighters face their principal opponent.
-            if is_shield_moving && let Some(pt) = actor.shield_face_point {
-                combat_face_target = Some(pt);
-                continue;
-            }
-            // Shield bearer with no danger point stored: face *away*
-            // from the protected ally.  Encode this as a target equal
-            // to `2 * self_pos - ally_pos` so the downstream
-            // `vector_to_sector_0_to_15(target - self)` math aims the
-            // shield-bearer away from the ally.
-            if is_shield_moving
-                && let Some(protected_id) = entity.pc_data().and_then(|pc| pc.shield_protected)
-                && let Some(ally) = self.world.entities.get(protected_id)
-            {
-                let self_pos = entity.element_data().position_map();
-                let ally_pos = ally.element_data().position_map();
-                combat_face_target = Some(crate::coordinates::MapPoint {
-                    x: 2.0 * self_pos.x - ally_pos.x,
-                    y: 2.0 * self_pos.y - ally_pos.y,
-                });
-                continue;
-            }
-            // FaceOpponent dispatch for sword movement:
-            //   swordfighting → principal opponent's ground position
-            //   else if soldier → primary target's ground position
-            //   else            → return WALKING_SWORD without facing change
-            //
-            // Build this even before `action_state` flips to MovingSword;
-            // forced sword movement can still be represented only by the
-            // movement element's FORCE_SWORD_MOVEMENT flag at this point.
-            //
-            // The non-soldier, non-swordfighting branch returns
-            // `WALKING_SWORD` immediately, without constructing a facing
-            // vector. Keep that distinct as `None`: using the actor's own
-            // position as a sentinel is not equivalent because Position and
-            // PositionGround can differ while cached projection state is
-            // refreshed, turning a nominally-zero vector into a small real
-            // angle and selecting a strafe row.
-            let is_swordfighting = entity
-                .human_data()
-                .map(|human| !human.opponents.is_empty())
-                .unwrap_or(false);
-            let opp_id_opt: Option<EntityId> = if is_swordfighting {
-                // Principal opponent = first in opponent list.
-                entity
-                    .human_data()
-                    .and_then(|h| h.opponents.first())
-                    .copied()
-            } else if entity.is_soldier() {
-                // GetPrimaryTarget — soldier's AI-picked priority target,
-                // which can differ from opponents[0]. The stored handle is a
-                // raw element slot and the occupant is any human, not just a
-                // PC: soldiers routinely keep an enemy soldier as their
-                // primary target once a swordfight has ended, and facing it
-                // is what keeps the fighter turned toward the melee.
-                entity
-                    .ai_controller()
-                    .map(|c| c.primary_target)
-                    .filter(|slot| *slot != 0)
-                    .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
-            } else {
-                None
-            };
-
-            if let Some(opp_id) = opp_id_opt
-                && let Some(opp) = self.world.entities.get(opp_id)
-            {
-                let position = opp.element_data().position();
-                combat_face_target =
-                    Some(crate::coordinates::MapPoint::new(position.x, position.y));
-                combat_face_target_is_ground = true;
-            }
-        }
+        let (combat_face_target, combat_face_target_is_ground) =
+            self.combat_face_target_for_owner(owner);
 
         // Pre-pass: look up the current sequence-element speed factor
         // for every entity with an active movement
