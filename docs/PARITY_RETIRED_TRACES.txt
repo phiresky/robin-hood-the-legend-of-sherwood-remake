@@ -238,3 +238,30 @@ parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-001-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-002-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_038/replay-003-session-0001.jsonl.zst
+# rng:CivilianBeggarSpeechGate cluster: the capture drops the beggar pay click's
+# target. A left-double-click on a use-focusable beggar reaches
+# RHElementActorCivilian::MouseClicked (rhelementactorcivilian.cpp:583-611),
+# whose AddInteractionWithSeek call resolves bRun=true
+# (RHelementactorpc.cpp:9263-9274 translates RHMOUSE_LEFTDOUBLE) and therefore
+# takes the MakeFast early return at RHelementactorpc.cpp:9304-9313. That branch
+# records only `make_pc_fast` for the selected PC and deletes the interaction
+# before RecordInteraction (RHelementactorpc.cpp:9339) would name the beggar, yet
+# the caller still runs SetBeggarDontTalkCounter(3) at
+# rhelementactorcivilian.cpp:609. `make_pc_fast` is emitted identically by the
+# plain ground double-click (RHengine.cpp:6672-6679), so the replayed command
+# stream cannot say which element - if any - was clicked, and the mouse point is
+# not recorded for no-action clicks. Rust's own pay path is already faithful
+# (engine/commands.rs stamps the counter on both the MakeFast and the full
+# seek+pay route), so the beggar keeps a zero cooldown only under replay and
+# draws one extra RandomSpeech gate roll (RHartificialbonhomie.cpp:1192-1211)
+# ~256 frames later. Injecting the single missing stamp at the recorded
+# `make_pc_fast` frame makes all four traces match every recorded frame:
+# Savegame_043 frame 8050 creation-order 63, Savegame_072 frame 39203 and
+# Savegame_073 frame 47829 creation-order 101, SuN1Sh1nE Savegame_009 frame
+# 22655 creation-order 100. Recapture needs the Original to record the beggar
+# stamp (or the discarded interaction target) alongside `make_pc_fast`; the
+# beggar is the only AddInteractionWithSeek caller with a post-call side effect.
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_043/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_072/replay-003-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_073/replay-003-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-003-session-0001.jsonl.zst
