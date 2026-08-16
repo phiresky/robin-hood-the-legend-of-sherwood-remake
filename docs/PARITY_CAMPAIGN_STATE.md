@@ -796,6 +796,48 @@ access inside the launch loop (e.g. a resumable launch action).
   draws `building_exit_wait_frames` (`engine/movement.rs:1546-1550`). Chase the accepted point's
   `interest`, not the sweep.
 
+### The `position_goal_map` comparison tolerance is HIDING real drift
+`crates/robin_rs/examples/original_parity_replay.rs:6131` compares `position_goal_map` with a **0.011
+absolute** tolerance (floats elsewhere use 1e-5 relative). A whole class of 1-ULP goal errors is therefore
+invisible, and only surfaces indirectly via `movement_map` — which is the derived
+`mpointMap - mpointOldMap` (`original-code/RHpositioninterface.h:215`), a small difference of two large
+coordinates whose effective tolerance is 1e-5 absolute, i.e. an amplifier. Three traces were fixed only
+because of that amplification. **Tightening this tolerance would surface the class directly** and is
+probably worth doing before declaring the corpus clean.
+
+### Three invented invariants removed (pattern worth watching for elsewhere)
+All three were Rust runtime checks standing in for Original code that is debug-only or absent:
+1. `TranslateJump` — Rust flipped the jump-line normal to face the destination; the Original uses
+   `GetNormal()` directly and only `assert`s the orientation (`original-code/RHelementactorpc.cpp:7877-7882`,
+   `:7970-7974`, `:8041-8046`), and those asserts are compiled out. On one jump line the real normal points
+   AWAY from the destination, so the flip put the source point 15u on the wrong side.
+2. Pass-door direction — every door arm of `RHElementActor::Translate` tests only
+   `if( GetSector() == pSectorIn )` (`RHelementactor.cpp:4021/4062/4148/4233`); the
+   `assert( GetSector() == pSectorOut )` else-branch is debug-only. Rust tested `sector_out` first and
+   PANICKED when an actor launched a door from a third sector.
+3. `door_pass.rs:1221` asserted the callback's departure sector equals the door's nominal source;
+   `RHElementActor::PassDoor` (`:7485-7573`) reads `GetSector()` only for the leave callbacks.
+Also fixed there: the building-exit obstacle/material re-seat must live inside the `bDirect == false` arm
+(`:7559-7572`) — Rust ran it for any building exit and recomputed elevation to 0 on a direct exit.
+
+### Open: goal clearing on interrupt needs the NEXT_LEVEL cascade (ground truth captured)
+Members schema14 linux3/P003/Savegame_028 replay-009 (f12003, Soldier87) and replay-010 (f12812,
+Soldier93). The Original's condolation stream at the divergence frame is `SendCondolationCard cmd=22
+state=6` **followed by** `cmd=20 state=6` (22 = MOVE_OK, 20 = MOVE, 6 = `RHSEQ_INTERRUPTED`) — i.e. it
+cascades to the parent `Move` and clears the sprite goal. **Rust produces only the first card** and takes
+`element_interrupted_after_replacement_selected` (`crates/robin_engine/src/sequence.rs:4051`), leaving the
+goal set. Earlier frames (f11983/f11993) emit cmd=22 alone and do NOT clear the goal, which is the
+discriminator. Reproduce the Original bit-exactly from the trace header's base64 `initial_save` with
+`-PARITYRANDOMINPUT 9009 -PARITYFRAMES 380`.
+**gdb caveat:** `robin-schema14-capture` has a symtab but **no DWARF** — source-line breakpoints and member
+access do not work; use `break <mangled symbol>` only.
+
+### Open: reversing pass-door re-entry (2 traces)
+schema12 SuN1Sh1nE/P004/Savegame_024 replay-011 (f1433, Soldier99 on a wall lift) and schema14
+linux3/P003/Savegame_010 replay-009 (f18927, Pc194 on stairs). On the frame the outbound walk element
+completes with a zeroed goal, the Original selects and translates the REVERSE `PassDoor` element in that
+same frame; Rust instead installs a further-out walk destination.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
