@@ -618,6 +618,25 @@ an `EVENT_ENTER_SWORDFIGHT` (`RHartificialmalignity.cpp:6485-6493`) Rust never d
    arm; the Original guards it with `if( GetCommand() != RHCOMMAND_QUIT_SWORDFIGHT )`
    (`RHartificialmalignity.cpp:4392-4397`). Needs an actor-command field on `AiContext` first.
 
+### Capture-side defect: beggar cooldown stamp is unrecoverable from the recording (4 traces RETIRED)
+The `rng:CivilianBeggarSpeechGate` family is one real bug, but it is in the CAPTURE, not the port.
+`RHElementActorCivilian::MouseClicked` (`original-code/rhelementactorcivilian.cpp:583-611`) stamps
+`SetBeggarDontTalkCounter(3)` at `:609`, but its `AddInteractionWithSeek` call takes the UWORD overload's
+MakeFast early return (`RHelementactorpc.cpp:9304-9313`), which records only a bare `make_pc_fast` and
+`delete`s the interaction **before** `RecordInteraction` (`:9339`) would name the beggar. A plain ground
+double-click emits an identical bare `make_pc_fast` (`RHengine.cpp:6672-6679`), so the replayed command
+stream cannot recover which element was clicked; `mpElementOldClick` reconstruction fails too. The beggar
+keeps a zero cooldown in replay and draws one extra gate roll at its next 256-frame `RandomSpeech` tick.
+**Proof the port is correct:** injecting the single missing stamp at the recorded `make_pc_fast` frame
+makes all four traces match to exact EOF. Both `SetBeggarDontTalkCounter` call sites in the whole Original
+(`rhelementactorcivilian.cpp:609` and `:736`) are already correctly ported, and the beggar is the only
+`AddInteractionWithSeek` caller with a post-call side effect. Retired in
+`docs/PARITY_RETIRED_TRACES.txt` (commit `08fb17308`).
+**Recapture path if these are ever wanted back:** add one line next to `rhelementactorcivilian.cpp:609`
+recording the stamp (e.g. `RHParity::RecordEntityCommand("beggar_dont_talk_stamp", engine, *this)`) plus a
+runner command variant. Not done here because the Original cannot be rebuilt on this machine, so the change
+would be unvalidatable and would risk the capture build.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
