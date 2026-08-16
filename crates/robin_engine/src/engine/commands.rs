@@ -15,6 +15,45 @@ use crate::sequence::{
 };
 use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
+/// Rebuild the seek tolerance of a `SwordStrikeCmd` that was recorded
+/// before the resolved distance became part of the command.
+///
+/// `RHEngine::PerformSwordfight` derives the tolerance from the *mouse
+/// pattern*, not from the launched command:
+/// `0.9f * GetStrikeMaximalDistance( ConvertMousePatternToStrike( mousePattern ) )`
+/// (`original-code/RHengine.cpp:15799` for the no-gesture click arm,
+/// `original-code/RHengine.cpp:15846` for the recognised A–E gesture arm).
+///
+/// The two arms disagree because
+/// `RHEngine::ConvertMousePatternToStrike` returns `END_OF_REAL_STRIKE`
+/// for every unrecognised pattern (`original-code/RHengine.cpp:15910-15942`),
+/// and `RHSword::GetStrikeMaximalDistance` answers that with the
+/// weapon's generic `auwDistance[ MAXIMAL ]` instead of the per-thrust
+/// `athrust[ strike ].uwMaximalDistance`
+/// (`original-code/RHSword.cpp:245-251`).
+///
+/// A legacy record carries the command but not the pattern, so the
+/// pattern is recovered from the command:
+/// * The click arm hard-codes `RHCOMMAND_SWORDSTRIKE_THRUST_A` while its
+///   pattern stays `MOUSEWAYPATTERN_NONE`
+///   (`original-code/RHengine.cpp:15801-15804`), so a legacy thrust-A
+///   seek is reconstructed with the generic maximum.
+/// * `RHCOMMAND_SWORDSTRIKE_THRUST_B..E` are only ever launched by the
+///   gesture arm, whose pattern maps 1:1 onto `SWORDSTRIKE_B..E`, so
+///   those keep the per-thrust maximum.
+fn legacy_sword_seek_distance(
+    weapon: &crate::profiles::HtHWeaponProfile,
+    strike_cmd: Command,
+    strike: crate::weapons::SwordStrike,
+) -> f32 {
+    let maximum = if strike_cmd == Command::SwordstrikeThrustA {
+        weapon.distance[crate::weapons::WeaponDistance::Maximal as usize]
+    } else {
+        weapon.thrusts[strike as usize].maximal_distance
+    };
+    0.9 * maximum as f32
+}
+
 /// Map a PC [`Action`] to the titbit phase used by the portrait
 /// macro-icon strip.
 ///
@@ -3667,7 +3706,7 @@ impl EngineInner {
                     crate::engine::melee::get_hth_weapon_id_full(e, &assets.profile_manager)
                 })
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-                .map(|p| 0.9 * p.thrusts[strike as usize].maximal_distance as f32)
+                .map(|p| legacy_sword_seek_distance(p, strike_cmd, strike))
             else {
                 tracing::warn!(
                     ?pc_id,
@@ -4580,6 +4619,38 @@ mod tests {
     use crate::profiles::{Action, CharacterProfile, ProfileManager};
     use crate::sprite::Sprite;
     use crate::sprite_script::{SpriteScript, UNMAPPED};
+
+    /// A legacy `SwordStrikeCmd` carries no resolved seek tolerance, so
+    /// the distance has to be rebuilt from the command. Thrust A is the
+    /// command `RHEngine::PerformSwordfight` hard-codes on its
+    /// no-gesture click arm, where `ConvertMousePatternToStrike` yields
+    /// `END_OF_REAL_STRIKE` and `RHSword::GetStrikeMaximalDistance`
+    /// answers with the weapon's generic maximum. Thrust B..E can only
+    /// come from the gesture arm and keep their per-thrust maximum.
+    #[test]
+    fn legacy_sword_seek_distance_uses_generic_maximum_only_for_thrust_a() {
+        let mut weapon = crate::profiles::HtHWeaponProfile::default();
+        weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] = 70;
+        weapon.thrusts[crate::weapons::SwordStrike::A as usize].maximal_distance = 60;
+        weapon.thrusts[crate::weapons::SwordStrike::B as usize].maximal_distance = 80;
+
+        assert_eq!(
+            legacy_sword_seek_distance(
+                &weapon,
+                Command::SwordstrikeThrustA,
+                crate::weapons::SwordStrike::A,
+            ),
+            63.0
+        );
+        assert_eq!(
+            legacy_sword_seek_distance(
+                &weapon,
+                Command::SwordstrikeThrustB,
+                crate::weapons::SwordStrike::B,
+            ),
+            72.0
+        );
+    }
 
     /// Build an `(engine, assets, pc_id)` triple with a single PC
     /// whose character profile carries the supplied `(action, max_ammo)`
