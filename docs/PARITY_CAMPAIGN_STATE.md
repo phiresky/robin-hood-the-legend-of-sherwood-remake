@@ -1157,6 +1157,44 @@ relationship teardown that `detach_npc_death_relationships` now performs for let
 combat neighbours, not just the newly added archer/shield-bearer pairing. Pre-existing; no failing trace
 yet.
 
+### Original quirk: `RecordTimer(0)` parks a sequence FOREVER
+`RHEngine::Hourglass` (`original-code/RHengine.cpp:3794-3810`) terminates an anonymous timer only when
+`RHFIELD_TIMER == 1`, and otherwise decrements a **signed int** — so a timer created with 0 counts down
+through -1, -2, ... and never fires. The S05_Yrk_EC crowd-reaction handler does `RecordTimer( Rand(25) )`
+per soldier, so whichever soldier rolls 0 is parked for the rest of the mission. Rust expired on
+`remaining <= 1` and ran a scripted Turn/Move the Original never issues. Fixed (`7e47a28cf`) by testing
+`== 1` and making `TimerEntry::remaining` an `i32`.
+**Related gap left open:** Rust does not decrement the sequence element's `Field::Timer` property the way
+`RHEngine::Hourglass` does via `UpdateProperty` — the countdown lives only in `TimerEntry::remaining`.
+Harmless today because legacy-save adoption reads the Original's already-decremented property, but a
+Rust-authored save would round-trip a stale timer.
+
+### Confirmed: intra-frame ordering, NOT a PointTo bug (1 trace, needs a phase change)
+schema14 linux2/P002/Savegame_039 replay-003, f10950, Soldier 138. `DECISION_TOWER_GUARD_ALERT`
+(`RHartificialmalignity.cpp:8114-8119`) does `mposSeekPosition = Position(mpPrimaryTarget); PointTo(...)`.
+Measured: Rust's `find_fighter`, `tick.primary_target_live_position` and `tick.primary_target_position` all
+return the PC's **pre-movement** position (1389.106, 1361.8235), which through the exact f32 classifier
+gives sector **6** (Rust's value); the PC's **post-movement** position for the same frame
+(1387.2236, 1358.2941, elev 8.4547) gives sector **7** (the Original's value). So the Original's
+`Position(mpPrimaryTarget)` at Think time already reflects that frame's PC movement and Rust's does not.
+The fix is a snapshot/phase-ordering change (where the tower-guard Think sits relative to PC movement in
+the hourglass), not a `PointTo` change.
+Still separately owed: Rust's `point_to` origin (`ctx.position` + `ctx.elevation`) equals
+`mpMe->GetPosition()` only while the actor is not door-snapped — it should use
+`ctx.self_body_position_world` like `face_position_3d_with_ctx` already does.
+
+### Composite-launch interleave: mechanism now verified at source level (still unlanded)
+`RHSequenceElement::ExecutedImmediately()` (`original-code/RHsequenceelement.cpp:916-958`) is **not a pure
+predicate** — it calls `mpOwner->ExecuteImmediately(this)` / `RHEngine::PerformExecuteCommand(this)` INLINE
+and then returns true. `RegisterSequenceElementToGo` (`RHsequencemanager.cpp:968-978`) invokes it per
+element inside `RHSequence::NextSequenceElementsGo`'s one-at-a-time loop (`RHsequence.cpp:272-288`). Rust
+models it as a pure predicate that queues a `SequenceAction` on `pending_synchronous_actions`, and
+`SequenceManager::launch_sequence` registers ALL level-1 elements before the engine wrapper drains that
+buffer. **Fix seam:** split `launch_sequence` into insert + per-element `register_element_to_go`, driven
+from `EngineInner` so `drain`/`dispatch_script_synchronous_action` can run between elements — the same
+interleave is owed to the `process_effects` level-advance cascade. Changes every sequence launch in the
+game; needs a wide control set.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
