@@ -451,6 +451,14 @@ impl EngineInner {
             None,
         );
         let life_points_before = get_life_points(victim);
+        // `SetConcussionOfTheBrain` (RHelementactorhuman.cpp:456-505) only runs
+        // the knock-out cascade from its `else` arm, i.e. when the victim was
+        // still conscious before this hit. A victim that was already
+        // unconscious never re-enters it.
+        let unconscious_before = victim
+            .human_data()
+            .map(|human| human.unconscious)
+            .unwrap_or(false);
 
         // Look up defender's weapon profile
         let defender_profile_idx = get_hth_weapon_id_full(victim, &assets.profile_manager);
@@ -1193,6 +1201,7 @@ impl EngineInner {
                         assets,
                         victim_id,
                         life_points_before,
+                        unconscious_before,
                         attacker_id,
                         false,
                         damage_element,
@@ -1396,6 +1405,14 @@ impl EngineInner {
         );
         let max_lp = get_max_life_points(victim);
         let life_points_before = get_life_points(victim);
+        // `SetConcussionOfTheBrain` (RHelementactorhuman.cpp:456-505) only runs
+        // the knock-out cascade from its `else` arm, i.e. when the victim was
+        // still conscious before this hit. A victim that was already
+        // unconscious never re-enters it.
+        let unconscious_before = victim
+            .human_data()
+            .map(|human| human.unconscious)
+            .unwrap_or(false);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -1434,6 +1451,7 @@ impl EngineInner {
                 assets,
                 victim_id,
                 life_points_before,
+                unconscious_before,
                 None,
                 false,
                 damage_element,
@@ -1492,6 +1510,7 @@ impl EngineInner {
             assets,
             victim_id,
             life_points_before,
+            unconscious_before,
             None,
             false,
             damage_element,
@@ -1544,6 +1563,14 @@ impl EngineInner {
         );
         let max_lp = get_max_life_points(victim);
         let life_points_before = get_life_points(victim);
+        // `SetConcussionOfTheBrain` (RHelementactorhuman.cpp:456-505) only runs
+        // the knock-out cascade from its `else` arm, i.e. when the victim was
+        // still conscious before this hit. A victim that was already
+        // unconscious never re-enters it.
+        let unconscious_before = victim
+            .human_data()
+            .map(|human| human.unconscious)
+            .unwrap_or(false);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -1653,6 +1680,7 @@ impl EngineInner {
                     assets,
                     victim_id,
                     life_points_before,
+                    unconscious_before,
                     None,
                     false,
                     damage_element,
@@ -1762,7 +1790,12 @@ impl EngineInner {
         if still_on_ground {
             let translated_anim = if life_points_before <= 0 && life_points_after <= 0 {
                 animations.map(|a| a.dying_forward)
-            } else if life_points_after > 0 && still_conscious {
+            } else if life_points_after > 0 && (is_arrow_damage || still_conscious) {
+                // `TranslateArrowDamage` (RHelementactorhuman.cpp:2399-2410)
+                // tests only `IsDead()`: a surviving victim always extracts
+                // the arrow, even while unconscious. Only the generic
+                // `TranslateDamage` (RHelementactorhuman.cpp:2559-2576) has
+                // the consciousness test.
                 animations.map(|a| {
                     if is_arrow_damage {
                         a.arrow_extract
@@ -1771,6 +1804,10 @@ impl EngineInner {
                     }
                 })
             } else {
+                // TODO: the unconscious non-arrow survivor should get
+                // `TranslateDamage`'s `animFallingBack` plus `QuitSwordFight`
+                // (RHelementactorhuman.cpp:2566-2575); today it gets no order
+                // at all. Out of scope for the arrow fix above.
                 None
             };
             if let Some(anim) = translated_anim {
@@ -1793,6 +1830,7 @@ impl EngineInner {
                 assets,
                 victim_id,
                 life_points_before,
+                unconscious_before,
                 None,
                 false,
                 damage_element,
@@ -2357,6 +2395,7 @@ impl EngineInner {
         assets: &LevelAssets,
         victim_id: EntityId,
         life_points_before: i16,
+        unconscious_before: bool,
         attacker_id: Option<EntityId>,
         no_damage: bool,
         damage_element: (crate::sequence::SequenceId, usize),
@@ -2414,7 +2453,7 @@ impl EngineInner {
                     dying_anim_override,
                 );
             }
-        } else if is_unconscious {
+        } else if is_unconscious && !unconscious_before {
             // `inform_my_friends` only fires when the attacker is a
             // PC.  Resolve the attacker identity here so
             // `handle_knockout` can gate the broadcast.  Attacker-less

@@ -9575,6 +9575,7 @@ mod tests {
             &LevelAssets::new(),
             victim,
             0,
+            false,
             None,
             false,
             (crate::sequence::SequenceId(999), 0),
