@@ -2657,7 +2657,15 @@ impl EngineInner {
     /// leave a PC, combat neighbour, or archery reservation pointing at the
     /// dead soldier.
     fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
-        let (guarded_pcs, shooting_points, archery_sector, left_neighbours, right_neighbours) = {
+        let (
+            guarded_pcs,
+            shooting_points,
+            archery_sector,
+            left_neighbours,
+            right_neighbours,
+            shield_bearers,
+            archers,
+        ) = {
             let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(victim_id) else {
                 return;
             };
@@ -2734,6 +2742,44 @@ impl EngineInner {
                     _ => {}
                 }
             }
+            // SUBSTATE_SLEEPING_FOREVER is neither a bow substate nor a
+            // shield-protect/phalanx substate, so the same
+            // `RHArtificialMalignity::SetState` constraint block also runs
+            // `UpdateArcherBehindMe( NULL )` and
+            // `UpdateShieldBearerBeforeMe( NULL )`
+            // (RHartificialmalignity.cpp:9459-9494), each of which clears the
+            // partner's reciprocal pointer
+            // (RHartificialmalignity.cpp:17635-17662, 17675-17702). Tear the
+            // archer/shield-bearer pairing down here for the same reason the
+            // combat neighbours are handled above.
+            let mut shield_bearers = Vec::new();
+            let mut archers = Vec::new();
+            let shield_bearer = std::mem::take(&mut enemy.shield_bearer_before_me);
+            if shield_bearer != 0 {
+                shield_bearers.push(shield_bearer);
+            }
+            let archer = std::mem::take(&mut enemy.archer_behind_me);
+            if archer != 0 {
+                archers.push(archer);
+            }
+            for action in &enemy.base.outbox.reentrant.cross_npc_actions {
+                match *action {
+                    crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer: 0 } => {
+                        if target != 0 && !shield_bearers.contains(&target) {
+                            shield_bearers.push(target);
+                        }
+                    }
+                    crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
+                        target,
+                        shield_bearer: 0,
+                    } => {
+                        if target != 0 && !archers.contains(&target) {
+                            archers.push(target);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             debug_assert!(
                 !release.release_sector || archery_sector.is_some(),
                 "queued archery-sector release has no owned sector on death"
@@ -2745,8 +2791,42 @@ impl EngineInner {
                 archery_sector,
                 left_neighbours,
                 right_neighbours,
+                shield_bearers,
+                archers,
             )
         };
+
+        for shield_bearer in shield_bearers {
+            let Some(Entity::Soldier(soldier)) =
+                self.world
+                    .entities
+                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
+                        shield_bearer,
+                    )))
+            else {
+                panic!(
+                    "dead soldier {victim_id:?} has missing/non-soldier shield bearer \
+                     {shield_bearer}"
+                );
+            };
+            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!("dead soldier {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi")
+            });
+            enemy.archer_behind_me = 0;
+        }
+        for archer in archers {
+            let Some(Entity::Soldier(soldier)) = self
+                .world
+                .entities
+                .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(archer)))
+            else {
+                panic!("dead soldier {victim_id:?} has missing/non-soldier archer {archer}");
+            };
+            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!("dead soldier {victim_id:?}'s archer {archer} has no EnemyAi")
+            });
+            enemy.shield_bearer_before_me = 0;
+        }
 
         for left_neighbour in left_neighbours {
             let Some(Entity::Soldier(soldier)) =
