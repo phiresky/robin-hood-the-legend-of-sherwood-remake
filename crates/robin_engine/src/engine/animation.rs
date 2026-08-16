@@ -2242,11 +2242,15 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
 /// etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct ExecuteSideOutcomes {
-    /// Soldiers executing WAITING_ALERTED while their requested attentive
-    /// state is false. Original launches LEAVE_ATTENTIVE_MODE from inside
-    /// that Execute arm unless an equivalent element is already waiting in
-    /// the sequence-manager launch queue.
-    pub waiting_alerted_leave: Vec<EntityId>,
+    /// Soldiers executing WAITING_ALERTED. Original's
+    /// `RHElementActorSoldier::Execute` arm (`RHelementactorsoldier.cpp:735-751`)
+    /// performs two corrections there, in this order: it launches
+    /// LEAVE_ATTENTIVE_MODE when the requested attentive state is false
+    /// (unless an equivalent element is already waiting in the
+    /// sequence-manager launch queue), and it calls `QuitSwordFight()` when
+    /// the soldier is still swordfighting despite playing a non-sword
+    /// animation.
+    pub waiting_alerted: Vec<EntityId>,
     /// PCs whose DROPPING_ALE animation reached DONE. Original creates the
     /// bottle and consumes one ale at this action point, before the order's
     /// later TERMINATED edge advances the sequence.
@@ -5926,15 +5930,16 @@ impl EngineInner {
                         if anim_type == OrderType::WaitingAlerted
                             && let Entity::Soldier(soldier) = entity
                         {
-                            let enemy = soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                            soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
                                 panic!("WaitingAlerted soldier {entity_id:?} has no enemy AI state")
                             });
-                            if !enemy.will_be_attentive {
-                                completion_outcomes
-                                    .execute_sides
-                                    .waiting_alerted_leave
-                                    .push(entity_id);
-                            }
+                            // Both corrections in the Original's arm are
+                            // decided in the drain so they stay ordered
+                            // per-soldier as `Execute` runs them.
+                            completion_outcomes
+                                .execute_sides
+                                .waiting_alerted
+                                .push(entity_id);
                         }
                         if entity.is_pc()
                             && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
