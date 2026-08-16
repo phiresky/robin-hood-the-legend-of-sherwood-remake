@@ -708,6 +708,33 @@ not to be "fixed": the `Wait` vs `WaitTimer` split at `crates/robin_engine/src/e
 matches Original, where `AppendMoveToLineToSequence` uses `RHCOMMAND_WAIT` (`RHsequence.cpp:1058,1063`)
 while the point/door variants use `WAIT_TIMER`.
 
+### Singleton direction leads (each a DIFFERENT root cause — do not re-cluster them)
+Five investigations have now confirmed the sector classifier is faithful; every direction divergence is
+*which vector*, *which origin*, or *whether/when the write happens*. Remaining singletons, each with its
+own cause:
+- **True-circle strike rotation phase** — schema14 linux3/P001/Savegame_030 replay-006, f31433, Soldier
+  co 192. `ExecuteTrueCircleSwordStrikeAction` (`original-code/RHelementactorhuman.cpp:10175`) does
+  `SetDirectionInstantly(AngleToSector(mfCurrentStrikeAngle))` ONLY on the `IsActionDone == true` branch;
+  Rust enters it one frame early, so both `direction` and `direction_goal` jump 1->14 a frame ahead.
+- **RaisingSword init direction write** — schema14 SuN1Sh1nE/P004/ExQuickSave replay-003, f36715,
+  Soldier co 128. Rust's `waiting_sword_direction_goal -> raising_sword_direction` write fires on the
+  first `TransitionRaisingSword` Execute; C++ (`RHelementactorhuman.cpp:3596`, soldier override
+  `RHelementactorsoldier.cpp:1249`) writes only when `pOrder->pAntagonist != NULL`. Original keeps goal 3
+  (no init write), Rust writes goal 1.
+- **AI FaceTo target selection** — schema14 linux2/P002/Savegame_034 replay-005, f35320, Soldier co 96.
+  `OfficerLookForSoldier` (`RHartificialmalignity.cpp:15905-15919`): the Original took the
+  `pSoldier == NULL` arm giving `FaceTo((dir+5)%16)` = 7; Rust found a soldier via `mlistPatrol[0]` /
+  `GetNearestFighter(camp, 200, CONDITION_IS_IN_DEFAULT_STATE_OR_LOOKING_BODY, RANK_SOLDIER)` and did
+  `Face(pSoldier)` = 8. The bug is the candidate search, not the facing.
+- **PointTo facing vector** — schema14 linux2/P002/Savegame_039 replay-003, f10950, Soldier co 169.
+  `PointTo` (`RHartificialintelligence.cpp:2798`) builds its sector from
+  `PositionToPoint3D(posTarget) - mpMe->GetPosition()` using raw 3D X/Y — the same origin class as the
+  already-fixed `7d6a13da9`.
+- **Movement/waypoint collateral (hand off, not direction bugs)** — schema12 nicouzouf/P001/Savegame_071
+  replay-015 (f564, first MOVE_OK frame after a door pass; position/elevation/increment/goal all differ)
+  and schema14 linux3/P003/Savegame_051 replay-004 (f14449, different next waypoint,
+  goal (836,1142) vs (851,1120)).
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
