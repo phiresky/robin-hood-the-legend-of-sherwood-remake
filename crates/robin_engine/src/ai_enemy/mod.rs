@@ -32,6 +32,16 @@ pub(crate) fn decision_path_debug_enabled() -> bool {
     std::env::var_os("PARITY_DEBUG_AI_DECISION_PATH").is_some()
 }
 
+/// Master switch for the `BattleDecisions` / phalanx / shield-timer
+/// diagnostic. Prints which branch of the decision tree an NPC took and the
+/// inputs that selected it, which is what a `actor.command` or `ai.substate`
+/// divergence in the shield-bearer and archer families reduces to. Cached in
+/// a `OnceLock` because the call sites sit on the per-stimulus AI path.
+pub(crate) fn battle_decision_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BATTLE_DECISION").is_some())
+}
+
 /// Exact frame/owner gate for the AI decision/path diagnostic. Enabling the
 /// master switch without both filters is an operator error: broad traces make
 /// same-frame re-entrant state ownership impossible to attribute reliably.

@@ -1175,6 +1175,24 @@ impl EnemyAi {
                 ////////// offensive decisions //////////////
 
                 if self.is_archer() && self.base.blood_alcohol == 0 {
+                    if crate::ai_enemy::battle_decision_debug_enabled() {
+                        eprintln!(
+                            "ARCHER_DECISION frame={} me={} tower={} sbb={} shooting_point={:?} too_near={} pos={:?}",
+                            ctx.frame,
+                            self.base.me,
+                            self.tower_guard,
+                            self.shield_bearer_before_me,
+                            self.my_shooting_point,
+                            self.base.primary_target != 0
+                                && self.archer_is_too_near_to_enemy(
+                                    &ctx.position,
+                                    self.base.primary_target,
+                                    ctx,
+                                    tick,
+                                ),
+                            ctx.position
+                        );
+                    }
                     // Archer offensive.
                     if self.tower_guard {
                         if !self.base.friends_are_alerted {
@@ -1342,6 +1360,18 @@ impl EnemyAi {
             friends_lower_company = tick.friends_lower_company,
             "battle_decisions: chose decision"
         );
+        if crate::ai_enemy::battle_decision_debug_enabled() {
+            eprintln!(
+                "BATTLE_DECISION frame={} me={} decision={:?} old_substate={:?} primary={} seen={} friends_nearer={}",
+                ctx.frame,
+                self.base.me,
+                decision,
+                old_substate,
+                self.base.primary_target,
+                num_enemies_i_can_see,
+                friends_nearer_to_enemy
+            );
+        }
         // Carry out decision (with possible fallback loop). The Observe
         // arm's avenger-on-roof fallback returns from the whole routine
         // before the log line is registered; every other path logs.

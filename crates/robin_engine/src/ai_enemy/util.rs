@@ -476,6 +476,18 @@ pub(crate) fn detects_position_180_raw(
 pub struct FighterSnapshot {
     pub handle: HumanHandle,
     pub position: Position,
+    /// The fighter's own `RHElement::GetPosition()` — the raw element
+    /// position, before `RHArtificialIntelligence::Position()`
+    /// (`original-code/RHartificialintelligence.cpp:4307-4343`) snaps an
+    /// actor in door transit onto the gate endpoint or substitutes the
+    /// carrier of an `ON_SHOULDERS` PC.
+    ///
+    /// The AI reads fighters through both accessors and they are not
+    /// interchangeable: `SquareDistance`/`Distance`/`MaxNormDistance`
+    /// (`RHartificialintelligence.cpp:6919-6938`) all take
+    /// `pSomething->GetPosition()` directly, so any range gate written in
+    /// terms of them must use this field, not [`Self::position`].
+    pub raw_position: Position,
     pub direction: u16,
     /// True if this fighter is on the same side as the evaluating AI.
     pub is_friendly: bool,

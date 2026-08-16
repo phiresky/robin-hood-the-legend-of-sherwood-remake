@@ -708,6 +708,61 @@ not to be "fixed": the `Wait` vs `WaitTimer` split at `crates/robin_engine/src/e
 matches Original, where `AppendMoveToLineToSequence` uses `RHCOMMAND_WAIT` (`RHsequence.cpp:1058,1063`)
 while the point/door variants use `WAIT_TIMER`.
 
+### B6 shield/bow bundle (recheck105) — 2026-08-16 agent
+
+Fixed (2/9): `RefreshArrowProtection`'s orphan-archer scan measured `SquareDistance` from the AI
+accessor `RHArtificialIntelligence::Position()` (`RHartificialintelligence.cpp:4307-4343`) instead of
+the raw `RHElement::GetPosition()` the reference actually uses
+(`RHartificialintelligence.cpp:6919-6922`). `Position()` snaps an actor in door transit onto the gate
+endpoint, which pushed the only protectable archer from 489 to 554 units and silenced the shield
+raise. `FighterSnapshot` now carries `raw_position`; any other range gate written in terms of
+`SquareDistance`/`Distance`/`MaxNormDistance` must use it, and several still read `position` — that is
+an open audit.
+
+The other seven decomposed into four unrelated families, none of which is a shield bug:
+
+* **BattleDecisions branch selection (3).** `Savegame_013/replay-005` f2165: soldier 81 leaves the
+  phalanx and the Original charges (`DECISION_FIGHT` -> `ReconsiderEnemyApproach` ->
+  `RefreshArrowProtection` -> `PROTECTING_WITH_SHIELD`) while Rust observes. The gate is
+  `uwNumberOfFriendsNearerThanMe >= uwNumberOfEnemiesICanSee + ... * (0.045f * GetCourage())`
+  (`RHartificialmalignity.cpp:7683`): Rust counts 6 nearer friends for soldier 81 and 5 for soldier 80,
+  even though 81 stands *closer* to the shared target than 80 does. Suspect the friend loop's
+  membership, not the mixed-metric comparison (that is already ported faithfully:
+  `ulSquareEnemyDistance` is the stretched 3-D `SquareDistance`, each friend is the plain 2-D map
+  `SquareNorm`, `RHposition` being 2-D confirms it).
+  `Savegame_040/replay-015` f28012 and `Savegame_071/replay-010` f995 are the archer half of the same
+  family (`RHartificialmalignity.cpp:7578-7645`): the Original reaches `DECISION_SHOOT`, Rust reaches
+  `RunToArcheryPoint` (so Rust's `ChooseGoodShootingPoint` returned true where the reference returned
+  false) and `CoverBehindShieldBearer` (so Rust's `GetNearestFreeShieldBearer` found a bearer where the
+  reference found none, or Rust dropped a `mpShieldBearerBeforeMe` link the reference kept — 115's link
+  to 116 disappears between f954 and f995 in Rust). `PARITY_DEBUG_BATTLE_DECISION` prints all of these
+  inputs directly.
+
+* **Projectile landing membership (1).** `Savegame_029/replay-013` f5265: the Original's arrow keeps
+  `layer = sector = 0xFFFF` for its entire life; Rust resolves layer 0 / sector 7. Both early returns of
+  `ComputeTrajectory`'s terminal block (`RHelementprojectile.cpp:769-830`) — non-projection-area terminal
+  obstacle, and landing inside a motion obstacle — are already ported in
+  `FastFindGrid::resolve_projectile_landing`, and `landing_map` correctly uses `y - z`, so the divergence
+  is in *which* terminal obstacle / motion sector the query finds at (722.857, 1644.150) on layer 0.
+
+* **Projectile trajectory (1).** `Savegame_029/replay-001` f12292 is the already-known bow-shot initial
+  velocity lead (item 6 below), not a presentation bug.
+
+* **Falling-arrow presentation/RNG (2).** `QuickSave` f35731 (`sprite_row 6 / frame 4` in an arrow's own
+  creation frame) and `Savegame_024/replay-013` f1449 (`ArrowFallingFrame` drawn where the Original
+  draws nothing). Useful new evidence for the first: in `Savegame_029/replay-013` a *normally created*
+  arrow records `sprite_row 0 / sprite_frame 0` on its creation frame and only picks up its real row on
+  the next frame, which confirms the "an arrow created this frame cannot carry a forced sprite" reading
+  and makes the QuickSave arrow's creation path the thing that must be found.
+
+Tooling added: `PARITY_DEBUG_BATTLE_DECISION` (see the diagnostics commit) prints `BATTLE_DECISION`,
+`ARCHER_DECISION`, `SHIELD_TIMER`, `PHALANX_TIMER`, `PHALANX_TIMER_EXIT` and `RECONSIDER_PHALANX`.
+Caveat learned the hard way: `original-code/build/native-full/robin-schema14-capture` does **not**
+reproduce schema-12 traces (its `[DBG]` stream shows no `Think` at all on the diverging frames), and it
+predates `PARITY_DEBUG_ORIGINAL_PROJECTILE`, so that diagnostic is not in the binary. It has symbols but
+no DWARF: gdb works only through `break *(&'<mangled>' + offset)` with hand-read disassembly, and
+`RHArtificialIntelligence::mpUniversalFrameCounter` is the frame counter (`GetUniversalFrameCounter` is
+inlined). Also beware: `set $sp = ...` in a gdb script clobbers the stack pointer.
 ### Singleton direction leads (each a DIFFERENT root cause — do not re-cluster them)
 Five investigations have now confirmed the sector classifier is faithful; every direction divergence is
 *which vector*, *which origin*, or *whether/when the write happens*. Remaining singletons, each with its

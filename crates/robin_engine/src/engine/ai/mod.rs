@@ -4093,6 +4093,15 @@ impl EngineInner {
                 return None;
             }
             let position = fighter_position(EntityId::Soldier(SoldierId(handle)));
+            // `RHElement::GetPosition()` — no door-transit or carrier
+            // substitution. Range gates phrased as `SquareDistance` read
+            // this, not the AI `Position()` result above.
+            let raw_position = Position {
+                x: s.element.position_map().x,
+                y: s.element.position_map().y,
+                sector: s.element.sector(),
+                level: s.element.layer(),
+            };
             let enemy_ai_other = s
                 .npc
                 .ai_brain
@@ -4191,6 +4200,7 @@ impl EngineInner {
                     sector: position.sector,
                     level: position.level,
                 },
+                raw_position,
                 direction: s.element.direction() as u16,
                 is_friendly,
                 is_swordfighting: !s.human.opponents.is_empty(),
@@ -4251,6 +4261,13 @@ impl EngineInner {
             }
             let is_carried = pc.human.carrier.is_some();
             let position = fighter_position(EntityId::Pc(PcId(handle)));
+            // `RHElement::GetPosition()` — see the soldier branch.
+            let raw_position = Position {
+                x: pc.element.position_map().x,
+                y: pc.element.position_map().y,
+                sector: pc.element.sector(),
+                level: pc.element.layer(),
+            };
             let character = assets
                 .profile_manager
                 .get_character(pc.pc.profile_index)
@@ -4288,6 +4305,7 @@ impl EngineInner {
             Some(FighterSnapshot {
                 handle,
                 position,
+                raw_position,
                 direction: pc.element.direction() as u16,
                 is_friendly: my_camp == Camp::Royalists,
                 is_swordfighting: !pc.human.opponents.is_empty(),

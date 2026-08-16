@@ -7204,6 +7204,21 @@ impl EnemyAi {
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.action_state)
                 .unwrap_or_default();
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "SHIELD_TIMER frame={} me={} action={:?} shield={} left={} right={} archer_behind={} target={} target_action={:?}",
+                    ctx.frame,
+                    self.base.me,
+                    my_action,
+                    my_action.is_shield(),
+                    self.left_combat_neighbour,
+                    self.right_combat_neighbour,
+                    self.archer_behind_me,
+                    self.base.primary_target,
+                    self.find_fighter(self.base.primary_target, tick)
+                        .map(|f| f.action_state),
+                );
+            }
 
             if !my_action.is_shield() {
                 // Reestablish shield state
@@ -7373,6 +7388,19 @@ impl EnemyAi {
                     primary = self.base.primary_target,
                     "phalanx timer"
                 );
+                let phalanx_debug = crate::ai_enemy::battle_decision_debug_enabled();
+                if phalanx_debug {
+                    eprintln!(
+                        "PHALANX_TIMER frame={} me={} action={:?} left={} right={} target={} archer_behind={}",
+                        ctx.frame,
+                        self.base.me,
+                        my_action,
+                        self.left_combat_neighbour,
+                        self.right_combat_neighbour,
+                        self.base.primary_target,
+                        self.archer_behind_me
+                    );
+                }
                 if !my_action.is_shield() && self.base.primary_target != 0 {
                     // Reestablish shield state
                     let (target_pos, target_elevation) = self
@@ -7402,6 +7430,12 @@ impl EnemyAi {
                     }
                 }
                 // else: reconsider_phalanx changed substate
+                if phalanx_debug {
+                    eprintln!(
+                        "PHALANX_TIMER_EXIT frame={} me={} substate={:?}",
+                        ctx.frame, self.base.me, self.base.current_substate
+                    );
+                }
             }
             StimulusType::CallInstruction => {
                 // Received new position instruction from phalanx leader
