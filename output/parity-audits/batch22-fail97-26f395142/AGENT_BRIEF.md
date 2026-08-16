@@ -48,8 +48,15 @@ expect one cause per trace.
 - RNG-site labels are frequently artifacts — the classifier keys on the first RNG site of the frame.
 - `INVERSE_SWORDFIGHT_ASPECT_RATIO` is 1 in the shipping build; the half-circle/lateral `mY *=` asymmetry
   is a **no-op**, don't chase it.
-- Before reporting any trace as failing or regressed, check `docs/PARITY_RETIRED_TRACES.txt` (187 entries).
-  Two agents have already wasted effort on retired traces.
+- **Before reporting any trace as failing or regressed, check `docs/PARITY_RETIRED_TRACES.txt` (187
+  entries) AND the universe snapshot.** THREE agents have now independently "discovered" that
+  `SuN1Sh1nE/Profile_004/Savegame_024` replay-010 and replay-012 fail, and reported them as pre-existing
+  regressions in main. **They are retired and not in the universe — they are out of scope and are not
+  regressions.** If you believe you have found a regression, verify it in this order: (1) is the trace in
+  `PARITY_RETIRED_TRACES.txt`? (2) is it in the current universe snapshot from
+  `scripts/build_parity_full_snapshot.sh`? (3) does it fail on a PREVIOUS frozen runner in
+  `output/parity-audits/batch*/runner-rust/` — those are kept precisely so a claim can be bisected across
+  batches without rebuilding.
 
 ## Tooling
 `original-code/build/native-full/robin-schema14-capture` reproduces **schema14** traces bit-exactly and
