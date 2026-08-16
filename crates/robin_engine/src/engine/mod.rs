@@ -4639,14 +4639,21 @@ impl EngineInner {
         };
 
         if let Some(next_order) = next_order {
-            // Original DoNextOrder assigns mpOrder = Proceed() immediately.
+            // Original DoNextOrder assigns mpOrder = Proceed() immediately
+            // and, when a successor exists, republishes the motion state as
+            // RHMOTION_IN_PROGRESS before Hourglass returns
+            // (RHelementactor.cpp:1246-1267). Callers reach here right after
+            // latching RHMOTION_TERMINATED, so that latch has to be replaced
+            // for the frame snapshot to show the successor's motion.
             if let Some(owner) = owner {
-                self.world
+                let actor = self
+                    .world
                     .entities
                     .get_mut(owner)
                     .and_then(Entity::actor_data_mut)
-                    .expect("next-order owner disappeared before mpOrder publication")
-                    .installed_order = Some(next_order);
+                    .expect("next-order owner disappeared before mpOrder publication");
+                actor.installed_order = Some(next_order);
+                actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
             }
             return;
         }
