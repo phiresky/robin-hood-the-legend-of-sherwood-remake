@@ -24,6 +24,25 @@ fn opponent_order_debug_matches(frame: u32, owner: EntityId) -> bool {
             .is_none_or(|value| value == owner.index())
 }
 
+/// `RHLineJump::GetAssociatedJumpLine()` — the paired jump line on the far
+/// side of a table.  `None` when the aggressor is not fighting across a
+/// table, or when the level's jump line has no associated partner.
+fn associated_jump_line(
+    engine: &EngineInner,
+    aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
+) -> Option<crate::jump_line::JumpLineIndex> {
+    aggressor_jump_line.and_then(|aggr| {
+        engine
+            .world
+            .fast_grid
+            .level
+            .jump_lines
+            .get(usize::from(aggr))
+            .and_then(|jl| jl.associated_line_index)
+            .and_then(crate::jump_line::JumpLineIndex::new)
+    })
+}
+
 impl EngineInner {
     // ─── Tie-up (public, called from natives/UI) ────────────────────
 
@@ -1001,6 +1020,17 @@ impl EngineInner {
             // opponent so they raise their sword.  (The stop +
             // soldier think from `prepare_to_enter_swordfight`
             // already ran at the top of this function.)
+            //
+            // `RHElementActorHuman::EnterSwordFight`
+            // (original-code/RHelementactorhuman.cpp:7674-7681) stores
+            // `pJumpLine->GetAssociatedJumpLine()` — the far side of the
+            // table — in the reciprocal element's
+            // RHFIELD_JUMPLINE_DESTINATION, not a null line.  That property
+            // is what the opponent's own ENTER_SWORDFIGHT translation reads
+            // to run the table-swordfight slot search and launch its
+            // approach movement, so dropping it silently skipped the whole
+            // cross-sector positioning half of the fight.
+            let reciprocal_jump_line = associated_jump_line(self, aggressor_jump_line);
             let mut seq = crate::sequence::Sequence::new();
             let mut elem = crate::sequence::SequenceElement::new_generic(
                 1,
@@ -1013,7 +1043,10 @@ impl EngineInner {
             );
             elem.set_property(
                 crate::sequence::Field::JumplineDestination,
-                crate::sequence::FieldValue::Integer(0),
+                match reciprocal_jump_line {
+                    Some(line) => crate::sequence::FieldValue::LineId(line),
+                    None => crate::sequence::FieldValue::Integer(0),
+                },
             );
             seq.append_element(elem);
             self.launch_sequence(seq);
@@ -1101,15 +1134,7 @@ impl EngineInner {
         // the table), the opponent stores the associated paired line
         // on the far side.  When no table fight is involved, both
         // sides store `None`.
-        let opponent_jump_line = aggressor_jump_line.and_then(|aggr| {
-            self.world
-                .fast_grid
-                .level
-                .jump_lines
-                .get(usize::from(aggr))
-                .and_then(|jl| jl.associated_line_index)
-                .and_then(crate::jump_line::JumpLineIndex::new)
-        });
+        let opponent_jump_line = associated_jump_line(self, aggressor_jump_line);
         let debug_opponent = opponent_order_debug_matches(self.control.frame_counter, opponent);
         let debug_initiator = opponent_order_debug_matches(self.control.frame_counter, initiator);
         let opponent_before = debug_opponent.then(|| {
