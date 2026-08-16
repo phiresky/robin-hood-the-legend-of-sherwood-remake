@@ -3741,6 +3741,48 @@ fn tick_arrows_matching(
         })
         .collect();
 
+    // `RHElementProjectile::FindHumanVictim` reads its shooter through the
+    // raw `mpShooter` pointer captured at construction
+    // (`original-code/RHelementprojectile.cpp:103`), which nothing but
+    // deserialization ever rewrites. The scan aborts on `mpShooter == NULL`
+    // alone (`:1801`) and otherwise only asks the shooter for `IsSoldier()`
+    // / `GetCamp()` / `IsPC()` (`:1833-1857`), no matter what has happened
+    // to him since the shot. Those answers stay valid for a shooter who has
+    // since been killed, knocked down, netted or tied, so his arrows keep
+    // hunting victims for the rest of their flight. The hittable-victim
+    // snapshot above deliberately drops exactly those states, so the
+    // shooter's prefilter traits are collected separately over every human
+    // actor.
+    struct ShooterTraits {
+        id: EntityId,
+        is_pc: bool,
+        is_soldier: bool,
+        camp: Option<crate::element::Camp>,
+    }
+    let shooter_traits: Vec<ShooterTraits> = actor_ids
+        .iter()
+        .filter_map(|&entity_id| {
+            let e = entities.get(entity_id).unwrap_or_else(|| {
+                panic!("projectile actor registry contains missing entity {entity_id}")
+            });
+            if !e.is_human() {
+                return None;
+            }
+            let camp = match e {
+                Entity::Pc(_) => Some(crate::element::Camp::Royalists),
+                Entity::Soldier(s) => Some(s.soldier.cached_camp),
+                Entity::Civilian(c) => Some(c.civilian.cached_camp),
+                _ => None,
+            };
+            Some(ShooterTraits {
+                id: entity_id,
+                is_pc: e.is_pc(),
+                is_soldier: e.is_soldier(),
+                camp,
+            })
+        })
+        .collect();
+
     // Snapshot FX targets that can be activated by a passing
     // projectile.  Each projectile type checks a specific filter bit
     // and launches a dedicated activation command — the per-projectile
@@ -4218,7 +4260,7 @@ fn tick_arrows_matching(
             (dx * dx + dy * dy + dz * dz).sqrt()
         }
         fn projectile_victim_prefilter_allows(
-            shooter: Option<&HumanSnapshot>,
+            shooter: Option<&ShooterTraits>,
             victim: &HumanSnapshot,
         ) -> bool {
             let Some(shooter) = shooter else {
@@ -4259,7 +4301,17 @@ fn tick_arrows_matching(
 
         let mut hit_victim = None;
         let shooter_snapshot =
-            shooter_id.and_then(|id| human_snapshots.iter().find(|snap| snap.id == id));
+            shooter_id.and_then(|id| shooter_traits.iter().find(|traits| traits.id == id));
+        if let Some(id) = shooter_id
+            && shooter_snapshot.is_none()
+        {
+            tracing::warn!(
+                arrow = arrow_id.index(),
+                shooter = %id,
+                "projectile shooter is not a human actor; C++ mpShooter is always \
+                 RHElementActorHuman*, so no camp prefilter can be applied"
+            );
+        }
         // C++ `RHElementProjectile::FindHumanVictim` returns null when
         // `mpShooter == NULL`; only FX target collision still runs.
         if let Some(shooter_snapshot) = shooter_snapshot {
@@ -6617,6 +6669,78 @@ mod tests {
         assert!(
             results.iter().all(|r| r.hit_target.is_none()),
             "C++ FindHumanVictim returns no victim when projectile has no shooter"
+        );
+    }
+
+    /// An arrow whose shooter dies mid-flight keeps hunting victims.
+    ///
+    /// `RHElementProjectile::FindHumanVictim` holds the shooter through the
+    /// raw `mpShooter` pointer stored at construction
+    /// (`original-code/RHelementprojectile.cpp:103`), aborts only on
+    /// `mpShooter == NULL` (`:1801`), and otherwise merely asks him for
+    /// `IsSoldier()` / `GetCamp()` / `IsPC()` (`:1833-1857`). A corpse still
+    /// answers all three, so the shot stays lethal. Rust used to resolve the
+    /// shooter inside the *hittable-victim* snapshot, which drops dead,
+    /// lying, netted and tied humans, and then skipped the whole scan.
+    #[test]
+    fn tick_arrows_dead_shooter_still_hits_human() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        use crate::element::Posture;
+
+        let mut shooter = make_pc(0.0, 0.0);
+        shooter.set_posture(Posture::Dead);
+
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+            bow_point: WorldPoint3D {
+                x: 0.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+            target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: WorldPoint3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 2,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        });
+
+        let mut entities = entity_table(vec![
+            Some(shooter),
+            Some(make_soldier(50.0, 0.0)),
+            Some(arrow),
+        ]);
+
+        let mut any_hit = None;
+        for _ in 0..10 {
+            for r in tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            ) {
+                if r.hit_target.is_some() {
+                    any_hit = r.hit_target;
+                }
+            }
+        }
+        assert_eq!(
+            any_hit,
+            Some(EntityId::Soldier(crate::entity_id::SoldierId(1))),
+            "a dead shooter's arrow must still resolve its human victim"
         );
     }
 
