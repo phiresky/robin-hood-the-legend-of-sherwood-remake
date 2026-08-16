@@ -1168,6 +1168,12 @@ fn compute_trajectory_ballistic_impl(
             // earlier reachability gate may use opaque obstacles to
             // select long-shot mode, but the arrow itself must not be
             // clipped by opaque-only sight blockers.
+            let candidates = check.fast_find_grid.impact_obstacle_candidates(
+                crate::coordinates::MapPoint::new(position.x, position.y),
+                crate::coordinates::MapPoint::new(new_position.x, new_position.y),
+                check.sight_obstacles,
+                crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
+            );
             let impact_3d = crate::sight_obstacle::is_reachable_impact_3d(
                 crate::coordinates::WorldPoint3D {
                     x: position.x,
@@ -1182,6 +1188,7 @@ fn compute_trajectory_ballistic_impl(
                 crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
                 check.sight_obstacles,
                 Some(check.fast_find_grid.level.map_bbox),
+                Some(&candidates),
             );
 
             // Compute the 3D impact ratio relative to the current
@@ -7624,12 +7631,22 @@ mod tests {
         obstacle.material_sectors = material_sectors;
         let obstacles = [obstacle];
         let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
         {
             let mut level = (*grid.level).clone();
             level.map_bbox =
                 crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
             grid.level = std::sync::Arc::new(level);
         }
+        // The 3D raycast reads its candidates out of the grid, exactly as
+        // `RHFastFindGrid::IsReachableImpact` does, so the wall has to be
+        // registered the way level loading registers real obstacles.
+        grid.add_obstacle_index(
+            crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
+            obstacles[0].layer,
+            &obstacles[0].box_ground,
+        );
         let check = TrajectoryObstacleCheck {
             fast_find_grid: &grid,
             layer: 0,
@@ -7766,12 +7783,21 @@ mod tests {
         // outside the level's map bbox, and a default grid has an empty
         // (hyperspace) bbox — give the flight path an open field instead.
         let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
         {
             let mut level = (*grid.level).clone();
             level.map_bbox =
                 crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
             grid.level = std::sync::Arc::new(level);
         }
+        // The raycast pulls its candidates from the grid, so the wall has to
+        // be registered there the way level loading registers real obstacles.
+        grid.add_obstacle_index(
+            crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
+            obstacles[0].layer,
+            &obstacles[0].box_ground,
+        );
         let check = TrajectoryObstacleCheck {
             fast_find_grid: &grid,
             layer: 0,

@@ -1669,6 +1669,126 @@ impl FastFindGrid {
         result
     }
 
+    /// Candidate sight obstacles for a 3D raycast, in Original's grid
+    /// traversal order.
+    ///
+    /// Ports `RHFastFindGrid::GetObstacles( listObstacles, uwLayer,
+    /// segment, type )` (`original-code/RHfastfindgrid.cpp:5180`) for the
+    /// `uwLayer == 0` call `RHFastFindGrid::IsReachableImpact` makes
+    /// (`original-code/RHfastfindgrid.cpp:6517`): walk the grid blocks under
+    /// the segment's bounding box row-major, skip blocks the segment misses,
+    /// append each remaining block's active + type-matching obstacles to a
+    /// `SBListUnique` (first occurrence wins), then drop the entries whose
+    /// ground bounding box does not actually meet the segment.
+    ///
+    /// The result order is load-bearing: `IsReachableImpact` partitions it
+    /// into bbox-overlap groups and stops at the first group that produces
+    /// an impact, so a different candidate order can select a strictly
+    /// farther obstacle.
+    ///
+    /// Two Original details are reproduced here rather than in the grid's
+    /// storage, which is shared with queries that must keep their current
+    /// shape:
+    ///
+    /// * `RHFastFindGrid::AddObstacle` (`original-code/RHfastfindgrid.cpp:5490`)
+    ///   registers an obstacle only in the blocks whose box its **polygon**
+    ///   intersects, while [`Self::add_obstacle_index`] indexes by bounding
+    ///   box. The polygon test is therefore applied per block here.
+    /// * `AddObstacle` opens with `uwLayer = 0`, so one per-block list holds
+    ///   every layer's obstacles in load order. Rust files projection areas
+    ///   under their own layer, so each cell's per-layer lists are merged and
+    ///   re-sorted by obstacle index — which is load order — before the append.
+    ///
+    /// Shields are dynamic obstacles that never enter the grid blocks, so
+    /// they are absent by construction, matching Original: `GetMobileObstacles`
+    /// only reaches mobile elements' obstacles, and shipped records have none.
+    pub fn impact_obstacle_candidates(
+        &self,
+        origin: crate::coordinates::MapPoint,
+        destination: crate::coordinates::MapPoint,
+        obstacles: crate::sight_obstacle::ObstacleList<'_>,
+        type_filter: u32,
+    ) -> Vec<usize> {
+        let mut segment_bbox = MapBBox::new();
+        segment_bbox.expand_point(origin);
+        segment_bbox.expand_point(destination);
+        let Some(rect) = segment_bbox.0 else {
+            return Vec::new();
+        };
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
+        let layer_count = self.level.layers.len();
+        let mut result: Vec<usize> = Vec::new();
+        let mut cell_obstacles: Vec<usize> = Vec::new();
+        for cy in y_min..=y_max {
+            for cx in x_min..=x_max {
+                let block_min_x = f32::from(cx) * GRID_CELL_SIZE_F;
+                let block_min_y = f32::from(cy) * GRID_CELL_SIZE_F;
+                let mut block_box = crate::coordinates::GroundBBox::new();
+                block_box.expand_point(crate::coordinates::GroundPoint::new(
+                    block_min_x,
+                    block_min_y,
+                ));
+                block_box.expand_point(crate::coordinates::GroundPoint::new(
+                    block_min_x + GRID_CELL_SIZE_F,
+                    block_min_y + GRID_CELL_SIZE_F,
+                ));
+                if !crate::sight_obstacle::bbox_intersects_segment_reference(
+                    &block_box,
+                    (origin.x, origin.y),
+                    (destination.x, destination.y),
+                ) {
+                    continue;
+                }
+                cell_obstacles.clear();
+                for layer in 0..layer_count {
+                    let block_idx = self.block_index_from_cell(cx, cy, layer as u16);
+                    let Some(block) = self.level.blocks.get(block_idx) else {
+                        continue;
+                    };
+                    cell_obstacles.extend(block.obstacle_indices.iter().map(|&i| usize::from(i)));
+                }
+                cell_obstacles.sort_unstable();
+                cell_obstacles.dedup();
+                let block_box_2d = crate::geo2d::BBox2D(block_box.0);
+                for &idx in &cell_obstacles {
+                    if result.contains(&idx) {
+                        continue;
+                    }
+                    let obstacle = obstacles.get(idx).unwrap_or_else(|| {
+                        panic!("grid block references missing sight obstacle {idx}")
+                    });
+                    if !obstacles.is_active(idx) || !obstacle.is_of_type(type_filter) {
+                        continue;
+                    }
+                    let vertices: Vec<crate::geo2d::GeoPoint2D> = obstacle
+                        .obstacle_points
+                        .iter()
+                        .map(|point| crate::geo2d::GeoPoint2D {
+                            x: point.x,
+                            y: point.y,
+                        })
+                        .collect();
+                    if !crate::geo2d::polygon_vertices_intersect_bbox(&vertices, &block_box_2d) {
+                        continue;
+                    }
+                    result.push(idx);
+                }
+            }
+        }
+        result.retain(|&idx| {
+            let obstacle = obstacles
+                .get(idx)
+                .unwrap_or_else(|| panic!("candidate sight obstacle {idx} disappeared"));
+            crate::sight_obstacle::bbox_intersects_segment_reference(
+                &obstacle.box_ground,
+                (origin.x, origin.y),
+                (destination.x, destination.y),
+            )
+        });
+        result
+    }
+
     /// Collect mask indices whose character polyline occludes a sprite
     /// centred at `position` with world-space bounding box `bbox` on the
     /// given `layer`.
@@ -1764,12 +1884,19 @@ impl FastFindGrid {
             y: pt2d.y,
             z: 0.0,
         };
+        let candidates = self.impact_obstacle_candidates(
+            MapPoint::new(origin.x, origin.y),
+            MapPoint::new(destination.x, destination.y),
+            obstacles,
+            type_filter,
+        );
         crate::sight_obstacle::is_reachable_impact_3d(
             origin,
             destination,
             type_filter,
             obstacles,
             Some(self.level.map_bbox),
+            Some(&candidates),
         )
         .map(|hit| hit.impact)
         .unwrap_or(destination)
@@ -3295,12 +3422,19 @@ impl FastFindGrid {
     ) -> bool {
         // 3D obstacle intersection (top plane, bottom plane, walls,
         // ground).
+        let candidates = self.impact_obstacle_candidates(
+            MapPoint::new(origin.x, origin.y),
+            MapPoint::new(destination.x, destination.y),
+            obstacles,
+            type_filter,
+        );
         let obstacle_hit = crate::sight_obstacle::is_reachable_impact_3d(
             origin,
             destination,
             type_filter,
             obstacles,
             Some(self.level.map_bbox),
+            Some(&candidates),
         );
 
         // Ground-level motion line intersection: the corridor between
@@ -4947,7 +5081,7 @@ mod tests {
         use crate::sight_obstacle::{
             ObstaclePoint, SIGHTOBSTACLE_OPAQUE, SIGHTOBSTACLE_SOLID, SightObstacle,
         };
-        let grid = make_empty_grid(1);
+        let mut grid = make_empty_grid(1);
 
         // A 10-tall wall between x=100 and x=150.
         let mut obs = SightObstacle::new(0, SIGHTOBSTACLE_SOLID | SIGHTOBSTACLE_OPAQUE);
@@ -4981,6 +5115,13 @@ mod tests {
         // Top plane at z=10, bottom plane at z=0 (on ground).
         obs.top_plane_points = [[0.0, 0.0, 10.0], [1.0, 0.0, 10.0], [0.0, 1.0, 10.0]];
         obs.bottom_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        // `is_reachable_impact_3d` takes its candidates from the grid, so the
+        // wall must be registered there the way level loading registers one.
+        grid.add_obstacle_index(
+            crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
+            obs.layer,
+            &obs.box_ground,
+        );
         let obstacles = vec![obs];
 
         let origin = crate::coordinates::WorldPoint3D {
