@@ -540,14 +540,11 @@ visibility query — the same as Rust — while the recording has 2. Rust now ag
 reference; the recording does not. These are re-record-or-retire candidates, not Rust bugs. Verify the
 same way before spending any more effort on them.
 
-### Missing feature (not a parity bug): RHShadowPolygon night/fog light modulation
-`shadow_polygon.rs` (engine and host side) implements no light modulation and no `is_reachable`. The
-Original's `rhshadowpolygon.cpp:14288-14320` selects SHADOW sectors at the **projection area's** obstacle
-layer (not the target's) and `:14349` calls `IsReachable(mptViewer, pSectorLight->GetBarycentre3D(),
-SIGHTOBSTACLE_OPAQUE)`. gdb confirms a layer-2 `GetSectors(SECTOR_SHADOW)` at f54350 whose box contains
-sector 189's barycentre (1035.3,1433.4) with **no preceding `ComputeViewRadius`** — so the layer-2 scan
-never came from a dropped target obstacle. This is the correct form of the old sub-cause (a); the
-"cadence" sub-cause (b) is **disproved** — no cadence change was needed for any member.
+### CORRECTED: night/fog light modulation IS implemented (earlier entry here was stale)
+An earlier revision of this file claimed `shadow_polygon.rs` had no light modulation and no
+`is_reachable`. That is no longer true — main's `ai_vision::compute_view_radius` selects SHADOW sectors via
+a faithful `GetSectors` block walk at the obstacle's layer and calls `is_reachable_3d` on each barycentre.
+Nothing to implement. Do not re-open it.
 
 ### Schema-12 corpus: VALID as an oracle (earlier "CRITICAL" claim in this file was WRONG)
 An earlier revision of this section claimed the schema-12 corpus could not be trusted because today's
@@ -928,6 +925,30 @@ instead of inferring it from `actor.command`.
 - It ships a symtab but **no DWARF**: gdb only works via `break *(&'<mangled>' + offset)` off hand-read
   disassembly. `RHArtificialIntelligence::mpUniversalFrameCounter` is the frame counter.
 - `set $sp = ...` in a gdb script silently clobbers the stack pointer and segfaults the inferior.
+
+### Two more AI-resolved-position bugs (same class as the raw_position audit above)
+`Position(mpMe)` is replaced with the committed gate endpoint during a door pass, so any C++ site using
+`GetPositionGround()` / `GetPosition()` must NOT read it:
+- `enemy_is_behind_me` now reads `ctx.self_body_position_world`, matching `mpMe->GetPositionGround()`
+  (`original-code/RHartificialmalignity.cpp:5381`, `RHElement.h:328`).
+- `MenacingPcInComa`'s EVENT_TIMER needed `ai_max_norm_distance`: the Original's `MaxNormDistance`
+  (`RHartificialintelligence.cpp:6950-6953`) is a **3D** Chebyshev norm with Y stretched
+  (`sb3dstuff.cpp:70-88`). A guard below a comatose PC on a wall measured 67 instead of 110, never returned
+  to duty, kept `pc.guard` set, and that tripped `!IsSeenLastFrame() && IsPC() && IsGuarded()`
+  (`RHelementactornpc.cpp:2958`) for every Lacklandist viewer — suppressing 8 actor-detection LOS rays.
+  This resolves the long-standing "eight fewer raycasts" observation.
+Third fix in the same batch: the strangle condolation (`RHelementactorpc.cpp:7305-7315`) must drain the
+pending eye status between `Think(EVENT_GOTHIT)` and the gaze reset — the Original sets
+`EYES_DIE_OR_GET_UNCONSCIOUS` INSIDE Think (`RHartificialmalignity.cpp:6654`), so the following
+`SetViewStatus(EYES_LOOK_FORWARD)` sees a change and sets `bTransition = true`. The port's outbox deferral
+compared LookForward against LookForward, clearing `view_transition` mid-decay and freezing the head-turn
+angle in the view cone permanently.
+
+### Open: civilian alert flow (schema12 nicouzouf/P001/Savegame_051 replay-001, f1474)
+Rust runs `create_list_of_soldiers_you_can_alert` for civilian 40; the Original never does, so Rust gains
+11 `DETECTABLE_FRIEND` soldiers the Original lacks. Same camp on both sides, and
+`CreateListOfSoldiersYouCanAlert` (`RHartificialintelligence.cpp:6996-7074`) has NO distance filter — so
+the divergence is upstream, in whether the civilian reaches `AlertSoldiers` at all. Civilian-AI family.
 
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
