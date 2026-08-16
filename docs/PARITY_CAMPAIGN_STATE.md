@@ -768,6 +768,34 @@ own cause:
   the half-circle and lateral IN_PROGRESS arms omitting the `mY *=` that the full-circle arm applies is a
   **no-op**. Don't spend time on that asymmetry.
 
+### Open: composite sequence launch must interleave immediate execution with registration
+Root cause FOUND, fix deliberately not landed (too broad to validate in one agent's window).
+Repro: nicouzouf/P001/Savegame_022 replay-012 f1413, the scroll-dialog composite
+`[LockAi(civ), TurnElement(PC), TurnElement(civ)]`, all level 1. `LockAi` is an `ExecutedImmediately()`
+command whose `ScriptLockAI` calls `Stop(RHPRIORITY_NORMAL)` -> `StopNotYetLaunchedSequenceElements`
+(`original-code/RHsequencemanager.cpp:1031-1054`), which interrupts the owner's entries ALREADY on
+`mlistSequenceElementsToGo`. In the Original, `RHSequence::NextSequenceElementsGo`
+(`RHsequence.cpp:272-288`) walks the level ONE ELEMENT AT A TIME and `RegisterSequenceElementToGo`
+(`RHsequencemanager.cpp:968-978`) executes immediate commands INLINE — so when LockAi's Stop runs, the
+civilian's later `TurnElement` is not yet on the list and survives. (The loop's `state != RHSEQ_INTERRUPTED`
+re-check exists precisely for this.) Rust's `SequenceManager::launch_sequence` registers ALL level-1
+elements first, then drains the immediates, so the civilian's `TurnElement` is already queued and gets
+interrupted. Fix = interleave the immediate drain with per-element registration; needs `EngineInner`
+access inside the launch loop (e.g. a resumable launch action).
+
+### SeekPointSelection members are TWO different bugs
+- **Sweep-count flood (the known lead):** schema12 linux2/P002/Savegame_031 replay-011 and
+  linux3/P001/Savegame_029 replay-015. r015 shows Original 21 first-draws vs Rust 22 — exactly one extra
+  accept/insert pair, i.e. `uwExpectedNumberOfPointsForOneGuy` one too high. r011 additionally shows the
+  Original making a leading draw at offset `1809799` that Rust never makes and that is still UNMAPPED —
+  worth capturing.
+- **NOT a sweep-count bug:** linux3/P003/Savegame_035 replay-002 f23297. The sweep agrees exactly (3 pairs
+  both sides). Rust's FIRST candidate point is rejected (`acceptance_roll >= interest`,
+  `crates/robin_engine/src/ai_enemy/seek.rs:906-922`) so it recurses to a second point and never reaches
+  the Original's accepted point — whose `AppendMoveToSequence` routes through a door into a building and
+  draws `building_exit_wait_frames` (`engine/movement.rs:1546-1550`). Chase the accepted point's
+  `interest`, not the sweep.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
