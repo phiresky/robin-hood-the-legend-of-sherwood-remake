@@ -744,13 +744,33 @@ impl EngineInner {
                     WeaponThrustKind::Straight | WeaponThrustKind::Assault
                 )
             });
+        // `mlistSwordStrikeVictims` belongs to `ExecutePushSwordStrike`
+        // (original-code/RHelementactorhuman.cpp:9928): its `RHMOTION_DONE`
+        // arm clears and refills the list, and only its `RHMOTION_TERMINATED`
+        // arm walks the list to send each victim an `ENTER_SWORDFIGHT`. A
+        // strike of any other kind runs a different executor and never
+        // touches the list, so victims recorded by a push strike that was
+        // interrupted before it terminated survive until the next push
+        // strike's DONE refills them.
+        let completes_push_strike = profile_idx
+            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .is_some_and(|profile| {
+                matches!(
+                    profile.thrusts[strike as usize].kind,
+                    WeaponThrustKind::PushAside
+                )
+            });
         let pending_swordfights = if let Some(entity) = self.world.entities.get_mut(actor_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             if clears_shared_sweep {
                 actor.sweep_state = None;
             }
-            let pending_swordfights = std::mem::take(&mut actor.pending_push_swordfight);
+            let pending_swordfights = if completes_push_strike {
+                std::mem::take(&mut actor.pending_push_swordfight)
+            } else {
+                Vec::new()
+            };
             if clears_shared_sweep && let Some(human) = entity.human_data_mut() {
                 // ExecuteLateralSwordStrike/ExecuteCircleSwordStrike delete
                 // their human-owned victim list when the strike genuinely
@@ -4042,7 +4062,16 @@ mod tests {
     #[test]
     fn push_rechecks_current_relationship_before_queueing_enter_swordfight() {
         let sim = crate::sim_rng::test_context();
-        let assets = LevelAssets::default();
+        // Only `ExecutePushSwordStrike` walks `mlistSwordStrikeVictims` at
+        // RHMOTION_TERMINATED, so the completing strike has to be a push.
+        let mut profile_manager = crate::profiles::ProfileManager::new();
+        let mut weapon = crate::profiles::HtHWeaponProfile::default();
+        weapon.thrusts[SwordStrike::A as usize].kind = WeaponThrustKind::PushAside;
+        profile_manager.hth_weapons.push(weapon);
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profile_manager),
+            ..LevelAssets::default()
+        };
         let mut engine = EngineInner::new();
 
         let mut attacker = falling_pushed_soldier(false);
@@ -4062,7 +4091,7 @@ mod tests {
             .actor_data_mut()
             .unwrap()
             .pending_push_swordfight = vec![victim_id];
-        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, None);
+        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, Some(1));
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
 
         if let Entity::Soldier(soldier) = engine.get_entity_mut(victim_id).unwrap() {
@@ -4074,7 +4103,7 @@ mod tests {
             .actor_data_mut()
             .unwrap()
             .pending_push_swordfight = vec![victim_id];
-        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, None);
+        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, Some(1));
 
         let sequence = engine
             .orders
