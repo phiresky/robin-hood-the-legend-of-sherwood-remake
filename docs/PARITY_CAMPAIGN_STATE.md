@@ -1287,6 +1287,56 @@ alters path selection broadly; it needs a trace that proves it.
 `PerformMove` path (`crates/robin_engine/src/engine/commands.rs:3438`), and
 `crates/robin_engine/src/engine/refresh_seek.rs` has no line handling at all.
 
+### GoTo's GOTO_SWORD raise-sword belongs INSIDE the movement's sequence (2 traces, fixed)
+`RHArtificialIntelligence::GoTo` (`original-code/RHartificialintelligence.cpp:2480-2497`) inserts the
+raise-sword `ENTER_SWORDFIGHT` generic element **into `plistSequence`** — the same sequence as the
+movement, one command level ahead — whenever `GOTO_SWORD` is set and the actor is not already in a sword
+action state. Rust raised a standalone `EnterSwordfightRequest::RaiseSword` outbox effect, so the drain
+launched TWO independent sequences, which doubles the `RHSequenceElement::Postpone` arbitration
+(`RHsequenceelement.cpp:727-789`). With an in-progress non-interruptable element that already owns a
+postponed successor: the Original arbitrates once, `DecidePriorities(NORMAL, POSTPONE_EVERYTHING_BUT_INJURIES)`
+-> `POSTPONE_CURRENT`, and the old postponed movement SURVIVES; Rust's movement element then arbitrated a
+second time on its own, `DecidePriorities(NORMAL, NORMAL)` -> `INTERRUPT_CURRENT`, destroying it.
+Fixed in `86aa37735` by carrying it as `enter_swordfight_before_move` alongside the existing
+`quit_swordfight_before_move` / `stop_menace_before_move` / `lower_shield_before_move` siblings.
+Measured on the REBUILT Original binary: at f44592 it translates two elements, 418801 (`flags=512`,
+action 6->303) and 418655 (`flags=64`, action 10->**304**, the postponed run from f44541 resuming), and the
+second wins `mpOrder->action`.
+
+### `ProposeGoodCombatPosition` splits into TWO different bugs (not one)
+Entry, list sizes, drunk gate and the `rand()%3` roll are all confirmed in parity via
+`PARITY_DEBUG_ORIGINAL_RECONSIDER_SWORDFIGHT` — the divergence is entirely inside the candidate list.
+- **B, formation arm** — schema14 linux3/P001/Savegame_044 replay-003, f28893, co 254. Rust produces only
+  TWO candidates: #0 stay-put (25) and #1 the formation slot right of left-neighbour 225 at
+  (1490.3826, 1661.4468) with `change_position=false` (so Rust does nothing). The Original ends at goal
+  **(1492.244, 1678.294)** — *neither* Rust candidate. So the bug is candidate GENERATION
+  (`ProposeLeftAndRightNeighbour` / `ProposeCombatPositionsRightOf` / `ProposeLinePositionsThere`,
+  `RHartificialmalignity.cpp:14202-14356`), not the scorer. Note `mpLeftCombatNeighbour` is used without
+  re-checking `mlistUs` membership, and neighbour 225 LEAVES `mlistUs` during this very frame (becomes
+  243) — a likely place for the engines to pick different neighbours.
+- **C, surround arm** — schema14 linux3/P003/Savegame_034 replay-014, f19764, co 108. Rust's 11 candidates
+  dump cleanly; #6 (the sector-0 ring position at sword DEFAULT range 50 behind the target) scores 7424 =
+  `EGOISM_FACTOR x ATTACK_FROM_BEHIND_BONUS` and wins, so Rust repositions and returns, skipping
+  `ProposeGoodSwordStrike`. **The from-behind test is NOT the bug** — target direction 13 gives
+  `marraySector{X,Y}[13] = (-cos pi/8, -sin pi/8)`, `dx == 0`, so `dot > 0` genuinely and the Original
+  would also compute `bFromBehind = true`. Also ruled out: the `uwTargetDirection` correction (does not
+  fire either side), the out-of-max-range early return (present and correctly placed), and the
+  forbidden-direction filter. That leaves **candidate membership** — the Original must not have #6 at all,
+  since its run still drew `ProposeGoodSwordStrike` (site 1810566), which only candidate #0 permits.
+  A probe with `PARITY_DEBUG_REACHABILITY` found ZERO `IsReachableThick` calls for the sector-0 and
+  sector-4 candidates, suggesting the Original rejects them earlier at `IsPositionAutorized`
+  (`RHfastfindgrid.cpp:9219-9227` short-circuits before `IsReachableThick`) while Rust accepts 5 of them.
+  **Caveat:** two negatives cannot distinguish "rejected pre-reachability" from "the derived source bits
+  are not what the Original passes" — build a POSITIVE control (any known `IsReachableThick` call in that
+  run) before trusting the negative.
+
+### RETRACTED: the `NON_ENGAGED_ENEMY_MALUS` stale-counter concern is not real
+`RHartificialmalignity.cpp:15034-15095` `Reset()`s the counter for every `mlistThem` member and then
+`Increment()`s it from the friend positions WITHIN THE SAME CALL, before any read at `:14964`. For enemies
+in `mlistThem` it is fully recomputed locally, so Rust's "some candidate friend position targets him"
+substitution is equivalent. The staleness would require an enemy read not in `mlistThem`, which
+`:14958-14966` cannot produce. Do not spend time on it.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
