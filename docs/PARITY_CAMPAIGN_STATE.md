@@ -800,9 +800,15 @@ own cause:
   Original's PC fails the roll (-> parade -> `ParrySword`) and Rust's passes (-> `Strike(A)`). **Civilian
   family, not melee.**
 - **`MoveWaiting->EnterSwordfight`, schema12 linux2/P002/Savegame_032 replay-002 f17626** — the
-  `mpMyLineJump`/ReconsiderSwordfight lead. Proof the Original HAD a jump line: its path-event tolerance
-  flips from `65.0` (the `mpMyLineJump == NULL` arm, `RHartificialmalignity.cpp:6986`) to `0.0` (the
-  jump-line arm, `:6990`) from f17459 onward including the divergent frame. `GetStandardRangeSword() == 65`
+  `mpMyLineJump`/ReconsiderSwordfight lead. ~~Proof the Original HAD a jump line: tolerance flips 65.0 -> 0.0~~ **THAT INFERENCE IS UNSOUND and was
+  retracted 2026-08-16**: `GoTo` sets `uwTolerance = 0` whenever `GOTO_NEAR` is absent
+  (`RHartificialintelligence.cpp:2365-2386`), and `GoNear` legs across sectors go through
+  `AppendMoveToSequence`, so a 0 tolerance proves nothing about `mpMyLineJump`. Re-measured: BOTH engines
+  reach `:6867` with the same numbers and BOTH call `BeginSwordfight`; the divergence is DOWNSTREAM — Rust's
+  `EnterSwordFight` SUCCEEDED while the Original's returned **false** (Original `Pc170.opponents = [S109]`,
+  Rust `[S110, S109]`), after which the Original re-approached in substate 155. Next step:
+  `enter_swordfight_impl` (`crates/robin_engine/src/engine/melee/swordfight.rs:839-951`) — the 3D UBER-range
+  gate (`:896-923`) or the 3D opaque LOS gate (`:929-951`). `GetStandardRangeSword() == 65`
   confirmed from those events, and Rust's distance (61.36) is right — so the Original cannot have reached
   the `uwDistance <= uwSwordRange` gate at `:6867` with PC 170 as target. Suspects: a friend target-swap in
   the swap loop (`:6753-6786`) that Rust skipped, or a wrong `mpPrimaryTarget`. **NOTE: `ai.primary_target`
@@ -949,6 +955,161 @@ Rust runs `create_list_of_soldiers_you_can_alert` for civilian 40; the Original 
 11 `DETECTABLE_FRIEND` soldiers the Original lacks. Same camp on both sides, and
 `CreateListOfSoldiersYouCanAlert` (`RHartificialintelligence.cpp:6996-7074`) has NO distance filter — so
 the divergence is upstream, in whether the civilian reaches `AlertSoldiers` at all. Civilian-AI family.
+
+### DEAD CODE in the Original (Rust deviates — latent divergence)
+`RHartificialmalignity.cpp:6897`'s "walking circus pyramid" test compares `GetCommand()` — which returns an
+`RHcommand`, max value 178 (`RHCommand.h`) — against `RHANIMATION_WALKING_CARRYING_ON_SHOULDERS = 201`
+(`RHOrder.h:265`). It is **unconditionally false**, so `bBelowRunDistance` is always forced false and the
+whole `:6979-7032` block (both `GoTo` sites) is dead code in the shipping game. Rust deviates: it compares
+`target_animation` (`crates/robin_engine/src/ai_enemy/battle.rs:2839-2847`), which CAN equal that value.
+Latent and rare, but a real faithfulness bug.
+
+### Faithfulness bug found, deliberately NOT landed (no validating trace)
+`RHartificialmalignity.cpp:14964` applies `NON_ENGAGED_ENEMY_MALUS` (1000) using the enemy's **live,
+stale-across-frames** `GetPrimaryTargetMultiplicity()` counter (maintained at `:7491` and `:15437/15466`).
+Rust (`crates/robin_engine/src/ai_enemy/util.rs:1300-1301`) substitutes "some candidate friend position
+targets him". With a 1000-point malus this can flip a combat-position winner. Faithfully reproducing the
+stale counter needs `global.primary_target_multiplicity_scratch` wiring — real regression risk, so it was
+left until a trace proves it.
+
+### `ProposeGoodCombatPosition` from-behind bonus (strongest open melee lead)
+schema14 linux3/P003/Savegame_034 replay-014, f19764, Soldier 77 (co 108). Both engines take the reposition
+branch (`roll=0`, `RHartificialmalignity.cpp:13780`), but Rust's candidate 6 scores **7424** ≈
+`EGOISM_FACTOR(1.5) x (ATTACK_FROM_BEHIND_BONUS 5000 + ...)` because it has **dx == 0 exactly**, so
+`estimate_damage` (`ai_enemy/util.rs:1181-1191`) returns `from_behind = true`. Winning it sets
+`change_position=true` -> `GoTo(..., GOTO_SWORD)` and **returns** at `:13834`, skipping
+`ProposeGoodSwordStrike` at `:13888` — which is exactly the skipped `SwordStrikeSelection` draw. The
+Original must have picked candidate 0 (fall-through, no return). Ruled out as causes: `SetSector0to15`
+default aspect is 1.0f and matches Rust; sector tables match; the dot-product sign is aspect-independent
+when dx==0. So the bug is **which candidates exist / which wins** — suspect `AddCombatPositions`
+(`:14013-14111`) membership or the `EstimateDamage` cache / `uwTargetDirection` mutation order.
+
+### Confirmed verbatim: the BattleDecisions friends-nearer count is a MEMBERSHIP bug
+`PARITY_DEBUG_BATTLE_DECISION` at f2165 of schema12 SuN1Sh1nE/P004/Savegame_013 replay-005:
+`me=81 decision=Observe friends_nearer=6` vs `me=80 decision=Fight friends_nearer=5` — and soldier 81 at
+(758.65,2627.79) is FARTHER from target 173 than soldier 80 at (740.97,2617.65). The gate
+`uwNumberOfFriendsNearerThanMe >= enemies + enemies*(0.045*courage)` (`:7683`) therefore fires for the
+wrong soldier. The counting loop's membership is the suspect, not the metric.
+
+### Two more per-trace attributions worth keeping
+- `QuitSwordfight->MoveOk` (schema12 linux3/P003/Savegame_054 replay-007, f1065) is **NOT** BattleDecisions.
+  The Original's `ObserveAndMove` move completed immediately (goal stayed (0,0), position pinned), giving
+  EVENT_REACHPOINT -> `ReconsiderSwordfightObservation` -> `GetNewPrimaryTarget(...)` NULL ->
+  `GetBattleOverview()` at `:15484`, which explains the whole diff set including `view_status 1 vs 6` and
+  `maximal_visibility 8 vs 19` via `Focus(NULL)`. Rust has a live 96-unit goal and never invokes
+  `reconsider_swordfight_observation`. **The Original's move was ~0 length; Rust's was 96 units.**
+- `ParryShield->RaiseShieldInstantly` (schema14 SuN1Sh1nE/P004/Savegame_024 replay-015, f1397): the
+  Original's `action_state == 0` at the divergent frame PROVES it did not take the `EVENT_ARROW_LAUNCHED`
+  path (which does `SetStates(UPRIGHT, HOLDING_SHIELD)`, `:6428`) — its `ParryShield` came from the
+  projectile physically hitting the shield (`RHelementprojectile.cpp:2193-2201`). Rust took the AI event
+  path. An ordering/priority bug between `EVENT_ARROW_LAUNCHED` and `GetHitShieldHolder` in one frame.
+- `HitCmd->Wait` (schema12 nicouzouf/P001/Savegame_039 replay-006, f994): PC 174 is idle and un-engaged
+  (`opponents []`); the Original issues `RHCOMMAND_HIT` — a **brawl/fist** command, not melee at all.
+
+### Diagnostic gotchas that cost real time
+- **`ctx.frame` for every Rust `PARITY_DEBUG_*_FRAME` filter equals the runner's `frame_after`**
+  (= `frame_before + 1`). For the RNG panic message "during original frame N", filter on `N + 1`.
+- `--dump-jsonl` with `--dump-from/--dump-through` gates on `frame_after` and DOES include the divergent
+  frame; `--dump-entity` may be repeated, and `original_entities` is empty unless at least one
+  `--dump-entity` is given.
+- `zstd -dc --long=31` is required to read these traces by hand (1 GB window).
+
+### ReconsiderSwordfight branch selection now has a 2-trace proven sub-group + a narrowing clue
+schema14 linux3/P001/Savegame_045 replay-004 (f44592, Soldier140) and linux3/P001/Savegame_044 replay-003
+(f28893, Soldier223). In m05 the substate is 173 on BOTH sides but the move action is `RUNNING_WITH_SWORD`
+(304) in the Original vs `WALKING_WITH_SWORD` (303) in Rust. **Only `GOTO_RUN` yields 304** via
+`DetermineMovementAnimation` (`original-code/RHelementactorhuman.cpp:2248-2276`) — and that port is
+FAITHFUL, so the discriminator is the `GOTO_RUN` flag, not the animation chooser. The Original therefore
+took `ReconsiderSwordfight`'s `bEnemyWeak` charge arm `GoNear(..., GOTO_RUN|GOTO_SWORD)`
+(`RHartificialmalignity.cpp:13752-13760`) while Rust took a `GOTO_SWORD`-only branch. **Check the caller of
+`ReconsiderSwordfight(true)` — `EVENT_ADVERSARY_WEAK` at `:6178-6183` — before digging into
+`ProposeGoodCombatPosition`.**
+
+### Newly attributed singletons from the order-lifecycle bundle
+- **m03 lazy door-pass materialization lags the order advance** (schema14 linux2/P002/Savegame_029 r006,
+  f4820): Rust ends the frame with `[(WalkingWithSword, done), (PassingDoor)]` — the lazily materialized
+  step is appended but NOT selected; the Original advanced to 295 in the same frame.
+- **m04 MakeFast/PostProcessPath end transition on an interrupted door-pass tail** (schema14
+  linux3/P001/Savegame_036 r008, f33618): after `make_pc_fast`, Rust's PassDoor orders are exactly
+  `[TransitionWalkingCrouchedRunningUpright, RunningUpright]` with NO end transition, although every
+  follower is `Interrupted` — i.e. `IsNextMovementOrJump()` should be false.
+- **m12 post-door `ATTACKING_DOOR_FIGHT_DELAY` never fires** (schema12 linux2/P002/Savegame_031 r015,
+  f11979): the Original's AI goes state 3->4, substate 73 -> **203**, and installs a `wait_timer` (wait 50,
+  order anim 12); Rust ends the door pass with no successor at all.
+- **m13 group-move installed one frame early** (schema12 SuN1Sh1nE/P004/Savegame_024 r006, f1337): the
+  Original is still `wait`/283 on the arrival frame; Rust is already `MoveWaiting`/292 `FREEZING`.
+- **m01 final-approach Move run-vs-walk** (schema12 linux3/P003/Savegame_055 r007, f36854): Original's
+  first post-door order is the MOVING_FAST **start** transition of a WALKING move; Rust's is the **end**
+  transition of a RUNNING move, with the destination 4.5 units off.
+
+### Trap: entity id spaces are NOT interchangeable
+The runner's `Pc(PcId(N))` is **not** always the trace's `elements[].entity_id.index` — in one member
+`Pc(PcId(174))` was element `pc:171`, and the trace's `commands`/`path_events` actor indices are a THIRD
+space again. Confirm the mapping before reading element state, or you will diagnose the wrong actor.
+Reliable pairing for order-lifecycle work: `--dump-jsonl --dump-from/--dump-through --dump-entity` gives
+full Rust engine state per frame, and
+`engine.orders.sequence_manager.sequences[*].elements[owner==target]` + `world.entities[idx]` (that list
+index IS the entity index) makes these members legible in one pass.
+
+### TOP PRIORITY TOOLING: rebuild a capture binary from current original-code
+`PARITY_DEBUG_REACHABILITY` exists in `original-code/RHfastfindgrid.cpp:60-122, 8471, 8763-8830` but the
+string is in **NEITHER** prebuilt binary — `build/native-full/robin` (Aug 9) and
+`build/native-full/robin-schema14-capture` (Aug 13) both predate the hook, and `robin-schema14-capture` is
+not a ninja target in that build dir so it cannot be regenerated there. Every Original-side
+reachability/route question is unanswerable until a capture binary is rebuilt from current sources.
+**The 32-bit toolchain is now installed and verified** (g++ -m32 links, CMake 4.3.4, all i386 dev libs and
+headers present) — see the campaign notes. First step must be a rebuild with NO source changes, verified to
+reproduce a known trace bit-exactly, before any new instrumentation is added.
+
+### Sub-group A: one-frame lag clearing `position_goal_map` (2 traces, localised to one call)
+schema14 linux3/P003/Savegame_028 replay-009 (f12003, Soldier 87) and replay-010 (f12812, Soldier 93).
+`PARITY_DEBUG_GOAL_OWNER_HANDOFF` shows the movement element going `Interrupted` with
+`terminal_selected=Some(same element)` yet `was_selected=false`, so `clears_goal=false`. The override is
+`SequenceManager::element_interrupted_after_replacement_selected`
+(`crates/robin_engine/src/sequence.rs:4052-4066`) from the `InterruptCurrent` arm of `arbitrate_instruct`
+(`engine/mod.rs:2839-2875`) — a literally correct model of `RHElementActor::Instruct` setting
+`mpSequenceElement = pNewSequenceElement` BEFORE `pOldSequenceElement->SetState(RHSEQ_INTERRUPTED)`
+(`original-code/RHelementactor.cpp:1432-1440`). **But the Original did not take INTERRUPT_CURRENT here**:
+its end-of-frame state is `command = 161 (Wait)` with `mpOrder->action = 12`, so the incoming `Move` never
+became `mpSequenceElement`. The goal zero must come from `SendCondolationCard`'s
+`if( mpSequenceElement == pSequenceElement )` arm (`RHelementactor.cpp:6696-6701`) firing while the
+movement was still selected. Narrow fix: work out which Original arm actually runs — `Stop()` ->
+`RHSequenceElement::Stop`'s keep-the-transition branch (`RHsequenceelement.cpp:530-537`) vs `Instruct`'s
+`ABANDON`/`GenerateTransition`-fails early return (`RHelementactor.cpp:1374-1384`, `:1408-1412`) — and stop
+routing it through `element_interrupted_after_replacement_selected`. With `--scan-all` this is the ONLY
+divergence in the whole trace and it self-heals the next frame.
+
+### Sub-group B: the "reverse pass-door re-entry" pair is a ROUTE-CONSTRUCTION bug, 11 frames earlier
+schema12 SuN1Sh1nE/P004/Savegame_024 replay-011 (visible at f1433, route built at **f1422**) and schema14
+linux3/P003/Savegame_010 replay-009 (f18927). Rust's source adaptation (`adapt_source_to_current_door`,
+`crates/robin_engine/src/engine/movement.rs:2217`, port of `original-code/RHsequence.cpp:361-377`) is
+CORRECT. The divergence is the gate search: Rust's `find_path_into_door` seeded at sector 14 returns
+`[gate 48, gate 0]`; the Original's route begins with **gate 49 traversed In->Out** (instantly-terminating
+Move to the In point, then PassDoor 49 walking back, then Move to gate 49's `point_out`).
+Next step: differential `crates/robin_engine/src/gate.rs:1373 find_path_into_door` (and `find_path_gates`)
+against `RHFastFindGrid::FindPathGates`/`FindPathIntoDoor` (`original-code/RHfastfindgrid.cpp:9584`) when
+seeded from a layer-1 area that is the In side of a `DOOR_LIFT_HIGH` gate. **Candidate cause:** the Original
+seeds strictly from `((RHSectorMotionArea*)pSectorSource)->GetGates()`, while Rust scans ALL doors for
+`sector_in/sector_out == source_sector` (`gate.rs:1439-1478`) — equivalent only if the level's per-sector
+gate lists match that predicate exactly.
+
+### Ruled out — do NOT re-derive
+- **`IsReachableThick` is a faithful port.** All eight corridor cases of
+  `original-code/RHfastfindgrid.cpp:8469-8760` were diffed point-by-point against
+  `FastFindGrid::build_thick_move_corridor` (`crates/robin_engine/src/fast_find_grid.rs:3079`), including
+  the `mX==0`/`mY==0` +-1 special cases, the x-negative swap, and bbox seeding (Rust's four extra
+  `expand_point` calls are provable no-ops). Line gathering matches in the same order.
+- **`GetHalfDiagonal(posture)` / `GetPathFinderIndex(posture)` are posture-INDEPENDENT** in the shipping
+  build — `RHpositioninterface.cpp:530` and `:851` both return immediately with the switch commented out.
+  Rust's posture-free accessors are correct.
+- The `position_goal_map` 0.011-tolerance blind spot was NOT in play for any movement member; every goal
+  divergence there is `0` vs a whole-number waypoint.
+
+### Cheap triage tool (use before running a replay)
+A trace-timeline extractor that prints per-frame pos/goal/increment/command/animation/substate straight
+from the Original trace, no engine run needed:
+`scratchpad/tl.sh <trace.zst> <lo> <hi> <kind> <index>` (with `peek.py`). Much cheaper than a replay for
+first-pass triage. Note `zstd -dc --long=31` is required to read these traces by hand.
 
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
