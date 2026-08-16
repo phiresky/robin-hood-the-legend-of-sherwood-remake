@@ -9675,6 +9675,36 @@ impl EngineInner {
                 describe(&lacklandist_ids),
                 describe(&civilian_ids),
             );
+            for &eid in &occupant_ids {
+                let Some(entity) = self.world.entities.get(eid) else {
+                    continue;
+                };
+                let detail = match entity {
+                    Entity::Soldier(s) => format!(
+                        "soldier lp={} unconscious={} camp={:?} posture={:?}",
+                        s.npc.life_points,
+                        s.human.unconscious,
+                        s.soldier.cached_camp,
+                        entity.element_data().posture
+                    ),
+                    Entity::Civilian(c) => format!(
+                        "civilian lp={} unconscious={}",
+                        c.npc.life_points, c.human.unconscious
+                    ),
+                    Entity::Pc(p) => {
+                        format!(
+                            "pc lp={} unconscious={}",
+                            p.pc.life_points, p.human.unconscious
+                        )
+                    }
+                    _ => "other".to_string(),
+                };
+                eprintln!(
+                    "BEXITWAIT_OCC {:?} co={} {detail}",
+                    eid,
+                    self.world.original_creation_order(eid)
+                );
+            }
         }
 
         // No battle unless both camps present.
