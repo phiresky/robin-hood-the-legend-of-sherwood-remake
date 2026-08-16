@@ -8253,9 +8253,20 @@ impl EnemyAi {
                     let keep_watching = {
                         let v = ctx
                             .expect_entity_view(self.base.primary_target, "menacing-coma target");
-                        let dx = (v.position.x - ctx.position.x).abs();
-                        let dy = (v.position.y - ctx.position.y).abs();
-                        v.is_pc && v.is_unconscious && v.in_coma && dx.max(dy) < 100.0
+                        // `MaxNormDistance`
+                        // (`original-code/RHartificialintelligence.cpp:6950-6953`)
+                        // is the stretched **3D** Chebyshev distance between
+                        // the two `GetPosition()` world points, so a target
+                        // 110 units above the guard is already out of range.
+                        // A raw 2D map-space max-norm kept the soldier
+                        // menacing a PC standing on a wall walkway forever.
+                        let distance = ai_max_norm_distance(
+                            &v.position,
+                            v.elevation,
+                            &ctx.position,
+                            ctx.elevation,
+                        );
+                        v.is_pc && v.is_unconscious && v.in_coma && distance < 100.0
                     };
                     if keep_watching {
                         self.base.launch_timer(20, ctx.frame);
