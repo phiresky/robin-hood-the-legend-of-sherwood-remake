@@ -7545,11 +7545,22 @@ impl EnemyAi {
                     self.base.stop_all();
                     self.set_state(AiState::Menacing, Substate::MenacingPcInComa);
                     if self.is_vip {
-                        // VIP variant — launch an EnterSwordfight against
-                        // the guarded PC to trigger the menace-variant
-                        // sword draw.
+                        // VIP variant — a bare sword draw, NOT an engagement.
+                        // `RHartificialmalignity.cpp:4433-4438` builds the
+                        // ENTER_SWORDFIGHT element with
+                        // `RHFIELD_OPPONENT = 0` and
+                        // `RHFIELD_JUMPLINE_DESTINATION = 0`, so
+                        // `RHElementActorHuman::Translate(ENTER_SWORDFIGHT)`
+                        // (RHelementactorhuman.cpp:1319-1404) skips
+                        // `EnterSwordFight` and stores a NULL
+                        // `pOrder->pAntagonist` on the raise-sword order. The
+                        // soldier's RAISING_SWORD arm
+                        // (RHelementactorsoldier.cpp:1250-1259) then performs
+                        // neither the `SetDirection` nor the `Turn`: the VIP
+                        // draws his sword without turning toward the comatose
+                        // PC. Passing the target here made Rust face him.
                         self.base.outbox.actor.enter_swordfight =
-                            Some(EnterSwordfightRequest::Engage(self.base.primary_target));
+                            Some(EnterSwordfightRequest::RaiseSword);
                         self.base.outbox.actor.enter_swordfight_jump_line = None;
                     } else {
                         // Normal variant — say, launch StartMenace
