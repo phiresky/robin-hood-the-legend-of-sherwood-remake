@@ -4726,3 +4726,17 @@ objects.
 - **Guard coverage caveat:** the 781-trace guard samples only ~17% of the 4,508-trace passing pool, so it
   bounds but does not eliminate regression risk. A full-universe sweep is still the only way to verify the
   whole passing set, and none is on record in this ledger. Worth scheduling once the remaining count is low.
+
+## Recheck of the remaining set — 2026-08-16, production runner a93c490bb
+- Failures-only recheck of the 105 traces left after batch-21, using a release-profile ("production")
+  runner built from HEAD `a93c490bb`; runner sha256 `613752b242375dc53f68d3d7…`.
+  (Note: the repo's `parity` cargo profile is the FAST-ITERATION build — LTO off, incremental on. The
+  production build is `--release`: opt-level 3, thin LTO. All authoritative sweeps use release.)
+- Purpose: batch-21's runner was frozen at `9fcb26ede`, before the dead-shooter arrow fix `3701d5504`
+  merged, so the 105 count did not reflect it.
+- **Result: 5 pass, 71 state divergences, 29 RNG divergences → 100 remain.**
+  The 5 clearances are the arrow fix (four Savegame_024 replays plus linux2 Savegame_031 replay-003).
+- Remaining set: `remaining-100.snapshot`; per-group listing `groups.txt`; classification
+  `classification.json` — **52 groups, largest only 6**, 28 of them singletons.
+- No regression guard in this run by design: it re-measures the known-failing set only. The guard result
+  stands from batch-21 (781/781 clean); a full-universe sweep is still outstanding.

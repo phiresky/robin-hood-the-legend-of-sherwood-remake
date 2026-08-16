@@ -1,0 +1,213 @@
+{
+ "state:sprite_frame": [
+  "parity-save-replays__15-no-input__traces__Savegame_SuN1Sh1nE__Profile_004__QuickSave-session-0001.jsonl.zst"
+ ],
+ "pass": [
+  "parity-save-replays__30s-random-input__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__30s-random-input__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-002-session-0001.jsonl.zst",
+  "parity-save-replays__30s-random-input__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-003-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-002-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux2__Profile_002__Savegame_031__replay-003-session-0001.jsonl.zst"
+ ],
+ "state:direction": [
+  "parity-save-replays__30s-random-input__traces__Savegame_linux3__Profile_001__Savegame_010__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_010__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_010__replay-007-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_030__replay-006-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_034__replay-012-session-0001.jsonl.zst"
+ ],
+ "state:visibility_queries.length": [
+  "parity-save-replays__30s-random-input__traces__Savegame_linux3__Profile_001__Savegame_023__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__30s-random-input__traces__Savegame_linux3__Profile_001__Savegame_023__replay-002-session-0001.jsonl.zst",
+  "parity-save-replays__30s-random-input__traces__Savegame_linux3__Profile_001__Savegame_023__replay-003-session-0001.jsonl.zst"
+ ],
+ "rng:MacroRand": [
+  "parity-save-replays__30s-random-input__traces__Savegame_linux3__Profile_003__Savegame_019__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_039__replay-012-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_039__replay-013-session-0001.jsonl.zst"
+ ],
+ "rng:AiRandomValueRectangle": [
+  "parity-save-replays__30s-random-input__traces__Savegame_linux3__Profile_003__Savegame_074__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_003__Savegame_074__replay-002-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_039__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_066__replay-002-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:ParrySword->SwordstrikeThrustA": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_004__replay-003-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:Wait->LowerShield": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_013__replay-005-session-0001.jsonl.zst"
+ ],
+ "rng:AiPanic": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_013__replay-006-session-0001.jsonl.zst"
+ ],
+ "state:ai.list_them": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-001-session-0001.jsonl.zst"
+ ],
+ "rng:DrunkCombatFreeze": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-003-session-0001.jsonl.zst"
+ ],
+ "state:ai.substate": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-004-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_047__replay-004-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_005__replay-008-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_051__replay-008-session-0001.jsonl.zst"
+ ],
+ "other-panic:crates/robin_engine/src/sprite.rs:905": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-006-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_076__replay-012-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:PassDoor->MoveOk": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-011-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_010__replay-009-session-0001.jsonl.zst"
+ ],
+ "rng:ArrowFallingFrame": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-013-session-0001.jsonl.zst"
+ ],
+ "state:path_events[0].goal.bits": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-014-session-0001.jsonl.zst"
+ ],
+ "rng:SwordDamageProtection": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_024__replay-015-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux2__Profile_002__Savegame_018__replay-008-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:MoveOk->Wait": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_036__replay-007-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_044__replay-003-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_019__replay-005-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_034__replay-014-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:MoveWaiting->PassDoor": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux2__Profile_002__Savegame_024__replay-013-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:MoveOk->MoveWaiting": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux2__Profile_002__Savegame_025__replay-004-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_009__replay-004-session-0001.jsonl.zst"
+ ],
+ "rng:SeekPointSelection": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux2__Profile_002__Savegame_031__replay-011-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_029__replay-015-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_035__replay-002-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:WaitTimer->Wait": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux2__Profile_002__Savegame_031__replay-015-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:Wait->MoveOk": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_018__replay-002-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:SearchCmd->Wait": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_018__replay-006-session-0001.jsonl.zst"
+ ],
+ "rng:VipIdleRemark": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_029__replay-006-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_029__replay-010-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_037__replay-005-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_SuN1Sh1nE__Profile_004__ExQuickSave__replay-012-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_030__replay-013-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_017__replay-007-session-0001.jsonl.zst"
+ ],
+ "state:actor.motion_state": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_034__replay-008-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_003__Savegame_071__replay-015-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_randomguy__Profile_004__Restart__replay-006-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_046__replay-011-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:MoveWaiting->MoveOk": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_034__replay-013-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:EquipBow->MoveOk": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_001__Savegame_040__replay-015-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:Wait->Turn": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_003__Savegame_055__replay-001-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_003__Savegame_055__replay-012-session-0001.jsonl.zst"
+ ],
+ "state:actor.animation": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_003__Savegame_055__replay-007-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_037__replay-013-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_029__replay-006-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_036__replay-008-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_045__replay-004-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:TakeCorpse->Move": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_003__Savegame_067__replay-008-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_linux3__Profile_003__Savegame_075__replay-013-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_035__replay-012-session-0001.jsonl.zst"
+ ],
+ "state:actor.wait_time": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_020__replay-014-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:TurnElement->Wait": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_022__replay-012-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:EatCmd->Wait": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_039__replay-004-session-0001.jsonl.zst"
+ ],
+ "rng:MeleeNonMutualGate": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_039__replay-005-session-0001.jsonl.zst"
+ ],
+ "rng:MeleeInitiative": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_039__replay-006-session-0001.jsonl.zst"
+ ],
+ "rng:DefaultPostLook": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_039__replay-009-session-0001.jsonl.zst"
+ ],
+ "state:detection.detectables.length": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_051__replay-001-session-0001.jsonl.zst"
+ ],
+ "rng:BoredAnimationChoice": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_069__replay-010-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_066__replay-001-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:EquipBow->MoveWaiting": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_071__replay-010-session-0001.jsonl.zst"
+ ],
+ "state:direction_goal": [
+  "parity-save-replays__60s-random-input__schema12__traces__Savegame_nicouzouf__Profile_001__Savegame_071__replay-015-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_SuN1Sh1nE__Profile_004__ExQuickSave__replay-003-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_034__replay-005-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_039__replay-003-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_051__replay-004-session-0001.jsonl.zst"
+ ],
+ "state:increment_map.x": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_SuN1Sh1nE__Profile_004__Savegame_028__replay-011-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_066__replay-008-session-0001.jsonl.zst"
+ ],
+ "state:movement_map.x": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_029__replay-010-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_029__replay-014-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_039__replay-009-session-0001.jsonl.zst"
+ ],
+ "state:layer": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_029__replay-013-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:MoveWaiting->EnterSwordfight": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_032__replay-002-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:LeaveAttentiveMode->StartMenace": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux2__Profile_002__Savegame_035__replay-006-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:EnterHelpingClimb->Wait": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_038__replay-007-session-0001.jsonl.zst"
+ ],
+ "other-panic:crates/robin_engine/src/engine/door_pass.rs:677": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_001__Savegame_047__replay-010-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:RaiseShield->Wait": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Continue__replay-009-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_025__replay-009-session-0001.jsonl.zst"
+ ],
+ "state:position_goal_map.x": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_028__replay-009-session-0001.jsonl.zst",
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_028__replay-010-session-0001.jsonl.zst"
+ ],
+ "state:elevation": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_029__replay-001-session-0001.jsonl.zst"
+ ],
+ "state:actor.command:QuitSwordfight->MoveOk": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_054__replay-007-session-0001.jsonl.zst"
+ ],
+ "state:detection.maximal_visibility": [
+  "parity-save-replays__60s-random-input__schema14__traces__Savegame_linux3__Profile_003__Savegame_066__replay-012-session-0001.jsonl.zst"
+ ]
+}
