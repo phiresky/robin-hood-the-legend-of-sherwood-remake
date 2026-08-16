@@ -1855,6 +1855,18 @@ impl EnemyAi {
                 threshold = atk_dist * atk_dist,
                 "reconsider_phalanx: attack-distance gate"
             );
+            if std::env::var_os("PARITY_DEBUG_SHIELD_TIMER").is_some() {
+                eprintln!(
+                    "RECONSIDER_PHALANX frame={} me={} nearest={} sq={} thr={} left={} right={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest,
+                    sq,
+                    atk_dist * atk_dist,
+                    self.left_combat_neighbour,
+                    self.right_combat_neighbour
+                );
+            }
             if sq < atk_dist * atk_dist {
                 self.break_phalanx(sim, global, ctx, tick, grid, None);
                 return true;
