@@ -549,17 +549,39 @@ sector 189's barycentre (1035.3,1433.4) with **no preceding `ComputeViewRadius`*
 never came from a dropped target obstacle. This is the correct form of the old sub-cause (a); the
 "cadence" sub-cause (b) is **disproved** — no cadence change was needed for any member.
 
-### CRITICAL: the current Original binary cannot reproduce the schema-12 corpus
-A fresh 400-frame capture of `reference-saves/Savegame_nicouzouf/Profile_001/Savegame_039` (sha256 matches
-the trace's `initial_save`) **passes the Rust runner end to end** — yet it diverges from the *recorded*
-schema-12 trace of the same save from frame 11. Reason: the recorded run took audio draws off the shared
-libc `rand()` stream, while current `original-code/RHParity.cpp:146-157` gives audio its own generator.
-Exact Original re-runs of schema-12 traces are therefore impossible on this machine, and a schema-12
-failure cannot be assumed to be a Rust bug. Combined with the separately proven staleness of the 30s
-Savegame_023 recordings, **a meaningful share of the remaining failures may be corpus artifacts rather
-than port defects.** Before deep-diagnosing any schema-12 trace, capture the same save fresh and check
-whether current Original agrees with the recording. (Audio also cannot be enabled here: `SDL_AUDIODRIVER`
-of `disk`/ALSA segfault the binary at "Applying sound settings"; only `dummy` runs.)
+### Schema-12 corpus: VALID as an oracle (earlier "CRITICAL" claim in this file was WRONG)
+An earlier revision of this section claimed the schema-12 corpus could not be trusted because today's
+Original cannot reproduce it. **That overstated the case and was disproven by a dedicated investigation
+(2026-08-16). Treat all schema-12 traces as fully trustworthy repros.**
+- The schema-12 recorder already tagged audio draws `domain:"audio"`, on a callsite set **disjoint** from
+  the simulation set (nicouzouf/039 r001: 6627 simulation draws over 43 callsites, 646 audio over 5, zero
+  overlap). The runner consumes **only** `TraceRngDomain::Simulation`
+  (`original_parity_replay.rs:548-564`, `:3900-3901`).
+- So the correct statement is narrow: *a schema-12 trace cannot be re-verified by re-running Original past
+  its first audio draw, but it remains a faithful record, because the runner filters the audio domain.*
+  In 12/12 old-vs-fresh pairs the first difference was exactly an audio-domain draw present in the old
+  trace and absent in the new one, with zero pre-audio drift — i.e. no build or asset staleness at all.
+- Decisive evidence the recordings are right and Rust is wrong: for two sampled failures today's Original
+  **independently reproduced the old recording's exact divergence entity and frame** — nicouzouf/037 r008
+  Pc78 at f653/654, and linux3/040 r001 Soldier255 at f28701/28702.
+- Reverse check: three currently-PASSING schema-12 traces each FAIL on a fresh capture of the same save at
+  the same site family / same actor. They pass because their trajectory misses the bug, not because of a
+  shared stale expectation (the runner has no schema-conditional comparison). Across 16 fresh captures,
+  8 pass / 8 fail — the corpus if anything **under**-reports defects.
+- Population evidence: 209 schema-12 traces pass bit-exactly in batch-20; schema-12's pass rate (76.3%,
+  209/274) is **higher** than schema-14's (72.3%, 138/191); 63% of schema-12 failures are in a failure
+  class that also occurs in other corpora; and all 65 come from saves that also have passing schema-12
+  traces, which recorder corruption would not do seed-selectively.
+- **Recommendation adopted: treat the 65 schema-12 failures as fixable port defects. Do not re-record or
+  retire them as a class.** Retire only individually on a *proven* recorder defect (presentation-
+  contaminated visibility queries, absent schema-14 fields, missing `rng_suffix`) via
+  `docs/PARITY_RETIRED_TRACES.txt`. Re-recording would cost ~65 x 3-6 min and LOSE coverage: the
+  audio-free trajectory dodges the bug in 7 of 13 sampled cases.
+- The one proven schema-12 recorder defect (missing `PresentationScope`, i.e. render visibility queries
+  leaking into the oracle) shows up as `state:visibility_queries.length` and accounts for exactly the 3
+  known-stale 30s Savegame_023 traces — and **zero** of the 65.
+- Fresh-capture recipe (all 16 save sha256s verified against each trace header's `initial_save`):
+  `env ROBINHOOD_DATA_DIR=<repo>/datadirs/fullgame_linux SDL_AUDIODRIVER=dummy SDL_VIDEODRIVER=dummy LD_LIBRARY_PATH=<repo>/lib32:<repo>/lib32/pulseaudio <repo>/original-code/build/native-full/robin-schema14-capture -PARITYSAVE <save> -PARITYTRACE <out>.jsonl -PARITYSEED 1 -PARITYFRAMES 1500 -PARITYRANDOMINPUT <header.random_input_seed>`
 
 ### Task-4 "early-battle melee micro-gate" cluster: framing DISPROVEN, re-cluster it
 All 22 members were re-measured on merged main: **2 now pass, 6 advanced, 14 unchanged.** The two
