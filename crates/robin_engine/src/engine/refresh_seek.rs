@@ -372,101 +372,8 @@ impl crate::engine::EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        let refresh = {
-            let Some(entity) = self.get_entity(owner) else {
-                return false;
-            };
-            let Some(actor) = entity.actor_data() else {
-                return false;
-            };
-            let Some(seq_id) = actor.active_movement.sequence_id else {
-                return false;
-            };
-            let elem_idx = actor.active_movement.element_index;
-            if self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner)
-                != Some((seq_id, elem_idx))
-            {
-                return false;
-            }
-            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-                return false;
-            };
-            if !matches!(
-                elem.command,
-                crate::element::Command::Move
-                    | crate::element::Command::MoveOk
-                    | crate::element::Command::Seek
-            ) {
-                return false;
-            }
-            let SequenceElementData::Movement {
-                flags,
-                element: target,
-                tolerance,
-                action,
-                ..
-            } = &elem.data
-            else {
-                return false;
-            };
-            if !flags.contains(MoveFlags::SEEK) {
-                return false;
-            }
-            // Original evaluates moved-target refresh only inside
-            // RHElementActor::PerformSeek. The SEEK flag remains attached to
-            // cross-sector wall and ladder orders, but their Execute arms call
-            // PerformMotion directly and must neither refresh nor consume the
-            // route-construction RNG draws. Sampling solely from the element
-            // flags made a climbing PC rebuild a cross-building chase while
-            // Original kept climbing.
-            let Some(order) = elem.orders.front() else {
-                return false;
-            };
-            if super::movement::perform_seek_calls_per_execute(order.order_type) == 0 {
-                return false;
-            }
-            let Some(target_id) = *target else {
-                return false;
-            };
-            let Some(target_entity) = self.get_entity(target_id) else {
-                return false;
-            };
-            let target_pos = target_entity.element_data().position_map();
-
-            // PerformSeek's same-sector distance gate precedes its expired
-            // timer / moved-target test. In particular, a target can enter
-            // range while this route still points at its old position; the
-            // ensuing owner Execute must consume the post-seek handoff rather
-            // than RefreshSeek replacing the route first.
-            if entity_seek_live_tolerance_reached(
-                entity,
-                target_entity,
-                *flags,
-                actor.seek_distance,
-            ) {
-                return false;
-            }
-
-            // Original stores this as ULONG but tests expiry through
-            // `(SLONG)mulWaitTime <= 0`. Wrapped high-bit values therefore
-            // remain expired rather than delaying refresh for another 2^32
-            // owner ticks.
-            if !seek_refresh_wait_elapsed(actor.seek_refresh_wait) {
-                return false;
-            }
-            let last = actor.last_seek_target_position;
-            let dx = (target_pos.x - last.x).abs();
-            let dy = (target_pos.y - last.y).abs();
-            if dx.max(dy) <= 10.0 {
-                return false;
-            }
-
-            (
-                seq_id, elem_idx, target_id, *action, *flags, *tolerance, target_pos,
-            )
+        let Some(refresh) = self.selected_seek_refresh_decision(owner) else {
+            return false;
         };
         let (seq_id, elem_idx, target, action, flags, tolerance, new_target_pos) = refresh;
         tracing::trace!(
@@ -495,6 +402,111 @@ impl crate::engine::EngineInner {
             new_target_pos,
         );
         true
+    }
+
+    /// Decide whether `RHElementActor::PerformSeek`'s moved-target branch
+    /// (RHelementactor.cpp:7913) fires for this owner's selected seek, without
+    /// applying it.
+    ///
+    /// Split out of [`Self::tick_refresh_seek_for_owner`] so the sword- and
+    /// shield-walking Execute arms can run their pre-`PerformSeek` facing
+    /// prologue on exactly the frames that branch preempts the motion.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn selected_seek_refresh_decision(
+        &self,
+        owner: EntityId,
+    ) -> Option<(
+        crate::sequence::SequenceId,
+        usize,
+        EntityId,
+        crate::order::OrderType,
+        MoveFlags,
+        f32,
+        crate::coordinates::MapPoint,
+    )> {
+        let entity = self.get_entity(owner)?;
+        let actor = entity.actor_data()?;
+        let seq_id = actor.active_movement.sequence_id?;
+        let elem_idx = actor.active_movement.element_index;
+        if self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            != Some((seq_id, elem_idx))
+        {
+            return None;
+        }
+        let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
+            return None;
+        };
+        if !matches!(
+            elem.command,
+            crate::element::Command::Move
+                | crate::element::Command::MoveOk
+                | crate::element::Command::Seek
+        ) {
+            return None;
+        }
+        let SequenceElementData::Movement {
+            flags,
+            element: target,
+            tolerance,
+            action,
+            ..
+        } = &elem.data
+        else {
+            return None;
+        };
+        if !flags.contains(MoveFlags::SEEK) {
+            return None;
+        }
+        // Original evaluates moved-target refresh only inside
+        // RHElementActor::PerformSeek. The SEEK flag remains attached to
+        // cross-sector wall and ladder orders, but their Execute arms call
+        // PerformMotion directly and must neither refresh nor consume the
+        // route-construction RNG draws. Sampling solely from the element
+        // flags made a climbing PC rebuild a cross-building chase while
+        // Original kept climbing.
+        let Some(order) = elem.orders.front() else {
+            return None;
+        };
+        if super::movement::perform_seek_calls_per_execute(order.order_type) == 0 {
+            return None;
+        }
+        let Some(target_id) = *target else {
+            return None;
+        };
+        let Some(target_entity) = self.get_entity(target_id) else {
+            return None;
+        };
+        let target_pos = target_entity.element_data().position_map();
+
+        // PerformSeek's same-sector distance gate precedes its expired
+        // timer / moved-target test. In particular, a target can enter
+        // range while this route still points at its old position; the
+        // ensuing owner Execute must consume the post-seek handoff rather
+        // than RefreshSeek replacing the route first.
+        if entity_seek_live_tolerance_reached(entity, target_entity, *flags, actor.seek_distance) {
+            return None;
+        }
+
+        // Original stores this as ULONG but tests expiry through
+        // `(SLONG)mulWaitTime <= 0`. Wrapped high-bit values therefore
+        // remain expired rather than delaying refresh for another 2^32
+        // owner ticks.
+        if !seek_refresh_wait_elapsed(actor.seek_refresh_wait) {
+            return None;
+        }
+        let last = actor.last_seek_target_position;
+        let dx = (target_pos.x - last.x).abs();
+        let dy = (target_pos.y - last.y).abs();
+        if dx.max(dy) <= 10.0 {
+            return None;
+        }
+
+        Some((
+            seq_id, elem_idx, target_id, *action, *flags, *tolerance, target_pos,
+        ))
     }
 
     /// Per-entity body of `tick_refresh_seeks`: re-resolve the seek
@@ -1602,6 +1614,86 @@ mod tests {
                 .unwrap()
                 .seek_refresh_wait,
             0
+        );
+    }
+
+    /// `RHElementActorHuman::Execute` calls `FaceOpponent`
+    /// (RHelementactorhuman.cpp:3662) before it enters `PerformSeek`
+    /// (RHelementactorhuman.cpp:3667), and `RHElementActor::PerformSeek`'s
+    /// moved-target branch returns `RHMOTION_IN_PROGRESS` without reaching
+    /// `PerformMotion`.  `FaceOpponent`'s
+    /// `SetDirection( ... GetSector0to15( ASPECT_RATIO ) )` plus `Turn()`
+    /// (RHelementactorhuman.cpp:7511-7512) therefore still run on the
+    /// RefreshSeek frame.
+    #[test]
+    fn sword_walk_seek_refresh_still_faces_the_opponent() {
+        let mut engine = crate::engine::EngineInner::new();
+
+        let mut owner_entity = test_pc_at(0.0, 0.0, 1);
+        owner_entity
+            .actor_data_mut()
+            .expect("test PC is an actor")
+            .action_state = ActionState::MovingSword;
+        owner_entity.element_data_mut().set_direction_instantly(0);
+        let owner = engine.add_entity(owner_entity);
+        let target = engine.add_entity(test_pc_at(100.0, 0.0, 1));
+        engine
+            .get_entity_mut(owner)
+            .expect("owner")
+            .human_data_mut()
+            .expect("PC has human payload")
+            .opponents
+            .push(target);
+
+        let mut seek = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingWithSword,
+        );
+        if let SequenceElementData::Movement { flags, element, .. } = &mut seek.data {
+            *flags = MoveFlags::SEEK;
+            *element = Some(target);
+        }
+        seek.orders.push_back(crate::order::Order::test_new(
+            OrderType::WalkingWithSword,
+            90.0,
+            0.0,
+        ));
+        let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(seek_seq, 0);
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .expect("owner")
+                .actor_data_mut()
+                .expect("owner is an actor");
+            actor.active_movement = ActiveMovement::new(seek_seq, 0);
+            actor.seek_refresh_wait = 0;
+            actor.seek_distance = 10.0;
+            actor.last_seek_target_position = MapPoint::ZERO;
+        }
+
+        assert!(
+            engine.selected_seek_refresh_decision(owner).is_some(),
+            "the >10u moved target must select PerformSeek's RefreshSeek branch"
+        );
+
+        engine.apply_pre_perform_seek_facing_prologue(owner);
+
+        let owner_entity = engine.get_entity(owner).expect("owner");
+        assert_eq!(
+            owner_entity.position_iface().get_direction_goal().as_u8(),
+            4,
+            "FaceOpponent aims the goal at the principal opponent"
+        );
+        assert_eq!(
+            owner_entity.position_iface().get_direction().as_u8(),
+            1,
+            "FaceOpponent's Turn advances one sector on the RefreshSeek frame"
         );
     }
 
