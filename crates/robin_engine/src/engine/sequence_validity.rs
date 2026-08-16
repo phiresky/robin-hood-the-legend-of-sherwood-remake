@@ -1140,18 +1140,14 @@ impl EngineInner {
                 }
             }
             ValidityArmTerminal::Terminated => {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.do_next_order(seq_id, elem_idx);
             }
             ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
                 if needs_drop {
                     // Instant drop.
                     self.force_drop_carried_corpse_instant(entity_id);
                 }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.do_next_order(seq_id, elem_idx);
             }
             // Unresolved variant — should never reach apply phase
             // because the snapshot loop converts it to
@@ -1162,9 +1158,7 @@ impl EngineInner {
                     ?entity_id,
                     "human_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
                 );
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.do_next_order(seq_id, elem_idx);
             }
         }
         true

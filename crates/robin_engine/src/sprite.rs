@@ -1970,8 +1970,34 @@ impl Sprite {
         let mut sum =
             self.wait_time(self.current_row, self.current_frame) as i32 - self.frame_count as i32;
 
-        // (2) Intermediate frames
-        for i in (self.current_frame + 1)..self.action_done_frame {
+        // (2) Intermediate frames.
+        //
+        // `RHsprite.cpp:1261` loops all the way to `muwActionDoneFrame`, but
+        // `InitializeActionDone` stores the impossible sentinel `(UWORD)-1`
+        // there whenever a row's action-done frame lands on the last frame of
+        // a two-frame row (`RHsprite.cpp:706-719`).  That sentinel survives
+        // until the sprite performs its next order, so a soldier whose order
+        // action has already advanced to a sword strike while the sprite still
+        // shows the previous two-frame transition row reaches
+        // `RHElementActorHuman::ProposeGoodSwordStrike`
+        // (`RHelementactorhuman.cpp:12672`) with `muwActionDoneFrame == 0xFFFF`.
+        // The Original then indexes `auwDelay` tens of thousands of entries
+        // past its end — undefined behaviour that sums unrelated heap.  Sum
+        // only the delays that exist; the frames beyond the row contribute
+        // nothing, which is what the recorded Original streams show.
+        let num_frames = self.num_frames_for_row(self.current_row);
+        let last_frame = self.action_done_frame.min(num_frames);
+        if last_frame != self.action_done_frame {
+            tracing::debug!(
+                row = self.current_row,
+                frame = self.current_frame,
+                action_done_frame = self.action_done_frame,
+                num_frames,
+                "action-done frame is beyond the current sprite row; \
+                 summing only the delays this row actually has"
+            );
+        }
+        for i in (self.current_frame + 1)..last_frame {
             sum += self.wait_time(self.current_row, i) as i32;
         }
 
