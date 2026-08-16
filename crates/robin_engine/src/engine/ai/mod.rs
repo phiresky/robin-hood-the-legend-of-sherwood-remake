@@ -10111,7 +10111,27 @@ impl EngineInner {
         // Resolve the actor's current building for the
         // "not this building" filter used by `GetNearestDoor`.
         let my_building = ctx.in_building.then_some(ctx.building_sector).flatten();
-        let my_layer = ctx.position.level;
+        // `GetNearestDoor` mixes three different views of "where I am"
+        // (`original-code/RHartificialintelligence.cpp:5494-5560`):
+        //
+        //  * `ptMe = mpMe->GetPositionMap()` — the RAW element position, used
+        //    only to build `vMeToDoor` for the flee-direction dot product
+        //    (`:5511`, `:5524`).
+        //  * `Position( mpMe )` — the AI position, which SNAPS to the gate's
+        //    destination endpoint while a door pass is committed.  It is the
+        //    other side of that dot product and the origin of the scored
+        //    distance vector (`:5524`, `:5533`).
+        //  * `mpMe->GetSector()` / `mpMe->GetLayer()` — the LIVE element
+        //    sector and layer, which during a door pass still name the side
+        //    the actor physically stands on.  They decide the +500 / +300
+        //    malus (`:5536`, `:5541`).
+        //
+        // Reading `ctx.position` for all three collapses the distinction and
+        // mis-scores every door while the actor straddles a gate.
+        let (raw_map_position, my_sector, my_layer) = {
+            let elem = self.expect_entity(npc_id, "door-seek owner").element_data();
+            (elem.position_map(), elem.sector(), elem.layer())
+        };
         let actor_auth = self
             .world
             .entities
@@ -10178,17 +10198,24 @@ impl EngineInner {
                 if my_building == crate::position_interface::SectorHandle::new(door.sector_in) {
                     continue;
                 }
-                let dx_door = door.point_out.x - ctx.position.x;
-                let dy_door = door.point_out.y - ctx.position.y;
+                // Flee-direction test: `vMeToDoor` is measured from the RAW
+                // map position, the flee vector from the AI position
+                // (`original-code/RHartificialintelligence.cpp:5511`, `:5524`).
                 if directed && let Some(center) = request.center {
+                    let dx_door = door.point_out.x - raw_map_position.x;
+                    let dy_door = door.point_out.y - raw_map_position.y;
                     let dx_flee = center.x - ctx.position.x;
                     let dy_flee = center.y - ctx.position.y;
                     if dx_door * dx_flee + dy_door * dy_flee >= 0.0 {
                         continue;
                     }
                 }
-                let mut distance = dx_door.abs().max(dy_door.abs()) as u32;
-                if Some(door.sector_out) != ctx.position.sector.map(u16::from) {
+                // Scored distance: `( pGate->GetPositionOut() - Position( mpMe ) ).MaxNorm()`
+                // (`original-code/RHartificialintelligence.cpp:5533-5534`).
+                let dx_score = door.point_out.x - ctx.position.x;
+                let dy_score = door.point_out.y - ctx.position.y;
+                let mut distance = dx_score.abs().max(dy_score.abs()) as u32;
+                if Some(door.sector_out) != my_sector.map(u16::from) {
                     distance = distance.saturating_add(500);
                 }
                 if door.layer_out != my_layer {
