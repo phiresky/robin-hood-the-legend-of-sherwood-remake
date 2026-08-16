@@ -371,6 +371,18 @@ impl EngineInner {
             self.force_drop_carried_corpse_instant(victim_id);
         }
 
+        if super::strikes::sword_damage_debug_enabled() {
+            eprintln!(
+                "[SWORDDMG f={} victim={:?} (co {}) attacker={:?} (co {:?}) strike={:?}]",
+                self.control.frame_counter,
+                victim_id,
+                self.world.original_creation_order(victim_id),
+                attacker_id,
+                attacker_id.map(|id| self.world.original_creation_order(id)),
+                strike,
+            );
+        }
+
         // Look up the attacker's weapon profile
         let attacker_profile = attacker_profile_idx
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))

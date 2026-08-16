@@ -9129,6 +9129,27 @@ impl EngineInner {
                 "turn:combat_face:after",
             );
         }
+        // Human's sword-movement Execute arm
+        // (`RHelementactorhuman.cpp:3631`) is the one movement arm that has no
+        // `Turn()` of its own: its non-SEEK branch goes straight to
+        // `mpSprite->PerformMotion` (`RHelementactorhuman.cpp:3660`), and its
+        // only pre-motion rotation is the one inside `FaceOpponent`
+        // (`RHelementactorhuman.cpp:7513`). `FaceOpponent` returns at
+        // `RHelementactorhuman.cpp:7505` — before `SetDirection` and before
+        // `Turn` — when a non-soldier is no longer swordfighting, which is
+        // exactly the `combat_target.is_none()` case resolved above. A
+        // non-interruptible order such as PASS_DOOR keeps that arm selected
+        // after `QuitSwordfightWithFarOpponents` has emptied the opponent
+        // list, so the Original then rotates the actor not at all while its
+        // direction goal stays where the door route last left it. Every other
+        // arm reaching the block below does turn: `Actor::Execute`'s ordinary
+        // movement arms call `Turn()` explicitly in their non-SEEK branch
+        // (`RHelementactor.cpp:2687`), `PerformSeek` calls it in both of its
+        // own branches (`RHelementactor.cpp:7805`, `:7925`), and
+        // `FaceDangerPoint` always turns (`RHelementactorpc.cpp:8914`).
+        let sword_arm_without_face_turn = executes_sword_movement
+            && combat_target.is_none()
+            && !active_move_flags.contains(crate::sequence::MoveFlags::SEEK);
         // Entity-target PerformSeek returns from its successful
         // pre-motion tolerance branch without calling PerformMotion.
         // Besides avoiding displacement, this preserves the prior sprite
@@ -9152,19 +9173,21 @@ impl EngineInner {
             // branch before the ordinary Turn/PerformMotion block. Do
             // not advance anti-vibration turning on a terminal tolerance
             // sample whose post-seek sequence is taking over.
-            super::animation::direction_provenance_snapshot(
-                &sprite.position_iface,
-                entity_id,
-                provenance_frame,
-                "turn:perform_seek:before",
-            );
-            let _ = sprite.position_iface.turn();
-            super::animation::direction_provenance_snapshot(
-                &sprite.position_iface,
-                entity_id,
-                provenance_frame,
-                "turn:perform_seek:after",
-            );
+            if !sword_arm_without_face_turn {
+                super::animation::direction_provenance_snapshot(
+                    &sprite.position_iface,
+                    entity_id,
+                    provenance_frame,
+                    "turn:perform_seek:before",
+                );
+                let _ = sprite.position_iface.turn();
+                super::animation::direction_provenance_snapshot(
+                    &sprite.position_iface,
+                    entity_id,
+                    provenance_frame,
+                    "turn:perform_seek:after",
+                );
+            }
             let diagnostic_pre = sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
             let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
             let result = sprite.perform_motion(
