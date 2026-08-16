@@ -1014,6 +1014,43 @@ wrong soldier. The counting loop's membership is the suspect, not the metric.
   `--dump-entity` is given.
 - `zstd -dc --long=31` is required to read these traces by hand (1 GB window).
 
+### ReconsiderSwordfight branch selection now has a 2-trace proven sub-group + a narrowing clue
+schema14 linux3/P001/Savegame_045 replay-004 (f44592, Soldier140) and linux3/P001/Savegame_044 replay-003
+(f28893, Soldier223). In m05 the substate is 173 on BOTH sides but the move action is `RUNNING_WITH_SWORD`
+(304) in the Original vs `WALKING_WITH_SWORD` (303) in Rust. **Only `GOTO_RUN` yields 304** via
+`DetermineMovementAnimation` (`original-code/RHelementactorhuman.cpp:2248-2276`) — and that port is
+FAITHFUL, so the discriminator is the `GOTO_RUN` flag, not the animation chooser. The Original therefore
+took `ReconsiderSwordfight`'s `bEnemyWeak` charge arm `GoNear(..., GOTO_RUN|GOTO_SWORD)`
+(`RHartificialmalignity.cpp:13752-13760`) while Rust took a `GOTO_SWORD`-only branch. **Check the caller of
+`ReconsiderSwordfight(true)` — `EVENT_ADVERSARY_WEAK` at `:6178-6183` — before digging into
+`ProposeGoodCombatPosition`.**
+
+### Newly attributed singletons from the order-lifecycle bundle
+- **m03 lazy door-pass materialization lags the order advance** (schema14 linux2/P002/Savegame_029 r006,
+  f4820): Rust ends the frame with `[(WalkingWithSword, done), (PassingDoor)]` — the lazily materialized
+  step is appended but NOT selected; the Original advanced to 295 in the same frame.
+- **m04 MakeFast/PostProcessPath end transition on an interrupted door-pass tail** (schema14
+  linux3/P001/Savegame_036 r008, f33618): after `make_pc_fast`, Rust's PassDoor orders are exactly
+  `[TransitionWalkingCrouchedRunningUpright, RunningUpright]` with NO end transition, although every
+  follower is `Interrupted` — i.e. `IsNextMovementOrJump()` should be false.
+- **m12 post-door `ATTACKING_DOOR_FIGHT_DELAY` never fires** (schema12 linux2/P002/Savegame_031 r015,
+  f11979): the Original's AI goes state 3->4, substate 73 -> **203**, and installs a `wait_timer` (wait 50,
+  order anim 12); Rust ends the door pass with no successor at all.
+- **m13 group-move installed one frame early** (schema12 SuN1Sh1nE/P004/Savegame_024 r006, f1337): the
+  Original is still `wait`/283 on the arrival frame; Rust is already `MoveWaiting`/292 `FREEZING`.
+- **m01 final-approach Move run-vs-walk** (schema12 linux3/P003/Savegame_055 r007, f36854): Original's
+  first post-door order is the MOVING_FAST **start** transition of a WALKING move; Rust's is the **end**
+  transition of a RUNNING move, with the destination 4.5 units off.
+
+### Trap: entity id spaces are NOT interchangeable
+The runner's `Pc(PcId(N))` is **not** always the trace's `elements[].entity_id.index` — in one member
+`Pc(PcId(174))` was element `pc:171`, and the trace's `commands`/`path_events` actor indices are a THIRD
+space again. Confirm the mapping before reading element state, or you will diagnose the wrong actor.
+Reliable pairing for order-lifecycle work: `--dump-jsonl --dump-from/--dump-through --dump-entity` gives
+full Rust engine state per frame, and
+`engine.orders.sequence_manager.sequences[*].elements[owner==target]` + `world.entities[idx]` (that list
+index IS the entity index) makes these members legible in one pass.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
