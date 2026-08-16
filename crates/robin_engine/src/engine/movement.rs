@@ -2240,6 +2240,20 @@ pub(crate) fn adapt_source_to_current_door(
 /// `GetDoor()` at that callback even though the translated movement element
 /// can keep executing its far-side walk, so later commands must use the live
 /// position/sector instead of adapting through the completed gate.
+///
+/// The direction reported here is the pass's live traversal direction, not the
+/// movement element's retained `mswDirection`. `RHSequence::AppendMoveToSequence`
+/// reads `pTarget->GetDoorDirection()` (`original-code/RHsequence.cpp:369`),
+/// which is `RHPositionInterface::mbDoorDirection`
+/// (`original-code/RHpositioninterface.h:297-298`). That field is written by
+/// `SetDoor( pDoor, <live direction> )` inside `RHElementActor::Translate`
+/// (`original-code/RHelementactor.cpp:4035`, `:4053`, `:4080`, `:4110`,
+/// `:4165`, `:4199`, `:4242`, `:4295`), where the direction comes from the
+/// `GetSector() == pSectorIn` test performed at launch — the same test
+/// `PassDoor::dispatch` reproduces into `ActiveDoorPass::direct`.
+/// `ActiveDoorPass::position_direct` mirrors the *element's* serialized
+/// `mswDirection` (`original-code/RHSequenceElementMovement.cpp:394-407`),
+/// which only `RHArtificialIntelligence::Position` consumes.
 pub(crate) fn current_door_for_route_source(
     entity: &crate::element::Entity,
 ) -> (crate::position_interface::DoorHandle, bool) {
@@ -2250,7 +2264,7 @@ pub(crate) fn current_door_for_route_source(
         .map(|pass| {
             (
                 crate::position_interface::DoorHandle(pass.door_index.0),
-                pass.position_direct,
+                pass.direct,
             )
         })
         .unwrap_or_else(|| {
@@ -2270,13 +2284,21 @@ mod route_source_tests {
     use crate::position_interface::DoorHandle;
 
     fn pc_with_door_pass(triggers_fired: u8) -> Entity {
+        pc_with_door_pass_directions(triggers_fired, true, true)
+    }
+
+    fn pc_with_door_pass_directions(
+        triggers_fired: u8,
+        direct: bool,
+        position_direct: bool,
+    ) -> Entity {
         Entity::Pc(ActorPc {
             element: ElementData::default(),
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {
                     door_index: DoorIndex(53),
-                    direct: true,
-                    position_direct: true,
+                    direct,
+                    position_direct,
                     steps: Default::default(),
                     triggers_fired,
                     current_action: OrderType::WalkingUpright,
@@ -2305,6 +2327,19 @@ mod route_source_tests {
             current_door_for_route_source(&pc),
             (DoorHandle::NULL, false)
         );
+    }
+
+    #[test]
+    fn route_source_reports_live_traversal_direction_not_element_direction() {
+        // `RHSequence::AppendMoveToSequence` reads `GetDoorDirection()`
+        // (`original-code/RHsequence.cpp:369`), the position interface field
+        // `SetDoor` writes from the live `GetSector() == pSectorIn` test at
+        // launch. A v48-restored movement element can carry a different
+        // serialized `mswDirection`; that value belongs to
+        // `RHArtificialIntelligence::Position`, not to route sourcing.
+        let pc = pc_with_door_pass_directions(0, true, false);
+
+        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(53), true));
     }
 
     #[test]
