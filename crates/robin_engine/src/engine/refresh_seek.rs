@@ -44,6 +44,61 @@ fn seek_refresh_wait_elapsed(wait: u32) -> bool {
     (wait as i32) <= 0
 }
 
+/// `RHElementActor::PerformSeek`'s entity arm opens with
+///
+/// ```text
+/// // Wait for the post seek sequence to be launched !
+/// if( mpSeekTarget == 0 )
+/// {
+///     return RHMOTION_TERMINATED;
+/// }
+/// ```
+///
+/// (`original-code/RHelementactor.cpp:7820-7826`).  The seek target lives on
+/// the actor, not on the sequence element: `StartPostSeekSequence` clears
+/// `mpSeekTarget` while the element keeps its own `GetElement()` pointer, so
+/// a later Move|SEEK leg of the same route still looks like an entity seek to
+/// the element but is already finished as far as `PerformSeek` is concerned.
+/// Original then terminates that Execute before computing any distance,
+/// before ageing `mulWaitTime`, and before `RefreshSeek`.
+///
+/// Returns `true` when this owner's selected movement is in that state.
+pub(super) fn perform_seek_lost_actor_target(
+    engine: &super::EngineInner,
+    owner: EntityId,
+    selected: super::movement::MovementOwnerSelection,
+) -> bool {
+    let Some(actor) = engine
+        .get_entity(owner)
+        .and_then(|entity| entity.actor_data())
+    else {
+        return false;
+    };
+    // `mbSeekToPoint` picks the point arm, which has no null-target guard.
+    if actor.continuation.seek_to_point || actor.seek_target.is_some() {
+        return false;
+    }
+    let Some(element) = engine
+        .orders
+        .sequence_manager
+        .get_element(selected.seq_id, selected.elem_idx)
+    else {
+        return false;
+    };
+    let SequenceElementData::Movement { flags, .. } = &element.data else {
+        return false;
+    };
+    if !flags.contains(MoveFlags::SEEK) {
+        return false;
+    }
+    // The seek wrapper is chosen per animation arm, not per element: wall and
+    // ladder orders keep the SEEK flag while their Execute arms call
+    // PerformMotion directly and never reach this guard.
+    element
+        .current_order()
+        .is_some_and(|order| super::movement::perform_seek_calls_per_execute(order.order_type) > 0)
+}
+
 /// `RHElementActor::PerformSeek` tests the live target tolerance before its
 /// moved-target refresh arm.  Keep the same test at the pre-owner refresh
 /// seam so an expired stale route cannot replace a seek whose target has
