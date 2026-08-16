@@ -1295,12 +1295,24 @@ pub(crate) fn validate_projectile_collision_debug_spawn(
     );
 }
 
+/// `grid_candidates` carries the fast-find grid's answer to Original's
+/// `GetObstacles( listObstacles, 0, raySegment, type )`
+/// (`original-code/RHfastfindgrid.cpp:6517`): the candidate obstacles in
+/// grid-traversal order. That order is load-bearing — it decides how the
+/// bbox-overlap groups below are partitioned, and the group walk stops at
+/// the first group that contributes an impact. Build it with
+/// [`crate::fast_find_grid::FastFindGrid::impact_obstacle_candidates`].
+///
+/// `None` means "no grid available" and is only reachable from unit tests
+/// that construct bare obstacle slices; it scans the obstacle registry in
+/// index order instead.
 pub fn is_reachable_impact_3d(
     origin: crate::coordinates::WorldPoint3D,
     destination: crate::coordinates::WorldPoint3D,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
     map_bbox: Option<MapBBox>,
+    grid_candidates: Option<&[usize]>,
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
@@ -1340,14 +1352,10 @@ pub fn is_reachable_impact_3d(
     // active + type, deduplicated, then reduced to obstacles whose ground
     // bbox intersects the segment exactly.
     //
-    // TODO(parity): we iterate the obstacle registry in index order
-    // instead of block-traversal order. Per-block lists are filled in
-    // load (index) order, so the relative candidate order only differs
-    // when a higher-index obstacle surfaces in an earlier-traversed
-    // block than a lower-index one, and the candidate set only differs
-    // for an obstacle whose bbox meets the segment while its polygon
-    // touches none of the traversed blocks. Both differences are
-    // observable solely through the group partitioning below.
+    // `grid_candidates` already carries that list; the loop below only
+    // reproduces it (in obstacle-registry order) when no grid is available,
+    // and always runs so the opt-in diagnostic keeps reporting every
+    // rejected obstacle.
     let mut candidates: Vec<usize> = Vec::new();
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
         let active = obstacles.is_active(idx);
@@ -1420,6 +1428,13 @@ pub fn is_reachable_impact_3d(
                 (destination.z - obs.compute_bottom_z(destination.x, destination.y)).to_bits(),
             );
         }
+    }
+
+    // The grid answer wins whenever the caller has a loaded level: it is
+    // the actual `GetObstacles` result, ordering included.
+    if let Some(grid_candidates) = grid_candidates {
+        candidates.clear();
+        candidates.extend_from_slice(grid_candidates);
     }
 
     // `RHFastFindGrid::IsReachableImpact` returns "reachable" outright when
@@ -1705,7 +1720,7 @@ pub fn is_reachable_impact_3d(
 /// (original-code/sblibng/SBGeoBoundingBox2D.cpp:1154): trivial rejection
 /// with strict comparisons, then inclusive endpoint containment, then the
 /// corner-determinant test of the segment's carrier line.
-fn bbox_intersects_segment_reference(
+pub(crate) fn bbox_intersects_segment_reference(
     bbox: &crate::coordinates::GroundBBox,
     a: (f32, f32),
     b: (f32, f32),
@@ -2348,6 +2363,7 @@ mod tests {
                 SIGHTOBSTACLE_SOLID,
                 ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
                 None,
+                None,
             )
             .is_none()
         );
@@ -2374,6 +2390,7 @@ mod tests {
             dest,
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
+            None,
             None,
         )
         .unwrap();
@@ -2422,6 +2439,7 @@ mod tests {
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&obstacle)),
             None,
+            None,
         )
         .expect("descending projectile should strike the obstacle top");
 
@@ -2454,6 +2472,7 @@ mod tests {
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
             None,
+            None,
         )
         .unwrap();
         // Vertical-segment short-circuit routes this through fall_3d —
@@ -2479,6 +2498,7 @@ mod tests {
             },
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(&[]),
+            None,
             None,
         )
         .unwrap();
@@ -2508,6 +2528,7 @@ mod tests {
             dest,
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
+            None,
             None,
         )
         .unwrap();
@@ -2566,6 +2587,7 @@ mod tests {
             dest,
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
+            None,
             None,
         )
         .unwrap();
@@ -2627,6 +2649,7 @@ mod tests {
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
             None,
+            None,
         )
         .unwrap();
 
@@ -2659,6 +2682,7 @@ mod tests {
                 SIGHTOBSTACLE_SOLID,
                 ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
                 None,
+                None,
             )
             .is_none()
         );
@@ -2669,6 +2693,7 @@ mod tests {
                 dest,
                 SIGHTOBSTACLE_OPAQUE,
                 ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
+                None,
                 None,
             )
             .is_some()
@@ -2794,6 +2819,7 @@ mod tests {
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(&obstacles),
             None,
+            None,
         )
         .expect("wall group must produce an impact");
         assert_eq!(result.obstacle_index, Some(1));
@@ -2809,6 +2835,7 @@ mod tests {
             dest,
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(&without_wall),
+            None,
             None,
         )
         .expect("roof must produce an impact");
@@ -2840,6 +2867,7 @@ mod tests {
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&wall)),
             None,
+            None,
         )
         .expect("wall impact expected");
         assert_eq!(result.obstacle_index, Some(0));
@@ -2862,6 +2890,7 @@ mod tests {
             dest,
             SIGHTOBSTACLE_SOLID,
             ObstacleList::from_slice_all_active(std::slice::from_ref(&wall)),
+            None,
             None,
         )
         .expect("ground impact expected");
