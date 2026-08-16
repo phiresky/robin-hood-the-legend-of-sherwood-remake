@@ -1,0 +1,35 @@
+## state:movement_map.x  (3)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_029/replay-010-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_029/replay-014-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_039/replay-009-session-0001.jsonl.zst
+
+## state:increment_map.x  (2)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_028/replay-011-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_066/replay-008-session-0001.jsonl.zst
+
+## state:position_goal_map.x  (2)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_028/replay-009-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_028/replay-010-session-0001.jsonl.zst
+
+## state:actor.command:PassDoor->MoveOk  (2)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-011-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_010/replay-009-session-0001.jsonl.zst
+
+## state:actor.command:MoveOk->MoveWaiting  (2)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_025/replay-004-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_009/replay-004-session-0001.jsonl.zst
+
+## state:actor.command:MoveWaiting->PassDoor  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_024/replay-013-session-0001.jsonl.zst
+
+## state:actor.command:MoveWaiting->MoveOk  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_034/replay-013-session-0001.jsonl.zst
+
+## state:actor.command:Wait->MoveOk  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_001/Savegame_018/replay-002-session-0001.jsonl.zst
+
+## state:path_events[0].goal.bits  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-014-session-0001.jsonl.zst
+
+## other-panic:crates/robin_engine/src/engine/door_pass.rs:677  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_047/replay-010-session-0001.jsonl.zst

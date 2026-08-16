@@ -1,0 +1,24 @@
+## rng:SwordDamageProtection  (2)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-015-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_018/replay-008-session-0001.jsonl.zst
+
+## rng:MeleeNonMutualGate  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-005-session-0001.jsonl.zst
+
+## rng:MeleeInitiative  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-006-session-0001.jsonl.zst
+
+## rng:DrunkCombatFreeze  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-003-session-0001.jsonl.zst
+
+## rng:AiPanic  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_013/replay-006-session-0001.jsonl.zst
+
+## state:actor.command:ParrySword->SwordstrikeThrustA  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003-session-0001.jsonl.zst
+
+## state:actor.command:QuitSwordfight->MoveOk  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_054/replay-007-session-0001.jsonl.zst
+
+## state:actor.command:MoveWaiting->EnterSwordfight  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_032/replay-002-session-0001.jsonl.zst
