@@ -991,10 +991,17 @@ impl PassDoorLaunchContext<'_> {
             .abs()
         };
         let tol_ladder_low_direct = dist(OrderType::TransitionWaitingUprightClimbingLadderUp);
-        let tol_wall_high_direct_noncrenel = dist(OrderType::TransitionCrouchingDown)
-            + dist(OrderType::TransitionWaitingCrouchedClimbingWallDown);
+        // `RHElementActor::TranslatePassDoorWall` wraps both high/direct
+        // tolerances in `abs()` (RHelementactor.cpp:5179 and :5210); the
+        // climb-down transition distances are negative, so without the
+        // absolute value the walk-to-mid order can never satisfy
+        // `IsGoalReached`'s `increment . (goal - pos) <= tolerance` test at
+        // the ring Original stops on, and the walk overshoots by a frame.
+        let tol_wall_high_direct_noncrenel = (dist(OrderType::TransitionCrouchingDown)
+            + dist(OrderType::TransitionWaitingCrouchedClimbingWallDown))
+        .abs();
         let tol_wall_high_direct_crenel =
-            dist(OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel);
+            dist(OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel).abs();
         let tol_wall_low_direct = dist(OrderType::TransitionWaitingUprightClimbingWallUp);
 
         let ctx = DoorPassContext {
