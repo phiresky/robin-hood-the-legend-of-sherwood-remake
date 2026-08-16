@@ -1051,6 +1051,66 @@ full Rust engine state per frame, and
 `engine.orders.sequence_manager.sequences[*].elements[owner==target]` + `world.entities[idx]` (that list
 index IS the entity index) makes these members legible in one pass.
 
+### TOP PRIORITY TOOLING: rebuild a capture binary from current original-code
+`PARITY_DEBUG_REACHABILITY` exists in `original-code/RHfastfindgrid.cpp:60-122, 8471, 8763-8830` but the
+string is in **NEITHER** prebuilt binary — `build/native-full/robin` (Aug 9) and
+`build/native-full/robin-schema14-capture` (Aug 13) both predate the hook, and `robin-schema14-capture` is
+not a ninja target in that build dir so it cannot be regenerated there. Every Original-side
+reachability/route question is unanswerable until a capture binary is rebuilt from current sources.
+**The 32-bit toolchain is now installed and verified** (g++ -m32 links, CMake 4.3.4, all i386 dev libs and
+headers present) — see the campaign notes. First step must be a rebuild with NO source changes, verified to
+reproduce a known trace bit-exactly, before any new instrumentation is added.
+
+### Sub-group A: one-frame lag clearing `position_goal_map` (2 traces, localised to one call)
+schema14 linux3/P003/Savegame_028 replay-009 (f12003, Soldier 87) and replay-010 (f12812, Soldier 93).
+`PARITY_DEBUG_GOAL_OWNER_HANDOFF` shows the movement element going `Interrupted` with
+`terminal_selected=Some(same element)` yet `was_selected=false`, so `clears_goal=false`. The override is
+`SequenceManager::element_interrupted_after_replacement_selected`
+(`crates/robin_engine/src/sequence.rs:4052-4066`) from the `InterruptCurrent` arm of `arbitrate_instruct`
+(`engine/mod.rs:2839-2875`) — a literally correct model of `RHElementActor::Instruct` setting
+`mpSequenceElement = pNewSequenceElement` BEFORE `pOldSequenceElement->SetState(RHSEQ_INTERRUPTED)`
+(`original-code/RHelementactor.cpp:1432-1440`). **But the Original did not take INTERRUPT_CURRENT here**:
+its end-of-frame state is `command = 161 (Wait)` with `mpOrder->action = 12`, so the incoming `Move` never
+became `mpSequenceElement`. The goal zero must come from `SendCondolationCard`'s
+`if( mpSequenceElement == pSequenceElement )` arm (`RHelementactor.cpp:6696-6701`) firing while the
+movement was still selected. Narrow fix: work out which Original arm actually runs — `Stop()` ->
+`RHSequenceElement::Stop`'s keep-the-transition branch (`RHsequenceelement.cpp:530-537`) vs `Instruct`'s
+`ABANDON`/`GenerateTransition`-fails early return (`RHelementactor.cpp:1374-1384`, `:1408-1412`) — and stop
+routing it through `element_interrupted_after_replacement_selected`. With `--scan-all` this is the ONLY
+divergence in the whole trace and it self-heals the next frame.
+
+### Sub-group B: the "reverse pass-door re-entry" pair is a ROUTE-CONSTRUCTION bug, 11 frames earlier
+schema12 SuN1Sh1nE/P004/Savegame_024 replay-011 (visible at f1433, route built at **f1422**) and schema14
+linux3/P003/Savegame_010 replay-009 (f18927). Rust's source adaptation (`adapt_source_to_current_door`,
+`crates/robin_engine/src/engine/movement.rs:2217`, port of `original-code/RHsequence.cpp:361-377`) is
+CORRECT. The divergence is the gate search: Rust's `find_path_into_door` seeded at sector 14 returns
+`[gate 48, gate 0]`; the Original's route begins with **gate 49 traversed In->Out** (instantly-terminating
+Move to the In point, then PassDoor 49 walking back, then Move to gate 49's `point_out`).
+Next step: differential `crates/robin_engine/src/gate.rs:1373 find_path_into_door` (and `find_path_gates`)
+against `RHFastFindGrid::FindPathGates`/`FindPathIntoDoor` (`original-code/RHfastfindgrid.cpp:9584`) when
+seeded from a layer-1 area that is the In side of a `DOOR_LIFT_HIGH` gate. **Candidate cause:** the Original
+seeds strictly from `((RHSectorMotionArea*)pSectorSource)->GetGates()`, while Rust scans ALL doors for
+`sector_in/sector_out == source_sector` (`gate.rs:1439-1478`) — equivalent only if the level's per-sector
+gate lists match that predicate exactly.
+
+### Ruled out — do NOT re-derive
+- **`IsReachableThick` is a faithful port.** All eight corridor cases of
+  `original-code/RHfastfindgrid.cpp:8469-8760` were diffed point-by-point against
+  `FastFindGrid::build_thick_move_corridor` (`crates/robin_engine/src/fast_find_grid.rs:3079`), including
+  the `mX==0`/`mY==0` +-1 special cases, the x-negative swap, and bbox seeding (Rust's four extra
+  `expand_point` calls are provable no-ops). Line gathering matches in the same order.
+- **`GetHalfDiagonal(posture)` / `GetPathFinderIndex(posture)` are posture-INDEPENDENT** in the shipping
+  build — `RHpositioninterface.cpp:530` and `:851` both return immediately with the switch commented out.
+  Rust's posture-free accessors are correct.
+- The `position_goal_map` 0.011-tolerance blind spot was NOT in play for any movement member; every goal
+  divergence there is `0` vs a whole-number waypoint.
+
+### Cheap triage tool (use before running a replay)
+A trace-timeline extractor that prints per-frame pos/goal/increment/command/animation/substate straight
+from the Original trace, no engine run needed:
+`scratchpad/tl.sh <trace.zst> <lo> <hi> <kind> <index>` (with `peek.py`). Much cheaper than a replay for
+first-pass triage. Note `zstd -dc --long=31` is required to read these traces by hand.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
