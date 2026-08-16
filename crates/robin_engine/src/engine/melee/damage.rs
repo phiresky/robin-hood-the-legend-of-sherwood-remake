@@ -1268,8 +1268,23 @@ impl EngineInner {
             elem.sprite.display_order_ref = None;
             elem.sprite.behind_display_order_ref = false;
             carried.set_posture(carried_posture);
-            if let Some(human) = carried.human_data_mut() {
-                human.carrier = None;
+            // `DropCorpse` ends with `mpCarried->SetCarrier( 0 )`
+            // (RHelementactorpc.cpp:6505), and
+            // `RHElementActorHuman::SetCarrier( NULL )` runs
+            // `SetDirection( mpCarrier->GetDirection() )`
+            // (RHelementactorhuman.cpp:5800) before clearing the
+            // back-reference.  `SetDirection` writes only the *goal*
+            // (RHpositioninterface.h:248), so the body keeps the
+            // `carrier_dir + 12` facing stamped above and turns toward
+            // the carrier's own heading afterwards.
+            if carried.human_data().is_some_and(|h| h.carrier.is_some()) {
+                carried
+                    .element_data_mut()
+                    .set_direction_goal(carrier_dir as i16);
+                carried
+                    .human_data_mut()
+                    .expect("carried body keeps its human payload across the carrier unlink")
+                    .carrier = None;
             }
             if let Some(actor) = carried.actor_data_mut() {
                 actor.execution_frozen = false;

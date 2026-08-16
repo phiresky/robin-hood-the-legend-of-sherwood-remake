@@ -1778,6 +1778,56 @@ fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 3);
 }
 
+/// `RHElementActorPC::DropCorpse( 12, true )` stamps the body's facing
+/// at `carrier_direction + 12` (RHelementactorpc.cpp:6476) and then ends
+/// with `mpCarried->SetCarrier( 0 )` (RHelementactorpc.cpp:6505), whose
+/// `SetDirection( mpCarrier->GetDirection() )`
+/// (RHelementactorhuman.cpp:5800) moves only the *goal*
+/// (RHpositioninterface.h:248) to the carrier's own heading.  The
+/// dropped body therefore ends the drop with a goal exactly four
+/// sectors ahead of its facing.
+#[test]
+fn instant_corpse_drop_leaves_the_goal_at_the_carrier_heading() {
+    use crate::element::Posture;
+
+    let mut engine = EngineInner::new();
+    let body = engine.add_entity(make_test_soldier(Posture::Carried));
+    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
+    {
+        let carrier_entity = engine.get_entity_mut(carrier).unwrap();
+        carrier_entity.pc_data_mut().unwrap().carried = Some(body);
+        carrier_entity
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Tied);
+        carrier_entity
+            .element_data_mut()
+            .set_direction_instantly(11);
+    }
+    {
+        let body_entity = engine.get_entity_mut(body).unwrap();
+        body_entity.human_data_mut().unwrap().carrier = Some(carrier);
+        body_entity.actor_data_mut().unwrap().execution_frozen = true;
+        body_entity.element_data_mut().set_direction_instantly(7);
+    }
+
+    engine.force_drop_carried_corpse_instant(carrier);
+
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.posture(), Posture::Tied);
+    assert_eq!(body_entity.human_data().unwrap().carrier, None);
+    assert_eq!(
+        body_entity.element_data().direction(),
+        7,
+        "SetDirectionInstantly stamps carrier_direction + 12"
+    );
+    assert_eq!(
+        body_entity.position_iface().get_direction_goal().as_u8(),
+        11,
+        "SetCarrier( 0 ) moves the goal to the carrier's own heading"
+    );
+}
+
 #[test]
 fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
     use crate::movement::AbilityKind;
