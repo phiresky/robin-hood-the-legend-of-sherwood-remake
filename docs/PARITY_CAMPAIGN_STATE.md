@@ -669,6 +669,45 @@ Also note: the parade-timer lead recorded earlier was a RED HERRING.
 animation ends, not because the timer rings. The real cause there was stale push-strike victims (fixed in
 `6088d23eb`).
 
+### Open lead: ReconsiderSwordfight branch selection
+Two traces (schema14 linux3/P001/Savegame_044 replay-003 at f28893, and linux3/P003/Savegame_034
+replay-014 at its new f19764 frontier) are the same next family:
+`RHArtificialMalignity::ReconsiderSwordfight` (`original-code/RHartificialmalignity.cpp:13497`) picks a
+different branch. In Savegame_044 both engines draw the identical 11 RNG values at the frontier
+(drunk x2 + `rand()%3` reposition, twice) and NEITHER reaches `ProposeGoodSwordStrike`, yet the Original
+ends in `SUBSTATE_ATTACKING_MOVING_AROUND_OLD_ENEMY` with a `GoTo(..., GOTO_SWORD)` while Rust stays in
+`SUBSTATE_ATTACKING_SWORDFIGHT`. Suspects: `ProposeGoodCombatPosition()`'s `bChangePosition`, or the
+"too far to adversary" test at `RHartificialmalignity.cpp:13840` — note its `mpMyLineJump == NULL` guard,
+which became reachable differently after the reciprocal jump-line fix `ecac2b399`.
+TOOLING NOTE: the checked-in `robin-schema14-capture` binary PREDATES the
+`PARITY_DEBUG_ORIGINAL_RECONSIDER_SWORDFIGHT` instrumentation present in the sources, so that stream is
+not available from it. gdb on `RHParity::RecordRandomDraw` / `RHSequenceManager::LaunchSequenceElement`
+with raw `$esp` offsets works instead — the binary has a symtab but no DWARF.
+
+### Diagnosed but NOT landed: AILOCK_BUSY unlock is one frame early (needs a wide sweep)
+`RHElementActor::IsVeryVeryBusy` (`original-code/RHelementactor.cpp:7658-7666`) reads `mpSequenceElement`,
+which the Original **keeps pointing at the terminated element** until the next one is instructed — and that
+instruct happens in `mSequenceManager.Hourglass()`, which runs AFTER every element's own `Hourglass`
+(`RHengine.cpp:3739-3763`). So the `AILOCK_BUSY` unlock edge (`RHelementactornpc.cpp:4397-4405`) and the
+queued-stimulus drain (`:4487`) are both one frame LATER than Rust's. Rust's
+`EngineInner::is_very_very_busy` (`crates/robin_engine/src/engine/mod.rs:3545`) uses
+`SequenceManager::current_element_for_actor`, whose `actor_in_progress` entry is removed the moment the
+element leaves `InProgress` (`crates/robin_engine/src/sequence.rs:4354-4361`).
+Measured on schema14 linux3/P003/Savegame_051 replay-008: Civilian 121's queued `CallPatrolCoordinate`
+drains at f14088 in Rust and f14089 in the Original, same goal value `(1316.4, 2321.0)`.
+NOT LANDED because `is_very_very_busy` also feeds `in_uninterruptible_command` at ~15 AI call sites;
+extending "busy" by one frame at every PassDoor/Fall termination needs a wider regression sweep than a
+single agent can run. Suggested safe shape: a `SequenceManager` "last instructed element per actor" map
+mirroring `mpSequenceElement`, cleared only on replacement and at the two `mpSequenceElement = 0` sites
+(`RHelementactor.cpp:1490` and `:6701`), used ONLY by `is_very_very_busy`.
+
+### Original-code bug worth knowing
+`original-code/RHsequence.cpp:799` appends the stale `pSequenceElement` instead of the new
+`pSequenceElementGeneric` — a genuine Original defect, not a porting question. Also confirmed correct and
+not to be "fixed": the `Wait` vs `WaitTimer` split at `crates/robin_engine/src/engine/movement.rs:4940`
+matches Original, where `AppendMoveToLineToSequence` uses `RHCOMMAND_WAIT` (`RHsequence.cpp:1058,1063`)
+while the point/door variants use `WAIT_TIMER`.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
