@@ -2593,13 +2593,22 @@ impl EngineInner {
 
         // Per-command move flags:
         //   Strangle, Hit → NO_TRANSITIONS | SEEK_STOP_NPC
-        //   Heal / Search / SwordstrikeDown / Tie / Take →
+        //   Heal / Search / SwordstrikeDown / Tie / Take / TakeCorpse →
         //     SEEK_IN_BUILDINGS
         // `NO_TRANSITIONS` suppresses the stand↔crouch retry the seek
         // would otherwise inject; `SEEK_STOP_NPC` asks the victim NPC
         // to halt on arrival; `SEEK_IN_BUILDINGS` lets `RefreshSeek`
         // short-circuit when both actor and target are already inside
         // the same building.
+        //
+        // TakeCorpse carries the flag from
+        // `RHElementActorHuman::MouseClicked`'s carry arm
+        // (RHelementactorhuman.cpp:11426-11436). TODO: the PC-specific
+        // in-coma pickup (RHelementactorpc.cpp:1058-1095) builds its
+        // Seek + post-seek pair by hand and deliberately does NOT pass
+        // RHMOVE_SEEK_IN_BUILDINGS; Rust routes every carry click
+        // through this one helper, so an in-coma PC target currently
+        // gets the flag it should not have.
         let mut per_command_seek_flags = MoveFlags::empty();
         match command {
             Command::StrangleCmd | Command::HitCmd => {
@@ -2609,7 +2618,8 @@ impl EngineInner {
             | Command::SearchCmd
             | Command::SwordstrikeDown
             | Command::TieCmd
-            | Command::Take => {
+            | Command::Take
+            | Command::TakeCorpse => {
                 per_command_seek_flags |= MoveFlags::SEEK_IN_BUILDINGS;
             }
             _ => {}
