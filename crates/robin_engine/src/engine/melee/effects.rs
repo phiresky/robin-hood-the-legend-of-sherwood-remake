@@ -1221,12 +1221,16 @@ impl EngineInner {
         if len < 1e-6 {
             return [0.0, 0.0, 1.0]; // flat
         }
-        let inv = 1.0 / len;
+        // `SBGeoPlane3D::ComputeNormal` (sb3dstuff.cpp:195-209) divides each
+        // component by the norm; it never multiplies by a reciprocal, and the
+        // two shapes disagree in the last bit. That bit reaches the roll
+        // destination through `FindRollPoint`, and from there the normalized
+        // roll increment and the actor's per-frame displacement.
         // Ensure normal points upward (positive Z)
-        if nz * inv >= 0.0 {
-            [nx * inv, ny * inv, nz * inv]
+        if nz >= 0.0 {
+            [nx / len, ny / len, nz / len]
         } else {
-            [-nx * inv, -ny * inv, -nz * inv]
+            [-nx / len, -ny / len, -nz / len]
         }
     }
 
