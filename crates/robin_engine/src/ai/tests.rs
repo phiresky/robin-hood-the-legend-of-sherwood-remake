@@ -1265,6 +1265,51 @@ fn face_position_with_context_resolves_original_sector_before_launch() {
     assert!(!orders[0].compute_direction);
 }
 
+/// `RHArtificialIntelligence::Face( RHposition, -1, bool )` subtracts the
+/// actor's raw 3D point — `PositionToPoint3D( location ) - mpMe->GetPosition()`
+/// (RHartificialintelligence.cpp:2680-2681) — while the explicit-elevation arm
+/// at :2685-2686 subtracts `Point( mpMe )`.  Those origins diverge while
+/// `Position( mpMe )` is overridden to a door's committed gate side, so the 3D
+/// overload must not read `ctx.position`.
+#[test]
+fn face_position_3d_measures_from_the_body_not_the_door_side_position() {
+    let mut ctx = face_to_ctx(crate::element::ActionState::Moving);
+    // The door-pass override moves the AI-facing position far away from the
+    // sprite's real location.
+    ctx.position = Position {
+        x: 100.0,
+        y: 0.0,
+        sector: None,
+        level: 0,
+    };
+    ctx.self_body_position_world = crate::coordinates::WorldPoint3D {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    ctx.elevation = 0.0;
+    let target = Position {
+        x: 0.0,
+        y: -100.0,
+        sector: None,
+        level: 0,
+    };
+
+    let mut ai = AiController::new(1);
+    ai.face_position_3d_with_ctx(target, &ctx);
+    let orders = ai.take_pending_orders();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
+    assert_eq!(
+        orders[0].explicit_direction,
+        Some(crate::position_interface::vector_to_sector_0_to_15_iso(
+            0.0, -100.0
+        )),
+        "the faced vector starts at the body point, not the overridden RHposition"
+    );
+}
+
 #[test]
 fn fast_face_marks_the_turn_intent_without_changing_geometry() {
     let ctx = face_to_ctx(crate::element::ActionState::Moving);

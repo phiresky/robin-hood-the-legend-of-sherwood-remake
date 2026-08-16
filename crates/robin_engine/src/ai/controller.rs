@@ -3967,6 +3967,20 @@ impl AiController {
         let dx = pos.x - ctx.position.x;
         let dy = (pos.y - ctx.position.y) + elevation_delta;
         let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+        tracing::trace!(
+            me = self.me,
+            target_dir,
+            current_dir = ctx.direction,
+            elevation_delta,
+            "face_position_impl"
+        );
+        self.face_to_sector(target_dir, ctx, fast);
+    }
+
+    /// `RHArtificialIntelligence::FaceTo( UWORD, bool )`
+    /// (RHartificialintelligence.cpp:2739) — the shared tail every `Face`
+    /// overload reaches once it has resolved a 16-sector direction.
+    pub(super) fn face_to_sector(&mut self, target_dir: i16, ctx: &AiContext, fast: bool) {
         // legacy implementation FaceTo only short-circuits same-direction turns while
         // WAITING or BORED. Other action states still launch Turn so
         // Halt() semantics are preserved.
@@ -3980,8 +3994,7 @@ impl AiController {
             ?ctx.self_action_state,
             may_short_circuit,
             already_matches = (target_dir as u16 == ctx.direction),
-            elevation_delta,
-            "face_position_impl"
+            "face_to_sector"
         );
         if target_dir as u16 == ctx.direction && may_short_circuit {
             self.already_turned = true;
@@ -4009,9 +4022,25 @@ impl AiController {
     /// projection. Unlike the explicitly 2D overload above, this preserves
     /// the target sector/layer elevation in world-horizontal Y before
     /// selecting the isometric direction.
+    ///
+    /// `RHArtificialIntelligence::Face( RHposition, SWORD swElevation, bool )`
+    /// (RHartificialintelligence.cpp:2672) uses two *different* origins.  The
+    /// `swElevation == -1` arm at :2680-2681 subtracts the actor's raw 3D
+    /// point, `PositionToPoint3D( location ) - mpMe->GetPosition()`, while the
+    /// explicit-elevation arm at :2685-2686 subtracts `Point( mpMe )`.  Those
+    /// disagree whenever `RHArtificialIntelligence::Position( mpMe )` is
+    /// overridden — most visibly during a door pass, where the AI-facing
+    /// position snaps to the committed gate side while the sprite is still
+    /// interpolating along the rail (see `engine/ai/mod.rs`'s `self_position`).
+    /// Subtract the body point here, not `ctx.position`.
     pub fn face_position_3d_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
         let target = ctx.position_to_point_3d(pos);
-        self.face_position_impl(pos, ctx, target.z - ctx.elevation, false);
+        let body = ctx.self_body_position_world;
+        let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(
+            target.x - body.x,
+            target.y - body.y,
+        );
+        self.face_to_sector(target_dir, ctx, false);
     }
 
     /// Face a position whose authoritative elevation travels separately.
