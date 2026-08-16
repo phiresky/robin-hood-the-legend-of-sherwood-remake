@@ -649,16 +649,21 @@ Useful reframing discovered while triaging: `actor.animation` IS `mpOrder->actio
 *order-advance timing* divergence, and value `283` = `RHNONANIMATION_END` = no order installed at all.
 That reading is what decomposed the 7-trace `actor.animation` cluster into five unrelated bugs.
 
-### Open, fully diagnosed, NOT fixed: Savegame_024 arrow flight sampling (7 traces)
-All seven `Savegame_SuN1Sh1nE/Profile_004/Savegame_024` RNG members are ONE shared arrow bug, not melee
+### CLOSED: Savegame_024 "arrow flight sampling" (7 traces) — it was the DEAD SHOOTER, not the sampling
+All seven `Savegame_SuN1Sh1nE/Profile_004/Savegame_024` RNG members were ONE shared arrow bug, not melee
 (that re-clustering also split the old 20-trace "early-battle melee micro-gate" family into five real
-families). At the frontier the trajectory waypoints are **bit-identical** to Original's. Original's arrow
-stops at trajectory segment 5's endpoint `(1047, 1529, 185.001)` and resolves `ArrowPiercingProtection` on
-Soldier44 standing there; Rust's arrow consumes segment 5's remainder **plus** the truncated segment 6 in
-one frame and lands on obstacle 83's roof at `z=160.001`. Rust's segment-5 geometry was verified correct
-(obstacle 96's top-plane crossing at `(1047.064, 1720.303)` genuinely lies outside its polygon), so the
-divergence is in **per-frame flight sampling / the in-flight actor-hit test**, not the raycast. This is the
-largest single remaining family with a known mechanism — good next dispatch.
+families). The per-frame sampling half of the earlier diagnosis was WRONG and is retracted: both engines
+pop exactly one trajectory point per `Hourglass`, both pop the truncated segment 6 on the same frame, and
+both move to `z=160.001`. What differs is the victim scan on that frame. Original's `FindHumanVictim`
+finds Soldier44's belt sitting exactly on the segment-5 endpoint the arrow just left, draws
+`ArrowPiercingProtection`, and `HitHuman` rewinds the sprite to `GetOldPosition()` — which is why the
+recorded arrow *looks* like it stopped at `(1047, 1529, 185.001)`. Rust skipped the scan entirely because
+it resolved the shooter (Soldier101, killed at ~f504) inside the *hittable-victim* snapshot, which drops
+dead/lying/netted/tied humans. Fixed by giving the shooter its own unfiltered trait lookup; see the
+commit for the `RHelementprojectile.cpp` citations. Outcome: 30s r001/r002/r003 and 60s/schema12 r002 now
+match every recorded frame; 60s r003 advances 517→906, r013 517→1449 (both land on the melee
+`SwordDamageProtection`/`MeleeProvoke` family), r006 503→1232 where it hits the known unrelated
+`sprite.rs:905` sprite-row panic.
 Also note: the parade-timer lead recorded earlier was a RED HERRING.
 `GetFramesFromStartTillActionDone + 10` is correct; the Original leaves the parade early because the injury
 animation ends, not because the timer rings. The real cause there was stale push-strike victims (fixed in
