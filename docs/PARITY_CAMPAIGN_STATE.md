@@ -735,6 +735,39 @@ own cause:
   and schema14 linux3/P003/Savegame_051 replay-004 (f14449, different next waypoint,
   goal (836,1142) vs (851,1120)).
 
+### Melee leftovers, per-member attribution (from the B2 bundle)
+- **AiPanic, schema14 SuN1Sh1nE/P004/Savegame_013 replay-006 f1963** — NOT an AI bug. Rust's re-fired
+  `EventReachPoint` after `EventCouldntReachPoint` is faithful (`RHartificialintelligence.cpp:2044-2070`
+  really does recurse). The upstream cause: Rust's `GOTO_RUN|GOTO_STRAIGHT|GOTO_ASKOBSTACLE` panic segment
+  resolved the `MoveOk` element **Impossible** (`crates/robin_engine/src/engine/soldier_helpers.rs:1125`)
+  where the Original's succeeded, and the path queue was empty — so this is the **straight-move obstacle
+  test**, not the pathfinder. Movement/obstacle family.
+- **`ParrySword->SwordstrikeThrustA`, schema14 SuN1Sh1nE/P004/Savegame_004 replay-003 f16552** — a
+  spurious `CivilianBeggarSpeechGate` draw. Both engines consume 9 draws, but Rust's FIRST draw is the
+  beggar gate where the Original's is the PC's `SwordStrikeSelection` skill roll, so the values swap: the
+  Original's PC fails the roll (-> parade -> `ParrySword`) and Rust's passes (-> `Strike(A)`). **Civilian
+  family, not melee.**
+- **`MoveWaiting->EnterSwordfight`, schema12 linux2/P002/Savegame_032 replay-002 f17626** — the
+  `mpMyLineJump`/ReconsiderSwordfight lead. Proof the Original HAD a jump line: its path-event tolerance
+  flips from `65.0` (the `mpMyLineJump == NULL` arm, `RHartificialmalignity.cpp:6986`) to `0.0` (the
+  jump-line arm, `:6990`) from f17459 onward including the divergent frame. `GetStandardRangeSword() == 65`
+  confirmed from those events, and Rust's distance (61.36) is right — so the Original cannot have reached
+  the `uwDistance <= uwSwordRange` gate at `:6867` with PC 170 as target. Suspects: a friend target-swap in
+  the swap loop (`:6753-6786`) that Rust skipped, or a wrong `mpPrimaryTarget`. **NOTE: `ai.primary_target`
+  is not a compared trace field, so a wrong primary target can persist silently — worth adding.**
+- **`QuitSwordfight->MoveOk`, schema12 linux3/P003/Savegame_054 replay-007 f1065** — Rust's
+  `AttackingObserveAndMove` was NOT entered through `Think` (the AI decision-path gate produced zero hits),
+  so it is the `BattleDecisions`/`ReconsiderSwordfight` family.
+
+### Two time-savers confirmed by measurement (do not re-investigate)
+- **RNG callsite offsets in the corpus do NOT match `original-code/build/native-full/robin`** — offset
+  `1845615` lands after an `SBGeoVector2D` constructor call there, not a `rand`. addr2line/nm against that
+  binary will mislead you. Use the runner's learned `PARITY_DEBUG_RNG_SITE_MAP` instead; it produced a
+  clean 1:1 map on every trace in that bundle.
+- **`INVERSE_SWORDFIGHT_ASPECT_RATIO` is 1 in the shipping build** (`original-code/RHsettings.h:103`), so
+  the half-circle and lateral IN_PROGRESS arms omitting the `mY *=` that the full-circle arm applies is a
+  **no-op**. Don't spend time on that asymmetry.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
