@@ -7851,6 +7851,30 @@ impl EngineInner {
             if matches!(owner, EntityId::Pc(_)) {
                 let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
                     entity.actor_data()?;
+                    // `RHElementActorPC::Execute` gates the override on the
+                    // live `mpSequenceElement`: it must exist AND must not
+                    // carry `RHPRIORITY_NON_INTERRUPTABLE`
+                    // (`RHelementactorpc.cpp:3667-3673`). A door pass is
+                    // exactly that priority
+                    // (`RHElementActor::DeterminePriority`,
+                    // `RHelementactor.cpp:5506-5507`), so a sword walk that
+                    // belongs to a PassDoor element never aborts — Hourglass'
+                    // ABORTED arm asserts the same invariant
+                    // (`RHelementactor.cpp:1206`). Without this gate the
+                    // aborted pop cancelled the door pass's own order advance
+                    // and the actor replayed the walk instead of reaching its
+                    // PASSING_DOOR action point.
+                    let selected_priority = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(owner)
+                        .and_then(|(seq_id, elem_idx)| {
+                            self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                        })
+                        .map(|element| element.priority)?;
+                    if selected_priority == crate::sequence::SequencePriority::NonInterruptable {
+                        return None;
+                    }
                     if !entity.position_iface().is_moving_map()
                         || !crate::engine::melee::enemies_are_blocking_my_movement(
                             &self.world.entities,
