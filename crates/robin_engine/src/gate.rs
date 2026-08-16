@@ -1387,45 +1387,20 @@ pub fn find_path_into_door(
         0.5 * (goal_door.point_in.y + goal_door.point_out.y),
     );
 
-    // Source sector is the goal door's own sector — the gate is
-    // reachable directly; return a single-step path.
-    if source_sector == goal_door.sector_out && goal_door.active {
-        if let Some(a) = auth
-            && !is_actor_authorized_for_gate(
-                goal_door,
-                true,
-                a,
-                building_has_capacity(goal_door, true, building_is_authorized),
-                allow_leave_map,
-                sector_lift_type,
-            )
-        {
-            return None;
-        }
-        return Some(vec![GatePathStep {
-            door_index: goal_door_index,
-            direct: true,
-        }]);
-    }
-    if source_sector == goal_door.sector_in && goal_door.active {
-        if let Some(a) = auth
-            && !is_actor_authorized_for_gate(
-                goal_door,
-                false,
-                a,
-                true,
-                allow_leave_map,
-                sector_lift_type,
-            )
-        {
-            return None;
-        }
-        return Some(vec![GatePathStep {
-            door_index: goal_door_index,
-            direct: false,
-        }]);
-    }
-
+    // No "the goal door already borders the source sector" shortcut:
+    // `RHFastFindGrid::FindPathIntoDoor` (`original-code/RHfastfindgrid.cpp:9860`)
+    // always seeds every gate of the source sector and runs the A*, and the
+    // goal test only fires when the goal door is *popped*
+    // (`FindPathToDoorNodes`, `original-code/RHfastfindgrid.cpp:9968`).  A
+    // cheaper multi-gate route can therefore relax the goal door first —
+    // overwriting its `mbDirect`, `mfDistanceFromSource` and
+    // `mpPreviousLink` (`original-code/RHfastfindgrid.cpp:10008-10058`) — so
+    // the Original can walk around through neighbouring sectors and arrive at
+    // the goal door from its far side even when that door borders the source
+    // sector.  Returning a one-step path here skipped those intermediate
+    // gates, and with them the building-exit WAIT_TIMER/CHANGE_POSITION
+    // sub-sequences (`original-code/RHsequence.cpp:484`, `:519`) and their two
+    // `rand() & 15` draws.
     if doors.is_empty() {
         return None;
     }
