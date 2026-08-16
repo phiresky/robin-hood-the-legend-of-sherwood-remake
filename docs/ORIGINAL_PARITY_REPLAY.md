@@ -4684,3 +4684,25 @@ objects.
 - Retired families: all 12 nicouzouf Savegame_076 members (beggar-cooldown fix `3ea0b8fc9`), all 9 remaining linux3/Profile_003/Savegame_000 members — the Soldier106 direction_goal pattern was downstream of the officer-route continuation fix `07872e94d` — plus nicouzouf Savegame_073 replay-013.
 - Remaining set: `remaining-failures-204.snapshot` in the same audit dir (sha256 2ba7e64819c94e39e4578c405ffbc07d6dd227c7026c0046ce5e9e216fa8cf13).
 - Cluster analysis of the failing set (pre-sweep, 14 proposed tasks + leftovers): `docs/parity-task-archive/cluster-analysis-batch19.md`.
+
+## Batch-20 sweep — 2026-08-16, runner 3f4ad2752
+- Manifest: 985 traces = the 204 non-EOF traces from the batch-19 sweep **plus 781 currently-passing
+  traces as a deliberate regression guard**. Failures-only was rejected for this batch: five merges
+  rewrote shared core paths (`198f7a6da` collision-grid grouping in sight_obstacle.rs, `f0c371b84` Think
+  recursion depth for all AI, `906cd1cf3` path-request scheduling, `9f4284669` FIFO AI move intents which
+  also removed an OrderRuntime invariant, `f6f8bd886` gaze-precision correction).
+- Runner sha256 `2af9ef9ef33bf9f8654757b6e09c94239a39ec99651c053b6f78c0d7dd4d024e`; manifest sha256
+  `eee154a620f9f12e759c940eac27ce50dfd50829067186a23751756de08149f2`.
+- **Result: 853 pass, 93 state divergences, 39 RNG divergences, 0 timeouts.**
+  - Regression guard: **781/781 still pass — zero regressions.** The shared-code merges are clean.
+  - Failing set: **72 of 204 cleared (35%), 132 remain.**
+- 18 behaviour fixes landed between runner 07872e94 and 3f4ad2752; see the batch-20 section of
+  `docs/PARITY_CAMPAIGN_STATE.md` for the per-fix root causes.
+- Remaining set: `remaining-failures-132.snapshot` in the audit dir. Classification:
+  `output/parity-audits/batch20-3f4ad2752/classification.json` (53 groups). Largest: direction_goal 17,
+  actor.animation 7, SwordstrikeThrustA->MoveOk 6, rng:VipIdleRemark 6, direction 5,
+  rng:AiRandomValueRectangle 5, actor.motion_state 5, rng:CivilianBeggarSpeechGate 4, ai.substate 4,
+  MoveOk->Wait 4.
+- **Read those labels with caution.** This session proved the classifier's RNG-site labels are artifacts
+  (it keys on the first RNG site of the diverging frame) and that three separate cluster framings were
+  not single families. Re-measure and re-cluster by the actual state delta before dispatching.
