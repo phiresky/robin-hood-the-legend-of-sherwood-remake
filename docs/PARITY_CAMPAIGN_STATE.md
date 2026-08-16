@@ -649,6 +649,21 @@ Useful reframing discovered while triaging: `actor.animation` IS `mpOrder->actio
 *order-advance timing* divergence, and value `283` = `RHNONANIMATION_END` = no order installed at all.
 That reading is what decomposed the 7-trace `actor.animation` cluster into five unrelated bugs.
 
+### Open, fully diagnosed, NOT fixed: Savegame_024 arrow flight sampling (7 traces)
+All seven `Savegame_SuN1Sh1nE/Profile_004/Savegame_024` RNG members are ONE shared arrow bug, not melee
+(that re-clustering also split the old 20-trace "early-battle melee micro-gate" family into five real
+families). At the frontier the trajectory waypoints are **bit-identical** to Original's. Original's arrow
+stops at trajectory segment 5's endpoint `(1047, 1529, 185.001)` and resolves `ArrowPiercingProtection` on
+Soldier44 standing there; Rust's arrow consumes segment 5's remainder **plus** the truncated segment 6 in
+one frame and lands on obstacle 83's roof at `z=160.001`. Rust's segment-5 geometry was verified correct
+(obstacle 96's top-plane crossing at `(1047.064, 1720.303)` genuinely lies outside its polygon), so the
+divergence is in **per-frame flight sampling / the in-flight actor-hit test**, not the raycast. This is the
+largest single remaining family with a known mechanism — good next dispatch.
+Also note: the parade-timer lead recorded earlier was a RED HERRING.
+`GetFramesFromStartTillActionDone + 10` is correct; the Original leaves the parade early because the injury
+animation ends, not because the timer rings. The real cause there was stale push-strike victims (fixed in
+`6088d23eb`).
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
