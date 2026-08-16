@@ -763,6 +763,93 @@ predates `PARITY_DEBUG_ORIGINAL_PROJECTILE`, so that diagnostic is not in the bi
 no DWARF: gdb works only through `break *(&'<mangled>' + offset)` with hand-read disassembly, and
 `RHArtificialIntelligence::mpUniversalFrameCounter` is the frame counter (`GetUniversalFrameCounter` is
 inlined). Also beware: `set $sp = ...` in a gdb script clobbers the stack pointer.
+### Singleton direction leads (each a DIFFERENT root cause — do not re-cluster them)
+Five investigations have now confirmed the sector classifier is faithful; every direction divergence is
+*which vector*, *which origin*, or *whether/when the write happens*. Remaining singletons, each with its
+own cause:
+- **True-circle strike rotation phase** — schema14 linux3/P001/Savegame_030 replay-006, f31433, Soldier
+  co 192. `ExecuteTrueCircleSwordStrikeAction` (`original-code/RHelementactorhuman.cpp:10175`) does
+  `SetDirectionInstantly(AngleToSector(mfCurrentStrikeAngle))` ONLY on the `IsActionDone == true` branch;
+  Rust enters it one frame early, so both `direction` and `direction_goal` jump 1->14 a frame ahead.
+- **RaisingSword init direction write** — schema14 SuN1Sh1nE/P004/ExQuickSave replay-003, f36715,
+  Soldier co 128. Rust's `waiting_sword_direction_goal -> raising_sword_direction` write fires on the
+  first `TransitionRaisingSword` Execute; C++ (`RHelementactorhuman.cpp:3596`, soldier override
+  `RHelementactorsoldier.cpp:1249`) writes only when `pOrder->pAntagonist != NULL`. Original keeps goal 3
+  (no init write), Rust writes goal 1.
+- **AI FaceTo target selection** — schema14 linux2/P002/Savegame_034 replay-005, f35320, Soldier co 96.
+  `OfficerLookForSoldier` (`RHartificialmalignity.cpp:15905-15919`): the Original took the
+  `pSoldier == NULL` arm giving `FaceTo((dir+5)%16)` = 7; Rust found a soldier via `mlistPatrol[0]` /
+  `GetNearestFighter(camp, 200, CONDITION_IS_IN_DEFAULT_STATE_OR_LOOKING_BODY, RANK_SOLDIER)` and did
+  `Face(pSoldier)` = 8. The bug is the candidate search, not the facing.
+- **PointTo facing vector** — schema14 linux2/P002/Savegame_039 replay-003, f10950, Soldier co 169.
+  `PointTo` (`RHartificialintelligence.cpp:2798`) builds its sector from
+  `PositionToPoint3D(posTarget) - mpMe->GetPosition()` using raw 3D X/Y — the same origin class as the
+  already-fixed `7d6a13da9`.
+- **Movement/waypoint collateral (hand off, not direction bugs)** — schema12 nicouzouf/P001/Savegame_071
+  replay-015 (f564, first MOVE_OK frame after a door pass; position/elevation/increment/goal all differ)
+  and schema14 linux3/P003/Savegame_051 replay-004 (f14449, different next waypoint,
+  goal (836,1142) vs (851,1120)).
+
+### Melee leftovers, per-member attribution (from the B2 bundle)
+- **AiPanic, schema14 SuN1Sh1nE/P004/Savegame_013 replay-006 f1963** — NOT an AI bug. Rust's re-fired
+  `EventReachPoint` after `EventCouldntReachPoint` is faithful (`RHartificialintelligence.cpp:2044-2070`
+  really does recurse). The upstream cause: Rust's `GOTO_RUN|GOTO_STRAIGHT|GOTO_ASKOBSTACLE` panic segment
+  resolved the `MoveOk` element **Impossible** (`crates/robin_engine/src/engine/soldier_helpers.rs:1125`)
+  where the Original's succeeded, and the path queue was empty — so this is the **straight-move obstacle
+  test**, not the pathfinder. Movement/obstacle family.
+- **`ParrySword->SwordstrikeThrustA`, schema14 SuN1Sh1nE/P004/Savegame_004 replay-003 f16552** — a
+  spurious `CivilianBeggarSpeechGate` draw. Both engines consume 9 draws, but Rust's FIRST draw is the
+  beggar gate where the Original's is the PC's `SwordStrikeSelection` skill roll, so the values swap: the
+  Original's PC fails the roll (-> parade -> `ParrySword`) and Rust's passes (-> `Strike(A)`). **Civilian
+  family, not melee.**
+- **`MoveWaiting->EnterSwordfight`, schema12 linux2/P002/Savegame_032 replay-002 f17626** — the
+  `mpMyLineJump`/ReconsiderSwordfight lead. Proof the Original HAD a jump line: its path-event tolerance
+  flips from `65.0` (the `mpMyLineJump == NULL` arm, `RHartificialmalignity.cpp:6986`) to `0.0` (the
+  jump-line arm, `:6990`) from f17459 onward including the divergent frame. `GetStandardRangeSword() == 65`
+  confirmed from those events, and Rust's distance (61.36) is right — so the Original cannot have reached
+  the `uwDistance <= uwSwordRange` gate at `:6867` with PC 170 as target. Suspects: a friend target-swap in
+  the swap loop (`:6753-6786`) that Rust skipped, or a wrong `mpPrimaryTarget`. **NOTE: `ai.primary_target`
+  is not a compared trace field, so a wrong primary target can persist silently — worth adding.**
+- **`QuitSwordfight->MoveOk`, schema12 linux3/P003/Savegame_054 replay-007 f1065** — Rust's
+  `AttackingObserveAndMove` was NOT entered through `Think` (the AI decision-path gate produced zero hits),
+  so it is the `BattleDecisions`/`ReconsiderSwordfight` family.
+
+### Two time-savers confirmed by measurement (do not re-investigate)
+- **RNG callsite offsets in the corpus do NOT match `original-code/build/native-full/robin`** — offset
+  `1845615` lands after an `SBGeoVector2D` constructor call there, not a `rand`. addr2line/nm against that
+  binary will mislead you. Use the runner's learned `PARITY_DEBUG_RNG_SITE_MAP` instead; it produced a
+  clean 1:1 map on every trace in that bundle.
+- **`INVERSE_SWORDFIGHT_ASPECT_RATIO` is 1 in the shipping build** (`original-code/RHsettings.h:103`), so
+  the half-circle and lateral IN_PROGRESS arms omitting the `mY *=` that the full-circle arm applies is a
+  **no-op**. Don't spend time on that asymmetry.
+
+### Open: composite sequence launch must interleave immediate execution with registration
+Root cause FOUND, fix deliberately not landed (too broad to validate in one agent's window).
+Repro: nicouzouf/P001/Savegame_022 replay-012 f1413, the scroll-dialog composite
+`[LockAi(civ), TurnElement(PC), TurnElement(civ)]`, all level 1. `LockAi` is an `ExecutedImmediately()`
+command whose `ScriptLockAI` calls `Stop(RHPRIORITY_NORMAL)` -> `StopNotYetLaunchedSequenceElements`
+(`original-code/RHsequencemanager.cpp:1031-1054`), which interrupts the owner's entries ALREADY on
+`mlistSequenceElementsToGo`. In the Original, `RHSequence::NextSequenceElementsGo`
+(`RHsequence.cpp:272-288`) walks the level ONE ELEMENT AT A TIME and `RegisterSequenceElementToGo`
+(`RHsequencemanager.cpp:968-978`) executes immediate commands INLINE — so when LockAi's Stop runs, the
+civilian's later `TurnElement` is not yet on the list and survives. (The loop's `state != RHSEQ_INTERRUPTED`
+re-check exists precisely for this.) Rust's `SequenceManager::launch_sequence` registers ALL level-1
+elements first, then drains the immediates, so the civilian's `TurnElement` is already queued and gets
+interrupted. Fix = interleave the immediate drain with per-element registration; needs `EngineInner`
+access inside the launch loop (e.g. a resumable launch action).
+
+### SeekPointSelection members are TWO different bugs
+- **Sweep-count flood (the known lead):** schema12 linux2/P002/Savegame_031 replay-011 and
+  linux3/P001/Savegame_029 replay-015. r015 shows Original 21 first-draws vs Rust 22 — exactly one extra
+  accept/insert pair, i.e. `uwExpectedNumberOfPointsForOneGuy` one too high. r011 additionally shows the
+  Original making a leading draw at offset `1809799` that Rust never makes and that is still UNMAPPED —
+  worth capturing.
+- **NOT a sweep-count bug:** linux3/P003/Savegame_035 replay-002 f23297. The sweep agrees exactly (3 pairs
+  both sides). Rust's FIRST candidate point is rejected (`acceptance_roll >= interest`,
+  `crates/robin_engine/src/ai_enemy/seek.rs:906-922`) so it recurses to a second point and never reaches
+  the Original's accepted point — whose `AppendMoveToSequence` routes through a door into a building and
+  draws `building_exit_wait_frames` (`engine/movement.rs:1546-1550`). Chase the accepted point's
+  `interest`, not the sweep.
 
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust

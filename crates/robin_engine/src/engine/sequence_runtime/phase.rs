@@ -2879,7 +2879,7 @@ impl EngineInner {
                                     sequence_manager: &mut self.orders.sequence_manager,
                                     next_order_id: &mut self.orders.next_order_id,
                                 }
-                                .dispatch(cmd, target, seq_id, elem_idx);
+                                .dispatch(owner, cmd, target, seq_id, elem_idx);
                                 if barrier == OwnerActionBarrier::Skip {
                                     break 'action;
                                 }

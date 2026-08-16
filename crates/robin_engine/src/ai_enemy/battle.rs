@@ -2776,6 +2776,22 @@ impl EnemyAi {
             return;
         }
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=reconsider_close_enough working_distance_bits={:08x} working_distance={} sword_range={} run_distance={} b_charge={} b_first={} my_line_jump={:?} target_in_lift={} working_target={}",
+                ctx.frame,
+                self.base.me,
+                working_distance.to_bits(),
+                working_distance,
+                sword_range,
+                run_distance,
+                b_charge,
+                b_first_consideration,
+                my_line_jump,
+                target_in_lift,
+                working_target,
+            );
+        }
         // Close enough to fight? Charging units defer until the
         // reachpoint has been hit; everyone else engages immediately.
         if working_distance <= sword_range && (!b_charge || reachpoint) {

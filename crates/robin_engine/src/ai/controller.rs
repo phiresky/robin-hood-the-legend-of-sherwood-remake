@@ -5136,6 +5136,12 @@ impl AiController {
             // ─── Fleeing ────────────────────────────────────────────
             Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
                 if stimulus_type == StimulusType::EventReachPoint {
+                    if std::env::var_os("PARITY_DEBUG_AI_PANIC").is_some() {
+                        eprintln!(
+                            "[AIHIDE f={} co={:?} substate={:?}]",
+                            ctx.frame, ctx.original_creation_order, self.current_substate,
+                        );
+                    }
                     self.set_ai_state(AiState::Fleeing);
                     self.current_substate = Substate::FleeingHiding;
                     self.set_alert_status(AlertLevel::Yellow);
@@ -5174,6 +5180,17 @@ impl AiController {
                     && stimulus_type != StimulusType::EventCouldntReachPoint
                 {
                     return false;
+                }
+                if std::env::var_os("PARITY_DEBUG_AI_PANIC").is_some() {
+                    eprintln!(
+                        "[AIPANIC f={} co={:?} stim={:?} runs={} directed={} first_try={}]",
+                        ctx.frame,
+                        ctx.original_creation_order,
+                        stimulus_type,
+                        self.lasting_panic_runs,
+                        self.directed_panic,
+                        self.first_try,
+                    );
                 }
 
                 if self.lasting_panic_runs == 0 {

@@ -1276,6 +1276,7 @@ impl EngineInner {
             })
             .flatten();
         let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+        let mut sweep_rebase = None;
         let proposed = crate::combat::propose_good_sword_strike_with_debug(
             sim,
             &ctx,
@@ -1283,7 +1284,9 @@ impl EngineInner {
             &mut boredom,
             false,
             debug,
+            &mut sweep_rebase,
         );
+        self.apply_strike_selection_sweep_rebase(assets, pc_id, sweep_rebase);
         if let Some(debug) = debug {
             eprintln!(
                 "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_evaluate rng_before={:?} rng_after={:?} result={:?}]",
@@ -1984,6 +1987,7 @@ impl EngineInner {
             };
 
             let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+            let mut sweep_rebase = None;
             let proposed = crate::combat::propose_good_sword_strike_with_debug(
                 sim,
                 &strike_ctx,
@@ -1991,7 +1995,9 @@ impl EngineInner {
                 &mut pc_boredom,
                 true, // also_parade
                 debug,
+                &mut sweep_rebase,
             );
+            self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
             if let Some(debug) = debug {
                 eprintln!(
                     "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
@@ -2419,6 +2425,7 @@ impl EngineInner {
         };
 
         let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+        let mut sweep_rebase = None;
         let proposed = crate::combat::propose_good_sword_strike_with_debug(
             sim,
             &strike_ctx,
@@ -2426,7 +2433,9 @@ impl EngineInner {
             &mut victim_boredom,
             true, // also_parade — this is the reactive parry path
             debug,
+            &mut sweep_rebase,
         );
+        self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
         if let Some(debug) = debug {
             eprintln!(
                 "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
