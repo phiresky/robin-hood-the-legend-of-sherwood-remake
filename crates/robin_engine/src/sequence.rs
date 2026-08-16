@@ -3209,6 +3209,29 @@ impl SequenceManager {
         self.actor_translating
     }
 
+    /// Release the translation selection when its own element is the one that
+    /// just detached the actor's `mpSequenceElement`.
+    ///
+    /// `RHElementActor::SendCondolationCard` writes `mpSequenceElement = NULL`
+    /// whenever the terminal element is the selected one
+    /// (`RHelementactor.cpp:6696-6701`). A command body can reach that state
+    /// from inside its own `Translate` — `RHPathFinder::AddPathRequest` calls
+    /// `Stop()` on the actor whose Move is being translated
+    /// (`RHpathfinder.cpp:464`) — and everything the same `Translate` does
+    /// afterwards, including the `Wait()` it launches next, must observe the
+    /// cleared pointer. Rust holds the translation identity until after the
+    /// deferred condolence dispatch, so drop it here instead.
+    pub(crate) fn clear_translating_element_if_selected(
+        &mut self,
+        actor: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        if self.actor_translating == Some((actor, SequenceElementRef::new(seq_id, elem_idx))) {
+            self.actor_translating = None;
+        }
+    }
+
     /// Select an incoming element while the outgoing element's synchronous
     /// interruption callback runs. Nested Instruct calls use a stack because
     /// Original temporarily replaces the actor pointer at each recursive

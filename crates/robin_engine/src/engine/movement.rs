@@ -13184,6 +13184,20 @@ impl EngineInner {
                 // through `stop_owner` (which clears active sequences
                 // and pending path requests for this owner) and
                 // launch a `Wait` sequence element at `Wait` priority.
+                //
+                // `RHPathFinder::AddPathRequest` (`RHpathfinder.cpp:464-465`)
+                // calls `pRequest->pActor->Stop()` with no argument, so the
+                // stop priority is the declared default
+                // `RHPRIORITY_NORMAL` (`RHelementactor.h:273`) — NOT
+                // `RHPRIORITY_WAIT`.  The distinction decides whether the
+                // incoming Normal-priority Move element is stopped at all:
+                // `RHSequenceElement::Stop` only acts when
+                // `mPriority >= priorityOfStop`
+                // (`RHsequenceelement.cpp:528`), and `RHPRIORITY_NORMAL`(8)
+                // is stronger than `RHPRIORITY_WAIT`(9)
+                // (`RHsequenceelement.h:38-51`).  With `Wait` the Move
+                // survived, kept the actor's selection, and left the sprite's
+                // PositionGoalMap installed for one extra frame.
                 tracing::warn!(
                     actor = ?owner,
                     src_x = source.x,
@@ -13191,7 +13205,7 @@ impl EngineInner {
                     layer = entity_layer,
                     "try_dispatch_move_path: actor cannot be extracted from obstacle (Stop + Wait)",
                 );
-                self.stop_owner(owner, crate::sequence::SequencePriority::Wait);
+                self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
                 let mut wait_elem = crate::sequence::SequenceElement::new(
                     1,
                     crate::element::Command::Wait,

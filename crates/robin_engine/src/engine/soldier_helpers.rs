@@ -989,6 +989,21 @@ impl EngineInner {
                 }
             }
         }
+        if detaches_selected_order {
+            // Same C++ statement pair as the `installed_order` detach above:
+            // `mpSequenceElement = NULL` alongside `mpOrder = NULL`
+            // (`RHelementactor.cpp:6698-6700`). Rust's in-progress registry
+            // drops the element on its own terminal transition, but a card
+            // raised from inside the element's own `Translate` still holds the
+            // translation selection, and everything that runs later in that
+            // same `Translate` — notably the `Wait()` that
+            // `RHPathFinder::AddPathRequest` launches right after `Stop()`
+            // (`RHpathfinder.cpp:464-465`) — must arbitrate against a cleared
+            // selection instead of the element that just died.
+            self.orders
+                .sequence_manager
+                .clear_translating_element_if_selected(owner, seq_id, usize::from(elem_idx));
+        }
         if cleared_selected_goal {
             // A queued replacement may carry the outgoing movement's goal
             // across Rust's eager halt. Once a later selected element has
