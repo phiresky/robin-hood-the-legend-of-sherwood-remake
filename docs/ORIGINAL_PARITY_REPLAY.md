@@ -4706,3 +4706,23 @@ objects.
 - **Read those labels with caution.** This session proved the classifier's RNG-site labels are artifacts
   (it keys on the first RNG site of the diverging frame) and that three separate cluster framings were
   not single families. Re-measure and re-cluster by the actual state delta before dispatching.
+
+## Batch-21 sweep — 2026-08-16, runner 9fcb26ede
+- Manifest: 909 traces = the 128 still-failing after batch-20 (132 minus the 4 beggar captures retired in
+  `08fb17308`) plus the same 781-trace regression guard, reused unchanged so the two sweeps are directly
+  comparable.
+- Runner sha256 `10da8c9482f8bd4f…`; manifest sha256 `4470494688370856…`.
+- **Result: 804 pass, 71 state divergences, 34 RNG divergences, 0 timeouts.**
+  - Regression guard: **781/781 still pass — zero regressions**, a second consecutive clean guard result.
+    Between them the two sweeps cover ten shared-code merges (collision-grid grouping, Think recursion
+    depth, path-request scheduling, FIFO move intents incl. a removed OrderRuntime invariant, the
+    gaze-precision correction, and grid-ordered impact candidates).
+  - Failing set: **23 of 128 cleared (18%), 105 remain.**
+- Clearance rate is down from batch-20's 35%, as expected: the large single-cause families are gone and the
+  remaining work is roughly one investigation per one-to-three traces.
+- Remaining set: `remaining-failures-105.snapshot`. Classification: 51 groups, largest only 6
+  (`rng:VipIdleRemark` 6, `state:direction` 5, `rng:AiRandomValueRectangle` 5, `state:actor.animation` 5,
+  `state:direction_goal` 5, `ai.substate` 4, `MoveOk->Wait` 4, `actor.motion_state` 4).
+- **Guard coverage caveat:** the 781-trace guard samples only ~17% of the 4,508-trace passing pool, so it
+  bounds but does not eliminate regression risk. A full-universe sweep is still the only way to verify the
+  whole passing set, and none is on record in this ledger. Worth scheduling once the remaining count is low.
