@@ -83,6 +83,15 @@ A list of which additional features we have added, which ones we might still wan
   host-only exceptions live in `RNG_AUDIT.md`; typed serialized-stream labels
   and a separately typed seed-derived authoritative peasant-name generator,
   plus a structural source test, reject unreviewed gameplay RNG additions.
+  Recordings stay one linear timeline across in-mission saves and loads: a
+  save at a clean frame boundary writes a save-marker record (`sv`, the
+  state hash at capture), and loading a save made in the same session writes
+  a load-back record (`lb`) pointing at that marker's frame. Playback pins
+  an engine clone at each marker and swaps it back in at the load-back, so
+  quicksave/quickload and script-triggered restarts replay bit-exactly
+  without embedding save payloads. Loads of saves from other sessions cannot
+  be expressed this way and log a warning that the recording is no longer
+  linearly replayable.
 
 - **Original-game parity traces**
   (`crates/robin_rs/examples/original_parity_replay.rs`). A diagnostic runner
@@ -196,6 +205,7 @@ A list of which additional features we have added, which ones we might still wan
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be
   more useful.
+- Add the ability to control any soldiers on your side (green soldiers)
   
 ### Code Quality
 

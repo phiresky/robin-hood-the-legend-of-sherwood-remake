@@ -58,7 +58,7 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   into focused modules.
 - Rendering debug, HUD and minimap code is separated from normal entity/frame
   rendering.
-- Save version 52, replay version 9 and network version 15 are the only current
+- Save version 52, replay version 10 and network version 15 are the only current
   schemas. Historical save/replay compatibility is intentionally unsupported.
 
 ## Required invariants
