@@ -214,7 +214,8 @@ impl NativeContext<'_, '_> {
                 let actor_h = stack.pop_i32();
                 // Remove actor from their current building's occupant list
                 if let Some(&bld_h) = self.script_domains.buildings.actor_building.get(&actor_h) {
-                    if let Some(idx) = Self::building_index(bld_h)
+                    let building_idx = Self::building_index(bld_h);
+                    if let Some(idx) = building_idx
                         && let Some(occupants) =
                             self.script_domains.buildings.occupants.get_mut(idx)
                     {
@@ -224,6 +225,30 @@ impl NativeContext<'_, '_> {
                         .buildings
                         .actor_building
                         .remove(&actor_h);
+                    // `RHScript::CleanFromHisBuildingBeforeTeleport`
+                    // (`original-code/RHScript.cpp:5567-5588`) calls
+                    // `RHSectorBuilding::Leave`, and the Original keeps a
+                    // single `mlistOccupants` per building. The port mirrors
+                    // that list in both `ScriptDomains::buildings::occupants`
+                    // and the AI-facing `AiGlobalState::houses`, so the
+                    // teleport must drop the actor from both — exactly as the
+                    // PassDoor Leave hook in `engine::door_pass` does.
+                    // Otherwise `EnemyInHouseAlert` keeps counting a soldier
+                    // who was teleported out of the house and stages an extra
+                    // pursuer in the door battle.
+                    let house_key = building_idx
+                        .and_then(|idx| u16::try_from(idx).ok())
+                        .and_then(crate::sector::BuildingIdx::new);
+                    let actor_id = self.actor_id(actor_h);
+                    if let (Some(house_key), Some(actor_id)) = (house_key, actor_id)
+                        && let Some(house) = self
+                            .ai_global_mut()
+                            .houses
+                            .iter_mut()
+                            .find(|house| house.building_index == Some(house_key))
+                    {
+                        house.occupant_ids.retain(|&e| e != actor_id);
+                    }
                     1
                 } else {
                     tracing::warn!(

@@ -7,7 +7,10 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::{ai_max_norm_distance, ai_square_distance, resolve_seek_point_id, vec_to_sector};
+use super::util::{
+    ai_max_norm_distance, ai_max_norm_distance_world, ai_square_distance, resolve_seek_point_id,
+    vec_to_sector,
+};
 use super::{
     AlertSoldiersFailureContinuation, EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags,
     UNDEFINED_DIRECTION, archer, combat, task_priority,
@@ -1996,7 +1999,7 @@ impl EnemyAi {
             }
 
             Substate::SeekingSeekpointApproachingBeggar => {
-                self.seeking_seekpoint_approaching_beggar(stimulus_type, ctx)
+                self.seeking_seekpoint_approaching_beggar(sim, stimulus_type, global, ctx, tick)
             }
 
             Substate::SeekingSeekpointIdentifyingBeggar1 => {
@@ -2464,16 +2467,35 @@ impl EnemyAi {
 
     fn seeking_seekpoint_approaching_beggar(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
+        global: &mut AiGlobalState,
         ctx: &AiContext,
+        tick: &AiPerTickData,
     ) -> bool {
         // Soldier is walking toward the beggar's last known
         // position (set by seek_next_point → go_near).
         // On arrival, stop and begin identification.
         if stimulus_type == StimulusType::EventReachPoint {
-            // The reference checks MaxNormDistance(beggar) < 100;
-            // since we used go_near(sim, pos, 50), reaching means
-            // we're close enough. If we somehow aren't, resume.
+            // `RHartificialmalignity.cpp:2394-2427`: the arrival is only an
+            // identification when `MaxNormDistance( mpBeggarToExamine ) < 100`.
+            // The go_near(50) request only bounds the *path goal*; the beggar
+            // can have walked away, or the point can be reached from the far
+            // side of an obstacle, so the arrival must be re-measured against
+            // the beggar's live body position. Otherwise the soldier menaces
+            // thin air instead of resuming the search at the next seek point.
+            let beggar_view = ctx.entity_view(self.beggar_to_examine).unwrap_or_else(|| {
+                panic!(
+                    "beggar {} disappeared before the approach distance check",
+                    self.beggar_to_examine
+                )
+            });
+            let beggar_world = beggar_view.detection_position_world;
+            if ai_max_norm_distance_world(&beggar_world, &ctx.self_body_position_world) >= 100.0 {
+                // Too far to control this beggar — carry on searching.
+                self.seek_next_point(sim, global, ctx, tick);
+                return false;
+            }
             self.base.stop_all();
             self.set_state(
                 AiState::Seeking,

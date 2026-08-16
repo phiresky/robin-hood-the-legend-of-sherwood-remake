@@ -701,6 +701,25 @@ pub(super) fn ai_max_norm_distance(
     dx.max(dy).max(dz)
 }
 
+/// `MaxNormDistance` over two already-resolved **world** points.
+///
+/// `RHArtificialIntelligence::MaxNormDistance`
+/// (`original-code/RHartificialintelligence.cpp:6950-6953`) subtracts the two
+/// raw `RHElement::GetPosition()` world points, stretches Y by
+/// `INVERSE_ASPECT_RATIO` and takes the 3D Chebyshev norm. Use this variant
+/// wherever the raw body points are available (`AiContext::self_body_position_world`
+/// / `AiEntityView::detection_position_world`): AI `Position()` snaps a
+/// door-passing actor to the gate endpoint and is not interchangeable.
+pub(super) fn ai_max_norm_distance_world(
+    target: &crate::coordinates::WorldPoint3D,
+    me: &crate::coordinates::WorldPoint3D,
+) -> f32 {
+    let dx = (target.x - me.x).abs();
+    let dy = ((target.y - me.y) * crate::position_interface::INVERSE_ASPECT_RATIO).abs();
+    let dz = (target.z - me.z).abs();
+    dx.max(dy).max(dz)
+}
+
 /// Convert a raw 2D map-space vector `(target - me)` to a 0–15 sector.
 /// Thin alias over [`crate::position_interface::vector_to_sector_0_to_15_iso`].
 pub(super) fn vec_to_sector(dx: f32, dy: f32) -> u16 {
