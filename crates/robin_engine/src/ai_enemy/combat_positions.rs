@@ -1424,6 +1424,24 @@ impl EnemyAi {
         let shield_advancing = Substate::AttackingAdvancingWithShield as u32;
 
         let mut count: i32 = 0;
+        let debug = arrow_protection_debug_matches(|| ctx.frame, || self.base.me);
+        // `SquareDistance` compares `pSoldier->GetPosition()` against
+        // `mpMe->GetPosition()` (`RHartificialintelligence.cpp:6919-6922`),
+        // i.e. both raw element positions. `AiContext::position` and
+        // `FighterSnapshot::position` carry the AI `Position()` result
+        // instead, which snaps an actor in door transit onto the gate
+        // endpoint; measuring from there moved a door-passing orphan archer
+        // out of the 500-unit radius and silenced the shield-bearer
+        // reaction.
+        let me_raw = self
+            .find_fighter(self.base.me, tick)
+            .unwrap_or_else(|| {
+                panic!(
+                    "NumberOfNearbyArchersWhoNeedProtection owner {} is absent from its own fighter snapshots",
+                    self.base.me
+                )
+            });
+        let (me_position, me_elevation) = (me_raw.raw_position, me_raw.elevation as f32);
         // Original walks the complete camp soldier registry. In particular it
         // does not apply IsAbleToFight/Active before counting an orphan
         // archer: an inactive Seeking soldier still owns its AI state and
@@ -1434,15 +1452,39 @@ impl EnemyAi {
         // admission work.
         for f in &tick.fighter_registry {
             if !f.is_friendly {
+                if debug {
+                    eprintln!(
+                        "ARCHER_PROTECTION_SCAN frame={} owner={} cand={} skip=not_friendly",
+                        ctx.frame, self.base.me, f.handle
+                    );
+                }
                 continue;
             }
-            if ai_square_distance(
-                &f.position,
+            let sq = ai_square_distance(
+                &f.raw_position,
                 f.elevation as f32,
-                &ctx.position,
-                ctx.elevation,
-            ) >= consider_sq
-            {
+                &me_position,
+                me_elevation,
+            );
+            if debug {
+                eprintln!(
+                    "ARCHER_PROTECTION_SCAN frame={} owner={} cand={} sq={} state={:?} sub={} archer={} tower={} sbb={} abm={} shield={} pos={:?} elev={}",
+                    ctx.frame,
+                    self.base.me,
+                    f.handle,
+                    sq,
+                    f.ai_state,
+                    f.current_substate,
+                    f.is_archer_unit,
+                    f.is_tower_guard,
+                    f.shield_bearer_before_me,
+                    f.archer_behind_me,
+                    f.is_shield_bearer,
+                    f.position,
+                    f.elevation
+                );
+            }
+            if sq >= consider_sq {
                 continue;
             }
             // Filter on AI state ∈ {Seeking, Wondering, Attacking}.
@@ -2266,6 +2308,12 @@ impl EnemyAi {
         // exists to answer even though such a posture reads as
         // "unable to fight".
         let mut dangerous_enemy: HumanHandle = 0;
+        if debug {
+            eprintln!(
+                "ARROW_PROTECTION_SEEN frame={} owner={} seen={:?}",
+                ctx.frame, self.base.me, tick.seen_last_frame_enemies
+            );
+        }
         for &handle in &tick.seen_last_frame_enemies {
             let Some(view) = ctx.entity_view(handle) else {
                 tracing::warn!(
@@ -2278,6 +2326,17 @@ impl EnemyAi {
                 continue;
             };
             let min_dist = archer::MIN_PROTECT_ARROW_DISTANCE as f32;
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION_ENEMY frame={} owner={} cand={} sq={} action={:?} bow={}",
+                    ctx.frame,
+                    self.base.me,
+                    handle,
+                    square_distance_to(&view.position, view.elevation),
+                    view.action_state,
+                    view.action_state.is_bow()
+                );
+            }
             if square_distance_to(&view.position, view.elevation) < min_dist * min_dist {
                 continue;
             }
@@ -4211,6 +4270,7 @@ mod tests {
         let orphan = FighterSnapshot {
             handle: 250,
             position: position(1_328.0, 1_033.0),
+            raw_position: position(1_328.0, 1_033.0),
             elevation: 0.0,
             is_friendly: true,
             is_able_to_fight: false,
@@ -4221,6 +4281,17 @@ mod tests {
             ..FighterSnapshot::default()
         };
         let mut tick = AiPerTickData::stub();
+        // The registry always leads with the scanning soldier's own entry;
+        // `SquareDistance` measures from its raw element position.
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 219,
+            position: position(1_520.0, 900.0),
+            raw_position: position(1_520.0, 900.0),
+            elevation: 0.0,
+            is_friendly: true,
+            ai_state: AiState::Attacking,
+            ..FighterSnapshot::default()
+        });
         tick.fighter_registry.push(orphan.clone());
         assert_eq!(
             ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
@@ -4228,15 +4299,16 @@ mod tests {
             "inactive is not an Original admission gate"
         );
 
-        tick.fighter_registry[0].ai_state = AiState::Default;
+        tick.fighter_registry[1].ai_state = AiState::Default;
         assert_eq!(
             ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
             0,
             "the explicit AI-state gate still rejects an inactive Default archer"
         );
 
-        tick.fighter_registry[0] = FighterSnapshot {
+        tick.fighter_registry[1] = FighterSnapshot {
             position: position(2_100.0, 900.0),
+            raw_position: position(2_100.0, 900.0),
             ..orphan
         };
         assert_eq!(

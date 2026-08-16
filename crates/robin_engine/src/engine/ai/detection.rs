@@ -3376,6 +3376,15 @@ impl EngineInner {
                                 sector: None,
                                 level: my_layer,
                             },
+                            // `SoldierSnapshot::position` is already the
+                            // raw `RHElement::GetPosition()` (no door
+                            // transit / carrier substitution).
+                            raw_position: crate::ai::Position {
+                                x: me_snap.position.x,
+                                y: me_snap.position.y,
+                                sector: None,
+                                level: my_layer,
+                            },
                             direction: me_snap.direction,
                             is_friendly: true,
                             is_swordfighting: me_snap.is_swordfighting,
@@ -3470,6 +3479,13 @@ impl EngineInner {
                                 sector: None,
                                 level: ss.layer,
                             },
+                            // Already the raw `RHElement::GetPosition()`.
+                            raw_position: crate::ai::Position {
+                                x: ss.position.x,
+                                y: ss.position.y,
+                                sector: None,
+                                level: ss.layer,
+                            },
                             direction: ss.direction,
                             is_friendly: true,
                             is_swordfighting: ss.is_swordfighting,
@@ -3545,6 +3561,13 @@ impl EngineInner {
                         tick_data.nearby_fighters.push(FighterSnapshot {
                             handle: enemy_handle,
                             position: crate::ai::Position {
+                                x: pc.position.x,
+                                y: pc.position.y,
+                                sector: None,
+                                level: pc.layer,
+                            },
+                            // Already the raw `RHElement::GetPosition()`.
+                            raw_position: crate::ai::Position {
                                 x: pc.position.x,
                                 y: pc.position.y,
                                 sector: None,
