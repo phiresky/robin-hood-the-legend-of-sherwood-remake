@@ -7204,7 +7204,7 @@ impl EnemyAi {
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.action_state)
                 .unwrap_or_default();
-            if std::env::var_os("PARITY_DEBUG_SHIELD_TIMER").is_some() {
+            if crate::ai_enemy::battle_decision_debug_enabled() {
                 eprintln!(
                     "SHIELD_TIMER frame={} me={} action={:?} shield={} left={} right={} archer_behind={} target={} target_action={:?}",
                     ctx.frame,
@@ -7388,7 +7388,7 @@ impl EnemyAi {
                     primary = self.base.primary_target,
                     "phalanx timer"
                 );
-                let phalanx_debug = std::env::var_os("PARITY_DEBUG_SHIELD_TIMER").is_some();
+                let phalanx_debug = crate::ai_enemy::battle_decision_debug_enabled();
                 if phalanx_debug {
                     eprintln!(
                         "PHALANX_TIMER frame={} me={} action={:?} left={} right={} target={} archer_behind={}",

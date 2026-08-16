@@ -1468,7 +1468,7 @@ impl EnemyAi {
             );
             if debug {
                 eprintln!(
-                    "ARCHER_PROTECTION_SCAN frame={} owner={} cand={} sq={} state={:?} sub={} archer={} tower={} sbb={} abm={} shield={} pos={:?} elev={}",
+                    "ARCHER_PROTECTION_SCAN frame={} owner={} cand={} sq={} state={:?} sub={} archer={} tower={} sbb={} own_abm={} abm={} shield={} pos={:?} elev={}",
                     ctx.frame,
                     self.base.me,
                     f.handle,
@@ -1478,6 +1478,7 @@ impl EnemyAi {
                     f.is_archer_unit,
                     f.is_tower_guard,
                     f.shield_bearer_before_me,
+                    self.archer_behind_me,
                     f.archer_behind_me,
                     f.is_shield_bearer,
                     f.position,
@@ -1855,7 +1856,7 @@ impl EnemyAi {
                 threshold = atk_dist * atk_dist,
                 "reconsider_phalanx: attack-distance gate"
             );
-            if std::env::var_os("PARITY_DEBUG_SHIELD_TIMER").is_some() {
+            if crate::ai_enemy::battle_decision_debug_enabled() {
                 eprintln!(
                     "RECONSIDER_PHALANX frame={} me={} nearest={} sq={} thr={} left={} right={}",
                     ctx.frame,
