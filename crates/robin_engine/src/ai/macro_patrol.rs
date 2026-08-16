@@ -773,6 +773,18 @@ pub fn prepare_forecast_destination_for_ia(
         // else: position is fine, keep current direction.
     }
 
+    if std::env::var_os("PARITY_DEBUG_FORECAST_IA").is_some()
+        && grid_sector.is_some_and(|gs| gs.sector_type.is_lift() || gs.sector_type.is_building())
+    {
+        eprintln!(
+            "FORECAST input={input:?} grid_sector_type={:?} out=({}, {}, sector={sector}, layer={layer}) dir={direction} gates={} entry={entry_gate:?}",
+            grid_sector.map(|gs| gs.sector_type),
+            point.x,
+            point.y,
+            building_gates.len(),
+        );
+    }
+
     PreparedForecastDestination {
         fallback: ForecastedDestination {
             position: Position {
