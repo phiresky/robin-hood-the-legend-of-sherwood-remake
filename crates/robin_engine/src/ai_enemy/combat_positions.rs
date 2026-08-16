@@ -1001,10 +1001,15 @@ impl EnemyAi {
         };
         let primary_pos = primary.position;
 
-        // (1) Search for an archery sector containing the enemy
+        // (1) Search for an archery sector containing the enemy.
+        // `RHSectorArchery::IsInside( posEnemy )` (RHsector.cpp:2330-2340)
+        // rejects the sector when its own layer differs from
+        // `posEnemy.uwLevel` — the layer travels with the enemy position the
+        // caller passed in (`ChooseGoodShootingPoint( Position( mpPrimaryTarget ) )`,
+        // RHartificialmalignity.cpp:7627), not with the archer.
         let mut found_sector: Option<usize> = None;
         for (i, sector) in global.archery_sectors.iter().enumerate() {
-            if !sector.is_full() && sector.is_inside(&primary_pos, ctx.position.level) {
+            if !sector.is_full() && sector.is_inside(&primary_pos, primary_pos.level) {
                 found_sector = Some(i);
                 break;
             }

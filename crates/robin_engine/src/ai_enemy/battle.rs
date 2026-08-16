@@ -1177,7 +1177,7 @@ impl EnemyAi {
                 if self.is_archer() && self.base.blood_alcohol == 0 {
                     if crate::ai_enemy::battle_decision_debug_enabled() {
                         eprintln!(
-                            "ARCHER_DECISION frame={} me={} tower={} sbb={} shooting_point={:?} too_near={} pos={:?}",
+                            "ARCHER_DECISION frame={} me={} tower={} sbb={} shooting_point={:?} too_near={} pos={:?} primary={} primary_pos={:?}",
                             ctx.frame,
                             self.base.me,
                             self.tower_guard,
@@ -1190,7 +1190,10 @@ impl EnemyAi {
                                     ctx,
                                     tick,
                                 ),
-                            ctx.position
+                            ctx.position,
+                            self.base.primary_target,
+                            self.find_fighter(self.base.primary_target, tick)
+                                .map(|f| f.position),
                         );
                     }
                     // Archer offensive.
