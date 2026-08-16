@@ -893,6 +893,42 @@ linux3/P003/Savegame_010 replay-009 (f18927, Pc194 on stairs). On the frame the 
 completes with a zeroed goal, the Original selects and translates the REVERSE `PassDoor` element in that
 same frame; Rust instead installs a further-out walk destination.
 
+### AUDIT OWED: range gates reading the AI-resolved position instead of the raw element position
+`RHArtificialIntelligence::Position()` (`original-code/RHartificialintelligence.cpp:4307-4343`) SNAPS an
+actor in door transit onto the gate endpoint. `SquareDistance` /`MaxNormDistance`
+(`RHartificialintelligence.cpp:6919-6922`) use `GetPosition()` — the RAW element position on both sides.
+Rust's `FighterSnapshot::position` / `AiContext::position` carry the AI-resolved value, so any range gate
+built on them measures a door-transiting actor from the gate. This was proven to cause a real bug
+(`NumberOfNearbyArchersWhoNeedProtection` counted 554 units instead of 489, returned 0 instead of 1, and a
+shield bearer never raised its shield) and fixed by adding `FighterSnapshot::raw_position` — mirroring the
+`AiEntityView::position` / `detection_position` split that already existed.
+**Only the one provable site was changed.** Other gates phrased as `SquareDistance`/`MaxNormDistance` still
+read `position` and should be audited against their C++ originals — known candidates:
+`refresh_arrow_protection`'s own two gates and `reconsider_phalanx`'s attack-distance gate.
+
+### Family B — BattleDecisions branch selection (3+ traces, biggest remaining prize)
+- schema12 SuN1Sh1nE/P004/Savegame_013 replay-005 f2165: soldier 81 leaves Phalanx; Original takes
+  `DECISION_FIGHT` -> `ProtectingWithShield`, Rust takes `DECISION_OBSERVE`. The Observe/Fight gate
+  `uwNumberOfFriendsNearerThanMe >= enemies + enemies*(0.045f*courage)`
+  (`original-code/RHartificialmalignity.cpp:7683`) counts 6 nearer friends for soldier 81 but 5 for soldier
+  80 — even though 81 stands CLOSER to the shared target. The mixed-metric comparison is already faithful
+  (`RHposition` is 2-D, so the friend test really is a plain map `SquareNorm` against a stretched-3D
+  `ulSquareEnemyDistance`); suspect the friend-loop MEMBERSHIP.
+- schema12 linux3/P001/Savegame_040 replay-015 f28012 (soldier 217) and nicouzouf/P001/Savegame_071
+  replay-010 f995 (soldier 115): the archer tree (`:7578-7645`) diverges at `ChooseGoodShootingPoint` and at
+  `GetNearestFreeShieldBearer` / a dropped `mpShieldBearerBeforeMe` link respectively.
+Use the new `PARITY_DEBUG_BATTLE_DECISION` (prints `BATTLE_DECISION`, `ARCHER_DECISION`, `SHIELD_TIMER`,
+`PHALANX_TIMER`, `PHALANX_TIMER_EXIT`, `RECONSIDER_PHALANX`) — it reads the decision-tree branch directly
+instead of inferring it from `actor.command`.
+
+### More capture-binary caveats (cost an agent real time)
+- `robin-schema14-capture` does **not** reproduce schema-12 traces — its `[DBG]` stream shows no `Think` at
+  all on the diverging frames. Use it for schema-14 only.
+- It predates `PARITY_DEBUG_ORIGINAL_PROJECTILE`, so that diagnostic is not compiled in.
+- It ships a symtab but **no DWARF**: gdb only works via `break *(&'<mangled>' + offset)` off hand-read
+  disassembly. `RHArtificialIntelligence::mpUniversalFrameCounter` is the frame counter.
+- `set $sp = ...` in a gdb script silently clobbers the stack pointer and segfaults the inferior.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
