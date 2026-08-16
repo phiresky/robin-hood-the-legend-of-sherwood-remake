@@ -653,6 +653,15 @@ pub fn forecast_destination_for_ia(
     prepare_forecast_destination_for_ia(input, doors, sectors, sector_map).resolve(sim)
 }
 
+/// Opt-in provenance for `ForecastDestinationForIA` resolutions that run
+/// through a lift sector. Process-local diagnostic state only: the value is
+/// read once and never enters engine state, snapshots, hashes, or the
+/// simulation RNG stream.
+fn forecast_ia_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_FORECAST_IA").is_some())
+}
+
 /// Prepare every deterministic branch of `ForecastDestinationForIA` without
 /// consuming the authoritative RNG. Only [`PreparedForecastDestination::resolve`]
 /// selects a building exit.
@@ -773,12 +782,9 @@ pub fn prepare_forecast_destination_for_ia(
         // else: position is fine, keep current direction.
     }
 
-    if std::env::var_os("PARITY_DEBUG_FORECAST_IA").is_some()
-        && grid_sector.is_some_and(|gs| gs.sector_type.is_lift() || gs.sector_type.is_building())
-    {
+    if forecast_ia_debug_enabled() && grid_sector.is_some_and(|gs| gs.sector_type.is_lift()) {
         eprintln!(
-            "FORECAST input={input:?} grid_sector_type={:?} out=({}, {}, sector={sector}, layer={layer}) dir={direction} gates={} entry={entry_gate:?}",
-            grid_sector.map(|gs| gs.sector_type),
+            "FORECAST input={input:?} out=({}, {}, sector={sector}, layer={layer}) dir={direction} gates={} entry={entry_gate:?}",
             point.x,
             point.y,
             building_gates.len(),
@@ -802,22 +808,30 @@ pub fn prepare_forecast_destination_for_ia(
 
 /// Find the exit door for a lift sector in the given direction.
 ///
-/// Scans the door table for a door whose `sector_in` matches the lift
-/// sector with the appropriate lift door type (High or Low).
+/// `RHSectorLift` resolves `GetHighSector/Layer/EntryPoint/ExitDirection`
+/// through `mpHighestDoor` and the low equivalents through `mpLowestDoor`
+/// (`original-code/RHSector.h:315-327`). Those two doors are chosen at level
+/// load by extreme `GetPointOut().mY` among the lift's own doors, *not* by
+/// door type (`original-code/RHsector.cpp:1493-1521`) — the reference keeps
+/// the `DOOR_LIFT_HIGH` assertion commented out at `RHsector.cpp:1524`
+/// precisely because a lift's high endpoint often carries another type.
+/// Selecting by type therefore misses the endpoint entirely on such lifts
+/// and silently falls back to the target's raw position.
 fn find_lift_exit_door(
     lift_sector: u16,
     moving_upwards: bool,
     doors: &[crate::gate::Door],
 ) -> Option<&crate::gate::Door> {
-    use crate::gate::DoorType;
-    doors.iter().find(|d| {
-        d.sector_in == lift_sector
-            && if moving_upwards {
-                matches!(d.door_type, DoorType::LiftHigh | DoorType::LiftHighCrenel)
-            } else {
-                d.door_type == DoorType::LiftLow
-            }
-    })
+    let (low_index, high_index) = crate::gate::lift_endpoint_door_indices(
+        doors,
+        crate::sector::SectorNumber::new(lift_sector as i16),
+    )?;
+    let index = if moving_upwards {
+        high_index
+    } else {
+        low_index
+    };
+    doors.get(index as usize)
 }
 
 /// Pick a random building exit gate that isn't the entry door.
