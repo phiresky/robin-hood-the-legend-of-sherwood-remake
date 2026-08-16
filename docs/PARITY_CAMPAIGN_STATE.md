@@ -637,6 +637,18 @@ recording the stamp (e.g. `RHParity::RecordEntityCommand("beggar_dont_talk_stamp
 runner command variant. Not done here because the Original cannot be rebuilt on this machine, so the change
 would be unvalidatable and would risk the capture build.
 
+### Follow-up: StartPostSeekSequence ordering (newly observable, not yet wrong on any trace)
+`EngineInner::start_post_seek_sequence` (`crates/robin_engine/src/engine/mod.rs:3606`) clears
+`actor.seek_target` and folds `wait_time = seek_refresh_wait` **before** checking whether a post-seek
+sequence exists. C++ `StartPostSeekSequence` (`original-code/RHelementactor.cpp:8024-8043`) does all of
+that strictly inside `if (mpPostSeekSequence != 0)` and never touches `mulWaitTime`. Harmless until now,
+but it became newly observable after the actor-level seek-target fix (`376c9cbd2`). Worth tightening.
+
+Useful reframing discovered while triaging: `actor.animation` IS `mpOrder->action`
+(`original-code/RHelementactor.h:209`), so an `actor.animation` divergence is really an
+*order-advance timing* divergence, and value `283` = `RHNONANIMATION_END` = no order installed at all.
+That reading is what decomposed the 7-trace `actor.animation` cluster into five unrelated bugs.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
