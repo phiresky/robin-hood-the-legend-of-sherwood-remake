@@ -8178,10 +8178,13 @@ impl EngineInner {
         //   * Rebalance(target) — ReconsiderSwordfight's direct
         //     `RHElementActorHuman::EnterSwordFight` call. This updates the
         //     relationship without authoring a recursive command/EventDone.
-        //   * RaiseSword — sword pose without engagement. `go_to`'s
-        //     `GOTO_SWORD` arm, `AttackingApproachToObserve`, and
+        //   * RaiseSword — sword pose without engagement, launched as its
+        //     own sequence. `AttackingApproachToObserve` and
         //     menace-effect-of-hit need a sword pose held without an
-        //     active fight.
+        //     active fight. `go_to`'s `GOTO_SWORD` arm does NOT come
+        //     through here: Original inserts its raise-sword element into
+        //     the movement's own sequence, so it travels on the movement
+        //     intent as `enter_swordfight_before_move` instead.
         if let Some(request) = effects.enter_swordfight {
             match request {
                 crate::ai::EnterSwordfightRequest::RaiseSword => {

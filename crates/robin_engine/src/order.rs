@@ -750,6 +750,17 @@ pub struct AiOrderIntent {
     /// drain.
     #[serde(default)]
     pub quit_swordfight_before_move: bool,
+    /// `GOTO_SWORD` issued while the actor is *not* in a sword action state
+    /// prepends an `EnterSwordfight` (raise-sword, no opponent) element to
+    /// the movement's own sequence — `RHArtificialIntelligence::GoTo`
+    /// (`original-code/RHartificialintelligence.cpp:2480-2497`) inserts it
+    /// into `plistSequence` at the command level ahead of the movement.
+    /// It must not be launched as a standalone sequence: the movement would
+    /// then arbitrate against the actor's already-postponed work in its own
+    /// right and interrupt it, instead of waiting behind the raise-sword
+    /// element at the next command level.
+    #[serde(default)]
+    pub enter_swordfight_before_move: bool,
     /// A non-sword GoTo issued while menacing carries `StopMenace` as the
     /// first element of the same sequence, ahead of the movement.
     #[serde(default)]
@@ -812,6 +823,7 @@ impl AiOrderIntent {
             speed_factor: 1.0,
             no_halt: false,
             quit_swordfight_before_move: false,
+            enter_swordfight_before_move: false,
             stop_menace_before_move: false,
             lower_shield_before_move: false,
             append_special_action_tail: false,

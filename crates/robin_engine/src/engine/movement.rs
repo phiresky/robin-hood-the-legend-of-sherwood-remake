@@ -6185,6 +6185,12 @@ impl EngineInner {
                     Some(entity_id),
                 ));
             }
+            if intent.enter_swordfight_before_move {
+                prefix.push(Self::goto_enter_swordfight_element(
+                    prefix.len() as u16 + 1,
+                    entity_id,
+                ));
+            }
             if intent.stop_menace_before_move {
                 prefix.push(crate::sequence::SequenceElement::new(
                     prefix.len() as u16 + 1,
@@ -6257,6 +6263,7 @@ impl EngineInner {
 
         let move_level = 1
             + u16::from(intent.quit_swordfight_before_move)
+            + u16::from(intent.enter_swordfight_before_move)
             + u16::from(intent.stop_menace_before_move)
             + u16::from(intent.lower_shield_before_move);
         let mut elem = crate::sequence::SequenceElement::new_movement(
@@ -6299,6 +6306,12 @@ impl EngineInner {
                 Some(entity_id),
             ));
         }
+        if intent.enter_swordfight_before_move {
+            let level = sequence
+                .last()
+                .map_or(1, |element| element.command_level.saturating_add(1));
+            sequence.append_element(Self::goto_enter_swordfight_element(level, entity_id));
+        }
         if intent.stop_menace_before_move {
             sequence.append_element(crate::sequence::SequenceElement::new(
                 sequence
@@ -6335,6 +6348,36 @@ impl EngineInner {
             "AI movement launched via sequence element"
         );
         Some(sequence_id)
+    }
+
+    /// The raise-sword element `RHArtificialIntelligence::GoTo` inserts into
+    /// the movement's own sequence for `GOTO_SWORD` when the actor is not
+    /// already in a sword action state
+    /// (`original-code/RHartificialintelligence.cpp:2486-2495`): a generic
+    /// `ENTER_SWORDFIGHT` with a null opponent, no jump-line destination and
+    /// `SWORDFIGHT_PREPARED` cleared.
+    fn goto_enter_swordfight_element(
+        command_level: u16,
+        entity_id: EntityId,
+    ) -> crate::sequence::SequenceElement {
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            command_level,
+            crate::element::Command::EnterSwordfight,
+            Some(entity_id),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::SwordfightPrepared,
+            crate::sequence::FieldValue::Bool(false),
+        );
+        element
     }
 
     /// Build the exact tail authored by
