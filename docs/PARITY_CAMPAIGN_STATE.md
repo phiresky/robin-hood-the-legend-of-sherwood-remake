@@ -1247,6 +1247,46 @@ Remember offsets are NOT comparable across capture generations.
   (`RHartificialmalignity.cpp:15272-15278`), `ProposeGoodStepBackGoal`, or an ordering difference between
   the `EVENT_REACHPOINT`->`SetState(SWORDFIGHT)` transition and the `EVENT_SWORDSTRIKE` recursion.
 
+### Door-goal A*: an invented shortcut was dropping the Original's multi-gate detours
+`crates/robin_engine/src/gate.rs:1390-1427` had a hand-added shortcut in `find_path_into_door`: if the
+source sector was the goal door's `sector_out`/`sector_in`, it returned a one-step path immediately.
+`RHFastFindGrid::FindPathIntoDoor` (`original-code/RHfastfindgrid.cpp:9860`) has **no such shortcut** — it
+seeds every gate of the source sector and runs the A*, whose goal test only fires when the goal door is
+POPPED (`FindPathToDoorNodes`, `:9968`). A cheaper multi-gate route can relax the goal door first,
+overwriting its `mbDirect`/`mfDistanceFromSource`/`mpPreviousLink` (`:10008-10058`), so the Original walks
+around through neighbouring sectors and reaches the goal door from its FAR side even when it borders the
+source. Losing those intermediate gates also lost the building-exit branch in the gate loop of
+`AppendMoveToSequence` (`RHsequence.cpp:484`, `:519`) — `WAIT_TIMER( (rand()&15)+(rand()&15) )` +
+`CHANGE_POSITION` whenever a gate is left from a building sector. Fixed in `420481dab`.
+
+### Residual on the same family: Rust never pops door 14 (best remaining lead)
+30s linux3/P003/Savegame_019 replay-001, f18479. Instrumented Rust's door-A* seeds and pop order
+(src (1664.32,1058.64), sector 0, goal door 16, 46 seeds). Penalties match the C++ formula
+`|in-out| + PENALTY_BUILDING|PENALTY_DEFAULT` (`original-code/RHGate.cpp:642-652`) EXACTLY. Rust pops
+`21 (553.02) -> 15 (576.39) -> 13 (581.99) -> 16 (645.69, prev=None)` and returns `[16]`. Hand-running the
+C++ algorithm on the same numbers gives the Original's route: popping 13 must relax **door 14** to
+`g=311.5, score~562.3` (< 645.69), then 14 relaxes 21 to 496.6, then 21 relaxes 16 to 589.6 ->
+`[13,14,21,16]`, whose 2nd gate leaves building sector 153 (= exactly one `rand&15` pair) and whose first
+MOVE is `(1533,896)` — matching the trace. **Rust never pops door 14 at all**, so the `13->14` (via sector
+153) and/or `21->14` (via sector 68) relaxations are dropped. Suspects in order: (a) missing/incorrect
+`Door::gate_links` entries for this mission; (b) the `next_exit_sector == entry_sector` guard at
+`gate.rs:1553-1559`, which is a RE-DERIVATION of the Original's literal condition
+(`pLink->mpNextGate->GetSectorOut() != pLink->mpPreviousGate->GetSectorOut()`,
+`RHfastfindgrid.cpp:9729-9730`) and is not obviously equivalent.
+
+### Faithfulness gap found in the same A* (deliberately not changed — no validating trace)
+Both `find_path_gates` and `find_path_into_door` recompute `d_to_goal` on EVERY relaxation. The Original
+guards it: `if( !pNextGate->mbVisited ) pNextGate->mfDistanceToGoal = ...`
+(`RHfastfindgrid.cpp:9758/9767/9781/9789` and `:10018/10027/10041/10049`), so a gate keeps the heuristic
+computed from the side it was FIRST seen from even when a later relaxation flips `mbDirect`. Changing this
+alters path selection broadly; it needs a trace that proves it.
+
+### Missing feature: `RefreshSeek`'s `RHMOVE_LINE` branch has no Rust counterpart
+`original-code/RHelementactor.cpp:7000-7010` -> `AppendMoveToLineToSequence` (whose building-exit waits use
+`RHCOMMAND_WAIT`, not `WAIT_TIMER`). In Rust, `GoalShape::Line` is only ever constructed by the jump-line
+`PerformMove` path (`crates/robin_engine/src/engine/commands.rs:3438`), and
+`crates/robin_engine/src/engine/refresh_seek.rs` has no line handling at all.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
