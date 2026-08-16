@@ -1314,18 +1314,31 @@ impl EnemyAi {
     /// for `RANK_SOLDIER` specifically).
     fn get_nearest_fighter_default_or_looking_body(
         &self,
-        my_pos: Position,
+        my_body_world: crate::coordinates::WorldPoint3D,
         max_radius: u16,
         rank: ProfileRank,
         tick: &AiPerTickData,
     ) -> Option<NpcHandle> {
-        let max_sq = (max_radius as f32) * (max_radius as f32);
-        let mut best: Option<(NpcHandle, f32)> = None;
+        // `RHArtificialMalignity::GetNearestFighter`
+        // (`RHartificialmalignity.cpp:16020-16137`) seeds its running minimum
+        // with the squared radius and keeps the `<=` comparison, so the radius
+        // itself is admissible and ties resolve to the *last* candidate in
+        // fighter order.  Both the distance and the bound are `ULONG`s there —
+        // the float square distance is truncated before either comparison.
+        let max_sq: u32 = u32::from(max_radius) * u32::from(max_radius);
+        let mut min_sq = max_sq;
+        let mut best: Option<NpcHandle> = None;
         for cs in &tick.camp_soldiers {
             // GetNearestFighter's general gates are distinct from the global
             // camp registry used by CreateListOfSoldiersYouCanAlert: the
             // registry includes inactive and unconscious soldiers, while this
             // scan rejects inactive plus dead/unconscious candidates.
+            // TODO(parity): the Original's gate is exactly
+            // `!IsDead() && !IsUnconscious() && IsActive()`; `is_able_to_help`
+            // additionally folds in `IsAbleToFight` and an AI-state whitelist.
+            // Given the condition flag below already restricts the state, the
+            // surviving difference is `IsAbleToFight`'s extra rejections
+            // (tied/carried/hit-stun), which can only drop candidates.
             if !cs.active || !cs.is_able_to_help {
                 continue;
             }
@@ -1345,17 +1358,24 @@ impl EnemyAi {
                 continue;
             }
 
-            let dx = cs.position.x - my_pos.x;
-            let dy = (cs.position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
-            let sq = dx * dx + dy * dy;
-            if sq > max_sq {
-                continue;
-            }
-            if best.is_none_or(|(_, b)| sq <= b) {
-                best = Some((cs.handle, sq));
+            // `RHArtificialIntelligence::SquareDistance`
+            // (`RHartificialintelligence.cpp:6919-6922`) is
+            // `( pSomething->GetPosition() - mpMe->GetPosition() )
+            //   .StretchY( INVERSE_ASPECT_RATIO ).SquareNorm()` — a **3D**
+            // squared norm (`SB3DStuff.h:64`) over the raw element points, so
+            // the elevation term counts. Measuring it flat in map space made a
+            // soldier two storeys up on a rampart look like a 172-unit
+            // neighbour when the Original sees him more than 570 away.
+            let dx = cs.position_world.x - my_body_world.x;
+            let dy = (cs.position_world.y - my_body_world.y) * INVERSE_ASPECT_RATIO;
+            let dz = cs.position_world.z - my_body_world.z;
+            let sq = (dx * dx + dy * dy + dz * dz) as u32;
+            if sq <= min_sq {
+                min_sq = sq;
+                best = Some(cs.handle);
             }
         }
-        best.map(|(h, _)| h)
+        best
     }
 
     /// Officer looks for a nearby soldier to alert.
@@ -1382,7 +1402,7 @@ impl EnemyAi {
             //   CONDITION_IS_IN_DEFAULT_STATE_OR_LOOKING_BODY,
             //   RANK_SOLDIER).
             if let Some(h) = self.get_nearest_fighter_default_or_looking_body(
-                ctx.position,
+                ctx.self_body_position_world,
                 200,
                 ProfileRank::Soldier,
                 tick,

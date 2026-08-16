@@ -2187,8 +2187,11 @@ pub type ElementIndex = u32;
 /// decrements each frame.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct TimerEntry {
-    /// Frames remaining. Decremented each frame; entry removed when it hits 0.
-    pub remaining: u32,
+    /// Frames remaining, mirroring the Original's `RHFIELD_TIMER` **signed**
+    /// `int` property. Decremented every frame; the entry is removed only when
+    /// the value is exactly 1 (`RHengine.cpp:3798`), so a timer that starts at
+    /// 0 counts down through negative values and never expires.
+    pub remaining: i32,
     /// Back-reference to the sequence element driving this timer. On expiry
     /// the engine calls `SequenceManager::element_terminated(sequence_id,
     /// element_index)`, terminating the underlying sequence element.

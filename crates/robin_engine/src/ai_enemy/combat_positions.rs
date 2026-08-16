@@ -935,12 +935,39 @@ impl EnemyAi {
             // elevation), not raw map coordinates.
             let dist =
                 ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "SHIELD_BEARER_CANDIDATE frame={} me={} candidate={} substate={} archer_behind={} dist={dist} min={min_distance}",
+                    ctx.frame, self.base.me, f.handle, f.current_substate, f.archer_behind_me,
+                );
+            }
             if f32::from(dist) < best_distance {
                 best_distance = f32::from(dist);
                 best = f.handle;
             }
         }
 
+        if crate::ai_enemy::battle_decision_debug_enabled() {
+            let shield_bearers = tick
+                .fighter_registry
+                .iter()
+                .filter(|f| f.is_shield_bearer)
+                .map(|f| {
+                    (
+                        f.handle,
+                        f.is_friendly,
+                        f.current_substate,
+                        f.archer_behind_me,
+                    )
+                })
+                .collect::<Vec<_>>();
+            eprintln!(
+                "SHIELD_BEARER_RESULT frame={} me={} best={best} registry={} bearers={shield_bearers:?}",
+                ctx.frame,
+                self.base.me,
+                tick.fighter_registry.len(),
+            );
+        }
         if best == 0 { None } else { Some(best) }
     }
 
@@ -974,10 +1001,15 @@ impl EnemyAi {
         };
         let primary_pos = primary.position;
 
-        // (1) Search for an archery sector containing the enemy
+        // (1) Search for an archery sector containing the enemy.
+        // `RHSectorArchery::IsInside( posEnemy )` (RHsector.cpp:2330-2340)
+        // rejects the sector when its own layer differs from
+        // `posEnemy.uwLevel` — the layer travels with the enemy position the
+        // caller passed in (`ChooseGoodShootingPoint( Position( mpPrimaryTarget ) )`,
+        // RHartificialmalignity.cpp:7627), not with the archer.
         let mut found_sector: Option<usize> = None;
         for (i, sector) in global.archery_sectors.iter().enumerate() {
-            if !sector.is_full() && sector.is_inside(&primary_pos, ctx.position.level) {
+            if !sector.is_full() && sector.is_inside(&primary_pos, primary_pos.level) {
                 found_sector = Some(i);
                 break;
             }

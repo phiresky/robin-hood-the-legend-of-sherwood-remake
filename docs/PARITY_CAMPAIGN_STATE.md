@@ -1111,6 +1111,182 @@ from the Original trace, no engine run needed:
 `scratchpad/tl.sh <trace.zst> <lo> <hi> <kind> <index>` (with `peek.py`). Much cheaper than a replay for
 first-pass triage. Note `zstd -dc --long=31` is required to read these traces by hand.
 
+### DISPROVED: the falling-arrow-at-spawn premise (stop chasing the falling branch)
+Three agents chased `RHElementArrow::Refresh`'s FALLING branch for the QuickSave f35731 arrow
+(`sprite_row 6 / frame 4` on its own creation frame). **That premise is wrong.** Row 6 / frame 4 comes
+from the **non-falling** branch (`original-code/RHElementArrow.cpp:344-353`): `swAzimut = -15` (the arrow
+descends 9.875 per 36.0 of ground travel, `acos(0.9644) = 15.3 deg`), and
+`(SWORD)(-15 * 0.0666666666667 + 0.5f)` truncates toward zero to `0`, `+4 = 4`; the row is just
+`ubSector` = 6. No `rand()` is involved — consistent with the frame showing no extra draw.
+**Decisive new fact:** two later arrows from the same soldier with bit-identical trajectories
+(creation_order 4943 @f35781, 4944 @f35931) record `0/0` on their creation frame and `6/4` from the next
+frame — exactly Rust's model. Only 4942, the FIRST arrow created after the save load, records `6/4` early.
+So it is not a render/record ordering bug; it is specific to the session's first arrow. Ruled out:
+`AddElement` deferral (`RHengine.cpp:10279`), the hourglass loop re-reading `marrayElements.Size()` (the
+arrow does get its second step in the creation frame, matching the recorded 2-step delta), and any writer
+other than `Refresh` (`muwCurrentSpriteRow/Frame` are only touched by `Force*`/`RestoreInfo`/`PopState`/
+anim advance). Remaining hypothesis: a nested `RHEngine::Draw()` — the only in-game one is
+`RHMenuScreen::CreateBkgndColorized` -> `pGame->Refresh(false,false)` (`RHMenuScreen.cpp:250`), which
+already carries a `RecordNestedMenuRefresh` probe. NOT retired.
+
+### Reframed: projectile 65535 layer/sector is NOT a landing-membership bug
+schema14 linux2/P002/Savegame_029 replay-013 f5265. Projectile 171 carries `layer=65535 sector=65535`
+from its **creation frame onward** (mid-flight at elevation 25, never a real layer) — so the divergence is
+not about which terminal obstacle the landing query finds. All three Original early-exits leave the
+`SetLayer((UWORD)-1); SetSector(0)` from `RHelementprojectile.cpp:379-380` untouched: non-projection
+terminal obstacle (`:783`), `!IsInsideGrid`, and impact inside an obstacle motion polygon. Rust reached the
+`pObstacle == 0 -> uwLayer = 0` path and found motion area 7.
+**Separate audit owed (not this member's cause):** Rust's `resolve_projectile_landing_impl`
+(`crates/robin_engine/src/fast_find_grid.rs:2046`) returns `layer: 0` on the non-projection-obstacle early
+return and returns `layer` unconditionally, whereas the Original never calls `SetLayer` on that path and
+otherwise only calls it `if (GetSector() != 0)`.
+
+### Quantified: bow-shot initial velocity differs by a TARGET-POINT scale, not a flight-time rounding
+schema14 linux3/P003/Savegame_029 replay-001 f12292, projectile 147. Same hand point in both
+(map (1549,101), elev 50). Per-step world velocities: Original `(-10.894043, 23.876312, 8.179687)`,
+Rust `(-7.184082, 15.745361, 12.663185)`. The XY ratio is 1.51642 / 1.51640 — identical bearing, pure
+scale — while z is NOT scaled by that factor (8.180 x 1.516 = 12.40 != 12.663). Since
+`velocity.xy = 0.5*V.xy/(T+1)`, an unchanged `V.xy` would force `(T_rust+1)/(T_orig+1) = 1.51642`, which is
+not a ratio of small integers. Therefore **`V.xy` itself differs by a scale factor: the target point
+differs along the same XY bearing** — a different lead (`GetForecastedMovement()` term) or a different
+belt/eyes point feeding `fHitDistance`, hence `uwTime` and `fApexHeight`.
+
+### Known gap: script-kill path skips ALL death relationship teardown
+`crates/robin_engine/src/engine/melee/mod.rs:965` (the script-kill path) does not run the death
+relationship teardown that `detach_npc_death_relationships` now performs for lethal damage — including the
+combat neighbours, not just the newly added archer/shield-bearer pairing. Pre-existing; no failing trace
+yet.
+
+### Original quirk: `RecordTimer(0)` parks a sequence FOREVER
+`RHEngine::Hourglass` (`original-code/RHengine.cpp:3794-3810`) terminates an anonymous timer only when
+`RHFIELD_TIMER == 1`, and otherwise decrements a **signed int** — so a timer created with 0 counts down
+through -1, -2, ... and never fires. The S05_Yrk_EC crowd-reaction handler does `RecordTimer( Rand(25) )`
+per soldier, so whichever soldier rolls 0 is parked for the rest of the mission. Rust expired on
+`remaining <= 1` and ran a scripted Turn/Move the Original never issues. Fixed (`7e47a28cf`) by testing
+`== 1` and making `TimerEntry::remaining` an `i32`.
+**Related gap left open:** Rust does not decrement the sequence element's `Field::Timer` property the way
+`RHEngine::Hourglass` does via `UpdateProperty` — the countdown lives only in `TimerEntry::remaining`.
+Harmless today because legacy-save adoption reads the Original's already-decremented property, but a
+Rust-authored save would round-trip a stale timer.
+
+### Confirmed: intra-frame ordering, NOT a PointTo bug (1 trace, needs a phase change)
+schema14 linux2/P002/Savegame_039 replay-003, f10950, Soldier 138. `DECISION_TOWER_GUARD_ALERT`
+(`RHartificialmalignity.cpp:8114-8119`) does `mposSeekPosition = Position(mpPrimaryTarget); PointTo(...)`.
+Measured: Rust's `find_fighter`, `tick.primary_target_live_position` and `tick.primary_target_position` all
+return the PC's **pre-movement** position (1389.106, 1361.8235), which through the exact f32 classifier
+gives sector **6** (Rust's value); the PC's **post-movement** position for the same frame
+(1387.2236, 1358.2941, elev 8.4547) gives sector **7** (the Original's value). So the Original's
+`Position(mpPrimaryTarget)` at Think time already reflects that frame's PC movement and Rust's does not.
+The fix is a snapshot/phase-ordering change (where the tower-guard Think sits relative to PC movement in
+the hourglass), not a `PointTo` change.
+Still separately owed: Rust's `point_to` origin (`ctx.position` + `ctx.elevation`) equals
+`mpMe->GetPosition()` only while the actor is not door-snapped — it should use
+`ctx.self_body_position_world` like `face_position_3d_with_ctx` already does.
+
+### Composite-launch interleave: mechanism now verified at source level (still unlanded)
+`RHSequenceElement::ExecutedImmediately()` (`original-code/RHsequenceelement.cpp:916-958`) is **not a pure
+predicate** — it calls `mpOwner->ExecuteImmediately(this)` / `RHEngine::PerformExecuteCommand(this)` INLINE
+and then returns true. `RegisterSequenceElementToGo` (`RHsequencemanager.cpp:968-978`) invokes it per
+element inside `RHSequence::NextSequenceElementsGo`'s one-at-a-time loop (`RHsequence.cpp:272-288`). Rust
+models it as a pure predicate that queues a `SequenceAction` on `pending_synchronous_actions`, and
+`SequenceManager::launch_sequence` registers ALL level-1 elements before the engine wrapper drains that
+buffer. **Fix seam:** split `launch_sequence` into insert + per-element `register_element_to_go`, driven
+from `EngineInner` so `drain`/`dispatch_script_synchronous_action` can run between elements — the same
+interleave is owed to the `process_effects` level-advance cascade. Changes every sequence launch in the
+game; needs a wide control set.
+
+### Open: PC produced-noise material never refreshes on a door pass (1 trace, decisively measured)
+schema14 linux3/P003/Savegame_005 replay-008, f55516. Both engines' hearing gate agrees bit-for-bit on
+listener world position, noise origin and elevation, but **Original `noise_volume` = 70, Rust = 150** —
+`NOISE_VOLUME_RUN_STANDARD` (Ground) vs RUN_WOOD/GRASS_DRY/BUSH. So the PC's produced-noise MATERIAL
+diverges. With 150 against a stretched-3D distance of 72.66, `GetHearVolume` returns 77 instead of 0 and
+the soldier hears 2 frames early (the Original hears at 55518). Bisected on the Original: PC 64's walk
+volume is 40 (Wood/Grass/Bush) through f54884 and 20 (Ground) by f54890 — the material flips during PC 64's
+**PassDoor at 54880-54889** (sector 0/layer 0 -> sector 53/layer 1). Rust never refreshes it:
+`RUST_LOG=robin_engine::engine::movement=trace` logs **zero** `dispatch_sound_line_crossing` events for
+PC 64 across the whole 900-frame replay, while soldiers 46/52/54/55 do cross lines 442/443.
+NOT `SetObstacleAndMaterial` — that is gated on `bFindPlane`, only set when leaving a building
+(`original-code/RHelementactor.cpp:7566-7570`), which Rust mirrors correctly.
+Next step: instrument `check_for_non_elevation_line_crossing` for PC 64 over f54878-54892 against the
+Original's `PARITY_DEBUG_MOVEMENT_OWNER`.
+
+### Audit owed: `PutActorInBulding` is the mirror of the teleport-occupant bug just fixed
+`EngineInner::put_actor_in_building` (`crates/robin_engine/src/engine/script.rs:5572`) pushes only the
+CARRIED actor into `buildings.occupants`/`actor_building` and never the primary actor, and never touches
+`ai.global.houses`. The Original's `RHScript::PutActorInBulding` (`original-code/RHScript.cpp:6286-6311`)
+calls `pBuilding->Enter(pActor)` -> `mlistOccupants.InsertLast(pActor)` (`RHsector.cpp:1805-1820`).
+Exact mirror image of the `CleanFromHisBuildingBeforeTeleport` bug fixed in `89a4d9b05` (where a
+script-teleported soldier stayed in the AI house list and was staged as a phantom second pursuer, costing
+8 extra `DoorFightDispersion` + 1 `DoorFightTarget`). No failing trace proves it yet.
+
+### More RNG callsite offsets learned (schema14 generation)
+`1144411`/`1144489` = `DoorFightDispersion` pair · `1145593` = `DoorFightTarget` ·
+`3435351`/`3435362` = `RuntimeBuildingExitWait` pair · `1665062` = `BoredAnimationChoice` ·
+`1408623` = `VipIdleRemark` · `1237317` = `SeekPointAcceptance` · `1740720`/`1740848` =
+`SwordDamageProtection` · `1845615` = `MeleeProvoke`.
+Remember offsets are NOT comparable across capture generations.
+
+### Open singletons handed between agents (each measured, none fixed)
+- **Lateral-strike collateral victim search** — schema12 nicouzouf/P001/Savegame_037 replay-005, f962. Rust
+  skips `SwordDamageProtection` x2 + `MeleeProvoke`. PC77 has NO opponents and is hit as a BYSTANDER by
+  Soldier51's `swordstrike_thrust_d` (a LATERAL strike) aimed at PC75. `ExecuteLateralSwordStrike`'s seed
+  loop (`original-code/RHelementactorhuman.cpp:9795-9828`) uses `GetPositionGround()` for the arc direction
+  and the **3D `GetPosition()` norm** for range, while the per-frame sweep uses `GetPositionMap()`. Rust's
+  `collect_arc_victims` (`crates/robin_engine/src/engine/melee/mod.rs:2046-2090`) uses `position_map()` for
+  both.
+- **Straight-move panic segment resolves Impossible** — schema12 SuN1Sh1nE/P004/Savegame_013 replay-006,
+  f1963. Movement, not melee. The `ask_obstacle` pre-flight
+  (`crates/robin_engine/src/engine/movement.rs:5853-5875`) passes `pi.map_position()` where the Original
+  passes `Point(mpMe)` = `PositionToPoint(Position(mpMe))` (`RHartificialintelligence.h:1178`) — i.e. the
+  SNAPPING `Position()`. That is the door-pass position class; unaudited here.
+- **Reactive step-back vs plain swordfight** — schema12 SuN1Sh1nE/P004/Savegame_024 replay-004, f912.
+  **RNG matches exactly** (3x `SwordStrikeSelection` + 5x `MeleeNonMutualGate`), so both sides ran
+  `ProposeGoodSwordStrike` the same number of times — it is NOT a missing/extra call. Rust's parade gate
+  was checked and is faithful, including `opponent_time_limit` timing the PRINCIPAL opponent rather than
+  the hitter. Remaining candidates: the `mcommandKnownEnemyStrike1/2/3` "do you know this strike?" gate
+  (`RHartificialmalignity.cpp:15272-15278`), `ProposeGoodStepBackGoal`, or an ordering difference between
+  the `EVENT_REACHPOINT`->`SetState(SWORDFIGHT)` transition and the `EVENT_SWORDSTRIKE` recursion.
+
+### Door-goal A*: an invented shortcut was dropping the Original's multi-gate detours
+`crates/robin_engine/src/gate.rs:1390-1427` had a hand-added shortcut in `find_path_into_door`: if the
+source sector was the goal door's `sector_out`/`sector_in`, it returned a one-step path immediately.
+`RHFastFindGrid::FindPathIntoDoor` (`original-code/RHfastfindgrid.cpp:9860`) has **no such shortcut** — it
+seeds every gate of the source sector and runs the A*, whose goal test only fires when the goal door is
+POPPED (`FindPathToDoorNodes`, `:9968`). A cheaper multi-gate route can relax the goal door first,
+overwriting its `mbDirect`/`mfDistanceFromSource`/`mpPreviousLink` (`:10008-10058`), so the Original walks
+around through neighbouring sectors and reaches the goal door from its FAR side even when it borders the
+source. Losing those intermediate gates also lost the building-exit branch in the gate loop of
+`AppendMoveToSequence` (`RHsequence.cpp:484`, `:519`) — `WAIT_TIMER( (rand()&15)+(rand()&15) )` +
+`CHANGE_POSITION` whenever a gate is left from a building sector. Fixed in `420481dab`.
+
+### Residual on the same family: Rust never pops door 14 (best remaining lead)
+30s linux3/P003/Savegame_019 replay-001, f18479. Instrumented Rust's door-A* seeds and pop order
+(src (1664.32,1058.64), sector 0, goal door 16, 46 seeds). Penalties match the C++ formula
+`|in-out| + PENALTY_BUILDING|PENALTY_DEFAULT` (`original-code/RHGate.cpp:642-652`) EXACTLY. Rust pops
+`21 (553.02) -> 15 (576.39) -> 13 (581.99) -> 16 (645.69, prev=None)` and returns `[16]`. Hand-running the
+C++ algorithm on the same numbers gives the Original's route: popping 13 must relax **door 14** to
+`g=311.5, score~562.3` (< 645.69), then 14 relaxes 21 to 496.6, then 21 relaxes 16 to 589.6 ->
+`[13,14,21,16]`, whose 2nd gate leaves building sector 153 (= exactly one `rand&15` pair) and whose first
+MOVE is `(1533,896)` — matching the trace. **Rust never pops door 14 at all**, so the `13->14` (via sector
+153) and/or `21->14` (via sector 68) relaxations are dropped. Suspects in order: (a) missing/incorrect
+`Door::gate_links` entries for this mission; (b) the `next_exit_sector == entry_sector` guard at
+`gate.rs:1553-1559`, which is a RE-DERIVATION of the Original's literal condition
+(`pLink->mpNextGate->GetSectorOut() != pLink->mpPreviousGate->GetSectorOut()`,
+`RHfastfindgrid.cpp:9729-9730`) and is not obviously equivalent.
+
+### Faithfulness gap found in the same A* (deliberately not changed — no validating trace)
+Both `find_path_gates` and `find_path_into_door` recompute `d_to_goal` on EVERY relaxation. The Original
+guards it: `if( !pNextGate->mbVisited ) pNextGate->mfDistanceToGoal = ...`
+(`RHfastfindgrid.cpp:9758/9767/9781/9789` and `:10018/10027/10041/10049`), so a gate keeps the heuristic
+computed from the side it was FIRST seen from even when a later relaxation flips `mbDirect`. Changing this
+alters path selection broadly; it needs a trace that proves it.
+
+### Missing feature: `RefreshSeek`'s `RHMOVE_LINE` branch has no Rust counterpart
+`original-code/RHelementactor.cpp:7000-7010` -> `AppendMoveToLineToSequence` (whose building-exit waits use
+`RHCOMMAND_WAIT`, not `WAIT_TIMER`). In Rust, `GoalShape::Line` is only ever constructed by the jump-line
+`PerformMove` path (`crates/robin_engine/src/engine/commands.rs:3438`), and
+`crates/robin_engine/src/engine/refresh_seek.rs` has no line handling at all.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
