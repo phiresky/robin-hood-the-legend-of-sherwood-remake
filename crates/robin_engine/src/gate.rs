@@ -1754,6 +1754,45 @@ pub fn compute_avenger_wait_position(
     None
 }
 
+/// Select the doors which define a lift's low/high endpoints, returned as
+/// `(lowest, highest)` indices into `doors`.
+///
+/// Original `RHSectorLift::InitializeFromProtoStream`
+/// (`original-code/RHsector.cpp:1493-1521`) owns only the doors whose inside
+/// sector is this lift and picks `mpLowestDoor` / `mpHighestDoor` purely by
+/// `GetPointOut().mY` — the largest screen Y is the lowest door, the smallest
+/// screen Y the highest. Door *type* plays no part: the reference even keeps
+/// the `mpHighestDoor->GetType() == DOOR_LIFT_HIGH` assertion commented out
+/// (`RHsector.cpp:1524`) because a lift's high endpoint is frequently not a
+/// `DOOR_LIFT_HIGH`. Comparisons are strict, so the first door wins a tie.
+///
+/// Every `RHSectorLift` accessor pair is derived from these two doors:
+/// `GetLow/HighExitPoint` → `GetPointIn`, `GetLow/HighEntryPoint` →
+/// `GetPointOut`, `GetLow/HighSector`, `GetLow/HighLayer`,
+/// `GetLow/HighExitDirection` (`original-code/RHSector.h:315-327`).
+pub fn lift_endpoint_door_indices(doors: &[Door], lift_sector: SectorNumber) -> Option<(u32, u32)> {
+    let mut candidates = doors
+        .iter()
+        .enumerate()
+        .filter(|(_, door)| door.sector_in == lift_sector);
+    let (first_idx, first) = candidates.next()?;
+    let mut low = (first_idx as u32, first.point_out.y);
+    let mut high = low;
+    for (index, door) in candidates {
+        if door.point_out.y > low.1 {
+            low = (index as u32, door.point_out.y);
+        }
+        if door.point_out.y < high.1 {
+            high = (index as u32, door.point_out.y);
+        }
+    }
+    assert_ne!(
+        low.0, high.0,
+        "lift sector {lift_sector} has fewer than two distinct high/low endpoint doors"
+    );
+    Some((low.0, high.0))
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

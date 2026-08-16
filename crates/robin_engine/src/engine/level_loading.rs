@@ -80,38 +80,7 @@ struct LiftPreflight {
     authored_door_count: usize,
 }
 
-/// Select the doors which define a lift's low/high exit points.
-///
-/// Original `RHSectorLift::InitializeFromProtoStream` owns only the doors
-/// whose inside sector is this lift and orders those doors by `PointOut.Y`.
-/// `GetLowExitPoint` / `GetHighExitPoint` then return the selected doors'
-/// `PointIn` values. Keep the identity selection separate from the cached
-/// coordinates so skewed doors cannot invert the climb direction.
-fn lift_endpoint_door_indices(
-    doors: &[crate::gate::Door],
-    lift_sector: crate::sector::SectorNumber,
-) -> Option<(u32, u32)> {
-    let mut candidates = doors
-        .iter()
-        .enumerate()
-        .filter(|(_, door)| door.sector_in == lift_sector);
-    let (first_idx, first) = candidates.next()?;
-    let mut low = (first_idx as u32, first.point_out.y);
-    let mut high = low;
-    for (index, door) in candidates {
-        if door.point_out.y > low.1 {
-            low = (index as u32, door.point_out.y);
-        }
-        if door.point_out.y < high.1 {
-            high = (index as u32, door.point_out.y);
-        }
-    }
-    assert_ne!(
-        low.0, high.0,
-        "lift sector {lift_sector} has fewer than two distinct high/low endpoint doors"
-    );
-    Some((low.0, high.0))
-}
+use crate::gate::lift_endpoint_door_indices;
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct PatchStageOutput {
