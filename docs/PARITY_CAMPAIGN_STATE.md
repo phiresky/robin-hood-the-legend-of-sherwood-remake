@@ -669,6 +669,21 @@ Also note: the parade-timer lead recorded earlier was a RED HERRING.
 animation ends, not because the timer rings. The real cause there was stale push-strike victims (fixed in
 `6088d23eb`).
 
+### Open lead: ReconsiderSwordfight branch selection
+Two traces (schema14 linux3/P001/Savegame_044 replay-003 at f28893, and linux3/P003/Savegame_034
+replay-014 at its new f19764 frontier) are the same next family:
+`RHArtificialMalignity::ReconsiderSwordfight` (`original-code/RHartificialmalignity.cpp:13497`) picks a
+different branch. In Savegame_044 both engines draw the identical 11 RNG values at the frontier
+(drunk x2 + `rand()%3` reposition, twice) and NEITHER reaches `ProposeGoodSwordStrike`, yet the Original
+ends in `SUBSTATE_ATTACKING_MOVING_AROUND_OLD_ENEMY` with a `GoTo(..., GOTO_SWORD)` while Rust stays in
+`SUBSTATE_ATTACKING_SWORDFIGHT`. Suspects: `ProposeGoodCombatPosition()`'s `bChangePosition`, or the
+"too far to adversary" test at `RHartificialmalignity.cpp:13840` — note its `mpMyLineJump == NULL` guard,
+which became reachable differently after the reciprocal jump-line fix `ecac2b399`.
+TOOLING NOTE: the checked-in `robin-schema14-capture` binary PREDATES the
+`PARITY_DEBUG_ORIGINAL_RECONSIDER_SWORDFIGHT` instrumentation present in the sources, so that stream is
+not available from it. gdb on `RHParity::RecordRandomDraw` / `RHSequenceManager::LaunchSequenceElement`
+with raw `$esp` offsets works instead — the binary has a symtab but no DWARF.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
