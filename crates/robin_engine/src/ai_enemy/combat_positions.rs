@@ -935,12 +935,39 @@ impl EnemyAi {
             // elevation), not raw map coordinates.
             let dist =
                 ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "SHIELD_BEARER_CANDIDATE frame={} me={} candidate={} substate={} archer_behind={} dist={dist} min={min_distance}",
+                    ctx.frame, self.base.me, f.handle, f.current_substate, f.archer_behind_me,
+                );
+            }
             if f32::from(dist) < best_distance {
                 best_distance = f32::from(dist);
                 best = f.handle;
             }
         }
 
+        if crate::ai_enemy::battle_decision_debug_enabled() {
+            let shield_bearers = tick
+                .fighter_registry
+                .iter()
+                .filter(|f| f.is_shield_bearer)
+                .map(|f| {
+                    (
+                        f.handle,
+                        f.is_friendly,
+                        f.current_substate,
+                        f.archer_behind_me,
+                    )
+                })
+                .collect::<Vec<_>>();
+            eprintln!(
+                "SHIELD_BEARER_RESULT frame={} me={} best={best} registry={} bearers={shield_bearers:?}",
+                ctx.frame,
+                self.base.me,
+                tick.fighter_registry.len(),
+            );
+        }
         if best == 0 { None } else { Some(best) }
     }
 
