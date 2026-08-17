@@ -4758,3 +4758,23 @@ objects.
   run. A FULL-UNIVERSE resweep — everything except the new schema14-seed1000000 corpus — is the agreed
   next step and is the only thing that can verify the whole passing set after this wave's shared-code
   changes.
+
+## Batch-23 failing-only sweep — 2026-08-17, production runner 7cdfa0799
+- Failures-only: the 60 traces left after batch-22. Runner sha256 `a25bd45910d7470efc9919d5…`, release
+  profile, clean tree, smoke-tested before launch.
+- **Result: 24 cleared (40%), 36 remain** — 28 state divergences, 8 RNG, 0 timeouts.
+- Produced by wave D: 6 parallel agents, 18 behaviour fixes. Notable root causes —
+  `AddPathRequest` calls `Stop()` with NO argument so the priority is the declared default `NORMAL`, not
+  `Wait`; `GoTo`'s `GOTO_SWORD` raise-sword element belongs INSIDE the movement's sequence (two sequences
+  double the postpone arbitration and destroy a postponed move); an INVENTED shortcut in
+  `find_path_into_door` suppressed the Original's multi-gate detours and with them the building-exit waits;
+  the route source must read the actor's live traversal direction, not the sequence element's; panic-door
+  sector/layer maluses must use the live element side, not the door-snapped AI position;
+  `RecordTimer(0)` parks a sequence forever (signed countdown, terminates only at ==1);
+  `WAITING_ALERTED` also quits any swordfight; `TranslateArrowDamage` has no consciousness test and the
+  knockout cascade must key on "was conscious before the hit".
+- Remaining set: `remaining-36.snapshot`; per-group listing `groups.txt`.
+  **30 groups, largest 3, and 25 are singletons** — effectively one bug per trace from here.
+- Two recurring bug CLASSES account for a large share of this wave: the AI-resolved position being used
+  where the Original uses the raw element position (5th and 6th sites found), and Rust enforcing an
+  invented invariant/shortcut the Original does not have (4th site found).
