@@ -32,6 +32,17 @@ fn distance_squared(a: MapPoint, b: MapPoint) -> f32 {
     dx * dx + dy * dy
 }
 
+fn allied_order_locks_ai(order: &AlliedSoldierOrder, threatened: bool) -> bool {
+    match order.stance {
+        AlliedStance::Hold => true,
+        AlliedStance::Defensive => !threatened,
+        // Aggressive soldiers remain under direct movement control while
+        // carrying out an explicit patrol/follow duty. Their normal AI takes
+        // over when a threat is detected, then the duty resumes afterwards.
+        AlliedStance::Aggressive => !threatened && !matches!(order.duty, AlliedDuty::Hold { .. }),
+    }
+}
+
 fn slot_preference(role: FormationRole, formation: AlliedFormation, point: MapPoint) -> [f32; 3] {
     let radius_squared = point.x * point.x + point.y * point.y;
     match (role, formation) {
@@ -230,6 +241,41 @@ mod tests {
             &[MapPoint::new(0.0, -20.0), MapPoint::new(0.0, 20.0)],
         );
         assert_eq!(deep_heroes.y, 20.0 + FORMATION_SPACING * 1.5);
+    }
+
+    #[test]
+    fn aggressive_patrol_group_stays_directed_until_threatened() {
+        let patrol_order = |x| AlliedSoldierOrder {
+            stance: AlliedStance::Aggressive,
+            formation: AlliedFormation::Line,
+            duty: AlliedDuty::Patrol {
+                points: [MapPoint::new(x, 0.0), MapPoint::new(x, 100.0)],
+                next: 1,
+            },
+            last_destination: MapPoint::new(x, 100.0),
+            path_fallback: None,
+            deploy_destination: None,
+        };
+        let group = [patrol_order(-11.0), patrol_order(11.0)];
+
+        assert!(
+            group
+                .iter()
+                .all(|order| allied_order_locks_ai(order, false))
+        );
+        assert!(
+            group
+                .iter()
+                .all(|order| !allied_order_locks_ai(order, true))
+        );
+
+        let idle_aggressive = AlliedSoldierOrder {
+            duty: AlliedDuty::Hold {
+                anchor: MapPoint::new(0.0, 0.0),
+            },
+            ..patrol_order(0.0)
+        };
+        assert!(!allied_order_locks_ai(&idle_aggressive, false));
     }
 }
 
@@ -1144,11 +1190,12 @@ impl EngineInner {
                 ),
                 _ => unreachable!("validated allied soldier changed entity kind"),
             };
-            let ai_locked = match order.stance {
-                AlliedStance::Hold => true,
-                AlliedStance::Defensive => !threatened,
-                AlliedStance::Aggressive => false,
-            };
+            let was_ai_locked = self
+                .get_entity(id)
+                .and_then(Entity::ai_controller)
+                .expect("controlled allied soldier has no AI controller")
+                .script_locked;
+            let ai_locked = allied_order_locks_ai(&order, threatened);
             self.set_allied_ai_locked(id, ai_locked);
             let deploy_destination = order.deploy_destination.filter(|_| {
                 matches!(
@@ -1180,6 +1227,11 @@ impl EngineInner {
                     if distance_squared(position, target) <= ARRIVAL_DISTANCE * ARRIVAL_DISTANCE {
                         *next = (*next + 1) % 2;
                         Some(points[usize::from(*next)])
+                    } else if ai_locked && !was_ai_locked {
+                        // Combat may have interrupted the route and moved the
+                        // soldier away from it. Re-issue the current patrol
+                        // leg when direct control resumes.
+                        Some(target)
                     } else {
                         None
                     }
@@ -1195,9 +1247,10 @@ impl EngineInner {
                     };
                     let target =
                         MapPoint::new(hero_position.x + offset.x, hero_position.y + offset.y);
-                    (distance_squared(position, target) > FOLLOW_DISTANCE * FOLLOW_DISTANCE
-                        && distance_squared(order.last_destination, target)
-                            > FOLLOW_REPATH_DISTANCE * FOLLOW_REPATH_DISTANCE)
+                    ((ai_locked && !was_ai_locked)
+                        || (distance_squared(position, target) > FOLLOW_DISTANCE * FOLLOW_DISTANCE
+                            && distance_squared(order.last_destination, target)
+                                > FOLLOW_REPATH_DISTANCE * FOLLOW_REPATH_DISTANCE))
                         .then_some(target)
                 }
             };
