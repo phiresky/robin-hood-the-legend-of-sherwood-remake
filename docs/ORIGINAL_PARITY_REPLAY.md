@@ -4778,3 +4778,18 @@ objects.
 - Two recurring bug CLASSES account for a large share of this wave: the AI-resolved position being used
   where the Original uses the raw element position (5th and 6th sites found), and Rust enforcing an
   invented invariant/shortcut the Original does not have (4th site found).
+
+## Batch-24 failing-only sweep — 2026-08-17, production runner 0c69baf45
+- The 36 traces left after batch-23. **Result: 4 cleared (11%), 32 remain** — 24 state divergences, 8 RNG.
+- Produced by wave E: 4 agents, 5 fixes (transition-seek-refresh IN_PROGRESS latch; projectile hole/water
+  terminal return; AlertSoldier detectable drain order; `PointTo` origin; `RHCOMMAND_HIT` instruct on an
+  out-of-order antagonist).
+- **The clearance rate has collapsed from ~40% to 11%, and that is the real signal.** Three of the four
+  agents returned mostly attribution rather than fixes, and for sound reasons: the remaining work is
+  singletons whose fixes are either (a) broad refactors nobody should land without a wide control set
+  (the composite sequence-launch interleave; giving unfrozen seek owners the Original's pre-motion
+  tolerance arm), (b) hourglass phase-ordering changes (tower-guard Think vs PC movement), or
+  (c) blocked on Original-side instrumentation for schema-12 traces that no binary can reproduce.
+- Wave E's most valuable output was arguably negative: it DISPROVED the "script-VM 41 frames late" theory
+  for the civilian-62 pair and replaced it with a measured cause, and one agent tried the cheap version of
+  its own fix, measured it as a no-op, and reverted rather than commit it.
