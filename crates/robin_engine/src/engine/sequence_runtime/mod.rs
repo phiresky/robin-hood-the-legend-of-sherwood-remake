@@ -57,8 +57,11 @@ impl SequencePhase {
     /// queue is non-empty. Therefore normal-priority elements registered by
     /// an immediate predecessor belong to this same drain just like
     /// immediate and Wait work; they must not wait for the next frame.
+    /// Parked `NextSequenceElementsGo` iterations stay with the manager: the
+    /// action a registration produced must be dispatched before the loop
+    /// registers the following sibling, so the next splice picks them up.
     fn splice_registered_actions(&mut self, orders: &mut OrderRuntime) {
-        let synchronous = orders.sequence_manager.take_pending_synchronous_actions();
+        let synchronous = orders.sequence_manager.take_settled_synchronous_actions();
         for action in synchronous.into_iter().rev() {
             self.actions.push_front(action);
         }
