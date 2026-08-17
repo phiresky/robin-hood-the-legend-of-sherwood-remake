@@ -2552,6 +2552,30 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_portrait_commands_switch_between_heroes_and_allied_groups() {
+        let (mut engine, assets, _host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let soldier = add_allied_soldier(&mut engine, 20.0, 20.0);
+        select_allied(&mut engine, &assets, soldier);
+        apply(&mut engine, &assets, PlayerCommand::PinAlliedSelection);
+
+        select(&mut engine, &assets, pc);
+        assert_eq!(engine.seat_selection(PlayerId(0)), &[pc]);
+        assert!(engine.allied_selection(PlayerId(0)).is_empty());
+
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::SelectAlliedGroup {
+                group_id: 1,
+                append: false,
+            },
+        );
+        assert!(engine.seat_selection(PlayerId(0)).is_empty());
+        assert_eq!(engine.allied_selection(PlayerId(0)), &[soldier]);
+    }
+
+    #[test]
     fn right_click_drops_carried_corpse_when_idle() {
         let (mut engine, assets, host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::CarryingCorpse);

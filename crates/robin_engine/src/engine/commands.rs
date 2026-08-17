@@ -776,6 +776,9 @@ impl EngineInner {
 
             // ── Selection ───────────────────────────────────────
             SelectPc { pc_id, append } => {
+                if !append {
+                    self.players.allied.ensure_seat(seat).selection.clear();
+                }
                 if recorded_nested_selection_action {
                     assert!(
                         self.get_entity(*pc_id)
@@ -832,6 +835,9 @@ impl EngineInner {
                 portrait_index,
                 append,
             } => {
+                if !append {
+                    self.players.allied.ensure_seat(seat).selection.clear();
+                }
                 // Portrait click → `select_by_portrait_index` fires
                 // `select_pc` with `speak=true` directly.
                 self.select_by_portrait_index(assets, seat, *portrait_index as u8, *append);
@@ -849,6 +855,9 @@ impl EngineInner {
             PinAlliedSelection => self.pin_allied_selection(seat),
             UnpinAlliedGroup { group_id } => self.unpin_allied_group(seat, *group_id),
             SelectAlliedGroup { group_id, append } => {
+                if !append {
+                    self.unselect_all_pcs(seat);
+                }
                 self.select_allied_group(seat, *group_id, *append);
             }
             PageAlliedPortraits { delta } => self.page_allied_portraits(seat, *delta),
