@@ -6,8 +6,8 @@
 //! the macro recorder).
 
 use super::{
-    HandlerAction, center_on_reselected_portrait_pc, dispatch_local_command,
-    dispatch_local_commands, required_menu_resources,
+    HandlerAction, center_on_reselected_allied_portrait, center_on_reselected_portrait_pc,
+    dispatch_local_command, dispatch_local_commands, required_menu_resources,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -627,6 +627,14 @@ fn on_portrait_click(
             PortraitHitArea::TopScroll
             | PortraitHitArea::BottomScroll
             | PortraitHitArea::Visage => {
+                center_on_reselected_allied_portrait(
+                    host,
+                    engine,
+                    local_seat,
+                    &members,
+                    shift_held || ctrl_held,
+                    hit.area,
+                );
                 if let PortraitTarget::AlliedGroup(group_id) = hit.target {
                     let cmd = PlayerCommand::SelectAlliedGroup {
                         group_id,
