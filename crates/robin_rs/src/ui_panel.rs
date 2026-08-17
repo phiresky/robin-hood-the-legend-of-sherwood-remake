@@ -207,6 +207,8 @@ pub struct PortraitCache {
     allied_portrait_background: Option<GpuImage>,
     /// Authored 112x134 transparent soldier foreground for allied groups.
     allied_portrait_foreground: Option<GpuImage>,
+    /// Transparent medieval brooch artwork for the transient and pinned states.
+    allied_pin_icons: [Option<GpuImage>; 2],
     /// State-specific artwork: three stances, two patrol states, and four
     /// formations, in that order.
     allied_action_surfaces: [Option<u32>; 9],
@@ -283,6 +285,7 @@ impl PortraitCache {
             bottom_scroll_surface: None,
             allied_portrait_background: None,
             allied_portrait_foreground: None,
+            allied_pin_icons: [None, None],
             allied_action_surfaces: [None; 9],
             border_top_left: None,
             border_top_right: None,
@@ -376,6 +379,39 @@ impl PortraitCache {
                 .create_rgba_gpu_image(width, height, &pixels, "allied portrait foreground")
                 .expect("embedded allied portrait foreground dimensions must match its payload"),
         );
+
+        for (index, (bytes, label)) in [
+            (
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../assets/ui/allied_pin_unpinned.png"
+                )) as &[u8],
+                "allied portrait pin (unpinned)",
+            ),
+            (
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../assets/ui/allied_pin_pinned.png"
+                )),
+                "allied portrait pin (pinned)",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes)
+                .expect("embedded allied pin icon must be a valid RGB/RGBA PNG");
+            assert_eq!(
+                (width, height),
+                (18, 18),
+                "embedded allied pin icon must be 18x18"
+            );
+            self.allied_pin_icons[index] = Some(
+                renderer
+                    .create_rgba_gpu_image(width, height, &pixels, label)
+                    .expect("embedded allied pin icon dimensions must match its payload"),
+            );
+        }
 
         for (index, bytes) in [
             include_bytes!(concat!(
@@ -1464,33 +1500,24 @@ fn render_allied_portrait(
 
     // Pin/unpin button remains visible in both open and closed states.
     let pin_y = sh - top_scroll + 4;
-    let pin_color = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
-        Renderer::create_color_16(238, 192, 55)
+    let pin_index = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
+        1
     } else {
-        Renderer::create_color_16(91, 73, 42)
+        0
     };
-    renderer.fill_screen(
+    let pin = portraits.allied_pin_icons[pin_index]
+        .as_ref()
+        .expect("allied pin icon must be loaded before drawing the HUD");
+    renderer.render_gpu_image(
+        pin,
+        None,
         Some(&bbox(
-            x + ELEMENT_WIDTH - 14,
+            x + ELEMENT_WIDTH - 30,
             pin_y,
-            x + ELEMENT_WIDTH - 5,
-            pin_y + 5,
+            x + ELEMENT_WIDTH - 12,
+            pin_y + 18,
         )),
-        pin_color,
-    );
-    renderer.draw_line_screen(
-        i32::from(x + ELEMENT_WIDTH - 10),
-        i32::from(pin_y + 4),
-        i32::from(x + ELEMENT_WIDTH - 10),
-        i32::from(pin_y + 12),
-        pin_color,
-    );
-    renderer.draw_line_screen(
-        i32::from(x + ELEMENT_WIDTH - 13),
-        i32::from(pin_y + 8),
-        i32::from(x + ELEMENT_WIDTH - 7),
-        i32::from(pin_y + 8),
-        pin_color,
+        BlendMode::Blend,
     );
 
     if selected {
@@ -3043,7 +3070,7 @@ pub fn hit_test_portrait_detailed(
             let action_top = (sh - POSITION_ACTION) as f32;
             let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
             let area = if cy >= top_scroll_top && cy < visage_top {
-                if click_x >= x + ELEMENT_WIDTH as f32 - 18.0 {
+                if click_x >= x + ELEMENT_WIDTH as f32 - 32.0 {
                     PortraitHitArea::Pin
                 } else {
                     PortraitHitArea::TopScroll
@@ -3334,13 +3361,7 @@ mod tests {
             let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
             assert_eq!((width, height), (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT));
             assert_eq!(pixels.len(), usize::from(width) * usize::from(height) * 4);
-            assert!(
-                pixels
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .any(|pixel| pixel[3] == 0)
-            );
+            assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0));
             found_partial_alpha |= pixels
                 .as_chunks::<4>()
                 .0
@@ -3348,6 +3369,25 @@ mod tests {
                 .any(|pixel| (1..=254).contains(&pixel[3]));
         }
         assert!(found_partial_alpha);
+    }
+
+    #[test]
+    fn embedded_allied_pin_icons_decode_with_transparency() {
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_pin_unpinned.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_pin_pinned.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!((width, height), (18, 18));
+            assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0));
+            assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] > 0));
+        }
     }
 
     #[test]

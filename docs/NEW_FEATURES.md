@@ -11,12 +11,16 @@ A list of which additional features we have added, which ones we might still wan
 - **Optional allied-soldier control.** A persistent `Control Allied Soldiers`
   game option enables direct control of active green/Royalist soldiers. Click
   or drag a selection box to create a temporary portrait beside the heroes;
-  its pin button preserves an individual or group portrait. Allied portraits
+  its illustrated pin button preserves an individual or group portrait. Allied portraits
   expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
   and type-aware line, box, staggered, and flank formations. Line formation
-  places shield and melee troops ahead of ranged troops and automatically
-  narrows to a two-wide marching column for long moves before deploying at the
-  destination; box formation protects ranged troops in its center. Hover
+  places officers at the command center, knights in close escort, shield and
+  melee troops on the fighting edge, and ranged troops in protected rear or
+  central positions. When heroes move with the selection, soldiers deploy
+  behind them instead of overlapping their formation. Long moves automatically
+  narrow to a two-wide marching column before deploying at the destination.
+  Controlled soldiers can enter swordfights, execute the normal drawn strike
+  gestures, and parry with right-click. Hover
   tooltips name every action and its current state and appear quickly across
   each button's full cell. Soldiers receive deterministic names from the
   localized peasant-name pool. Selection uses the heroes' persistent ground

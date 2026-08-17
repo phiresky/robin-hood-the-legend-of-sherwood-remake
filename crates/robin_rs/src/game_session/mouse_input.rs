@@ -232,7 +232,8 @@ fn on_left_mouse_down(
             //     Lever / Strangle → fire the matching
             //     drag action (see `resolve_action_drag`).
             let selected_action = engine.selected_action_for_seat(local_seat);
-            let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
+            let is_swordfighting =
+                crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
             match selected_action {
                 Action::HelpToClimb => {
                     let posture_ok = engine
@@ -287,7 +288,7 @@ fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32)
         // `has_focus` gate: a UI widget that grabbed
         // focus this frame blocks the deselection-drag
         // from starting.
-        let guard_ok = !engine.is_seat_selection_swordfighting(local_seat)
+        let guard_ok = !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
             && !host.input.is_alt
             && !engine.view_locked()
@@ -326,7 +327,7 @@ fn on_mouse_move(
         if host.input.is_dragging
             && !host.input.is_alt
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
-            && engine.is_seat_selection_swordfighting(local_seat)
+            && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
         {
             host.mouse_way.add_point(mouse_pt);
         }
@@ -491,7 +492,8 @@ fn on_left_mouse_up(
             // commits that gesture — skip portrait hit-testing so a release
             // over a portrait doesn't accidentally select that PC.
             let swordfight_drag =
-                engine.is_seat_selection_swordfighting(local_seat) && !host.mouse_way.is_empty();
+                crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+                    && !host.mouse_way.is_empty();
 
             // Check portrait panel first (detailed sub-area hit-test).
             let portrait_hit = if swordfight_drag {

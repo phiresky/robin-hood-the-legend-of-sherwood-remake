@@ -2352,12 +2352,12 @@ mod route_source_tests {
 }
 
 /// Radius for circular dispatch (one third of [`GROUP_LIMIT_MAX`]).
-const CIRCULAR_DISPATCH_RADIUS: f32 = 60.0;
+pub(in crate::engine) const CIRCULAR_DISPATCH_RADIUS: f32 = 60.0;
 
 /// Maximum centroid-to-member distance for mercenary formation to apply.
 /// When any member is farther than this from the centroid, fall back to
 /// circular dispatch.
-const GROUP_LIMIT_MAX: f32 = 180.0;
+pub(in crate::engine) const GROUP_LIMIT_MAX: f32 = 180.0;
 
 /// Rebuild Original's per-actor formation box at a candidate destination.
 ///

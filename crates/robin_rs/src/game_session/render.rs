@@ -39,7 +39,7 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids as engine_resource_ids;
 use robin_engine::sprite as engine_sprite;
 
-fn allied_action_tooltip(
+fn allied_portrait_tooltip(
     engine: &Engine,
     seat: robin_engine::player_command::PlayerId,
     hit: PortraitHit,
@@ -79,14 +79,23 @@ fn allied_action_tooltip(
         PortraitHitArea::AlliedAction(2) => {
             let formation = order.map_or(AlliedFormation::Line, |order| order.formation);
             let name = match formation {
-                AlliedFormation::Line => "Line (melee front, ranged rear)",
-                AlliedFormation::Box => "Box (ranged protected inside)",
-                AlliedFormation::Staggered => "Staggered rows",
-                AlliedFormation::Flank => "Two flanking wings",
+                AlliedFormation::Line => "Line (officer center, melee front, ranged rear)",
+                AlliedFormation::Box => "Box (officer center, ranged protected inside)",
+                AlliedFormation::Staggered => "Staggered rows (officer leads)",
+                AlliedFormation::Flank => "Flank (officer center, two wings)",
             };
             format!("Formation: {name} - click to change")
         }
-        _ => panic!("allied tooltip requested for non-action portrait area"),
+        PortraitHitArea::Pin => match hit.target {
+            PortraitTarget::AlliedSelection => {
+                "Pin this soldier group to the portrait bar".to_owned()
+            }
+            PortraitTarget::AlliedGroup(_) => {
+                "Unpin this soldier group from the portrait bar".to_owned()
+            }
+            PortraitTarget::Pc(_) => panic!("allied pin tooltip requested for PC portrait"),
+        },
+        _ => panic!("allied tooltip requested for non-control portrait area"),
     }
 }
 
@@ -1457,6 +1466,9 @@ pub(super) fn render_frame(
             PortraitHitArea::ActionButton(btn) | PortraitHitArea::AlliedAction(btn) => {
                 Some((hit.slot, btn))
             }
+            PortraitHitArea::Pin if !matches!(hit.target, PortraitTarget::Pc(_)) => {
+                Some((hit.slot, 3))
+            }
             _ => None,
         });
         pc_action_tooltip.update(hovered_action_btn);
@@ -1464,7 +1476,9 @@ pub(super) fn render_frame(
             && let (Some(hit), Some(fonts)) = (hovered_hit, hud_fonts)
         {
             let text = match hit.area {
-                PortraitHitArea::AlliedAction(_) => allied_action_tooltip(engine, local_seat, hit),
+                PortraitHitArea::AlliedAction(_) | PortraitHitArea::Pin => {
+                    allied_portrait_tooltip(engine, local_seat, hit)
+                }
                 PortraitHitArea::ActionButton(btn) => {
                     let pc_id = match hit.target {
                         PortraitTarget::Pc(pc_id) => Some(pc_id),

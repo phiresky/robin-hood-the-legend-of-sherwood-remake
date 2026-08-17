@@ -858,7 +858,16 @@ impl EngineInner {
                 running,
                 formation,
             } => {
-                self.command_allied_move(sim, assets, soldiers, *destination, *running, *formation)
+                let leaders = self.players.seats[seat].selection.clone();
+                self.command_allied_move(
+                    sim,
+                    assets,
+                    soldiers,
+                    &leaders,
+                    *destination,
+                    *running,
+                    *formation,
+                )
             }
             SetAlliedStance { soldiers, stance } => {
                 self.set_allied_stance(soldiers, *stance);
