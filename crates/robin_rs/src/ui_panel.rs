@@ -205,6 +205,8 @@ pub struct PortraitCache {
     bottom_scroll_surface: Option<u32>,
     /// Authored 112x50 visage used by transient and pinned allied groups.
     allied_visage_surface: Option<u32>,
+    /// Shared parchment beneath the transparent allied action icons.
+    allied_action_backing_surface: Option<u32>,
     /// Original-game artwork for stance, patrol, formation, and follow.
     allied_action_surfaces: [Option<u32>; 4],
     /// Panel border frame pieces.
@@ -279,6 +281,7 @@ impl PortraitCache {
             top_scroll_alt_surface: None,
             bottom_scroll_surface: None,
             allied_visage_surface: None,
+            allied_action_backing_surface: None,
             allied_action_surfaces: [None; 4],
             border_top_left: None,
             border_top_right: None,
@@ -355,6 +358,22 @@ impl PortraitCache {
             renderer
                 .create_surface_from_rgb565(width, height, &pixels)
                 .expect("embedded allied-soldier portrait dimensions must match its payload"),
+        );
+
+        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/ui/allied_action_backing.png"
+        )))
+        .expect("embedded allied-action backing must be a valid RGB/RGBA PNG");
+        assert_eq!(
+            (width, height),
+            (ELEMENT_WIDTH, ACTION_HEIGHT),
+            "embedded allied-action backing must match the native HUD action row"
+        );
+        self.allied_action_backing_surface = Some(
+            renderer
+                .create_surface_from_rgb565(width, height, &pixels)
+                .expect("embedded allied-action backing dimensions must match its payload"),
         );
 
         // Reuse authored interface artwork instead of drawing synthetic,
@@ -1354,6 +1373,16 @@ fn render_allied_portrait(
     if selected {
         let action_top = sh - POSITION_ACTION;
         let action_bottom = sh - POSITION_BOTTOM_SCROLL;
+        let backing = portraits
+            .allied_action_backing_surface
+            .expect("allied action backing must be loaded before drawing the HUD");
+        blit_to_screen_widget(
+            renderer,
+            backing,
+            None,
+            Some(&bbox(x, action_top, x + ELEMENT_WIDTH, action_bottom)),
+            BLIT_SOURCE_TRANSPARENT,
+        );
         let order = item
             .members
             .first()
@@ -3177,6 +3206,14 @@ mod tests {
         )))
         .unwrap();
         assert_eq!((width, height), (ELEMENT_WIDTH, VISAGE_HEIGHT));
+        assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
+
+        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/ui/allied_action_backing.png"
+        )))
+        .unwrap();
+        assert_eq!((width, height), (ELEMENT_WIDTH, ACTION_HEIGHT));
         assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
     }
 
