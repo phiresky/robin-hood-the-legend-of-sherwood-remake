@@ -1498,6 +1498,41 @@ fn render_allied_portrait(
         selected,
     );
 
+    // Reuse the native merry-man crossed-swords overlay for controlled
+    // soldiers. A group counts as fighting while any surviving member is in
+    // a sword action or has an active melee opponent. Match hero portraits:
+    // the overlay stays visible on the open portrait and blinks while closed.
+    let is_sword_fighting = item.members.iter().any(|member| {
+        engine.get_entity(*member).is_some_and(|entity| {
+            entity
+                .actor_data()
+                .is_some_and(|actor| actor.action_state.is_sword())
+                || entity
+                    .human_data()
+                    .is_some_and(|human| !human.opponents.is_empty())
+        })
+    });
+    let fighting_visible = selected || (engine.frame_counter() / 10).is_multiple_of(2);
+    if is_sword_fighting
+        && fighting_visible
+        && let Some(surface) = portraits.get_fighting_surface(CharacterKind::MerryManA)
+    {
+        let visage_top = if selected {
+            sh - POSITION_VISAGE
+        } else {
+            sh - CLOSE_POSITION_VISAGE
+        };
+        let width = renderer.surface_width(surface);
+        let height = renderer.surface_height(surface);
+        blit_to_screen_widget(
+            renderer,
+            surface,
+            None,
+            Some(&bbox(x, visage_top, x + width, visage_top + height)),
+            BLIT_SOURCE_TRANSPARENT,
+        );
+    }
+
     // Pin/unpin button remains visible in both open and closed states.
     let pin_y = sh - top_scroll + 4;
     let pin_index = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {

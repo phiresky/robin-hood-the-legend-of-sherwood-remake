@@ -1267,6 +1267,13 @@ fn resolve_double_click_repeat(
 /// Resolve a right-click into player commands.
 pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
     let selected_combatants = selected_units(engine, local_seat);
+    let clear_allied = !engine.allied_selection(local_seat).is_empty();
+    let finish = |mut commands: Vec<PlayerCommand>| {
+        if clear_allied {
+            commands.push(PlayerCommand::ClearAlliedSelection);
+        }
+        commands
+    };
 
     // Swordfighting → parry
     if is_selected_unit_swordfighting(engine, local_seat) {
@@ -1287,10 +1294,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
     }
 
     if engine.seat_selection(local_seat).is_empty() {
-        return (!engine.allied_selection(local_seat).is_empty())
-            .then_some(PlayerCommand::ClearAlliedSelection)
-            .into_iter()
-            .collect();
+        return finish(Vec::new());
     }
     let selected = engine.seat_selection(local_seat);
 
@@ -1306,7 +1310,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
         | Action::Beggar => {
             let mut cmds = resolve_right_click_stop(engine, local_seat);
             cmds.push(PlayerCommand::UnselectAllActions);
-            return cmds;
+            return finish(cmds);
         }
         Action::Bow => {
             // Right-click with Bow armed clears the queued shoot list
@@ -1317,9 +1321,9 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
             if let Some(pc_id) = first
                 && engine.pc_has_pending_shoot_bow(pc_id)
             {
-                return vec![PlayerCommand::ClearShootList { pc_id }];
+                return finish(vec![PlayerCommand::ClearShootList { pc_id }]);
             }
-            return vec![PlayerCommand::UnselectAllActions];
+            return finish(vec![PlayerCommand::UnselectAllActions]);
         }
         Action::Shield | Action::BigShield => {
             // Splits on action state:
@@ -1346,15 +1350,15 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
                 }
             }
             cmds.push(PlayerCommand::UnselectAllActions);
-            return cmds;
+            return finish(cmds);
         }
         _ => {
-            return vec![PlayerCommand::UnselectAllActions];
+            return finish(vec![PlayerCommand::UnselectAllActions]);
         }
     }
 
     // NoAction → posture-based stop
-    resolve_right_click_stop(engine, local_seat)
+    finish(resolve_right_click_stop(engine, local_seat))
 }
 
 /// Resolve the posture-based stop for each selected PC.
@@ -2022,6 +2026,29 @@ mod tests {
         }))
     }
 
+    fn add_allied_soldier(engine: &mut Engine, x: f32, y: f32) -> EntityId {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(x, y));
+        engine.test_add_entity(engine_element::Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                life_points: 100,
+                ..Default::default()
+            },
+            soldier: SoldierData {
+                cached_camp: robin_engine::element_kinds::Camp::Royalists,
+                ..Default::default()
+            },
+        }))
+    }
+
     fn select_allied(engine: &mut Engine, assets: &LevelAssets, soldier: EntityId) {
         apply(
             engine,
@@ -2505,6 +2532,23 @@ mod tests {
 
         let cmds = resolve_right_click(&engine, host.transport.local_seat);
         assert_cmds!(cmds, vec![PlayerCommand::StopPc { pc_id: pc }]);
+    }
+
+    #[test]
+    fn right_click_clears_allies_from_a_mixed_selection() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let soldier = add_allied_soldier(&mut engine, 20.0, 20.0);
+        select(&mut engine, &assets, pc);
+        select_allied(&mut engine, &assets, soldier);
+
+        assert_cmds!(
+            resolve_right_click(&engine, host.transport.local_seat),
+            vec![
+                PlayerCommand::StopPc { pc_id: pc },
+                PlayerCommand::ClearAlliedSelection,
+            ]
+        );
     }
 
     #[test]
