@@ -45,6 +45,8 @@ const MARGIN: u16 = 32;
 
 /// Width of a single portrait element (pixels).
 const ELEMENT_WIDTH: u16 = 112;
+const ALLIED_ACTION_ICON_WIDTH: u16 = 34;
+const ALLIED_ACTION_ICON_HEIGHT: u16 = 32;
 
 /// Border gap at the very bottom of the screen.
 const BORDURE: u16 = 3;
@@ -211,7 +213,7 @@ pub struct PortraitCache {
     allied_pin_icons: [Option<GpuImage>; 2],
     /// State-specific artwork: three stances, two patrol states, and four
     /// formations, in that order.
-    allied_action_surfaces: [Option<u32>; 9],
+    allied_action_surfaces: [Option<GpuImage>; 9],
     /// Panel border frame pieces.
     border_top_left: Option<u32>,
     border_top_right: Option<u32>,
@@ -286,7 +288,7 @@ impl PortraitCache {
             allied_portrait_background: None,
             allied_portrait_foreground: None,
             allied_pin_icons: [None, None],
-            allied_action_surfaces: [None; 9],
+            allied_action_surfaces: [const { None }; 9],
             border_top_left: None,
             border_top_right: None,
             border_bottom_left: None,
@@ -454,11 +456,21 @@ impl PortraitCache {
         .into_iter()
         .enumerate()
         {
-            let (width, height, pixels) = decode_embedded_png_rgb565(bytes)
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes)
                 .unwrap_or_else(|error| panic!("decode allied state icon {index}: {error}"));
+            assert_eq!(
+                (width, height),
+                (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT),
+                "embedded allied state icon must be 34x32"
+            );
             self.allied_action_surfaces[index] = Some(
                 renderer
-                    .create_surface_from_rgb565(width, height, &pixels)
+                    .create_rgba_gpu_image(
+                        width,
+                        height,
+                        &pixels,
+                        &format!("allied state icon {index}"),
+                    )
                     .unwrap_or_else(|| panic!("allied state icon {index} has invalid dimensions")),
             );
         }
@@ -1126,49 +1138,6 @@ pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
         .expect("pic_to_surface: decoded picture dimensions must match RGB565 payload")
 }
 
-fn decode_embedded_png_rgb565(bytes: &[u8]) -> Result<(u16, u16, Vec<u16>), String> {
-    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    let mut reader = decoder
-        .read_info()
-        .map_err(|error| format!("decode embedded PNG header: {error}"))?;
-    let mut buffer = vec![
-        0;
-        reader
-            .output_buffer_size()
-            .ok_or_else(|| "embedded PNG has no known output size".to_owned())?
-    ];
-    let info = reader
-        .next_frame(&mut buffer)
-        .map_err(|error| format!("decode embedded PNG frame: {error}"))?;
-    let data = &buffer[..info.buffer_size()];
-    let pixels = match info.color_type {
-        png::ColorType::Rgb => data
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|pixel| Renderer::create_color_16(pixel[0], pixel[1], pixel[2]))
-            .collect(),
-        png::ColorType::Rgba => data
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|pixel| {
-                if pixel[3] < 128 {
-                    crate::renderer::TRANSPARENT_COLOR_KEY_16
-                } else {
-                    Renderer::create_color_16(pixel[0], pixel[1], pixel[2])
-                }
-            })
-            .collect(),
-        color_type => {
-            return Err(format!(
-                "embedded PNG uses unsupported color type {color_type:?}"
-            ));
-        }
-    };
-    Ok((info.width as u16, info.height as u16, pixels))
-}
-
 fn decode_embedded_png_rgba(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), String> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder
@@ -1573,24 +1542,22 @@ fn render_allied_portrait(
             let active = index == 1
                 && order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. }));
             let icon_index = allied_state_icon_index(index as u8, order);
-            let surface = portraits.allied_action_surfaces[icon_index]
+            let image = portraits.allied_action_surfaces[icon_index]
+                .as_ref()
                 .unwrap_or_else(|| panic!("allied state icon {icon_index} was not loaded"));
-            let source_width = renderer.surface_width(surface);
-            let source_height = renderer.surface_height(surface);
             let scale = f32::min(
-                (right - left - 2) as f32 / source_width as f32,
-                (action_bottom - action_top - 2) as f32 / source_height as f32,
+                (right - left - 2) as f32 / ALLIED_ACTION_ICON_WIDTH as f32,
+                (action_bottom - action_top - 2) as f32 / ALLIED_ACTION_ICON_HEIGHT as f32,
             );
-            let width = ((source_width as f32 * scale).round() as u16).max(1);
-            let height = ((source_height as f32 * scale).round() as u16).max(1);
+            let width = ((ALLIED_ACTION_ICON_WIDTH as f32 * scale).round() as u16).max(1);
+            let height = ((ALLIED_ACTION_ICON_HEIGHT as f32 * scale).round() as u16).max(1);
             let icon_x = left + (right - left - width) / 2;
             let icon_y = action_top + (action_bottom - action_top - height) / 2;
-            blit_to_screen_widget(
-                renderer,
-                surface,
+            renderer.render_gpu_image(
+                image,
                 None,
                 Some(&bbox(icon_x, icon_y, icon_x + width, icon_y + height)),
-                BLIT_SOURCE_TRANSPARENT,
+                BlendMode::Blend,
             );
 
             if active || hovered_action == Some(index as u8) {
@@ -3420,8 +3387,10 @@ mod tests {
         ] {
             let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
             assert_eq!((width, height), (18, 18));
-            assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0));
-            assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] > 0));
+            let pixels = pixels.as_chunks::<4>().0;
+            assert!(pixels.iter().any(|pixel| pixel[3] == 0));
+            assert!(pixels.iter().any(|pixel| pixel[3] == 255));
+            assert!(pixels.iter().any(|pixel| (1..=254).contains(&pixel[3])));
         }
     }
 
@@ -3465,13 +3434,15 @@ mod tests {
                 "/../../assets/ui/allied_formation_flank.png"
             )),
         ] {
-            let (width, height, pixels) = decode_embedded_png_rgb565(bytes).unwrap();
-            assert_eq!((width, height), (34, 32));
-            assert!(
-                pixels
-                    .iter()
-                    .any(|pixel| *pixel == crate::renderer::TRANSPARENT_COLOR_KEY_16)
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!(
+                (width, height),
+                (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT)
             );
+            let pixels = pixels.as_chunks::<4>().0;
+            assert!(pixels.iter().any(|pixel| pixel[3] == 0));
+            assert!(pixels.iter().any(|pixel| pixel[3] == 255));
+            assert!(pixels.iter().any(|pixel| (1..=254).contains(&pixel[3])));
         }
     }
 
