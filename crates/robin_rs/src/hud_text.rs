@@ -192,6 +192,14 @@ fn entity_display_name(
     }
 }
 
+fn allied_portrait_name(individual_name: String, member_count: usize) -> String {
+    match member_count {
+        0 => panic!("allied portrait group must contain at least one soldier"),
+        1 => individual_name,
+        count => format!("{count} soldiers"),
+    }
+}
+
 /// Whether a PC entity is a VIP (main hero) vs a merry man (peasant).
 ///
 /// Uses the `CharacterProfile::vip` flag when the profile is available,
@@ -601,8 +609,8 @@ fn render_portrait_text_gpu(
         let vis_top = (sh - pos_visage) as i32;
         let mut name =
             entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_default();
-        if !matches!(item.target, PortraitTarget::Pc(_)) && item.members.len() > 1 {
-            name = format!("{name}\n+{}", item.members.len() - 1);
+        if !matches!(item.target, PortraitTarget::Pc(_)) {
+            name = allied_portrait_name(name, item.members.len());
         }
         if !name.is_empty() && !sword_visible {
             let vip =
@@ -828,6 +836,24 @@ mod tests {
     #[test]
     fn prepare_name_vip_no_wrap() {
         assert_eq!(prepare_portrait_name("Robin Hood", true), "Robin Hood");
+    }
+
+    #[test]
+    fn allied_group_name_reports_total_soldier_count() {
+        assert_eq!(
+            allied_portrait_name("John Smith".to_owned(), 1),
+            "John Smith"
+        );
+        assert_eq!(
+            allied_portrait_name("John Smith".to_owned(), 7),
+            "7 soldiers"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "allied portrait group must contain at least one soldier")]
+    fn allied_group_name_rejects_empty_group() {
+        allied_portrait_name(String::new(), 0);
     }
 
     #[test]
