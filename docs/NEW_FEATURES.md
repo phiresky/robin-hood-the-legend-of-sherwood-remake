@@ -205,8 +205,11 @@ A list of which additional features we have added, which ones we might still wan
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be
   more useful.
-- Add the ability to control any soldiers on your side (green soldiers)
-  
+- Add the ability to control any soldiers on your side (green soldiers). Maybe box-selecting a group of soldiers adds a new portrait, with action buttons to define the stance of the group, patrols, formation, follow one of the heroes,...
+    - box-select and click adds a "temporary" portrait for that group / individual
+    - soldier names auto generate?
+    - small button to "pin" a soldier/soldier group, which keeps that portrait present / visible
+
 ### Code Quality
 
 - Finish moving legacy sentinels to typed runtime boundaries. Entity IDs,
