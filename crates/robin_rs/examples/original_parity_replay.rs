@@ -6039,8 +6039,14 @@ fn compare_frame(
             continue;
         }
         let id = entity_map.translate(expected.entity_id);
+        // Diff paths name the RUST id, but `--dump-entity`, the trace's
+        // `elements[].entity_id.index` and the Original's logs all use the ORIGINAL
+        // index, and the two are frequently unequal (e.g. Original pc:171 is
+        // Rust Pc(PcId(174))). Four investigations lost hours to that mismatch, so
+        // every diff root spells the pairing out.
+        let id_label = EntityLabel { id, original_index: expected.entity_id.index };
         let Some(actual) = engine.get_entity(id) else {
-            differences.push(format!("{id:?}: missing in Rust entity table"));
+            differences.push(format!("{id_label:?}: missing in Rust entity table"));
             continue;
         };
         let element = actual.element_data();
@@ -6258,7 +6264,7 @@ fn compare_frame(
             let mut actual_runtime = engine.parity_entity_runtime_state(id, assets);
             retain_recorded_entity_runtime_coverage(&expected_runtime, &mut actual_runtime);
             collect_json_differences(
-                &format!("{id:?}.runtime"),
+                &format!("{id_label:?}.runtime"),
                 &expected_runtime,
                 &actual_runtime,
                 &mut differences,
@@ -8404,5 +8410,21 @@ mod tests {
             frames.into_iter().collect::<Vec<_>>(),
             (17..50).collect::<Vec<_>>()
         );
+    }
+}
+
+/// Wraps a Rust entity id so its `Debug` rendering also carries the Original
+/// trace index it was mapped from, e.g. `Pc(PcId(174))[orig:171]`.
+///
+/// The divergence report is read alongside `--dump-entity` (Original indices)
+/// and the Original's own `[DBG]` logs; the id spaces frequently differ.
+struct EntityLabel {
+    id: robin_engine::entity_id::EntityId,
+    original_index: u32,
+}
+
+impl std::fmt::Debug for EntityLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}[orig:{}]", self.id, self.original_index)
     }
 }
