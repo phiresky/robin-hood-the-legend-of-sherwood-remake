@@ -4252,10 +4252,15 @@ impl AiController {
         let owner = self
             .owner_entity_id
             .expect("PointTo requires an AI controller bound to an owner");
+        // `vMeToTarget3D = PositionToPoint3D( posTarget ) - mpMe->GetPosition()`
+        // (`RHartificialintelligence.cpp:2806`). The origin is the raw element
+        // body point, not the AI `Position( mpMe )` that snaps to a gate
+        // endpoint during a door pass.
         let target = ctx.position_to_point_3d(pos);
+        let me = ctx.self_body_position_world;
         let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
-            pos.x - ctx.position.x,
-            (pos.y - ctx.position.y) + (target.z - ctx.elevation),
+            target.x - me.x,
+            target.y - me.y,
         );
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
         turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));

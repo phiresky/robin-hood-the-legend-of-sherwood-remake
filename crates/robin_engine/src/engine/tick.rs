@@ -5103,7 +5103,16 @@ impl EngineInner {
                         return Some(crate::sprite::MotionState::InProgress);
                     }
                 }
-                engine.tick_entity_movement_owner(sim, assets, owner, movement);
+                // PerformSeek's completion-time RefreshSeek branches return
+                // RHMOTION_IN_PROGRESS explicitly
+                // (`original-code/RHelementactor.cpp:7963-7970`, `:8002-8007`),
+                // so Actor::Hourglass runs none of its DONE / TERMINATED /
+                // ABORTED tail for that slot.
+                if let Some(motion) =
+                    engine.tick_entity_movement_owner(sim, assets, owner, movement)
+                {
+                    return Some(motion);
+                }
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
                     if engine

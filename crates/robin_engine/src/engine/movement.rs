@@ -7135,8 +7135,10 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         owner: EntityId,
         selected: Option<MovementOwnerSelection>,
-    ) {
-        let Some(selected) = selected else { return };
+    ) -> Option<crate::sprite::MotionState> {
+        let Some(selected) = selected else {
+            return None;
+        };
         let selected_is_live = self
             .orders
             .sequence_manager
@@ -7145,7 +7147,7 @@ impl EngineInner {
             .and_then(|element| element.current_order())
             .is_some_and(|order| order.order_id == selected.order_id);
         if !selected_is_live {
-            return;
+            return None;
         }
         if let Some(entity) = self.world.entities.get(owner) {
             super::animation::direction_provenance_snapshot(
@@ -7162,7 +7164,7 @@ impl EngineInner {
             .and_then(|entity| entity.actor_data())
             .is_some_and(|actor| actor.execution_frozen)
         {
-            return;
+            return None;
         }
         let selected_command = self
             .orders
@@ -7178,14 +7180,14 @@ impl EngineInner {
             selected_command,
             Some(crate::element::Command::WaitTimer | crate::element::Command::WaitFreeLift)
         ) {
-            return;
+            return None;
         }
         if self.abort_orphaned_sword_movement(sim, assets, owner, selected) {
             // LaunchSequenceElement registers the replacement for the later
             // sequence-manager phase. It must not execute at this actor
             // boundary: Original exposes QuitSwordfight as the current
             // command for one frame before its lowering order starts.
-            return;
+            return None;
         }
         if self.actors_frozen() {
             // A globally frozen Sprite::PerformMotion returns IN_PROGRESS
@@ -7245,7 +7247,7 @@ impl EngineInner {
             if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
-            return;
+            return None;
         }
 
         // Sample mutable mobile geometry only now, at this actor's Original
@@ -7803,6 +7805,13 @@ impl EngineInner {
         // Keep this before crossing resolution/dispatch; delaying it until
         // afterwards lets LINE_SOUND/LINE_SCRIPT callbacks inspect the stale
         // seek and can enter the seeking AI state an extra time.
+        // `PerformSeek` answers both of these branches with an explicit
+        // `return RHMOTION_IN_PROGRESS` immediately after `RefreshSeek`
+        // (`original-code/RHelementactor.cpp:7963-7970` for the stale final
+        // waypoint, `:8002-8007` for the out-of-reach stop transition), so the
+        // Execute result Actor::Hourglass latches is IN_PROGRESS regardless of
+        // the state `RefreshSeek` left on the replaced element.
+        let mut refreshed_seek_in_progress = false;
         for (owner, seq_id, elem_idx) in transition_seek_refreshes {
             // Re-read the seek element's flags / target / tolerance / action
             // because another staged Execute effect may have changed adjacent
@@ -7853,6 +7862,7 @@ impl EngineInner {
                     tolerance,
                     new_target_pos,
                 );
+                refreshed_seek_in_progress = true;
             }
         }
 
@@ -8116,6 +8126,8 @@ impl EngineInner {
                     "movement owner {owner:?} failed to drain synchronous callback work: {error:?}"
                 )
             });
+
+        refreshed_seek_in_progress.then_some(crate::sprite::MotionState::InProgress)
     }
 
     /// Movement Execute body for the single movement owner. The caller's
@@ -11505,7 +11517,7 @@ impl EngineInner {
                             order_id: order.order_id,
                         })
                 });
-            self.tick_entity_movement_owner(sim, assets, owner, selected);
+            let _ = self.tick_entity_movement_owner(sim, assets, owner, selected);
         }
     }
 
@@ -15325,7 +15337,7 @@ mod movement_transition_state_tests {
             .unwrap()
             .active_movement = ActiveMovement::new(sequence, 0);
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,

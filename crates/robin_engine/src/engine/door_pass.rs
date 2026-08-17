@@ -2766,7 +2766,7 @@ mod tests {
 
         // The terminal transition slot applies its OnWall state and installs
         // PassingDoor, but does not execute the topology callback.
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -2804,7 +2804,7 @@ mod tests {
             .element_data()
             .position_map();
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -3272,7 +3272,7 @@ mod tests {
             actor.active_door_pass.as_mut().unwrap().current_reverse = true;
         }
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -3345,7 +3345,7 @@ mod tests {
             actor.active_door_pass.as_mut().unwrap().current_reverse = true;
         }
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -3513,7 +3513,7 @@ mod tests {
                     "the PassingDoor action point changes sector but must not snap lift facing"
                 );
 
-                engine.tick_entity_movement_owner(
+                let _ = engine.tick_entity_movement_owner(
                     &crate::sim_rng::test_context(),
                     &LevelAssets::new(),
                     owner,
@@ -3723,7 +3723,7 @@ mod tests {
                 .element_data_mut()
                 .set_direction_goal(5);
 
-            engine.tick_entity_movement_owner(
+            let _ = engine.tick_entity_movement_owner(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
                 owner,
