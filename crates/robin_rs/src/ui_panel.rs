@@ -15,7 +15,7 @@
 
 use crate::host::Host;
 use robin_assets::picture::Picture;
-use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
+use robin_engine::allied_control::AlliedDuty;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -203,6 +203,10 @@ pub struct PortraitCache {
     top_scroll_surface: Option<u32>,
     top_scroll_alt_surface: Option<u32>,
     bottom_scroll_surface: Option<u32>,
+    /// Authored 112x50 visage used by transient and pinned allied groups.
+    allied_visage_surface: Option<u32>,
+    /// Original-game artwork for stance, patrol, formation, and follow.
+    allied_action_surfaces: [Option<u32>; 4],
     /// Panel border frame pieces.
     border_top_left: Option<u32>,
     border_top_right: Option<u32>,
@@ -274,6 +278,8 @@ impl PortraitCache {
             top_scroll_surface: None,
             top_scroll_alt_surface: None,
             bottom_scroll_surface: None,
+            allied_visage_surface: None,
+            allied_action_surfaces: [None; 4],
             border_top_left: None,
             border_top_right: None,
             border_bottom_left: None,
@@ -334,6 +340,50 @@ impl PortraitCache {
             "Portrait cache: {} surfaces loaded",
             self.surfaces.iter().filter(|s| s.is_some()).count(),
         );
+
+        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/ui/allied_soldier_portrait.png"
+        )))
+        .expect("embedded allied-soldier portrait must be a valid RGB/RGBA PNG");
+        assert_eq!(
+            (width, height),
+            (ELEMENT_WIDTH, VISAGE_HEIGHT),
+            "embedded allied-soldier portrait must match the native HUD visage slot"
+        );
+        self.allied_visage_surface = Some(
+            renderer
+                .create_surface_from_rgb565(width, height, &pixels)
+                .expect("embedded allied-soldier portrait dimensions must match its payload"),
+        );
+
+        // Reuse authored interface artwork instead of drawing synthetic,
+        // opaque rectangles. These resources already carry the classic
+        // color-keyed silhouettes and soft shadows used throughout the HUD.
+        for (index, (resource, label)) in [
+            (resource_ids::RHID_GUARD, "stance"),
+            (resource_ids::RHID_DISPLAY_CAMPAIGN_MAP, "patrol"),
+            (resource_ids::RHID_SELECT_ALL, "formation"),
+            (resource_ids::RHID_GO_TO_EXIT, "follow"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let picture = match res.get_picture(resource, 1) {
+                Ok(picture) => Ok(picture),
+                Err(_) => res.get_picture(resource, 0),
+            };
+            match picture {
+                Ok(picture) => {
+                    self.allied_action_surfaces[index] = Some(pic_to_surface(renderer, picture));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to load allied {label} icon (resource {resource}): {error}"
+                    );
+                }
+            }
+        }
 
         // ── Load scroll decoration surfaces (generic, shared by all portraits) ──
         for (res_id, field, label) in [
@@ -998,6 +1048,49 @@ pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
         .expect("pic_to_surface: decoded picture dimensions must match RGB565 payload")
 }
 
+fn decode_embedded_png_rgb565(bytes: &[u8]) -> Result<(u16, u16, Vec<u16>), String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("decode embedded PNG header: {error}"))?;
+    let mut buffer = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| "embedded PNG has no known output size".to_owned())?
+    ];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("decode embedded PNG frame: {error}"))?;
+    let data = &buffer[..info.buffer_size()];
+    let pixels = match info.color_type {
+        png::ColorType::Rgb => data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|pixel| Renderer::create_color_16(pixel[0], pixel[1], pixel[2]))
+            .collect(),
+        png::ColorType::Rgba => data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| {
+                if pixel[3] < 128 {
+                    crate::renderer::TRANSPARENT_COLOR_KEY_16
+                } else {
+                    Renderer::create_color_16(pixel[0], pixel[1], pixel[2])
+                }
+            })
+            .collect(),
+        color_type => {
+            return Err(format!(
+                "embedded PNG uses unsupported color type {color_type:?}"
+            ));
+        }
+    };
+    Ok((info.width as u16, info.height as u16, pixels))
+}
+
 /// The [`CharacterKind`] for a PC entity, if it is a PC whose profile
 /// matched one of the 10 known characters at level-load time.
 fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
@@ -1159,6 +1252,10 @@ fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Enti
         .map(|i| i as u8)
 }
 
+fn allied_action_index(relative_x: f32) -> u8 {
+    ((relative_x / (ELEMENT_WIDTH as f32 / 4.0)).floor() as u8).min(3)
+}
+
 fn render_allied_portrait(
     renderer: &mut Renderer,
     portraits: &PortraitCache,
@@ -1167,6 +1264,7 @@ fn render_allied_portrait(
     item: &PortraitBarItem,
     x: u16,
     sh: u16,
+    hovered_action: Option<u8>,
 ) {
     let selected = engine.allied_selection(seat) == item.members;
     let top_scroll = if selected {
@@ -1211,31 +1309,16 @@ fn render_allied_portrait(
     } else {
         sh - CLOSE_POSITION_BOTTOM_SCROLL
     };
-    renderer.fill_screen(
+    let surface = portraits
+        .allied_visage_surface
+        .expect("allied portrait surface must be loaded before drawing the HUD");
+    blit_to_screen_widget(
+        renderer,
+        surface,
+        None,
         Some(&bbox(x, visage_top, x + ELEMENT_WIDTH, visage_bottom)),
-        Renderer::create_color_16(67, 62, 42),
+        BLIT_SOURCE_TRANSPARENT,
     );
-    renderer.draw_rect_outline_screen(
-        i32::from(x + 3),
-        i32::from(visage_top + 2),
-        i32::from(x + ELEMENT_WIDTH - 4),
-        i32::from(visage_bottom.saturating_sub(2)),
-        Renderer::create_color_16(142, 119, 72),
-    );
-    for index in 0..item.members.len().min(12) {
-        let px = x + 10 + (index % 6) as u16 * 16;
-        let py = visage_top + 7 + (index / 6) as u16 * 17;
-        // Small helmet-and-tunic silhouettes read as soldiers even at the
-        // original game's low HUD resolution.
-        renderer.fill_screen(
-            Some(&bbox(px + 2, py, px + 8, py + 5)),
-            Renderer::create_color_16(200, 184, 126),
-        );
-        renderer.fill_screen(
-            Some(&bbox(px, py + 5, px + 10, py + 11)),
-            Renderer::create_color_16(54, 112, 55),
-        );
-    }
 
     // Pin/unpin button remains visible in both open and closed states.
     let pin_y = sh - top_scroll + 4;
@@ -1275,183 +1358,51 @@ fn render_allied_portrait(
             .members
             .first()
             .and_then(|soldier| engine.allied_order(*soldier));
-        let stance = order.map_or(AlliedStance::Defensive, |order| order.stance);
-        let formation = order.map_or(AlliedFormation::Compact, |order| order.formation);
-        let glyph = Renderer::create_color_16(224, 211, 157);
-        let highlight = Renderer::create_color_16(141, 119, 73);
-        let shadow = Renderer::create_color_16(35, 31, 23);
-        let button_w = ELEMENT_WIDTH / 2;
-        let button_h = (action_bottom - action_top) / 2;
+        let button_w = ELEMENT_WIDTH / 4;
         for index in 0..4 {
-            let column = index % 2;
-            let row = index / 2;
-            let left = x + column as u16 * button_w;
-            let right = if column == 1 {
+            let left = x + index as u16 * button_w;
+            let right = if index == 3 {
                 x + ELEMENT_WIDTH
             } else {
                 left + button_w
-            };
-            let top = action_top + row as u16 * button_h;
-            let bottom = if row == 1 {
-                action_bottom
-            } else {
-                top + button_h
             };
             let active = match (index, order.map(|order| &order.duty)) {
                 (1, Some(AlliedDuty::Patrol { .. })) | (3, Some(AlliedDuty::Follow { .. })) => true,
                 _ => false,
             };
-            renderer.fill_screen(
-                Some(&bbox(left + 1, top + 1, right - 1, bottom - 1)),
-                if active {
-                    Renderer::create_color_16(92, 78, 39)
+            let surface = portraits.allied_action_surfaces[index]
+                .unwrap_or_else(|| panic!("allied action icon {index} was not loaded"));
+            let source_width = renderer.surface_width(surface);
+            let source_height = renderer.surface_height(surface);
+            let scale = f32::min(
+                (right - left - 2) as f32 / source_width as f32,
+                (action_bottom - action_top - 2) as f32 / source_height as f32,
+            );
+            let width = ((source_width as f32 * scale).round() as u16).max(1);
+            let height = ((source_height as f32 * scale).round() as u16).max(1);
+            let icon_x = left + (right - left - width) / 2;
+            let icon_y = action_top + (action_bottom - action_top - height) / 2;
+            blit_to_screen_widget(
+                renderer,
+                surface,
+                None,
+                Some(&bbox(icon_x, icon_y, icon_x + width, icon_y + height)),
+                BLIT_SOURCE_TRANSPARENT,
+            );
+
+            if active || hovered_action == Some(index as u8) {
+                let color = if active {
+                    Renderer::create_color_16(238, 192, 55)
                 } else {
-                    Renderer::create_color_16(62, 57, 39)
-                },
-            );
-            renderer.draw_line_screen(
-                i32::from(left + 1),
-                i32::from(top + 1),
-                i32::from(right - 2),
-                i32::from(top + 1),
-                highlight,
-            );
-            renderer.draw_line_screen(
-                i32::from(left + 1),
-                i32::from(top + 1),
-                i32::from(left + 1),
-                i32::from(bottom - 2),
-                highlight,
-            );
-            renderer.draw_line_screen(
-                i32::from(left + 1),
-                i32::from(bottom - 2),
-                i32::from(right - 2),
-                i32::from(bottom - 2),
-                shadow,
-            );
-            let center = (left + right) / 2;
-            let cy = (top + bottom) / 2;
-            match index {
-                // Stance: stop bar, shield, or crossed aggressive blades.
-                0 => match stance {
-                    AlliedStance::Hold => {
-                        renderer.fill_screen(
-                            Some(&bbox(center - 8, cy - 2, center + 8, cy + 2)),
-                            glyph,
-                        );
-                    }
-                    AlliedStance::Defensive => {
-                        renderer.draw_line_screen(
-                            i32::from(center - 7),
-                            i32::from(cy - 7),
-                            i32::from(center + 7),
-                            i32::from(cy - 7),
-                            glyph,
-                        );
-                        renderer.draw_line_screen(
-                            i32::from(center - 7),
-                            i32::from(cy - 7),
-                            i32::from(center - 5),
-                            i32::from(cy + 4),
-                            glyph,
-                        );
-                        renderer.draw_line_screen(
-                            i32::from(center + 7),
-                            i32::from(cy - 7),
-                            i32::from(center + 5),
-                            i32::from(cy + 4),
-                            glyph,
-                        );
-                        renderer.draw_line_screen(
-                            i32::from(center - 5),
-                            i32::from(cy + 4),
-                            i32::from(center),
-                            i32::from(cy + 8),
-                            glyph,
-                        );
-                        renderer.draw_line_screen(
-                            i32::from(center + 5),
-                            i32::from(cy + 4),
-                            i32::from(center),
-                            i32::from(cy + 8),
-                            glyph,
-                        );
-                    }
-                    AlliedStance::Aggressive => {
-                        renderer.draw_line_screen(
-                            i32::from(center - 7),
-                            i32::from(cy + 7),
-                            i32::from(center + 7),
-                            i32::from(cy - 7),
-                            glyph,
-                        );
-                        renderer.draw_line_screen(
-                            i32::from(center - 7),
-                            i32::from(cy - 7),
-                            i32::from(center + 7),
-                            i32::from(cy + 7),
-                            glyph,
-                        );
-                    }
-                },
-                // Patrol: two waypoints, route, and return arrowhead.
-                1 => {
-                    renderer
-                        .fill_screen(Some(&bbox(center - 9, cy - 7, center - 5, cy - 3)), glyph);
-                    renderer
-                        .fill_screen(Some(&bbox(center + 5, cy + 3, center + 9, cy + 7)), glyph);
-                    renderer.draw_line_screen(
-                        i32::from(center - 5),
-                        i32::from(cy - 4),
-                        i32::from(center + 7),
-                        i32::from(cy + 4),
-                        glyph,
-                    );
-                    renderer.draw_line_screen(
-                        i32::from(center + 7),
-                        i32::from(cy + 4),
-                        i32::from(center + 2),
-                        i32::from(cy + 3),
-                        glyph,
-                    );
-                }
-                // Formation: miniature current formation.
-                2 => {
-                    let dots: &[(i16, i16)] = match formation {
-                        AlliedFormation::Compact => &[(-6, -5), (5, -4), (-5, 5), (6, 5)],
-                        AlliedFormation::PatrolColumn => &[(0, -8), (-6, 0), (6, 0), (0, 8)],
-                        AlliedFormation::Battle => &[(-7, -5), (0, -5), (7, -5), (-4, 6), (4, 6)],
-                    };
-                    for &(dx, dy) in dots {
-                        let px = (center as i16 + dx) as u16;
-                        let py = (cy as i16 + dy) as u16;
-                        renderer.fill_screen(Some(&bbox(px, py, px + 4, py + 4)), glyph);
-                    }
-                }
-                // Follow: a small leader above two followers.
-                3 => {
-                    renderer.draw_line_screen(
-                        i32::from(center),
-                        i32::from(cy - 5),
-                        i32::from(center - 7),
-                        i32::from(cy + 4),
-                        glyph,
-                    );
-                    renderer.draw_line_screen(
-                        i32::from(center),
-                        i32::from(cy - 5),
-                        i32::from(center + 7),
-                        i32::from(cy + 4),
-                        glyph,
-                    );
-                    for (dx, dy) in [(0i16, -9i16), (-7, 5), (7, 5)] {
-                        let px = (center as i16 + dx) as u16;
-                        let py = (cy as i16 + dy) as u16;
-                        renderer.fill_screen(Some(&bbox(px - 2, py - 2, px + 3, py + 3)), glyph);
-                    }
-                }
-                _ => unreachable!(),
+                    Renderer::create_color_16(224, 211, 157)
+                };
+                renderer.draw_line_screen(
+                    i32::from(left + 3),
+                    i32::from(action_bottom - 2),
+                    i32::from(right - 4),
+                    i32::from(action_bottom - 2),
+                    color,
+                );
             }
         }
     }
@@ -1640,12 +1591,16 @@ pub fn draw_panel(
     let num_portraits = portrait_items.len() as u16;
     let capacity = portrait_capacity(sw);
     let frame = engine.frame_counter();
-    let hovered_action =
-        hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y)
-            .and_then(|hit| match hit.area {
-                PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
-                _ => None,
-            });
+    let hovered_portrait =
+        hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y);
+    let hovered_action = hovered_portrait.and_then(|hit| match hit.area {
+        PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
+        _ => None,
+    });
+    let hovered_allied_action = hovered_portrait.and_then(|hit| match hit.area {
+        PortraitHitArea::AlliedAction(btn) => Some((hit.slot, btn)),
+        _ => None,
+    });
 
     let mut titbit_renderer_opt = titbit_renderer;
 
@@ -1675,7 +1630,12 @@ pub fn draw_panel(
 
         let item = &portrait_items[slot as usize];
         if !matches!(item.target, PortraitTarget::Pc(_)) {
-            render_allied_portrait(renderer, portraits, engine, local_seat, item, x, sh);
+            let hovered = hovered_allied_action
+                .filter(|(hovered_slot, _)| *hovered_slot == slot as u8)
+                .map(|(_, button)| button);
+            render_allied_portrait(
+                renderer, portraits, engine, local_seat, item, x, sh, hovered,
+            );
             continue;
         }
         let PortraitTarget::Pc(pc_id) = item.target else {
@@ -2951,12 +2911,7 @@ pub fn hit_test_portrait_detailed(
             } else if cy >= visage_top && (!selected || cy < action_top) {
                 PortraitHitArea::Visage
             } else if selected && cy >= action_top && cy < bottom_scroll_top {
-                let column = (((click_x - x) / (ELEMENT_WIDTH as f32 / 2.0)).floor() as u8).min(1);
-                let row = (((cy - action_top) / ((bottom_scroll_top - action_top) / 2.0)).floor()
-                    as u8)
-                    .min(1);
-                let index = row * 2 + column;
-                PortraitHitArea::AlliedAction(index)
+                PortraitHitArea::AlliedAction(allied_action_index(click_x - x))
             } else {
                 PortraitHitArea::BottomScroll
             };
@@ -3200,6 +3155,29 @@ mod tests {
         assert_eq!(ACTION_SUB_ID_FOCUSED, 2);
         assert_eq!(ACTION_SUB_ID_SELECTED, 3);
         assert_eq!(ACTION_SUB_ID_FOCUSED_SELECTED, 4);
+    }
+
+    #[test]
+    fn allied_action_row_has_four_equal_hit_columns() {
+        assert_eq!(allied_action_index(0.0), 0);
+        assert_eq!(allied_action_index(27.9), 0);
+        assert_eq!(allied_action_index(28.0), 1);
+        assert_eq!(allied_action_index(55.9), 1);
+        assert_eq!(allied_action_index(56.0), 2);
+        assert_eq!(allied_action_index(83.9), 2);
+        assert_eq!(allied_action_index(84.0), 3);
+        assert_eq!(allied_action_index(112.0), 3);
+    }
+
+    #[test]
+    fn embedded_allied_portrait_decodes_at_native_hud_size() {
+        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/ui/allied_soldier_portrait.png"
+        )))
+        .unwrap();
+        assert_eq!((width, height), (ELEMENT_WIDTH, VISAGE_HEIGHT));
+        assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
     }
 
     // The CharacterKind resource-lookup and sub-id tests live in

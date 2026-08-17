@@ -3870,6 +3870,62 @@ impl EngineInner {
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
     ) {
+        self.perform_group_move_with_destinations(
+            sim,
+            assets,
+            pc_ids,
+            click_point,
+            run,
+            show_marker,
+            goal_override,
+            None,
+        );
+    }
+
+    /// Run the normal group-movement resolution while retaining explicit
+    /// role-aware destinations. Allied formations use this rather than
+    /// invoking [`Self::perform_group_move`] once per soldier, so the group
+    /// shares the same click-sector resolution and slot-authorization pass as
+    /// an ordinary multi-hero click.
+    pub(super) fn perform_group_move_to_slots(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_ids: &[EntityId],
+        click_point: MapPoint,
+        destinations: &[MapPoint],
+        run: bool,
+        show_marker: bool,
+    ) {
+        assert_eq!(
+            actor_ids.len(),
+            destinations.len(),
+            "explicit group-move destination count must match actor count"
+        );
+        self.perform_group_move_with_destinations(
+            sim,
+            assets,
+            actor_ids,
+            click_point,
+            run,
+            show_marker,
+            None,
+            Some(destinations),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn perform_group_move_with_destinations(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        pc_ids: &[EntityId],
+        click_point: MapPoint,
+        run: bool,
+        show_marker: bool,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        explicit_destinations: Option<&[MapPoint]>,
+    ) {
         if pc_ids.is_empty() {
             return;
         }
@@ -4067,7 +4123,9 @@ impl EngineInner {
                     .position_map()
             })
             .collect();
-        let (mercenary_center, dests) = {
+        let (mercenary_center, dests) = if let Some(destinations) = explicit_destinations {
+            (None, destinations.to_vec())
+        } else {
             let n = pc_positions.len() as f32;
             let mut cx = pc_positions.iter().map(|p| p.x).sum::<f32>();
             let mut cy = pc_positions.iter().map(|p| p.y).sum::<f32>();
@@ -4105,6 +4163,10 @@ impl EngineInner {
         for ((pc_id, _, pc_src_layer, src_sector), formation_dest) in
             positions.iter().zip(dests.iter())
         {
+            let owner_is_pc = self
+                .get_entity(*pc_id)
+                .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"))
+                .is_pc();
             // Compact-group placement is authorized exactly once, before
             // PerformMove, using the box produced by Original's ordered
             // `box - center + click` translations. Reconstructing a point
@@ -4228,12 +4290,14 @@ impl EngineInner {
                         pc_effective_layer,
                         1.0,
                     );
-                    let speak = crate::sequence::SequenceElement::new(
-                        4,
-                        crate::element::Command::SpeakHeroReachDestination,
-                        Some(*pc_id),
-                    );
-                    seq.append_element(speak);
+                    if owner_is_pc {
+                        let speak = crate::sequence::SequenceElement::new(
+                            4,
+                            crate::element::Command::SpeakHeroReachDestination,
+                            Some(*pc_id),
+                        );
+                        seq.append_element(speak);
+                    }
                     self.append_posture_recovery(*pc_id, &mut seq);
                     self.launch_sequence(seq);
                     if show_marker && !is_door_click {
@@ -4337,14 +4401,16 @@ impl EngineInner {
                 // `Instruct` override terminates the Speak element on
                 // dispatch and queues the HERO_DONE_COMMAND bark
                 // (handled by `arbitrate_instruct`).
-                let speak = crate::sequence::SequenceElement::new(
-                    1,
-                    crate::element::Command::SpeakHeroReachDestination,
-                    Some(*pc_id),
-                );
                 let mut seq = crate::sequence::Sequence::new();
                 seq.append_element(move_elem);
-                seq.append_element(speak);
+                if owner_is_pc {
+                    let speak = crate::sequence::SequenceElement::new(
+                        1,
+                        crate::element::Command::SpeakHeroReachDestination,
+                        Some(*pc_id),
+                    );
+                    seq.append_element(speak);
+                }
                 self.append_posture_recovery(*pc_id, &mut seq);
                 self.launch_sequence(seq);
                 if show_marker && !is_door_click {
@@ -4561,7 +4627,7 @@ impl EngineInner {
                         crate::sequence::MoveFlags::empty(),
                         Vec::new(),
                         Vec::new(),
-                        true,
+                        owner_is_pc,
                         true,
                     );
                     if show_marker && !is_door_click {
@@ -7206,8 +7272,7 @@ impl EngineInner {
             .get_element(selected.seq_id, selected.elem_idx)
             .and_then(|element| element.current_order())
             .is_some_and(|order| {
-                order.order_id == selected.order_id
-                    && order.order_type == OrderType::PassingDoor
+                order.order_id == selected.order_id && order.order_type == OrderType::PassingDoor
             });
         if self.actors_frozen() && !selected_is_door_pass_action_point {
             // A globally frozen Sprite::PerformMotion returns IN_PROGRESS
