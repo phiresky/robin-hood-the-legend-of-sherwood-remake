@@ -4262,6 +4262,12 @@ impl AiController {
             target.x - me.x,
             target.y - me.y,
         );
+        if std::env::var_os("PARITY_DEBUG_POINT_TO").is_some() {
+            eprintln!(
+                "[POINT_TO frame={} owner={owner:?} pos={pos:?} target={target:?} me={me:?} dir={direction}]",
+                ctx.frame
+            );
+        }
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
         turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
         let mut point = SequenceElement::new_generic(2, Command::Point, Some(owner));

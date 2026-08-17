@@ -1643,6 +1643,17 @@ impl EngineInner {
             pc.human.unconscious = true;
             pc.element.set_posture(Posture::Lying);
         }
+        // `RHElementActorPC::GetWounded` reaches the coma save through
+        // `SetPosture( RHPOSTURE_LYING )` (RHelementactorpc.cpp:8977), and
+        // `RHElementActorHuman::SetPosture` (RHelementactorhuman.cpp:13549-13574)
+        // runs `RHEngine::UpdateIntersectingCorpses( this, true )`
+        // synchronously on the lying transition. The wounding site is the
+        // *attacker's* creation slot, so the victim's own owner boundary —
+        // and the end-of-tick drain — are both too late: an actor whose slot
+        // falls between them samples the body's repulsive radius on the very
+        // next frame and would see the full corpse radius instead of the
+        // shrunken intersecting-corpse one.
+        self.process_corpse_intersection_update_for(pc_id);
         if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             if let Some(desc) = campaign.characters.get_mut(status_idx) {
                 desc.status.in_coma = true;
