@@ -11,7 +11,8 @@ use super::{EngineInner, LevelAssets};
 const ARRIVAL_DISTANCE: f32 = 32.0;
 const FOLLOW_DISTANCE: f32 = 85.0;
 const FOLLOW_REPATH_DISTANCE: f32 = 24.0;
-const FORMATION_SPACING: f32 = 42.0;
+const FORMATION_SPACING: f32 = 24.0;
+const COMPACT_MAX_RADIUS: f32 = 54.0;
 
 fn distance_squared(a: MapPoint, b: MapPoint) -> f32 {
     let dx = a.x - b.x;
@@ -24,46 +25,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formations_are_centered_and_distinct() {
-        assert_eq!(
-            formation_offset(AlliedFormation::Line, 1, 3),
-            MapPoint::new(0.0, 0.0)
-        );
-        assert_eq!(
-            formation_offset(AlliedFormation::Column, 0, 3),
-            MapPoint::new(0.0, -FORMATION_SPACING)
-        );
-        assert_eq!(
-            formation_offset(AlliedFormation::Wedge, 0, 5),
-            MapPoint::new(0.0, 0.0)
-        );
-        assert_ne!(
-            formation_offset(AlliedFormation::Ring, 0, 4),
-            formation_offset(AlliedFormation::Ring, 1, 4)
-        );
+    fn patrol_column_uses_tight_staggered_pairs() {
+        let offsets = patrol_column_offsets(5);
+        assert_eq!(offsets[0], MapPoint::ZERO);
+        assert_eq!(offsets[1].y, offsets[2].y);
+        assert_eq!(offsets[1].x, -offsets[2].x);
+        assert!(offsets[3].y < offsets[1].y);
     }
 }
 
-fn formation_offset(formation: AlliedFormation, index: usize, count: usize) -> MapPoint {
-    let centered = index as f32 - (count.saturating_sub(1) as f32 / 2.0);
-    match formation {
-        AlliedFormation::Line => MapPoint::new(centered * FORMATION_SPACING, 0.0),
-        AlliedFormation::Column => MapPoint::new(0.0, centered * FORMATION_SPACING),
-        AlliedFormation::Wedge => {
+fn patrol_column_offsets(count: usize) -> Vec<MapPoint> {
+    (0..count)
+        .map(|index| {
             if index == 0 {
-                MapPoint::new(0.0, 0.0)
+                MapPoint::ZERO
             } else {
                 let rank = index.div_ceil(2) as f32;
                 let side = if index.is_multiple_of(2) { 1.0 } else { -1.0 };
-                MapPoint::new(side * rank * FORMATION_SPACING, rank * FORMATION_SPACING)
+                MapPoint::new(side * FORMATION_SPACING * 0.65, -rank * FORMATION_SPACING)
             }
-        }
-        AlliedFormation::Ring => {
-            let angle = std::f32::consts::TAU * index as f32 / count.max(1) as f32;
-            let radius = (count.max(2) as f32 * FORMATION_SPACING / std::f32::consts::TAU)
-                .max(FORMATION_SPACING);
-            MapPoint::new(angle.cos() * radius, angle.sin() * radius)
-        }
+        })
+        .collect()
+}
+
+fn rotate_formation_offset(local: MapPoint, forward: MapPoint) -> MapPoint {
+    let right = MapPoint::new(-forward.y, forward.x);
+    MapPoint::new(
+        right.x * local.x + forward.x * local.y,
+        right.y * local.x + forward.y * local.y,
+    )
+}
+
+fn normalized_direction(from: MapPoint, to: MapPoint) -> MapPoint {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let length = (dx * dx + dy * dy).sqrt();
+    if length > f32::EPSILON {
+        MapPoint::new(dx / length, dy / length)
+    } else {
+        MapPoint::new(0.0, -1.0)
     }
 }
 
@@ -141,13 +141,70 @@ impl EngineInner {
             .copied()
             .filter(|id| self.is_controllable_allied_soldier(*id))
             .collect();
-        let state = self.players.allied.ensure_seat(seat);
-        if !append {
-            state.selection.clear();
+        let newly_selected = {
+            let state = self.players.allied.ensure_seat(seat);
+            let previous = state.selection.clone();
+            if !append {
+                state.selection.clear();
+            }
+            for &id in &valid {
+                if !state.selection.contains(&id) {
+                    state.selection.push(id);
+                }
+            }
+            state
+                .selection
+                .iter()
+                .copied()
+                .filter(|id| !previous.contains(id))
+                .collect::<Vec<_>>()
+        };
+
+        for id in newly_selected {
+            let entity = self
+                .get_entity_mut(id)
+                .unwrap_or_else(|| panic!("newly selected allied soldier {id:?} disappeared"));
+            entity
+                .human_data_mut()
+                .expect("controllable allied soldier has no human data")
+                .start_hulk(true, 1.0);
         }
-        for id in valid {
-            if !state.selection.contains(&id) {
-                state.selection.push(id);
+    }
+
+    /// Advance selection-outline fades on controllable allied soldiers.
+    ///
+    /// PCs use `PcData::already_selected` to detect the selection edge.
+    /// Allied selection seeds the fade directly in `select_allied_soldiers`,
+    /// so this pass only has to advance an animation already in flight.
+    pub(super) fn refresh_allied_selection_hulks(&mut self) {
+        let soldier_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        for id in soldier_ids {
+            if !self.is_controllable_allied_soldier(id) {
+                continue;
+            }
+            let entity = self
+                .get_entity_mut(id)
+                .unwrap_or_else(|| panic!("controllable allied soldier {id:?} disappeared"));
+            let human = entity
+                .human_data_mut()
+                .expect("controllable allied soldier has no human data");
+            if human.running_hulk == 0 {
+                continue;
+            }
+            assert!(
+                human.time_hulk > 0,
+                "running allied selection hulk has zero duration"
+            );
+            human.running_hulk -= 1;
+            if human.running_hulk > 0 {
+                let ratio = human.running_hulk as f32 / human.time_hulk as f32;
+                human.hulk_level = if human.hulk_direction {
+                    40 + (60.0 * ratio) as u16
+                } else {
+                    40 + (60.0 * (1.0 - ratio)) as u16
+                };
+            } else {
+                human.hulk_direction = true;
             }
         }
     }
@@ -261,6 +318,166 @@ impl EngineInner {
         ai.remember_events = locked;
     }
 
+    fn allied_formation_slots(
+        &self,
+        assets: &LevelAssets,
+        soldiers: &[EntityId],
+        destination: MapPoint,
+        formation: AlliedFormation,
+    ) -> Vec<(EntityId, MapPoint)> {
+        if soldiers.is_empty() {
+            return Vec::new();
+        }
+        let positions: Vec<_> = soldiers
+            .iter()
+            .map(|id| {
+                self.get_entity(*id)
+                    .unwrap_or_else(|| panic!("forming allied soldier {id:?} disappeared"))
+                    .element_data()
+                    .position_map()
+            })
+            .collect();
+        let count = positions.len() as f32;
+        let centroid = MapPoint::new(
+            positions.iter().map(|point| point.x).sum::<f32>() / count,
+            positions.iter().map(|point| point.y).sum::<f32>() / count,
+        );
+        let forward = normalized_direction(centroid, destination);
+
+        let offsets = match formation {
+            AlliedFormation::Compact => {
+                let mut offsets: Vec<_> = positions
+                    .iter()
+                    .map(|point| MapPoint::new(point.x - centroid.x, point.y - centroid.y))
+                    .collect();
+                let radius = offsets
+                    .iter()
+                    .map(|point| (point.x * point.x + point.y * point.y).sqrt())
+                    .fold(0.0, f32::max);
+                if radius > COMPACT_MAX_RADIUS {
+                    let scale = COMPACT_MAX_RADIUS / radius;
+                    for offset in &mut offsets {
+                        offset.x *= scale;
+                        offset.y *= scale;
+                    }
+                }
+                offsets
+            }
+            AlliedFormation::PatrolColumn => patrol_column_offsets(soldiers.len())
+                .into_iter()
+                .map(|offset| rotate_formation_offset(offset, forward))
+                .collect(),
+            AlliedFormation::Battle => {
+                #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+                enum Role {
+                    Shield,
+                    Melee,
+                    Ranged,
+                }
+                let mut ranked: Vec<_> = soldiers
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(original_index, id)| {
+                        let soldier = self
+                            .get_entity(id)
+                            .and_then(Entity::soldier_data)
+                            .unwrap_or_else(|| {
+                                panic!("allied formation member {id:?} is not a soldier")
+                            });
+                        let profile = assets
+                            .profile_manager
+                            .get_soldier(soldier.soldier_profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "allied soldier {id:?} requires missing profile {:?}",
+                                    soldier.soldier_profile_index
+                                )
+                            });
+                        let weapon = assets
+                            .profile_manager
+                            .get_hth_weapon(profile.hth_weapon_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "allied soldier {id:?} requires missing HtH weapon {}",
+                                    profile.hth_weapon_id
+                                )
+                            });
+                        let role = if weapon.shield || profile.formation {
+                            Role::Shield
+                        } else if profile.shooting > 0 && profile.shooting_weapon_id != 0 {
+                            Role::Ranged
+                        } else {
+                            Role::Melee
+                        };
+                        (role, original_index, id)
+                    })
+                    .collect();
+                ranked.sort_by_key(|&(role, original_index, _)| (role, original_index));
+                let front_count = ranked
+                    .iter()
+                    .filter(|(role, _, _)| *role != Role::Ranged)
+                    .count();
+                let ranged_count = ranked.len() - front_count;
+                let row_width = soldiers.len().min(5).max(1);
+                let mut by_id = std::collections::BTreeMap::new();
+                let mut front_index = 0;
+                let mut rear_index = 0;
+                for (role, _, id) in ranked {
+                    let (index, depth) = if role == Role::Ranged {
+                        let index = rear_index;
+                        rear_index += 1;
+                        let occupied_front_rows = front_count.div_ceil(row_width);
+                        let first_rear_depth = -(occupied_front_rows as f32) * FORMATION_SPACING;
+                        (
+                            index,
+                            first_rear_depth - (index / row_width) as f32 * FORMATION_SPACING,
+                        )
+                    } else {
+                        let index = front_index;
+                        front_index += 1;
+                        (index, (index / row_width) as f32 * -FORMATION_SPACING)
+                    };
+                    let members_in_row = if role == Role::Ranged {
+                        ranged_count
+                            .saturating_sub((index / row_width) * row_width)
+                            .min(row_width)
+                    } else {
+                        front_count
+                            .saturating_sub((index / row_width) * row_width)
+                            .min(row_width)
+                    };
+                    let column = index % row_width;
+                    let lateral = (column as f32 - (members_in_row.saturating_sub(1) as f32 / 2.0))
+                        * FORMATION_SPACING;
+                    by_id.insert(
+                        id,
+                        rotate_formation_offset(MapPoint::new(lateral, depth), forward),
+                    );
+                }
+                soldiers
+                    .iter()
+                    .map(|id| {
+                        *by_id.get(id).unwrap_or_else(|| {
+                            panic!("battle formation lost allied soldier {id:?}")
+                        })
+                    })
+                    .collect()
+            }
+        };
+        soldiers
+            .iter()
+            .copied()
+            .zip(offsets)
+            .map(|(id, offset)| {
+                (
+                    id,
+                    MapPoint::new(destination.x + offset.x, destination.y + offset.y),
+                )
+            })
+            .collect()
+    }
+
     fn move_allied_to_slots(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -275,13 +492,10 @@ impl EngineInner {
             .copied()
             .filter(|id| self.is_controllable_allied_soldier(*id))
             .collect();
-        let mut slots = Vec::with_capacity(valid.len());
-        for (index, id) in valid.iter().copied().enumerate() {
-            let offset = formation_offset(formation, index, valid.len());
-            let slot = MapPoint::new(destination.x + offset.x, destination.y + offset.y);
+        let slots = self.allied_formation_slots(assets, &valid, destination, formation);
+        for &(id, slot) in &slots {
             self.set_allied_ai_locked(id, true);
             self.perform_group_move(sim, assets, &[id], slot, running, true, None);
-            slots.push((id, slot));
         }
         slots
     }
@@ -417,6 +631,7 @@ impl EngineInner {
 
     pub(crate) fn set_allied_follow(
         &mut self,
+        assets: &LevelAssets,
         soldiers: &[EntityId],
         hero: EntityId,
         formation: AlliedFormation,
@@ -429,8 +644,14 @@ impl EngineInner {
             .copied()
             .filter(|id| self.is_controllable_allied_soldier(*id))
             .collect();
-        for (index, id) in valid.iter().copied().enumerate() {
-            let offset = formation_offset(formation, index, valid.len());
+        let hero_position = self
+            .get_entity(hero)
+            .expect("validated allied follow hero disappeared")
+            .element_data()
+            .position_map();
+        let slots = self.allied_formation_slots(assets, &valid, hero_position, formation);
+        for (id, slot) in slots {
+            let offset = MapPoint::new(slot.x - hero_position.x, slot.y - hero_position.y);
             let current_position = self
                 .get_entity(id)
                 .expect("validated allied follower disappeared")

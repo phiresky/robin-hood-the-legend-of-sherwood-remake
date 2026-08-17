@@ -3103,8 +3103,8 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
         target.pc.life_points = 100;
 
         let sim = crate::sim_rng::test_context();
-        let prepared = engine.prepare_npc_owner_pass(&sim, &assets);
-        engine.tick_npc_owner_pass(&sim, &assets, &positions, prepared, observer_id);
+        let mut prepared = engine.prepare_npc_owner_pass(&sim, &assets);
+        engine.tick_npc_owner_pass(&sim, &assets, &positions, &mut prepared, observer_id);
 
         engine
             .get_entity(observer_id)

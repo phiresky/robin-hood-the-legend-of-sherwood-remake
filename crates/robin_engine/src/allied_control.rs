@@ -50,19 +50,20 @@ impl AlliedStance {
 )]
 pub enum AlliedFormation {
     #[default]
-    Line,
-    Column,
-    Wedge,
-    Ring,
+    #[serde(alias = "Line")]
+    Compact,
+    #[serde(alias = "Column")]
+    PatrolColumn,
+    #[serde(alias = "Wedge", alias = "Ring")]
+    Battle,
 }
 
 impl AlliedFormation {
     pub fn next(self) -> Self {
         match self {
-            Self::Line => Self::Column,
-            Self::Column => Self::Wedge,
-            Self::Wedge => Self::Ring,
-            Self::Ring => Self::Line,
+            Self::Compact => Self::PatrolColumn,
+            Self::PatrolColumn => Self::Battle,
+            Self::Battle => Self::Compact,
         }
     }
 }
@@ -142,7 +143,7 @@ mod tests {
             soldier,
             AlliedSoldierOrder {
                 stance: AlliedStance::Defensive,
-                formation: AlliedFormation::Line,
+                formation: AlliedFormation::Compact,
                 duty: AlliedDuty::Hold { anchor: point },
                 last_destination: point,
             },

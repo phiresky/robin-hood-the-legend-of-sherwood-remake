@@ -604,7 +604,7 @@ fn on_portrait_click(
                 let formation = members
                     .first()
                     .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Line, |order| order.formation);
+                    .map_or(AlliedFormation::Compact, |order| order.formation);
                 host.allied_target_mode = Some(AlliedTargetMode::Patrol {
                     soldiers: members,
                     formation,
@@ -614,7 +614,7 @@ fn on_portrait_click(
                 let formation = members
                     .first()
                     .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Line, |order| order.formation)
+                    .map_or(AlliedFormation::Compact, |order| order.formation)
                     .next();
                 let cmd = PlayerCommand::SetAlliedFormation {
                     soldiers: members,
@@ -641,7 +641,7 @@ fn on_portrait_click(
                 let formation = members
                     .first()
                     .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Line, |order| order.formation);
+                    .map_or(AlliedFormation::Compact, |order| order.formation);
                 let cmd = PlayerCommand::SetAlliedFollow {
                     soldiers: members,
                     hero: heroes[next_index],

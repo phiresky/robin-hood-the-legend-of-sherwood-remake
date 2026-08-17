@@ -876,7 +876,7 @@ impl EngineInner {
                 soldiers,
                 hero,
                 formation,
-            } => self.set_allied_follow(soldiers, *hero, *formation),
+            } => self.set_allied_follow(assets, soldiers, *hero, *formation),
             ReleaseAlliedControl => self.release_allied_control(),
 
             // ── Special ─────────────────────────────────────────

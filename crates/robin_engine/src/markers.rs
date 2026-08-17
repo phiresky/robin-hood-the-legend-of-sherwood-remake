@@ -123,20 +123,18 @@ impl GroundMark {
     /// dropped, since `{ render; advance; retire }` must run as one
     /// indivisible per-mark body.  (2) snapshot
     /// `render_frame = current_frame` for the renderer.  (3) on even
-    /// universal-frame-counter ticks, advance `current_frame` for marks
-    /// that pass the on-screen test.
+    /// universal-frame-counter ticks, advance `current_frame`.
     ///
-    /// Off-screen marks freeze (advancement is gated on the on-screen
-    /// test). Engine-owned command marks call this from
+    /// Engine-owned command marks call this from
     /// `EngineInner::perform_hourglass`; host-owned preview marks call it
     /// from the same hourglass cadence while staying outside the
     /// deterministic sim snapshot.
     pub fn tick(
         &mut self,
-        view_pos: geo::Coord<f32>,
-        zoom: f32,
-        screen_w: i32,
-        screen_h: i32,
+        _view_pos: geo::Coord<f32>,
+        _zoom: f32,
+        _screen_w: i32,
+        _screen_h: i32,
         frame_counter: u32,
     ) {
         // (1) Retire entries whose animation finished on the previous
@@ -150,33 +148,18 @@ impl GroundMark {
             mark.render_frame = mark.current_frame;
         }
 
-        // (3) Advance on even ticks, gated per-mark by on-screen.
+        // (3) Advance on even ticks. The original game gated this on the
+        // render viewport. Rust keeps deterministic marker state in the
+        // engine, which does not own the player's actual viewport; using the
+        // cutscene camera here made visible marks freeze forever after the
+        // player scrolled. Always advancing preserves the intended visible
+        // animation and guarantees retirement.
+        // TODO: Restore off-screen freezing if the deterministic simulation
+        // gains an authoritative per-player viewport.
         let advance_this_tick = frame_counter.is_multiple_of(2);
-        if advance_this_tick && !self.frame_sizes.is_empty() {
+        if advance_this_tick {
             for mark in &mut self.marks {
-                let idx = mark.current_frame as usize;
-                let (fw, fh) = match self.frame_sizes.get(idx) {
-                    Some(&sz) => sz,
-                    None => continue,
-                };
-                // Per-frame auto-crop offset: shifts the cull AABB
-                // top-left into the opaque region. Defaults to (0,0)
-                // when host metadata is missing.
-                let (ox, oy) = self.per_frame_offsets.get(idx).copied().unwrap_or((0, 0));
-                let scaled_w = (fw as f32 * zoom).round() as i32;
-                let scaled_h = (fh as f32 * zoom).round() as i32;
-                if scaled_w <= 0 || scaled_h <= 0 {
-                    continue;
-                }
-                let dst_x = (((mark.x + ox as f32) - view_pos.x) * zoom).round() as i32;
-                let dst_y = (((mark.y + oy as f32) - view_pos.y) * zoom).round() as i32;
-                let on_screen = dst_x + scaled_w > 0
-                    && dst_y + scaled_h > 0
-                    && dst_x < screen_w
-                    && dst_y < screen_h;
-                if on_screen {
-                    mark.current_frame = mark.current_frame.saturating_add(1);
-                }
+                mark.current_frame = mark.current_frame.saturating_add(1);
             }
         }
     }

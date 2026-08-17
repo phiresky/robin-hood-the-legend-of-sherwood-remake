@@ -3943,6 +3943,19 @@ impl EngineInner {
         false
     }
 
+    /// `true` when a hero or directly controlled allied selection for this
+    /// seat has at least one entity eligible for the persistent ground ring.
+    pub fn any_selection_drawing_selection_mark(
+        &self,
+        seat: crate::player_command::PlayerId,
+    ) -> bool {
+        self.seat_selection(seat)
+            .iter()
+            .chain(self.allied_selection(seat))
+            .copied()
+            .any(|id| self.pc_draws_selection_mark(id))
+    }
+
     /// Check whether the entity's cached sector (set during door-pass
     /// transitions) is a building sector.
     ///
@@ -3960,7 +3973,8 @@ impl EngineInner {
     }
 
     /// `true` when the rotating ground selection circle should be drawn
-    /// for `pc_id`.
+    /// for an actor. Despite the legacy name, the posture/building checks
+    /// apply equally to PCs and directly controlled allied soldiers.
     pub fn pc_draws_selection_mark(&self, pc_id: EntityId) -> bool {
         let Some(entity) = self.get_entity(pc_id) else {
             return false;

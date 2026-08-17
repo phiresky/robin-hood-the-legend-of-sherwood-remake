@@ -13,8 +13,13 @@ A list of which additional features we have added, which ones we might still wan
   or drag a selection box to create a temporary portrait beside the heroes;
   its pin button preserves an individual or group portrait. Allied portraits
   expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
-  line/column/wedge/ring formations, and follow-a-hero orders. Soldiers receive
-  deterministic names from the localized peasant-name pool. The portrait bar
+  compact/patrol-column/type-aware battle formations, and follow-a-hero orders.
+  Battle formation places shield and melee troops ahead of ranged troops;
+  patrol column follows the original game's staggered-pair patrol layout.
+  Hover tooltips name every action and its current stance, formation, or hero
+  target. Soldiers receive deterministic names from the localized peasant-name
+  pool. Selection uses the heroes' persistent ground ring and fading green
+  outline. The portrait bar
   computes its capacity from the actual screen width (six portraits fit at
   800 px) and uses the original Sherwood left/right arrow resources with
   wraparound paging when the combined hero and allied portraits overflow.

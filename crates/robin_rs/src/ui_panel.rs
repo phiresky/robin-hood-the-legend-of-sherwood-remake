@@ -15,7 +15,7 @@
 
 use crate::host::Host;
 use robin_assets::picture::Picture;
-use robin_engine::allied_control::{AlliedFormation, AlliedStance};
+use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -1213,118 +1213,216 @@ fn render_allied_portrait(
     };
     renderer.fill_screen(
         Some(&bbox(x, visage_top, x + ELEMENT_WIDTH, visage_bottom)),
-        Renderer::create_color_16(30, 92, 38),
+        Renderer::create_color_16(67, 62, 42),
+    );
+    renderer.draw_rect_outline_screen(
+        i32::from(x + 3),
+        i32::from(visage_top + 2),
+        i32::from(x + ELEMENT_WIDTH - 4),
+        i32::from(visage_bottom.saturating_sub(2)),
+        Renderer::create_color_16(142, 119, 72),
     );
     for index in 0..item.members.len().min(12) {
-        let px = x + 8 + (index % 6) as u16 * 16;
-        let py = visage_top + 8 + (index / 6) as u16 * 16;
+        let px = x + 10 + (index % 6) as u16 * 16;
+        let py = visage_top + 7 + (index / 6) as u16 * 17;
+        // Small helmet-and-tunic silhouettes read as soldiers even at the
+        // original game's low HUD resolution.
         renderer.fill_screen(
-            Some(&bbox(px, py, px + 9, py + 9)),
-            Renderer::create_color_16(166, 214, 120),
+            Some(&bbox(px + 2, py, px + 8, py + 5)),
+            Renderer::create_color_16(200, 184, 126),
+        );
+        renderer.fill_screen(
+            Some(&bbox(px, py + 5, px + 10, py + 11)),
+            Renderer::create_color_16(54, 112, 55),
         );
     }
 
     // Pin/unpin button remains visible in both open and closed states.
     let pin_y = sh - top_scroll + 4;
+    let pin_color = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
+        Renderer::create_color_16(238, 192, 55)
+    } else {
+        Renderer::create_color_16(91, 73, 42)
+    };
     renderer.fill_screen(
         Some(&bbox(
             x + ELEMENT_WIDTH - 14,
             pin_y,
-            x + ELEMENT_WIDTH - 3,
-            pin_y + 11,
+            x + ELEMENT_WIDTH - 5,
+            pin_y + 5,
         )),
-        if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
-            Renderer::create_color_16(232, 190, 45)
-        } else {
-            Renderer::create_color_16(118, 104, 68)
-        },
+        pin_color,
+    );
+    renderer.draw_line_screen(
+        i32::from(x + ELEMENT_WIDTH - 10),
+        i32::from(pin_y + 4),
+        i32::from(x + ELEMENT_WIDTH - 10),
+        i32::from(pin_y + 12),
+        pin_color,
+    );
+    renderer.draw_line_screen(
+        i32::from(x + ELEMENT_WIDTH - 13),
+        i32::from(pin_y + 8),
+        i32::from(x + ELEMENT_WIDTH - 7),
+        i32::from(pin_y + 8),
+        pin_color,
     );
 
     if selected {
         let action_top = sh - POSITION_ACTION;
         let action_bottom = sh - POSITION_BOTTOM_SCROLL;
-        let colors = [
-            Renderer::create_color_16(66, 124, 66),
-            Renderer::create_color_16(78, 104, 164),
-            Renderer::create_color_16(158, 112, 48),
-            Renderer::create_color_16(132, 72, 142),
-        ];
         let order = item
             .members
             .first()
             .and_then(|soldier| engine.allied_order(*soldier));
         let stance = order.map_or(AlliedStance::Defensive, |order| order.stance);
-        let formation = order.map_or(AlliedFormation::Line, |order| order.formation);
-        let glyph = Renderer::create_color_16(224, 236, 194);
-        for (index, color) in colors.into_iter().enumerate() {
-            let left = x + index as u16 * (ELEMENT_WIDTH / 4);
-            let right = if index == 3 {
+        let formation = order.map_or(AlliedFormation::Compact, |order| order.formation);
+        let glyph = Renderer::create_color_16(224, 211, 157);
+        let highlight = Renderer::create_color_16(141, 119, 73);
+        let shadow = Renderer::create_color_16(35, 31, 23);
+        let button_w = ELEMENT_WIDTH / 2;
+        let button_h = (action_bottom - action_top) / 2;
+        for index in 0..4 {
+            let column = index % 2;
+            let row = index / 2;
+            let left = x + column as u16 * button_w;
+            let right = if column == 1 {
                 x + ELEMENT_WIDTH
             } else {
-                x + (index as u16 + 1) * (ELEMENT_WIDTH / 4)
+                left + button_w
+            };
+            let top = action_top + row as u16 * button_h;
+            let bottom = if row == 1 {
+                action_bottom
+            } else {
+                top + button_h
+            };
+            let active = match (index, order.map(|order| &order.duty)) {
+                (1, Some(AlliedDuty::Patrol { .. })) | (3, Some(AlliedDuty::Follow { .. })) => true,
+                _ => false,
             };
             renderer.fill_screen(
-                Some(&bbox(
-                    left + 1,
-                    action_top + 1,
-                    right - 1,
-                    action_bottom - 1,
-                )),
-                color,
+                Some(&bbox(left + 1, top + 1, right - 1, bottom - 1)),
+                if active {
+                    Renderer::create_color_16(92, 78, 39)
+                } else {
+                    Renderer::create_color_16(62, 57, 39)
+                },
+            );
+            renderer.draw_line_screen(
+                i32::from(left + 1),
+                i32::from(top + 1),
+                i32::from(right - 2),
+                i32::from(top + 1),
+                highlight,
+            );
+            renderer.draw_line_screen(
+                i32::from(left + 1),
+                i32::from(top + 1),
+                i32::from(left + 1),
+                i32::from(bottom - 2),
+                highlight,
+            );
+            renderer.draw_line_screen(
+                i32::from(left + 1),
+                i32::from(bottom - 2),
+                i32::from(right - 2),
+                i32::from(bottom - 2),
+                shadow,
             );
             let center = (left + right) / 2;
+            let cy = (top + bottom) / 2;
             match index {
-                // Stance: one/two/three rank bars for hold/defend/aggressive.
-                0 => {
-                    let bars = match stance {
-                        AlliedStance::Hold => 1,
-                        AlliedStance::Defensive => 2,
-                        AlliedStance::Aggressive => 3,
-                    };
-                    for bar in 0..bars {
-                        let y = action_bottom - 9 - bar * 7;
-                        renderer.fill_screen(Some(&bbox(center - 7, y, center + 7, y + 3)), glyph);
+                // Stance: stop bar, shield, or crossed aggressive blades.
+                0 => match stance {
+                    AlliedStance::Hold => {
+                        renderer.fill_screen(
+                            Some(&bbox(center - 8, cy - 2, center + 8, cy + 2)),
+                            glyph,
+                        );
                     }
-                }
-                // Patrol: two waypoints connected by a route.
+                    AlliedStance::Defensive => {
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy - 7),
+                            i32::from(center + 7),
+                            i32::from(cy - 7),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy - 7),
+                            i32::from(center - 5),
+                            i32::from(cy + 4),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center + 7),
+                            i32::from(cy - 7),
+                            i32::from(center + 5),
+                            i32::from(cy + 4),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center - 5),
+                            i32::from(cy + 4),
+                            i32::from(center),
+                            i32::from(cy + 8),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center + 5),
+                            i32::from(cy + 4),
+                            i32::from(center),
+                            i32::from(cy + 8),
+                            glyph,
+                        );
+                    }
+                    AlliedStance::Aggressive => {
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy + 7),
+                            i32::from(center + 7),
+                            i32::from(cy - 7),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy - 7),
+                            i32::from(center + 7),
+                            i32::from(cy + 7),
+                            glyph,
+                        );
+                    }
+                },
+                // Patrol: two waypoints, route, and return arrowhead.
                 1 => {
-                    renderer.fill_screen(
-                        Some(&bbox(
-                            center - 8,
-                            action_top + 9,
-                            center - 3,
-                            action_top + 14,
-                        )),
+                    renderer
+                        .fill_screen(Some(&bbox(center - 9, cy - 7, center - 5, cy - 3)), glyph);
+                    renderer
+                        .fill_screen(Some(&bbox(center + 5, cy + 3, center + 9, cy + 7)), glyph);
+                    renderer.draw_line_screen(
+                        i32::from(center - 5),
+                        i32::from(cy - 4),
+                        i32::from(center + 7),
+                        i32::from(cy + 4),
                         glyph,
                     );
-                    renderer.fill_screen(
-                        Some(&bbox(
-                            center + 4,
-                            action_bottom - 14,
-                            center + 9,
-                            action_bottom - 9,
-                        )),
-                        glyph,
-                    );
-                    renderer.fill_screen(
-                        Some(&bbox(
-                            center - 4,
-                            action_top + 15,
-                            center + 5,
-                            action_top + 18,
-                        )),
+                    renderer.draw_line_screen(
+                        i32::from(center + 7),
+                        i32::from(cy + 4),
+                        i32::from(center + 2),
+                        i32::from(cy + 3),
                         glyph,
                     );
                 }
                 // Formation: miniature current formation.
                 2 => {
                     let dots: &[(i16, i16)] = match formation {
-                        AlliedFormation::Line => &[(-8, 0), (0, 0), (8, 0)],
-                        AlliedFormation::Column => &[(0, -8), (0, 0), (0, 8)],
-                        AlliedFormation::Wedge => &[(0, -7), (-7, 6), (7, 6)],
-                        AlliedFormation::Ring => &[(-6, -6), (6, -6), (-6, 6), (6, 6)],
+                        AlliedFormation::Compact => &[(-6, -5), (5, -4), (-5, 5), (6, 5)],
+                        AlliedFormation::PatrolColumn => &[(0, -8), (-6, 0), (6, 0), (0, 8)],
+                        AlliedFormation::Battle => &[(-7, -5), (0, -5), (7, -5), (-4, 6), (4, 6)],
                     };
-                    let cy = (action_top + action_bottom) / 2;
                     for &(dx, dy) in dots {
                         let px = (center as i16 + dx) as u16;
                         let py = (cy as i16 + dy) as u16;
@@ -1333,7 +1431,20 @@ fn render_allied_portrait(
                 }
                 // Follow: a small leader above two followers.
                 3 => {
-                    let cy = (action_top + action_bottom) / 2;
+                    renderer.draw_line_screen(
+                        i32::from(center),
+                        i32::from(cy - 5),
+                        i32::from(center - 7),
+                        i32::from(cy + 4),
+                        glyph,
+                    );
+                    renderer.draw_line_screen(
+                        i32::from(center),
+                        i32::from(cy - 5),
+                        i32::from(center + 7),
+                        i32::from(cy + 4),
+                        glyph,
+                    );
                     for (dx, dy) in [(0i16, -9i16), (-7, 5), (7, 5)] {
                         let px = (center as i16 + dx) as u16;
                         let py = (cy as i16 + dy) as u16;
@@ -2840,7 +2951,11 @@ pub fn hit_test_portrait_detailed(
             } else if cy >= visage_top && (!selected || cy < action_top) {
                 PortraitHitArea::Visage
             } else if selected && cy >= action_top && cy < bottom_scroll_top {
-                let index = (((click_x - x) / (ELEMENT_WIDTH as f32 / 4.0)).floor() as u8).min(3);
+                let column = (((click_x - x) / (ELEMENT_WIDTH as f32 / 2.0)).floor() as u8).min(1);
+                let row = (((cy - action_top) / ((bottom_scroll_top - action_top) / 2.0)).floor()
+                    as u8)
+                    .min(1);
+                let index = row * 2 + column;
                 PortraitHitArea::AlliedAction(index)
             } else {
                 PortraitHitArea::BottomScroll

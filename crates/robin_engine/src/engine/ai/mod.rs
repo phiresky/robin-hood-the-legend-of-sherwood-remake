@@ -406,11 +406,16 @@ thread_local! {
     > = std::cell::RefCell::new(None);
 }
 
-/// Immutable, RNG-free inputs prepared once before the live actor-owner walk.
-/// Volatile entity/AI views are deliberately absent and rebuilt at each NPC
-/// slot after earlier owners have closed their recursive work.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub(super) struct PreparedNpcOwnerPass;
+/// Immutable, RNG-free inputs prepared lazily at the first NPC owner slot.
+///
+/// The tactical snapshot is a per-tick view. Volatile optical and detectable
+/// target geometry is still rebuilt at each NPC slot from live entities; doing
+/// the full all-soldier tactical extraction for every owner made large maps
+/// quadratic without providing fresher optical inputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct PreparedNpcOwnerPass {
+    world: Option<snapshots::AiWorldView>,
+}
 
 /// Exact `ubFramePhase` computed by `RHElementActorNPC::Hourglass`.
 /// `register_number` is the original creation/register ordering value.
@@ -7784,7 +7789,7 @@ impl EngineInner {
                 .collect();
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
-        PreparedNpcOwnerPass
+        PreparedNpcOwnerPass { world: None }
     }
 
     /// Run one NPC's complete post-human envelope using live inputs sampled at
@@ -7794,7 +7799,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-        _prepared: PreparedNpcOwnerPass,
+        prepared: &mut PreparedNpcOwnerPass,
         npc_id: EntityId,
     ) {
         self.debug_refresh_view_lifecycle("npc_tail_enter", npc_id, None);
@@ -7817,8 +7822,17 @@ impl EngineInner {
             return;
         }
 
-        let world =
-            self.tick_enemy_ai_build_world_view(assets, Some((npc_id, positions_before_movement)));
+        if prepared.world.is_none() {
+            prepared.world =
+                Some(self.tick_enemy_ai_build_world_view(
+                    assets,
+                    Some((npc_id, positions_before_movement)),
+                ));
+        }
+        let world = prepared
+            .world
+            .as_ref()
+            .expect("prepared NPC owner pass lost its tactical world view");
         self.tick_enemy_ai_refresh_detection(
             sim,
             assets,
@@ -11026,6 +11040,22 @@ impl EngineInner {
         if self.actors_frozen() {
             return;
         }
+        let has_patrol_work = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .is_some_and(|ai| {
+                ai.needs_patrol_reinit
+                    || !ai.patrol.is_empty()
+                    || !ai.missed_patrol_members.is_empty()
+            });
+        if !has_patrol_work {
+            return;
+        }
+        if self.is_very_very_busy(owner) {
+            return;
+        }
         let scratch = self.build_owner_context_scratch_at_slot_without_forecast(
             assets,
             owner,
@@ -11171,9 +11201,6 @@ impl EngineInner {
             // position and the 16-pixel side offset would still get
             // dispatched.  Check before acquiring the entity/ai borrow
             // so the engine-level helper can read `self`.
-            if self.is_very_very_busy(npc_id) {
-                continue;
-            }
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
