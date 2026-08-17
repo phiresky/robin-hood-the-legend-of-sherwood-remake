@@ -932,6 +932,14 @@ pub struct SequenceElement {
     /// while another sword strike sequence is mid-walk).
     pub cross_postponed: Option<(SequenceId, usize)>,
 
+    /// `RHSequenceElement::Stop` nulls `mpsqeNextSequenceElement` once the
+    /// recursive stop leaves that successor `RHSEQ_INTERRUPTED`
+    /// (`RHsequenceelement.cpp:547-556`). Runtime-authored elements derive
+    /// their successor from append order rather than from a stored pointer,
+    /// so record the severing explicitly. Loaded v48 elements clear
+    /// `legacy_v48.next` instead, exactly as the Original save does.
+    pub next_link_severed: bool,
+
     /// Original-only authoritative members retained during v48 adoption.
     ///
     /// TODO(legacy-sequence-runtime): route `next`, `mummy`, linked-seek,
@@ -1006,6 +1014,7 @@ impl SequenceElement {
             data: SequenceElementData::Simple,
             postponed_element_index: None,
             cross_postponed: None,
+            next_link_severed: false,
             legacy_v48: None,
         }
     }
@@ -2214,6 +2223,9 @@ impl Sequence {
     /// non-adjacent links.
     fn following_element_index(&self, elem_idx: usize) -> Option<usize> {
         let element = self.elements.get(elem_idx)?;
+        if element.next_link_severed {
+            return None;
+        }
         if let Some(legacy) = &element.legacy_v48 {
             let next = legacy.next?;
             // TODO(legacy-sequence-runtime): promote cascade effects from
@@ -2407,15 +2419,17 @@ impl Sequence {
                     "stop_element after next"
                 );
                 if self.elements[next_idx].state == SequenceState::Interrupted {
+                    // `mpsqeNextSequenceElement = NULL`
+                    // (`RHsequenceelement.cpp:552-555`). The edge is gone for
+                    // every later reader, not just for cascades: a movement
+                    // element that survives this Stop must afterwards see
+                    // `IsNextMovementOrJump() == false`
+                    // (`RHSequenceElementMovement.cpp:1251-1257`) and grow the
+                    // end transition when `MakeFast` re-runs PostProcessPath.
                     if let Some(legacy) = self.elements[elem_idx].legacy_v48.as_mut() {
                         legacy.next = None;
-                    } else {
-                        // TODO(sequence-runtime): runtime-authored elements
-                        // infer next from append order and cannot yet retain
-                        // Original's Stop-time pointer severing. The reached
-                        // successor is already terminal, so no current replay
-                        // behavior depends on traversing this edge again.
                     }
+                    self.elements[elem_idx].next_link_severed = true;
                 }
             }
         }
@@ -3207,6 +3221,29 @@ impl SequenceManager {
     /// Read-only exposure for the opt-in goal/condolence ownership trace.
     pub(crate) fn goal_owner_debug_translating(&self) -> Option<(EntityId, SequenceElementRef)> {
         self.actor_translating
+    }
+
+    /// Release the translation selection when its own element is the one that
+    /// just detached the actor's `mpSequenceElement`.
+    ///
+    /// `RHElementActor::SendCondolationCard` writes `mpSequenceElement = NULL`
+    /// whenever the terminal element is the selected one
+    /// (`RHelementactor.cpp:6696-6701`). A command body can reach that state
+    /// from inside its own `Translate` — `RHPathFinder::AddPathRequest` calls
+    /// `Stop()` on the actor whose Move is being translated
+    /// (`RHpathfinder.cpp:464`) — and everything the same `Translate` does
+    /// afterwards, including the `Wait()` it launches next, must observe the
+    /// cleared pointer. Rust holds the translation identity until after the
+    /// deferred condolence dispatch, so drop it here instead.
+    pub(crate) fn clear_translating_element_if_selected(
+        &mut self,
+        actor: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        if self.actor_translating == Some((actor, SequenceElementRef::new(seq_id, elem_idx))) {
+            self.actor_translating = None;
+        }
     }
 
     /// Select an incoming element while the outgoing element's synchronous
@@ -5501,6 +5538,9 @@ impl SequenceManager {
         elem_idx: usize,
     ) -> Option<(SequenceId, usize)> {
         let this = self.get_element(seq_id, elem_idx)?;
+        if this.next_link_severed {
+            return None;
+        }
         let (next_seq, next_idx) = if let Some(legacy) = &this.legacy_v48 {
             let next = legacy.next?;
             (next.sequence_id, next.element_index)
