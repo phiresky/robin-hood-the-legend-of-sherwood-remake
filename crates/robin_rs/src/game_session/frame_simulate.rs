@@ -740,6 +740,7 @@ impl InteractiveFrameSimulation {
             &mut runtime.rewind_buffer,
             &mut runtime.rollback_checker,
             &mut runtime.replay_player,
+            &mut runtime.playback_pinned_saves,
             manual_pause,
             active_modal,
         );
@@ -769,6 +770,11 @@ impl InteractiveFrameSimulation {
         // and applies them before the tick; back seeks the cursor to
         // the rewound frame so playback resumes from there.
         if step_forward_pressed && !modal_state_pending(&host) {
+            // Stepping into a save-marker / load-back frame must pin or
+            // swap state exactly like the normal playback admission path.
+            runtime
+                .apply_playback_timeline_events(host, game, manager, assets)
+                .unwrap_or_else(|error| panic!("replay step boundary failed: {error}"));
             let step_frame = manager.sim_frame;
             let buffered_cmds = if step_frame < runtime.rewind_buffer.next_record_frame() {
                 runtime

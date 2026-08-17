@@ -333,13 +333,19 @@ impl MissionBootstrap {
             self.loaded.engine_sim_config,
             self.host.transport.net.is_some(),
         );
-        let timeline = TimelineRuntime::new(
+        let mut timeline = TimelineRuntime::new(
             replay,
             contract,
             wait_for_multiplayer_start,
             self.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST,
         );
         debug_assert_eq!(timeline.frame_contract(), contract);
+        // Mirror of the `setup_restart_or_sherwood` write condition: those
+        // missions captured a Restart auto-save of this exact pre-frame-0
+        // engine state, so mark frame 0 as its save marker.
+        if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
+            timeline.register_bootstrap_save(&self.loaded.engine, &self.host, &self.game);
+        }
         let manager = robin_engine::engine_manager::EngineManager::new(
             self.loaded.engine,
             self.host.transport.local_seat,

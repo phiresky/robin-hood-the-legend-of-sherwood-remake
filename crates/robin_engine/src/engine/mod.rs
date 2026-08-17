@@ -11,6 +11,7 @@
 mod ai;
 pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod ale;
+mod allied_control;
 mod animation;
 pub(crate) mod anti_collision;
 mod beggar;
@@ -1117,6 +1118,18 @@ impl EngineInner {
     /// Add an entity to the world. Returns its EntityId.
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
         let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
+
+        // Original RHScript::AddElement assigns the element's script-list
+        // index as soon as it enters the entity list. AI door passing uses
+        // this required identity to resolve the actor's committed gate-side
+        // position from the shared entity views.
+        entity.element_data_mut().index_in_elements_list = u16::try_from(id.index())
+            .unwrap_or_else(|_| {
+                panic!(
+                    "entity slot {} exceeds legacy element-list index range",
+                    id.index()
+                )
+            });
 
         if let Entity::Pc(pc) = &mut entity {
             let position = pc.element.position_map();
@@ -3972,6 +3985,19 @@ impl EngineInner {
         false
     }
 
+    /// `true` when a hero or directly controlled allied selection for this
+    /// seat has at least one entity eligible for the persistent ground ring.
+    pub fn any_selection_drawing_selection_mark(
+        &self,
+        seat: crate::player_command::PlayerId,
+    ) -> bool {
+        self.seat_selection(seat)
+            .iter()
+            .chain(self.allied_selection(seat))
+            .copied()
+            .any(|id| self.pc_draws_selection_mark(id))
+    }
+
     /// Check whether the entity's cached sector (set during door-pass
     /// transitions) is a building sector.
     ///
@@ -3989,7 +4015,8 @@ impl EngineInner {
     }
 
     /// `true` when the rotating ground selection circle should be drawn
-    /// for `pc_id`.
+    /// for an actor. Despite the legacy name, the posture/building checks
+    /// apply equally to PCs and directly controlled allied soldiers.
     pub fn pc_draws_selection_mark(&self, pc_id: EntityId) -> bool {
         let Some(entity) = self.get_entity(pc_id) else {
             return false;

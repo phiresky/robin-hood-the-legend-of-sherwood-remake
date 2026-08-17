@@ -54,16 +54,31 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 9 requires the complete campaign and
-/// [`crate::engine::SimConfig`] used for frame-0 construction, stores typed
-/// script effects in one global emission order, includes synchronous sequence
-/// continuation state, records fully-resolved minimap command inputs, and
-/// snapshots first-owner active-ability and actor Execute initialization plus
-/// result-bearing specialized-AI callback continuations.
-pub const REPLAY_SCHEMA_VERSION: u32 = 9;
+/// On-disk replay schema version. Version 10 builds on version 9 (complete
+/// campaign + [`crate::engine::SimConfig`] for frame-0 construction, typed
+/// script effects in one global emission order, synchronous sequence
+/// continuation state, fully-resolved minimap command inputs, first-owner
+/// active-ability and actor Execute initialization snapshots) and adds
+/// in-mission save markers (`sv`) and load-back records (`lb`), keeping the
+/// recording a single linear timeline across in-mission saves and loads.
+pub const REPLAY_SCHEMA_VERSION: u32 = 10;
 
-/// One JSONL line.  Carries per-frame commands and/or a periodic
-/// engine-state hash used for desync detection on replay.
+/// A recorded in-mission load and the slot-specific post-load behavior that
+/// must be reproduced after restoring its earlier save marker.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct ReplayLoadBack {
+    /// Earlier save-marker frame whose captured state must be restored.
+    pub to_frame: u32,
+    /// Whether the source slot was the Continue auto-save.
+    #[serde(default)]
+    pub is_continue: bool,
+}
+
+/// One JSONL line.  Carries per-frame commands, a periodic engine-state
+/// hash used for desync detection on replay, and/or in-mission
+/// save-marker / load-back timeline records.
 #[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 struct FrameRecord {
     /// Frame number (0-based).
@@ -75,6 +90,18 @@ struct FrameRecord {
     /// (every 25 frames).  Used by the player to detect desyncs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     h: Option<u64>,
+    /// Save marker: an in-mission save captured the engine state at this
+    /// frame's pre-command boundary.  Carries the state hash at capture so
+    /// playback can pin a clone of that state (for later load-backs) and
+    /// verify it against the recording.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sv: Option<u64>,
+    /// Load-back record: at this frame's pre-command boundary the engine
+    /// state was replaced with the state captured by the save marker at the
+    /// referenced (strictly earlier) frame.  Keeps the replay linear across
+    /// in-mission loads instead of embedding save payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lb: Option<ReplayLoadBack>,
 }
 
 /// A complete recorded replay loaded into memory.
@@ -85,6 +112,12 @@ pub struct ReplayData {
     frames: BTreeMap<u32, Vec<PlayerInput>>,
     /// Sparse map: expected engine state hash at the start of frame N.
     hashes: BTreeMap<u32, u64>,
+    /// Save markers: frame → state hash at the pre-command boundary of
+    /// that frame, where an in-mission save captured the engine state.
+    save_markers: BTreeMap<u32, u64>,
+    /// Load-back records: frame → earlier save-marker frame whose
+    /// captured state replaced the engine at this frame's boundary.
+    load_backs: BTreeMap<u32, ReplayLoadBack>,
 }
 
 /// Flat serde-compatible snapshot of a [`ReplayData`], used as the
@@ -96,6 +129,10 @@ pub struct ReplayFile {
     pub header: ReplayHeader,
     pub frames: BTreeMap<u32, Vec<PlayerInput>>,
     pub hashes: BTreeMap<u32, u64>,
+    #[serde(default)]
+    pub save_markers: BTreeMap<u32, u64>,
+    #[serde(default)]
+    pub load_backs: BTreeMap<u32, ReplayLoadBack>,
 }
 
 impl From<ReplayFile> for ReplayData {
@@ -104,6 +141,8 @@ impl From<ReplayFile> for ReplayData {
             header: f.header,
             frames: f.frames,
             hashes: f.hashes,
+            save_markers: f.save_markers,
+            load_backs: f.load_backs,
         }
     }
 }
@@ -114,6 +153,8 @@ impl From<&ReplayData> for ReplayFile {
             header: d.header.clone(),
             frames: d.frames.clone(),
             hashes: d.hashes.clone(),
+            save_markers: d.save_markers.clone(),
+            load_backs: d.load_backs.clone(),
         }
     }
 }
@@ -133,6 +174,18 @@ impl ReplayData {
     /// or `None` if no hash was recorded for that frame.
     pub fn hash_for_frame(&self, frame: u32) -> Option<u64> {
         self.hashes.get(&frame).copied()
+    }
+
+    /// State hash captured by an in-mission save at the pre-command
+    /// boundary of `frame`, if a save marker was recorded there.
+    pub fn save_marker_for_frame(&self, frame: u32) -> Option<u64> {
+        self.save_markers.get(&frame).copied()
+    }
+
+    /// Earlier save-marker frame whose captured state replaced the engine
+    /// at the pre-command boundary of `frame`, if a load-back was recorded.
+    pub fn load_back_for_frame(&self, frame: u32) -> Option<ReplayLoadBack> {
+        self.load_backs.get(&frame).copied()
     }
 
     /// Load a replay from a JSONL reader.
@@ -158,6 +211,8 @@ impl ReplayData {
             serde_json::from_value(header_value).map_err(|e| format!("bad header: {e}"))?;
         let mut frames = BTreeMap::new();
         let mut hashes = BTreeMap::new();
+        let mut save_markers = BTreeMap::new();
+        let mut load_backs = BTreeMap::new();
         let mut max_frame: u32 = 0;
         for (i, line) in lines.enumerate() {
             let line = line.map_err(|e| format!("read error at line {}: {e}", i + 2))?;
@@ -170,18 +225,50 @@ impl ReplayData {
             if let Some(h) = rec.h {
                 hashes.insert(rec.f, h);
             }
+            if let Some(sv) = rec.sv {
+                save_markers.insert(rec.f, sv);
+            }
+            if let Some(lb) = rec.lb {
+                if lb.to_frame >= rec.f {
+                    return Err(format!(
+                        "bad line {}: load-back target {} is not before frame {}",
+                        i + 2,
+                        lb.to_frame,
+                        rec.f
+                    ));
+                }
+                load_backs.insert(rec.f, lb);
+            }
             if !rec.c.is_empty() {
                 frames.insert(rec.f, rec.c);
             }
         }
+        // Every load-back must reference a save marker recorded earlier in
+        // this same file — playback pins engine state at marker frames and
+        // has nothing to jump to otherwise.
+        for (&frame, load_back) in &load_backs {
+            if !save_markers.contains_key(&load_back.to_frame) {
+                return Err(format!(
+                    "load-back at frame {frame} references frame {}, which has no save marker",
+                    load_back.to_frame
+                ));
+            }
+        }
         // If header didn't have total_frames, infer from max frame index.
-        if header.total_frames == 0 && (!frames.is_empty() || !hashes.is_empty()) {
+        if header.total_frames == 0
+            && (!frames.is_empty()
+                || !hashes.is_empty()
+                || !save_markers.is_empty()
+                || !load_backs.is_empty())
+        {
             header.total_frames = max_frame;
         }
         Ok(Self {
             header,
             frames,
             hashes,
+            save_markers,
+            load_backs,
         })
     }
 
@@ -281,14 +368,10 @@ impl ReplayRecorder {
                 f: self.frame_number,
                 c: inputs,
                 h: None,
+                sv: None,
+                lb: None,
             };
-            if let Err(e) = serde_json::to_writer(&mut self.writer, &rec) {
-                tracing::error!("Replay write error: {e}");
-            } else if let Err(e) = writeln!(self.writer) {
-                tracing::error!("Replay write error: {e}");
-            } else {
-                let _ = self.writer.flush();
-            }
+            self.write_record(&rec);
         }
         self.frame_number += 1;
     }
@@ -301,12 +384,52 @@ impl ReplayRecorder {
     /// Write a standalone hash record for `frame` (no commands).
     /// Flushed immediately so partial replays remain crash-safe.
     pub fn write_hash(&mut self, frame: u32, hash: u64) {
-        let rec = FrameRecord {
+        self.write_record(&FrameRecord {
             f: frame,
             c: Vec::new(),
             h: Some(hash),
-        };
-        if let Err(e) = serde_json::to_writer(&mut self.writer, &rec) {
+            sv: None,
+            lb: None,
+        });
+    }
+
+    /// Write a save-marker record for the current frame: an in-mission save
+    /// captured the engine state (with the given state hash) at this frame's
+    /// pre-command boundary.  Flushed immediately.
+    pub fn write_save_marker(&mut self, state_hash: u64) {
+        self.write_record(&FrameRecord {
+            f: self.frame_number,
+            c: Vec::new(),
+            h: None,
+            sv: Some(state_hash),
+            lb: None,
+        });
+    }
+
+    /// Write a load-back record for the current frame: the engine state was
+    /// replaced with the state captured by the save marker at `to_frame`.
+    /// `to_frame` must be strictly earlier than the current frame.  Flushed
+    /// immediately.
+    pub fn write_load_back(&mut self, to_frame: u32, is_continue: bool) {
+        assert!(
+            to_frame < self.frame_number,
+            "load-back target {to_frame} must precede the current frame {}",
+            self.frame_number
+        );
+        self.write_record(&FrameRecord {
+            f: self.frame_number,
+            c: Vec::new(),
+            h: None,
+            sv: None,
+            lb: Some(ReplayLoadBack {
+                to_frame,
+                is_continue,
+            }),
+        });
+    }
+
+    fn write_record(&mut self, rec: &FrameRecord) {
+        if let Err(e) = serde_json::to_writer(&mut self.writer, rec) {
             tracing::error!("Replay write error: {e}");
         } else if let Err(e) = writeln!(self.writer) {
             tracing::error!("Replay write error: {e}");
@@ -404,6 +527,18 @@ impl ReplayPlayer {
     /// recording carries one for that frame.
     pub fn hash_for_frame(&self, frame: u32) -> Option<u64> {
         self.data.hash_for_frame(frame)
+    }
+
+    /// Save marker at `frame`: the state hash an in-mission save captured
+    /// at that frame's pre-command boundary, if one was recorded.
+    pub fn save_marker_for_frame(&self, frame: u32) -> Option<u64> {
+        self.data.save_marker_for_frame(frame)
+    }
+
+    /// Load-back at `frame`: the earlier save-marker frame whose captured
+    /// state replaced the engine at that frame's boundary, if recorded.
+    pub fn load_back_for_frame(&self, frame: u32) -> Option<ReplayLoadBack> {
+        self.data.load_back_for_frame(frame)
     }
 
     /// Total frames in the replay.
@@ -826,6 +961,85 @@ mod tests {
     }
 
     #[test]
+    fn save_markers_and_load_backs_round_trip_linearly() {
+        let path = unique_replay_path("save_load_timeline");
+        let campaign = crate::campaign::Campaign::default();
+        {
+            let mut rec = ReplayRecorder::new(
+                &path,
+                "timeline".into(),
+                7,
+                crate::engine::SimConfig::default(),
+                &campaign,
+            )
+            .unwrap();
+            // Frame 0-9: play.
+            for _ in 0..10 {
+                rec.end_frame();
+            }
+            // Frame 10: quick save captured state with hash 0xABCD.
+            rec.write_save_marker(0xABCD);
+            for _ in 10..30 {
+                rec.end_frame();
+            }
+            // Frame 30: quick load jumped back to the frame-10 state.
+            rec.write_load_back(10, true);
+            rec.push(PlayerCommand::CrouchDown);
+            rec.end_frame();
+        }
+
+        let data = ReplayData::from_file(&path).unwrap();
+        assert_eq!(data.save_marker_for_frame(10), Some(0xABCD));
+        assert_eq!(data.save_marker_for_frame(9), None);
+        assert_eq!(
+            data.load_back_for_frame(30),
+            Some(ReplayLoadBack {
+                to_frame: 10,
+                is_continue: true,
+            })
+        );
+        assert_eq!(data.load_back_for_frame(29), None);
+        assert_eq!(data.commands_for_frame(30).len(), 1);
+        assert_eq!(data.frame_count(), 31);
+
+        // Timeline records survive the compact-format struct conversion.
+        let file = ReplayFile::from(&data);
+        let back: ReplayData = file.into();
+        assert_eq!(back.save_marker_for_frame(10), Some(0xABCD));
+        assert_eq!(
+            back.load_back_for_frame(30),
+            Some(ReplayLoadBack {
+                to_frame: 10,
+                is_continue: true,
+            })
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_back_without_matching_save_marker_is_rejected() {
+        let header = serde_json::json!({
+            "mission_id": "x",
+            "rng_seed": 0,
+            "sim_config": crate::engine::SimConfig::default(),
+            "version": REPLAY_SCHEMA_VERSION,
+            "total_frames": 0,
+            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+        });
+        let input =
+            format!("{header}\n{{\"f\":30,\"lb\":{{\"to_frame\":10,\"is_continue\":false}}}}\n");
+        let error = ReplayData::from_reader(std::io::Cursor::new(input))
+            .expect_err("dangling load-back must not load");
+        assert!(error.contains("no save marker"), "{error}");
+
+        let forward =
+            format!("{header}\n{{\"f\":5,\"lb\":{{\"to_frame\":10,\"is_continue\":false}}}}\n");
+        let error = ReplayData::from_reader(std::io::Cursor::new(forward))
+            .expect_err("forward load-back must not load");
+        assert!(error.contains("not before frame"), "{error}");
+    }
+
+    #[test]
     fn player_past_end_returns_empty() {
         let mut frames = BTreeMap::new();
         frames.insert(0, vec![PlayerInput::host(PlayerCommand::CrouchDown)]);
@@ -840,6 +1054,8 @@ mod tests {
             },
             frames,
             hashes: BTreeMap::new(),
+            save_markers: BTreeMap::new(),
+            load_backs: BTreeMap::new(),
         };
         let mut player = ReplayPlayer::new(data);
         let _ = player.next_frame();

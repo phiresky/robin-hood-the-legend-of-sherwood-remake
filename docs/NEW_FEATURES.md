@@ -4,6 +4,31 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Direct custom-mission launch.** `--custom-mission <zip>` mounts a vanilla
+  mod archive for the lifetime of a direct `--mission <name>` launch. Pair it
+  with `--proto <map>` when the mission and proto-level basenames differ.
+
+- **Optional allied-soldier control.** A persistent `Control Allied Soldiers`
+  game option enables direct control of active green/Royalist soldiers. Click
+  or drag a selection box to create a temporary portrait beside the heroes;
+  its illustrated pin button preserves an individual or group portrait. Allied portraits
+  expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
+  and type-aware line, box, staggered, and flank formations. Line formation
+  places officers at the command center, knights in close escort, shield and
+  melee troops on the fighting edge, and ranged troops in protected rear or
+  central positions. When heroes move with the selection, soldiers deploy
+  behind them instead of overlapping their formation. Long moves automatically
+  narrow to a two-wide marching column before deploying at the destination.
+  Controlled soldiers can enter swordfights, execute the normal drawn strike
+  gestures, and parry with right-click. Hover
+  tooltips name every action and its current state and appear quickly across
+  each button's full cell. Soldiers receive deterministic names from the
+  localized peasant-name pool. Selection uses the heroes' persistent ground
+  ring and fading green outline. The portrait bar
+  computes its capacity from the actual screen width (six portraits fit at
+  800 px) and uses the original Sherwood left/right arrow resources with
+  wraparound paging when the combined hero and allied portraits overflow.
+
 - **Fog/night-tint all sprites option.** Options → Graphics now includes a
   `Fog/Night All Sprites` toggle. On fog and night missions it applies the
   generated ambiance sprite variant to Day-based world sprites, including
@@ -87,7 +112,8 @@ A list of which additional features we have added, which ones we might still wan
   save at a clean frame boundary writes a save-marker record (`sv`, the
   state hash at capture), and loading a save made in the same session writes
   a load-back record (`lb`) pointing at that marker's frame. Playback pins
-  an engine clone at each marker and swaps it back in at the load-back, so
+  the complete engine, sound, host-input, and persistent game state at each
+  marker and restores it through the normal post-load path, so
   quicksave/quickload and script-triggered restarts replay bit-exactly
   without embedding save payloads. Loads of saves from other sessions cannot
   be expressed this way and log a warning that the recording is no longer
@@ -205,11 +231,6 @@ A list of which additional features we have added, which ones we might still wan
 - improvements to quick actions: shift-click should queue an action
 - Most items seem useless, like the apple throw. Maybe rebalance items to be
   more useful.
-- Add the ability to control any soldiers on your side (green soldiers). Maybe box-selecting a group of soldiers adds a new portrait, with action buttons to define the stance of the group, patrols, formation, follow one of the heroes,...
-    - box-select and click adds a "temporary" portrait for that group / individual
-    - soldier names auto generate?
-    - small button to "pin" a soldier/soldier group, which keeps that portrait present / visible
-
 ### Code Quality
 
 - Finish moving legacy sentinels to typed runtime boundaries. Entity IDs,

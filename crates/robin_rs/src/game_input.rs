@@ -10,6 +10,7 @@
 use crate::host::Host;
 use crate::mouse_way::MouseWayPattern;
 use crate::shadow_polygon::ASPECT_RATIO;
+use robin_engine::allied_control::AlliedFormation;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
@@ -44,6 +45,26 @@ pub fn resolve_left_click(
     let local_seat = host.transport.local_seat;
     let selected = engine.seat_selection(local_seat);
     let num_selected = selected.len();
+    let allied_selected = engine.allied_selection(local_seat).to_vec();
+
+    // The optional allied-control layer keeps soldier selection separate from
+    // the original PC selection so scripts and hero action bars retain their
+    // five-PC assumptions. A direct click still feels like ordinary unit
+    // selection and may coexist with heroes when Shift is held.
+    if host.control_allied_soldiers
+        && let Some(soldier) =
+            engine.find_controllable_allied_soldier(assets, &host.draw_order.ids, map_pt)
+    {
+        let mut commands = Vec::new();
+        if !shift_held {
+            commands.push(PlayerCommand::UnselectAllPcs);
+        }
+        commands.push(PlayerCommand::SelectAlliedSoldiers {
+            soldiers: vec![soldier],
+            append: shift_held,
+        });
+        return commands;
+    }
 
     // Pre-process for double-clicks: when an action is armed and any
     // selected PC's profile lacks the action or has it disabled, abort
@@ -131,22 +152,49 @@ pub fn resolve_left_click(
     // cached value first.
     host.input.element_old_click = None;
 
-    // No PCs selected: can only select a PC
+    // No PCs selected: a controlled allied group can still engage a
+    // sword-focusable target, select a hero, or move.
     if num_selected == 0 {
         if let Some(pc_id) =
             engine.find_focusable_entity(assets, &host.draw_order.ids, map_pt, Focus::Select)
         {
             host.input.element_old_click = Some(pc_id);
-            return vec![PlayerCommand::SelectPc {
+            let mut commands = Vec::new();
+            if !shift_held && !allied_selected.is_empty() {
+                commands.push(PlayerCommand::ClearAlliedSelection);
+            }
+            commands.push(PlayerCommand::SelectPc {
                 pc_id,
                 append: shift_held,
+            });
+            return commands;
+        }
+        if host.control_allied_soldiers && !allied_selected.is_empty() {
+            if let Some(target_id) =
+                engine.find_focusable_entity(assets, &host.draw_order.ids, map_pt, Focus::Sword)
+            {
+                host.input.element_old_click = Some(target_id);
+                return allied_selected
+                    .into_iter()
+                    .map(|actor| PlayerCommand::EnterSwordfight {
+                        actor,
+                        target: target_id,
+                        running: false,
+                    })
+                    .collect();
+            }
+            return vec![PlayerCommand::MoveAlliedSoldiers {
+                formation: selected_allied_formation(engine, &allied_selected),
+                soldiers: allied_selected,
+                destination: map_pt,
+                running: is_double,
             }];
         }
         host.input.element_old_click = None;
         return vec![];
     }
 
-    let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
+    let is_swordfighting = is_selected_unit_swordfighting(engine, local_seat);
 
     // Unselected PC → select it
     if let Some(pc_id) = engine.find_focusable_pc(assets, map_pt, Focus::Select)
@@ -156,10 +204,15 @@ pub fn resolve_left_click(
         if ctrl_held {
             return vec![PlayerCommand::TogglePcSelection { pc_id }];
         } else {
-            return vec![PlayerCommand::SelectPc {
+            let mut commands = Vec::new();
+            if !shift_held && !allied_selected.is_empty() {
+                commands.push(PlayerCommand::ClearAlliedSelection);
+            }
+            commands.push(PlayerCommand::SelectPc {
                 pc_id,
                 append: shift_held,
-            }];
+            });
+            return commands;
         }
     }
 
@@ -241,7 +294,11 @@ pub fn resolve_left_click(
             .get_entity(target_id)
             .map(|e| e.is_soldier())
             .unwrap_or(false);
-        let selected: Vec<EntityId> = selected.to_vec();
+        let selected: Vec<EntityId> = selected
+            .iter()
+            .chain(allied_selected.iter())
+            .copied()
+            .collect();
         let engagers: Vec<EntityId> = if target_is_soldier {
             selected
         } else {
@@ -322,13 +379,22 @@ pub fn resolve_left_click(
             engine_sector::SectorNumber::new(patch.sector as i16),
             patch.layer,
         ));
-        return vec![PlayerCommand::GroupMove {
+        let mut commands = vec![PlayerCommand::GroupMove {
             actors,
             destination: patch.waypoint,
             running: is_double,
             show_marker: false,
             goal_override,
         }];
+        if host.control_allied_soldiers && !allied_selected.is_empty() {
+            commands.push(PlayerCommand::MoveAlliedSoldiers {
+                formation: selected_allied_formation(engine, &allied_selected),
+                soldiers: allied_selected.clone(),
+                destination: patch.waypoint,
+                running: is_double,
+            });
+        }
+        return commands;
     }
 
     // Sector-click branch — gated on both predicates.
@@ -352,13 +418,29 @@ pub fn resolve_left_click(
                 }
             })
     });
-    vec![PlayerCommand::GroupMove {
+    let mut commands = vec![PlayerCommand::GroupMove {
         actors,
         destination: map_pt,
         running: is_double,
         show_marker: true,
         goal_override,
-    }]
+    }];
+    if host.control_allied_soldiers && !allied_selected.is_empty() {
+        commands.push(PlayerCommand::MoveAlliedSoldiers {
+            formation: selected_allied_formation(engine, &allied_selected),
+            soldiers: allied_selected.clone(),
+            destination: map_pt,
+            running: is_double,
+        });
+    }
+    commands
+}
+
+fn selected_allied_formation(engine: &Engine, soldiers: &[EntityId]) -> AlliedFormation {
+    soldiers
+        .iter()
+        .find_map(|soldier| engine.allied_order(*soldier).map(|order| order.formation))
+        .unwrap_or_default()
 }
 
 /// Update the click-and-drag target cache after a successful action-mode
@@ -937,7 +1019,7 @@ pub fn resolve_action_drag(
     // Swordfighting PCs feed the mouse-way gesture recognizer on
     // drag, not the action arm.  The drag path already filters in the
     // caller; this defensive check is a safety net.
-    if engine.is_seat_selection_swordfighting(local_seat) {
+    if is_selected_unit_swordfighting(engine, local_seat) {
         return vec![];
     }
 
@@ -1102,8 +1184,9 @@ fn resolve_double_click_repeat(
         Some(_) | None => return vec![],
     };
 
-    let selected: Vec<EntityId> = engine.seat_selection(local_seat).to_vec();
-    if selected.is_empty() {
+    let selected_pcs = engine.seat_selection(local_seat).to_vec();
+    let selected_combatants = selected_units(engine, local_seat);
+    if selected_combatants.is_empty() {
         return vec![];
     }
 
@@ -1114,7 +1197,7 @@ fn resolve_double_click_repeat(
             // macro does it fall through to a fresh seek with the
             // running gait.
             if engine.is_recording_macro() {
-                selected
+                selected_combatants
                     .into_iter()
                     .map(|pc_id| PlayerCommand::EnterSwordfight {
                         actor: pc_id,
@@ -1123,13 +1206,14 @@ fn resolve_double_click_repeat(
                     })
                     .collect()
             } else {
-                selected
+                selected_combatants
                     .into_iter()
                     .map(|pc_id| PlayerCommand::MakePcFast { pc_id })
                     .collect()
             }
         }
         Kind::Civilian => {
+            let selected = selected_pcs;
             let pc_id = selected[0];
             let Some(cmd) = determine_use_command(engine, assets, pc_id, cached_target) else {
                 return vec![];
@@ -1145,6 +1229,7 @@ fn resolve_double_click_repeat(
                 .collect()
         }
         Kind::Object => {
+            let selected = selected_pcs;
             // Non-recording double-click: accelerate the in-flight
             // seek with MakePcFast.  Recording double-click falls
             // through to a fresh Take launched with the running gait
@@ -1181,15 +1266,19 @@ fn resolve_double_click_repeat(
 
 /// Resolve a right-click into player commands.
 pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
-    let selected = engine.seat_selection(local_seat);
-    if selected.is_empty() {
-        return vec![];
-    }
+    let selected_combatants = selected_units(engine, local_seat);
+    let clear_allied = !engine.allied_selection(local_seat).is_empty();
+    let finish = |mut commands: Vec<PlayerCommand>| {
+        if clear_allied {
+            commands.push(PlayerCommand::ClearAlliedSelection);
+        }
+        commands
+    };
 
     // Swordfighting → parry
-    if engine.is_seat_selection_swordfighting(local_seat) {
+    if is_selected_unit_swordfighting(engine, local_seat) {
         let mut cmds = Vec::new();
-        for &pc_id in selected {
+        for &pc_id in &selected_combatants {
             let is_fighting = engine
                 .get_entity(pc_id)
                 .and_then(|e| e.human_data())
@@ -1204,6 +1293,11 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
         return cmds;
     }
 
+    if engine.seat_selection(local_seat).is_empty() {
+        return finish(Vec::new());
+    }
+    let selected = engine.seat_selection(local_seat);
+
     // Action selected → cancel
     let selected_action = engine.selected_action_for_seat(local_seat);
     match selected_action {
@@ -1216,7 +1310,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
         | Action::Beggar => {
             let mut cmds = resolve_right_click_stop(engine, local_seat);
             cmds.push(PlayerCommand::UnselectAllActions);
-            return cmds;
+            return finish(cmds);
         }
         Action::Bow => {
             // Right-click with Bow armed clears the queued shoot list
@@ -1227,9 +1321,9 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
             if let Some(pc_id) = first
                 && engine.pc_has_pending_shoot_bow(pc_id)
             {
-                return vec![PlayerCommand::ClearShootList { pc_id }];
+                return finish(vec![PlayerCommand::ClearShootList { pc_id }]);
             }
-            return vec![PlayerCommand::UnselectAllActions];
+            return finish(vec![PlayerCommand::UnselectAllActions]);
         }
         Action::Shield | Action::BigShield => {
             // Splits on action state:
@@ -1256,15 +1350,15 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
                 }
             }
             cmds.push(PlayerCommand::UnselectAllActions);
-            return cmds;
+            return finish(cmds);
         }
         _ => {
-            return vec![PlayerCommand::UnselectAllActions];
+            return finish(vec![PlayerCommand::UnselectAllActions]);
         }
     }
 
     // NoAction → posture-based stop
-    resolve_right_click_stop(engine, local_seat)
+    finish(resolve_right_click_stop(engine, local_seat))
 }
 
 /// Resolve the posture-based stop for each selected PC.
@@ -1378,14 +1472,14 @@ pub fn resolve_swordfight(
     is_left_button: bool,
 ) -> Vec<PlayerCommand> {
     let local_seat = host.transport.local_seat;
-    if !engine.is_seat_selection_swordfighting(local_seat) {
+    if !is_selected_unit_swordfighting(engine, local_seat) {
         return vec![];
     }
 
     let mut cmds = Vec::new();
     let mut consumed = false;
 
-    for &pc_id in engine.seat_selection(local_seat) {
+    for pc_id in selected_units(engine, local_seat) {
         let Some((is_sword, pos_map, facing_dir)) = engine.get_entity(pc_id).and_then(|entity| {
             let h = entity.human_data()?;
             let is_sword = !h.opponents.is_empty();
@@ -1520,6 +1614,27 @@ pub fn resolve_swordfight(
     cmds
 }
 
+fn selected_units(engine: &Engine, local_seat: PlayerId) -> Vec<EntityId> {
+    engine
+        .seat_selection(local_seat)
+        .iter()
+        .chain(engine.allied_selection(local_seat).iter())
+        .copied()
+        .collect()
+}
+
+/// True when any selected hero or controllable allied soldier is currently
+/// engaged in melee. The original engine query intentionally remains PC-only;
+/// UI input uses this broader query for the optional allied-control layer.
+pub fn is_selected_unit_swordfighting(engine: &Engine, local_seat: PlayerId) -> bool {
+    selected_units(engine, local_seat).into_iter().any(|id| {
+        engine
+            .get_entity(id)
+            .and_then(|entity| entity.human_data())
+            .is_some_and(|human| !human.opponents.is_empty())
+    })
+}
+
 fn sword_strike_target_is_in_same_sector(
     engine: &Engine,
     actor: EntityId,
@@ -1550,22 +1665,34 @@ fn sword_strike_target_is_in_same_sector(
 fn resolved_sword_seek_distance(
     engine: &Engine,
     assets: &LevelAssets,
-    pc_id: EntityId,
+    actor_id: EntityId,
     command: Command,
     generic_maximum: bool,
 ) -> f32 {
-    let pc = engine
-        .get_entity(pc_id)
-        .and_then(Entity::pc_data)
-        .unwrap_or_else(|| panic!("sword seek owner {pc_id:?} is not a PC"));
-    let profile = assets
-        .profile_manager
-        .get_character(pc.profile_index)
-        .unwrap_or_else(|| panic!("sword seek owner {pc_id:?} has no character profile"));
+    let entity = engine
+        .get_entity(actor_id)
+        .unwrap_or_else(|| panic!("sword seek owner {actor_id:?} disappeared"));
+    let weapon_id = match entity {
+        Entity::Pc(pc) => {
+            assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .unwrap_or_else(|| panic!("sword seek owner {actor_id:?} has no character profile"))
+                .hth_weapon_id
+        }
+        Entity::Soldier(soldier) => {
+            assets
+                .profile_manager
+                .get_soldier(soldier.soldier.soldier_profile_index)
+                .unwrap_or_else(|| panic!("sword seek owner {actor_id:?} has no soldier profile"))
+                .hth_weapon_id
+        }
+        _ => panic!("sword seek owner {actor_id:?} is not a PC or soldier"),
+    };
     let weapon = assets
         .profile_manager
-        .get_hth_weapon(profile.hth_weapon_id)
-        .unwrap_or_else(|| panic!("sword seek owner {pc_id:?} has no HtH weapon profile"));
+        .get_hth_weapon(weapon_id)
+        .unwrap_or_else(|| panic!("sword seek owner {actor_id:?} has no HtH weapon profile"));
     sword_seek_distance_for_weapon(weapon, command, generic_maximum)
 }
 
@@ -1863,6 +1990,71 @@ mod tests {
             assets,
             PlayerCommand::SelectPc {
                 pc_id,
+                append: false,
+            },
+        );
+    }
+
+    fn add_fighting_allied_soldier(
+        engine: &mut Engine,
+        x: f32,
+        y: f32,
+        opponent: EntityId,
+    ) -> EntityId {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(x, y));
+        engine.test_add_entity(engine_element::Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData {
+                opponents: vec![opponent],
+                ..Default::default()
+            },
+            npc: NpcData {
+                life_points: 100,
+                ..Default::default()
+            },
+            soldier: SoldierData {
+                cached_camp: robin_engine::element_kinds::Camp::Royalists,
+                ..Default::default()
+            },
+        }))
+    }
+
+    fn add_allied_soldier(engine: &mut Engine, x: f32, y: f32) -> EntityId {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(x, y));
+        engine.test_add_entity(engine_element::Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                life_points: 100,
+                ..Default::default()
+            },
+            soldier: SoldierData {
+                cached_camp: robin_engine::element_kinds::Camp::Royalists,
+                ..Default::default()
+            },
+        }))
+    }
+
+    fn select_allied(engine: &mut Engine, assets: &LevelAssets, soldier: EntityId) {
+        apply(
+            engine,
+            assets,
+            PlayerCommand::SelectAlliedSoldiers {
+                soldiers: vec![soldier],
                 append: false,
             },
         );
@@ -2343,6 +2535,47 @@ mod tests {
     }
 
     #[test]
+    fn right_click_clears_allies_from_a_mixed_selection() {
+        let (mut engine, assets, host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let soldier = add_allied_soldier(&mut engine, 20.0, 20.0);
+        select(&mut engine, &assets, pc);
+        select_allied(&mut engine, &assets, soldier);
+
+        assert_cmds!(
+            resolve_right_click(&engine, host.transport.local_seat),
+            vec![
+                PlayerCommand::StopPc { pc_id: pc },
+                PlayerCommand::ClearAlliedSelection,
+            ]
+        );
+    }
+
+    #[test]
+    fn exclusive_portrait_commands_switch_between_heroes_and_allied_groups() {
+        let (mut engine, assets, _host) = fixture();
+        let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let soldier = add_allied_soldier(&mut engine, 20.0, 20.0);
+        select_allied(&mut engine, &assets, soldier);
+        apply(&mut engine, &assets, PlayerCommand::PinAlliedSelection);
+
+        select(&mut engine, &assets, pc);
+        assert_eq!(engine.seat_selection(PlayerId(0)), &[pc]);
+        assert!(engine.allied_selection(PlayerId(0)).is_empty());
+
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::SelectAlliedGroup {
+                group_id: 1,
+                append: false,
+            },
+        );
+        assert!(engine.seat_selection(PlayerId(0)).is_empty());
+        assert_eq!(engine.allied_selection(PlayerId(0)), &[soldier]);
+    }
+
+    #[test]
     fn right_click_drops_carried_corpse_when_idle() {
         let (mut engine, assets, host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::CarryingCorpse);
@@ -2472,6 +2705,70 @@ mod tests {
 
         let cmds = resolve_swordfight(&mut host, &engine, &assets, MapPoint::new(50.0, 50.0), true);
         assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn allied_soldier_swordfight_participates_in_gesture_input_and_parry() {
+        let (mut engine, assets, mut host) = fixture();
+        let opponent = add_soldier(&mut engine, 20.0, 20.0, 100);
+        let soldier = add_fighting_allied_soldier(&mut engine, 10.0, 10.0, opponent);
+        select_allied(&mut engine, &assets, soldier);
+
+        assert!(is_selected_unit_swordfighting(&engine, PlayerId(0)));
+        assert_cmds!(
+            resolve_right_click(&engine, PlayerId(0)),
+            vec![PlayerCommand::LaunchSelfAbility {
+                actor: soldier,
+                command: Command::ParrySword,
+            }]
+        );
+
+        // A full circle is the game's Thrust-H gesture. It exercises the
+        // gesture path without needing a seek-distance profile fixture.
+        for (x, y) in [
+            (320.0, 280.0),
+            (360.0, 320.0),
+            (360.0, 340.0),
+            (320.0, 350.0),
+            (300.0, 340.0),
+            (280.0, 340.0),
+            (280.0, 320.0),
+            (320.0, 290.0),
+        ] {
+            host.mouse_way
+                .add_point(engine_coordinates::ScreenPoint::new(x, y));
+        }
+        assert_cmds!(
+            resolve_swordfight(&mut host, &engine, &assets, MapPoint::new(0.0, 0.0), true,),
+            vec![PlayerCommand::SwordStrikeCmd {
+                actor: soldier,
+                target: opponent,
+                command: Command::SwordstrikeThrustH,
+                with_seek: false,
+                seek_distance: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn allied_box_selection_uses_ground_points_not_sprite_bounds() {
+        let (mut engine, assets, _host) = fixture();
+        let opponent = add_soldier(&mut engine, 100.0, 100.0, 100);
+        let inside = add_fighting_allied_soldier(&mut engine, 10.0, 10.0, opponent);
+        let outside = add_fighting_allied_soldier(&mut engine, -1.0, -1.0, opponent);
+
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::BoxSelectAlliedSoldiers {
+                pt1: MapPoint::new(0.0, 0.0),
+                pt2: MapPoint::new(20.0, 20.0),
+                shift: false,
+            },
+        );
+
+        assert_eq!(engine.allied_selection(PlayerId(0)), &[inside]);
+        assert_ne!(inside, outside);
     }
 
     // ── determine_use_command ──

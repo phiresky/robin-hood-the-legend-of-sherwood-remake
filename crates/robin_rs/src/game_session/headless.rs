@@ -133,7 +133,9 @@ impl HeadlessMission {
                 .as_ref()
                 .is_some_and(|player| !player.is_finished())
         {
-            self.runtime.inject_next_replay_frame(&mut frame);
+            self.runtime
+                .inject_next_replay_frame(&mut frame)
+                .unwrap_or_else(|error| panic!("headless replay boundary failed: {error}"));
         }
 
         if self.policy.auto_dismiss_modals {
@@ -293,6 +295,7 @@ impl HeadlessMission {
                 &mut timeline.rewind_buffer,
                 &mut timeline.rollback_checker,
                 &mut timeline.replay_player,
+                &mut timeline.playback_pinned_saves,
                 &mut control.manual_pause,
                 &mut active_modal,
             );

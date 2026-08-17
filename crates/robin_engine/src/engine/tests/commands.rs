@@ -313,10 +313,10 @@ fn ground_mark_hourglass_advances_and_retires_on_screen_marks() {
 }
 
 #[test]
-fn ground_mark_hourglass_freezes_off_screen_marks() {
+fn ground_mark_hourglass_retires_off_screen_marks() {
     let mut display = HostDisplayState::default();
-    // Off-screen marks must freeze in both live and replay — the
-    // `IsOnScreen` gate suppresses advance.
+    // The sim camera is not the player's render viewport, so it must not
+    // freeze a marker that can be visible after host-side scrolling.
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
@@ -335,8 +335,7 @@ fn ground_mark_hourglass_freezes_off_screen_marks() {
     for _ in 0..(2 * crate::markers::NUMBER_OF_GROUND_FRAMES as usize + 4) {
         engine.perform_hourglass(&mut display, &assets, &mut dev);
     }
-    assert_eq!(engine.feedback.ground_mark.len(), 1);
-    assert_eq!(engine.feedback.ground_mark.marks[0].current_frame, 0);
+    assert!(engine.feedback.ground_mark.is_empty());
 }
 
 #[test]

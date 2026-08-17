@@ -847,7 +847,6 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        scratch: &SimScratch,
         npc_id: EntityId,
     ) {
         let frame = self.control.frame_counter;
@@ -871,6 +870,10 @@ impl EngineInner {
 
         let origin = soldier.element.position_map();
         let targets = enemy_ai.list_them.clone();
+        if targets.is_empty() {
+            return;
+        }
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let nearby_targets = enemies_near_from_them_list(origin, &targets, |target_handle| {
             let target_view = scratch.ai_entity_views.get(&target_handle);
             if target_view.is_none() {
@@ -934,7 +937,7 @@ impl EngineInner {
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             let tick_data =
-                self.build_npc_tick_data_for_target(sim, npc_id, scratch, assets, Some(target_id));
+                self.build_npc_tick_data_for_target(sim, npc_id, &scratch, assets, Some(target_id));
             let stimulus = crate::ai::Stimulus::with_human(
                 crate::ai::StimulusType::EventEnemyNear,
                 target_handle,
@@ -1896,7 +1899,21 @@ impl EngineInner {
             // Original CleanUpDetectables/ComputeVisibility dereference live
             // human pointers. Rebuild the target records at this creation
             // slot, but let the NPC's detectable list dictate scan order.
-            let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(world);
+            let enemy_target_ids: std::collections::HashSet<_> = self
+                .world
+                .entities
+                .get(npc_id)
+                .and_then(Entity::npc_data)
+                .expect("RefreshDetection owner lost NPC data before Enemy snapshot")
+                .detectable_lists[DetectableType::Enemy as usize]
+                .iter()
+                .filter_map(|detectable| detectable.element)
+                .collect();
+            let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(
+                world,
+                positions_before_movement.map(|positions| (npc_id, positions)),
+                Some(&enemy_target_ids),
+            );
             // Original caches ComputeViewRadius for this viewer/frame: one
             // ground entry plus one entry on each projection obstacle. Enemy
             // and the later detectable-type buckets share the same cache
@@ -3920,10 +3937,18 @@ impl EngineInner {
     fn tick_enemy_ai_build_live_enemy_optical_targets(
         &self,
         world: &AiWorldView,
+        owner_boundary: Option<(
+            EntityId,
+            &EntitySlots<Option<crate::entities::BoundaryPosition>>,
+        )>,
+        required_targets: Option<&std::collections::HashSet<EntityId>>,
     ) -> Vec<EnemyOpticalTarget> {
         self.world
             .entities
             .humans()
+            .filter(|(id, _)| {
+                required_targets.is_none_or(|required| required.contains(&EntityId::from(*id)))
+            })
             .filter_map(|(id, entity)| match entity {
                 Entity::Pc(pc) => {
                     let entity_id: EntityId = id.into();
@@ -3940,6 +3965,11 @@ impl EngineInner {
                         });
                     let posture = pc.element.posture;
                     let ground_z = pc.element.position().z;
+                    let boundary = owner_boundary
+                        .map(|(owner, positions)| {
+                            self.boundary_position(entity_id, owner, positions, true)
+                        })
+                        .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&pc.element));
                     let order_type = self
                         .orders
                         .sequence_manager
@@ -3948,15 +3978,10 @@ impl EngineInner {
                         .unwrap_or(crate::order::OrderType::Invalid);
                     Some(EnemyOpticalTarget {
                         id: entity_id,
-                        position: snapshot.position,
-                        position_world: snapshot.position_world,
-                        ai_position: *world.ai_positions.get(&entity_id).unwrap_or_else(|| {
-                            panic!("PC {} is absent from the owner-boundary AI position view", entity_id.index())
-                        }),
-                        ground_position: GroundPoint::from_map_and_z(
-                            snapshot.position,
-                            ground_z,
-                        ),
+                        position: boundary.map,
+                        position_world: boundary.world,
+                        ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
+                        ground_position: GroundPoint::from_map_and_z(boundary.map, ground_z),
                         sector: pc.element.sector(),
                         layer: pc.element.layer(),
                         posture,
@@ -3972,7 +3997,7 @@ impl EngineInner {
                         }),
                         detection_point: (!dead).then(|| {
                             crate::stealth::detection_point_world(
-                                snapshot.position_world,
+                                boundary.world,
                                 posture,
                                 pc.element.direction(),
                                 false,
@@ -3999,33 +4024,18 @@ impl EngineInner {
                     let posture = soldier.element.posture;
                     let is_rider = soldier.soldier.rider;
                     let dead = soldier.npc.life_points <= 0;
-                    let (position, position_world) = world
-                        .soldiers
-                        .iter()
-                        .find(|snapshot| snapshot.id == entity_id)
-                        .map(|snapshot| (snapshot.position, snapshot.position_world))
-                        .unwrap_or_else(|| {
-                            assert!(
-                                dead || !soldier.element.active || soldier.human.unconscious,
-                                "active conscious soldier {} is absent from the owner-relative Enemy optical snapshot",
-                                entity_id.index()
-                            );
-                            // Inactive, unconscious, and dead soldiers do not
-                            // participate in the globally batched movement
-                            // slice, so their live position is also their
-                            // owner-boundary position.
-                            (
-                                soldier.element.position_map(),
-                                soldier.element.position(),
-                            )
-                        });
+                    let boundary = owner_boundary
+                        .map(|(owner, positions)| {
+                            self.boundary_position(entity_id, owner, positions, true)
+                        })
+                        .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&soldier.element));
+                    let position = boundary.map;
+                    let position_world = boundary.world;
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
                         position_world,
-                        ai_position: *world.ai_positions.get(&entity_id).unwrap_or_else(|| {
-                            panic!("soldier {} is absent from the owner-boundary AI position view", entity_id.index())
-                        }),
+                        ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
                         ground_position: GroundPoint::from_map_and_z(
                             position,
                             soldier.element.position().z,
@@ -4082,7 +4092,11 @@ impl EngineInner {
         let world =
             self.tick_enemy_ai_build_world_view(assets, Some((owner, positions_before_movement)));
         let optical = self
-            .tick_enemy_ai_build_live_enemy_optical_targets(&world)
+            .tick_enemy_ai_build_live_enemy_optical_targets(
+                &world,
+                Some((owner, positions_before_movement)),
+                None,
+            )
             .into_iter()
             .find(|entry| entry.id == target)
             .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));

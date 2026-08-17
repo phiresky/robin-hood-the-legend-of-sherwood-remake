@@ -15,6 +15,7 @@
 
 use crate::host::Host;
 use robin_assets::picture::Picture;
+use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -27,26 +28,30 @@ use robin_engine::sim_rng::{self, AuxiliaryRngSite};
 use robin_engine::sprite::BBox;
 use std::collections::HashMap;
 
-use crate::gfx_types::Rect;
+use crate::gfx_types::{BlendMode, Rect};
 use crate::ingame_menu::{layout, widget_bridge};
-use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
+use crate::renderer::{BLIT_SOURCE_TRANSPARENT, GpuImage, Renderer};
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::resource_manager::{ResourceId, ResourceManager};
-use robin_engine::element::Entity;
+use robin_engine::element::{Entity, EntityId};
 use robin_engine::minimap::HitMask;
 use robin_engine::profiles::Action;
 use robin_engine::titbit::SpriteRow;
 
 // ─── Layout constants ─────────────────────────────────────────────
 
-/// Number of portrait slots across the panel.
-const NUMBER_OF_SLOTS: u16 = 5;
-
 /// Horizontal margin on each side of the portrait area (pixels).
 const MARGIN: u16 = 32;
 
 /// Width of a single portrait element (pixels).
 const ELEMENT_WIDTH: u16 = 112;
+const ALLIED_ACTION_ICON_WIDTH: u16 = 34;
+const ALLIED_ACTION_ICON_HEIGHT: u16 = 32;
+const ALLIED_PIN_ICON_SIZE: u16 = 27;
+// Scale the old 18px icon around its center, then move that center 9px
+// right/up. The resulting pin hangs slightly over the scroll's top-right.
+const ALLIED_PIN_LEFT: u16 = 86;
+const ALLIED_PIN_RISE: u16 = 10;
 
 /// Border gap at the very bottom of the screen.
 const BORDURE: u16 = 3;
@@ -205,12 +210,23 @@ pub struct PortraitCache {
     top_scroll_surface: Option<u32>,
     top_scroll_alt_surface: Option<u32>,
     bottom_scroll_surface: Option<u32>,
+    /// Authored 112x134 transparent scroll background for allied groups.
+    allied_portrait_background: Option<GpuImage>,
+    /// Authored 112x134 transparent soldier foreground for allied groups.
+    allied_portrait_foreground: Option<GpuImage>,
+    /// Transparent medieval brooch artwork for the transient and pinned states.
+    allied_pin_icons: [Option<GpuImage>; 2],
+    /// State-specific artwork: three stances, two patrol states, and four
+    /// formations, in that order.
+    allied_action_surfaces: [Option<GpuImage>; 9],
     /// Panel border frame pieces.
     border_top_left: Option<u32>,
     border_top_right: Option<u32>,
     border_bottom_left: Option<u32>,
     border_bottom_right: Option<u32>,
     border_middle: Option<u32>,
+    portrait_page_left: Option<u32>,
+    portrait_page_right: Option<u32>,
     /// Fighting sword overlay surface per character.
     fighting_surfaces: [Option<u32>; CharacterKind::COUNT],
     /// Guard indicator surface (RHID_GUARD=209).
@@ -274,11 +290,17 @@ impl PortraitCache {
             top_scroll_surface: None,
             top_scroll_alt_surface: None,
             bottom_scroll_surface: None,
+            allied_portrait_background: None,
+            allied_portrait_foreground: None,
+            allied_pin_icons: [None, None],
+            allied_action_surfaces: [const { None }; 9],
             border_top_left: None,
             border_top_right: None,
             border_bottom_left: None,
             border_bottom_right: None,
             border_middle: None,
+            portrait_page_left: None,
+            portrait_page_right: None,
             fighting_surfaces: [None; CharacterKind::COUNT],
             guard_surface: None,
             trumpet_surface: None,
@@ -333,6 +355,131 @@ impl PortraitCache {
             self.surfaces.iter().filter(|s| s.is_some()).count(),
         );
 
+        let (width, height, pixels) = decode_embedded_png_rgba(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/ui/allied_portrait_background.png"
+        )))
+        .expect("embedded allied portrait background must be a valid RGB/RGBA PNG");
+        assert_eq!(
+            (width, height),
+            (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
+            "embedded allied portrait background must match the native open HUD slot"
+        );
+        self.allied_portrait_background = Some(
+            renderer
+                .create_rgba_gpu_image(width, height, &pixels, "allied portrait background")
+                .expect("embedded allied portrait background dimensions must match its payload"),
+        );
+
+        let (width, height, pixels) = decode_embedded_png_rgba(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/ui/allied_portrait_foreground.png"
+        )))
+        .expect("embedded allied portrait foreground must be a valid RGB/RGBA PNG");
+        assert_eq!(
+            (width, height),
+            (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
+            "embedded allied portrait foreground must match the native open HUD slot"
+        );
+        self.allied_portrait_foreground = Some(
+            renderer
+                .create_rgba_gpu_image(width, height, &pixels, "allied portrait foreground")
+                .expect("embedded allied portrait foreground dimensions must match its payload"),
+        );
+
+        for (index, (bytes, label)) in [
+            (
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../assets/ui/allied_pin_unpinned.png"
+                )) as &[u8],
+                "allied portrait pin (unpinned)",
+            ),
+            (
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../assets/ui/allied_pin_pinned.png"
+                )),
+                "allied portrait pin (pinned)",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes)
+                .expect("embedded allied pin icon must be a valid RGB/RGBA PNG");
+            assert_eq!(
+                (width, height),
+                (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE),
+                "embedded allied pin icon must be 27x27"
+            );
+            self.allied_pin_icons[index] = Some(
+                renderer
+                    .create_rgba_gpu_image(width, height, &pixels, label)
+                    .expect("embedded allied pin icon dimensions must match its payload"),
+            );
+        }
+
+        for (index, bytes) in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_hold.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_defensive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_aggressive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_off.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_on.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_line.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_box.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_staggered.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_flank.png"
+            )),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes)
+                .unwrap_or_else(|error| panic!("decode allied state icon {index}: {error}"));
+            assert_eq!(
+                (width, height),
+                (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT),
+                "embedded allied state icon must be 34x32"
+            );
+            self.allied_action_surfaces[index] = Some(
+                renderer
+                    .create_rgba_gpu_image(
+                        width,
+                        height,
+                        &pixels,
+                        &format!("allied state icon {index}"),
+                    )
+                    .unwrap_or_else(|| panic!("allied state icon {index} has invalid dimensions")),
+            );
+        }
+
         // ── Load scroll decoration surfaces (generic, shared by all portraits) ──
         for (res_id, field, label) in [
             (
@@ -380,6 +527,28 @@ impl PortraitCache {
                 Err(e) => {
                     tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
                 }
+            }
+        }
+
+        for (res_id, field, label) in [
+            (
+                resource_ids::RHID_PORTRAIT_SCROLL_LEFT,
+                &mut self.portrait_page_left as &mut Option<u32>,
+                "portrait page left",
+            ),
+            (
+                resource_ids::RHID_PORTRAIT_SCROLL_RIGHT,
+                &mut self.portrait_page_right,
+                "portrait page right",
+            ),
+        ] {
+            let picture = match res.get_picture(res_id, 1) {
+                Ok(picture) => Ok(picture),
+                Err(_) => res.get_picture(res_id, 0),
+            };
+            match picture {
+                Ok(pic) => *field = Some(pic_to_surface(renderer, pic)),
+                Err(error) => tracing::warn!("Failed to load {label}: {error}"),
             }
         }
 
@@ -974,6 +1143,38 @@ pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
         .expect("pic_to_surface: decoded picture dimensions must match RGB565 payload")
 }
 
+fn decode_embedded_png_rgba(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("decode embedded PNG header: {error}"))?;
+    let mut buffer = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| "embedded PNG has no known output size".to_owned())?
+    ];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("decode embedded PNG frame: {error}"))?;
+    let data = &buffer[..info.buffer_size()];
+    let pixels = match info.color_type {
+        png::ColorType::Rgba => data.to_vec(),
+        png::ColorType::Rgb => data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
+            .collect(),
+        color_type => {
+            return Err(format!(
+                "embedded PNG uses unsupported color type {color_type:?}"
+            ));
+        }
+    };
+    Ok((info.width as u16, info.height as u16, pixels))
+}
+
 /// The [`CharacterKind`] for a PC entity, if it is a PC whose profile
 /// matched one of the 10 known characters at level-load time.
 fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
@@ -986,15 +1187,69 @@ fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
 // ─── Helpers ───────────────────────────────────────────────────────
 
 /// Compute the pixel width of each portrait slot.
-fn slot_width(screen_width: u16) -> u16 {
-    (screen_width - 2 * MARGIN) / NUMBER_OF_SLOTS
+pub fn portrait_capacity(screen_width: u16) -> usize {
+    usize::from(((screen_width.saturating_sub(2 * MARGIN)) / ELEMENT_WIDTH).max(1))
 }
 
 /// Compute the left X of a portrait element within its slot.
-fn slot_left_x(screen_width: u16, slot_index: u16) -> u16 {
-    let sw = slot_width(screen_width);
-    let position_in_slot = MARGIN + (sw - ELEMENT_WIDTH) / 2;
+pub(crate) fn slot_left_x(screen_width: u16, slot_index: u16, slot_count: usize) -> u16 {
+    let sw = screen_width.saturating_sub(2 * MARGIN) / slot_count.max(1) as u16;
+    let position_in_slot = MARGIN + sw.saturating_sub(ELEMENT_WIDTH) / 2;
     slot_index * sw + position_in_slot
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortraitTarget {
+    Pc(EntityId),
+    AlliedSelection,
+    AlliedGroup(u32),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PortraitBarItem {
+    pub target: PortraitTarget,
+    pub members: Vec<EntityId>,
+}
+
+pub(crate) fn portrait_bar_items(
+    engine: &Engine,
+    seat: PlayerId,
+    screen_width: u16,
+) -> (Vec<PortraitBarItem>, bool) {
+    let mut all: Vec<_> = engine
+        .displayed_pc_ids()
+        .into_iter()
+        .map(|pc| PortraitBarItem {
+            target: PortraitTarget::Pc(pc),
+            members: vec![pc],
+        })
+        .collect();
+    for group in engine.allied_pinned_groups(seat) {
+        all.push(PortraitBarItem {
+            target: PortraitTarget::AlliedGroup(group.id),
+            members: group.members.clone(),
+        });
+    }
+    let selection = engine.allied_selection(seat);
+    if !selection.is_empty()
+        && !engine
+            .allied_pinned_groups(seat)
+            .iter()
+            .any(|group| group.members == selection)
+    {
+        all.push(PortraitBarItem {
+            target: PortraitTarget::AlliedSelection,
+            members: selection.to_vec(),
+        });
+    }
+    let capacity = portrait_capacity(screen_width);
+    let paged = all.len() > capacity;
+    if paged {
+        let offset = engine.allied_first_visible_portrait(seat) % all.len();
+        all.rotate_left(offset);
+        all.truncate(capacity);
+    }
+    (all, paged)
 }
 
 fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
@@ -1079,6 +1334,254 @@ fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Enti
         .iter()
         .position(|a| *a == pc.current_action)
         .map(|i| i as u8)
+}
+
+fn allied_action_index(relative_x: f32) -> u8 {
+    ((relative_x / (ELEMENT_WIDTH as f32 / 3.0)).floor() as u8).min(2)
+}
+
+fn allied_state_icon_index(
+    action: u8,
+    order: Option<&robin_engine::allied_control::AlliedSoldierOrder>,
+) -> usize {
+    match action {
+        0 => match order.map_or(AlliedStance::Defensive, |order| order.stance) {
+            AlliedStance::Hold => 0,
+            AlliedStance::Defensive => 1,
+            AlliedStance::Aggressive => 2,
+        },
+        1 => {
+            if order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. })) {
+                4
+            } else {
+                3
+            }
+        }
+        2 => match order.map_or(AlliedFormation::Line, |order| order.formation) {
+            AlliedFormation::Line => 5,
+            AlliedFormation::Box => 6,
+            AlliedFormation::Staggered => 7,
+            AlliedFormation::Flank => 8,
+        },
+        _ => panic!("allied action index {action} is outside the three-button row"),
+    }
+}
+
+fn render_allied_portrait_layer(
+    renderer: &mut Renderer,
+    image: &GpuImage,
+    x: u16,
+    sh: u16,
+    selected: bool,
+) {
+    if selected {
+        let top = sh - PORTRAIT_TOTAL_HEIGHT;
+        renderer.render_gpu_image(
+            image,
+            None,
+            Some(&bbox(
+                x,
+                top,
+                x + ELEMENT_WIDTH,
+                top + PORTRAIT_TOTAL_HEIGHT,
+            )),
+            BlendMode::Blend,
+        );
+        return;
+    }
+
+    // Closed portraits omit the 35-pixel action row. Preserve the authored
+    // layer boundaries and close the gap exactly like the native PC widget.
+    for (source, destination) in [
+        (
+            bbox(0, 0, ELEMENT_WIDTH, TOP_SCROLL_HEIGHT),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_TOP_SCROLL,
+                x + ELEMENT_WIDTH,
+                sh - CLOSE_POSITION_VISAGE,
+            ),
+        ),
+        (
+            bbox(
+                0,
+                TOP_SCROLL_HEIGHT,
+                ELEMENT_WIDTH,
+                TOP_SCROLL_HEIGHT + VISAGE_HEIGHT,
+            ),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_VISAGE,
+                x + ELEMENT_WIDTH,
+                sh - CLOSE_POSITION_BOTTOM_SCROLL,
+            ),
+        ),
+        (
+            bbox(
+                0,
+                TOP_SCROLL_HEIGHT + VISAGE_HEIGHT + ACTION_HEIGHT,
+                ELEMENT_WIDTH,
+                PORTRAIT_TOTAL_HEIGHT - BORDURE,
+            ),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_BOTTOM_SCROLL,
+                x + ELEMENT_WIDTH,
+                sh - BORDURE,
+            ),
+        ),
+    ] {
+        renderer.render_gpu_image(image, Some(&source), Some(&destination), BlendMode::Blend);
+    }
+}
+
+fn render_allied_portrait(
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    engine: &Engine,
+    seat: PlayerId,
+    item: &PortraitBarItem,
+    x: u16,
+    sh: u16,
+    hovered_action: Option<u8>,
+) {
+    let selected = engine.allied_selection(seat) == item.members;
+    let top_scroll = if selected {
+        POSITION_TOP_SCROLL
+    } else {
+        CLOSE_POSITION_TOP_SCROLL
+    };
+    render_allied_portrait_layer(
+        renderer,
+        portraits
+            .allied_portrait_background
+            .as_ref()
+            .expect("allied portrait background must be loaded before drawing the HUD"),
+        x,
+        sh,
+        selected,
+    );
+    render_allied_portrait_layer(
+        renderer,
+        portraits
+            .allied_portrait_foreground
+            .as_ref()
+            .expect("allied portrait foreground must be loaded before drawing the HUD"),
+        x,
+        sh,
+        selected,
+    );
+
+    // Reuse the native merry-man crossed-swords overlay for controlled
+    // soldiers. A group counts as fighting while any surviving member is in
+    // a sword action or has an active melee opponent. Match hero portraits:
+    // the overlay stays visible on the open portrait and blinks while closed.
+    let is_sword_fighting = item.members.iter().any(|member| {
+        engine.get_entity(*member).is_some_and(|entity| {
+            entity
+                .actor_data()
+                .is_some_and(|actor| actor.action_state.is_sword())
+                || entity
+                    .human_data()
+                    .is_some_and(|human| !human.opponents.is_empty())
+        })
+    });
+    let fighting_visible = selected || (engine.frame_counter() / 10).is_multiple_of(2);
+    if is_sword_fighting
+        && fighting_visible
+        && let Some(surface) = portraits.get_fighting_surface(CharacterKind::MerryManA)
+    {
+        let visage_top = if selected {
+            sh - POSITION_VISAGE
+        } else {
+            sh - CLOSE_POSITION_VISAGE
+        };
+        let width = renderer.surface_width(surface);
+        let height = renderer.surface_height(surface);
+        blit_to_screen_widget(
+            renderer,
+            surface,
+            None,
+            Some(&bbox(x, visage_top, x + width, visage_top + height)),
+            BLIT_SOURCE_TRANSPARENT,
+        );
+    }
+
+    // Pin/unpin button remains visible in both open and closed states.
+    let pin_x = x + ALLIED_PIN_LEFT;
+    let pin_y = sh - top_scroll - ALLIED_PIN_RISE;
+    let pin_index = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
+        1
+    } else {
+        0
+    };
+    let pin = portraits.allied_pin_icons[pin_index]
+        .as_ref()
+        .expect("allied pin icon must be loaded before drawing the HUD");
+    renderer.render_gpu_image(
+        pin,
+        None,
+        Some(&bbox(
+            pin_x,
+            pin_y,
+            pin_x + ALLIED_PIN_ICON_SIZE,
+            pin_y + ALLIED_PIN_ICON_SIZE,
+        )),
+        BlendMode::Blend,
+    );
+
+    if selected {
+        let action_top = sh - POSITION_ACTION;
+        let action_bottom = sh - POSITION_BOTTOM_SCROLL;
+        let order = item
+            .members
+            .first()
+            .and_then(|soldier| engine.allied_order(*soldier));
+        let button_w = ELEMENT_WIDTH / 3;
+        for index in 0..3 {
+            let left = x + index as u16 * button_w;
+            let right = if index == 2 {
+                x + ELEMENT_WIDTH
+            } else {
+                left + button_w
+            };
+            let active = index == 1
+                && order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. }));
+            let icon_index = allied_state_icon_index(index as u8, order);
+            let image = portraits.allied_action_surfaces[icon_index]
+                .as_ref()
+                .unwrap_or_else(|| panic!("allied state icon {icon_index} was not loaded"));
+            let scale = f32::min(
+                (right - left - 2) as f32 / ALLIED_ACTION_ICON_WIDTH as f32,
+                (action_bottom - action_top - 2) as f32 / ALLIED_ACTION_ICON_HEIGHT as f32,
+            );
+            let width = ((ALLIED_ACTION_ICON_WIDTH as f32 * scale).round() as u16).max(1);
+            let height = ((ALLIED_ACTION_ICON_HEIGHT as f32 * scale).round() as u16).max(1);
+            let icon_x = left + (right - left - width) / 2;
+            let icon_y = action_top + (action_bottom - action_top - height) / 2;
+            renderer.render_gpu_image(
+                image,
+                None,
+                Some(&bbox(icon_x, icon_y, icon_x + width, icon_y + height)),
+                BlendMode::Blend,
+            );
+
+            if active || hovered_action == Some(index as u8) {
+                let color = if active {
+                    Renderer::create_color_16(238, 192, 55)
+                } else {
+                    Renderer::create_color_16(224, 211, 157)
+                };
+                renderer.draw_line_screen(
+                    i32::from(left + 3),
+                    i32::from(action_bottom - 2),
+                    i32::from(right - 4),
+                    i32::from(action_bottom - 2),
+                    color,
+                );
+            }
+        }
+    }
 }
 
 // ─── Public API ────────────────────────────────────────────────────
@@ -1260,23 +1763,60 @@ pub fn draw_panel(
     // Hidden-interface PCs don't consume a slot, so filter on
     // `pc.interface_hidden` via `engine.displayed_pc_ids()` rather than
     // walking `pc_ids` directly.
-    let displayed_pcs = engine.displayed_pc_ids();
-    let num_portraits = displayed_pcs.len().min(NUMBER_OF_SLOTS as usize) as u16;
+    let (portrait_items, paged) = portrait_bar_items(engine, local_seat, sw);
+    let num_portraits = portrait_items.len() as u16;
+    let capacity = portrait_capacity(sw);
     let frame = engine.frame_counter();
-    let hovered_action =
-        hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y)
-            .and_then(|hit| match hit.area {
-                PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
-                _ => None,
-            });
+    let hovered_portrait =
+        hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y);
+    let hovered_action = hovered_portrait.and_then(|hit| match hit.area {
+        PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
+        _ => None,
+    });
+    let hovered_allied_action = hovered_portrait.and_then(|hit| match hit.area {
+        PortraitHitArea::AlliedAction(btn) => Some((hit.slot, btn)),
+        _ => None,
+    });
 
     let mut titbit_renderer_opt = titbit_renderer;
 
+    if paged {
+        for (surface, x) in [
+            (portraits.portrait_page_left, 4),
+            (portraits.portrait_page_right, sw.saturating_sub(28)),
+        ] {
+            if let Some(surface) = surface {
+                let w = renderer.surface_width(surface);
+                let h = renderer.surface_height(surface);
+                let y = sh.saturating_sub(PORTRAIT_TOTAL_HEIGHT / 2 + h / 2);
+                blit_to_screen_widget(
+                    renderer,
+                    surface,
+                    None,
+                    Some(&bbox(x, y, x + w, y + h)),
+                    BLIT_SOURCE_TRANSPARENT,
+                );
+            }
+        }
+    }
+
     for slot in 0..num_portraits {
-        let x = slot_left_x(sw, slot);
+        let x = slot_left_x(sw, slot, capacity);
         let x2 = x + ELEMENT_WIDTH;
 
-        let pc_id = displayed_pcs[slot as usize];
+        let item = &portrait_items[slot as usize];
+        if !matches!(item.target, PortraitTarget::Pc(_)) {
+            let hovered = hovered_allied_action
+                .filter(|(hovered_slot, _)| *hovered_slot == slot as u8)
+                .map(|(_, button)| button);
+            render_allied_portrait(
+                renderer, portraits, engine, local_seat, item, x, sh, hovered,
+            );
+            continue;
+        }
+        let PortraitTarget::Pc(pc_id) = item.target else {
+            unreachable!()
+        };
         let entity = engine.get_entity(pc_id);
         let is_selected = engine.seat_selection(local_seat).contains(&pc_id);
 
@@ -2041,41 +2581,40 @@ pub fn action_button_tooltip_mt_id(action: robin_engine::profiles::Action) -> Op
     })
 }
 
-/// Hover-idle tracker for the three PC portrait action buttons.
-/// Wraps [`RequirementsTooltipTracker`] keyed on the `(portrait slot,
-/// button index)` pair encoded as `slot * 4 + btn` — each portrait has
-/// at most 3 buttons so the 4x stride leaves a unique slot id per
-/// button.  The shared 75-tick idle-hover delay is inherited from
-/// `RequirementsTooltipTracker`.
+/// Hover-idle tracker for portrait action buttons. These compact controls
+/// need much quicker feedback than the large requirements-bar widgets.
 #[derive(Default, Clone)]
 pub struct PcActionTooltipTracker {
-    inner: RequirementsTooltipTracker,
+    hovered: Option<(u8, u8)>,
+    hover_ticks: u32,
 }
+
+pub const PC_ACTION_TOOLTIP_DELAY_TICKS: u32 = 12;
 
 impl PcActionTooltipTracker {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Encode `(slot, btn)` into the shared slot-index space.
-    fn encode(slot: u8, btn: u8) -> usize {
-        (slot as usize) * 4 + (btn as usize)
-    }
-
-    fn decode(encoded: usize) -> (u8, u8) {
-        ((encoded / 4) as u8, (encoded % 4) as u8)
-    }
-
     /// Call once per frame with the hovered `(slot, btn)` pair, or
     /// `None` when the cursor is not over any PC action button.
     pub fn update(&mut self, hovered: Option<(u8, u8)>) {
-        self.inner.update(hovered.map(|(s, b)| Self::encode(s, b)));
+        if hovered == self.hovered {
+            if hovered.is_some() {
+                self.hover_ticks = self.hover_ticks.saturating_add(1);
+            }
+        } else {
+            self.hovered = hovered;
+            self.hover_ticks = u32::from(hovered.is_some());
+        }
     }
 
     /// `Some((slot, btn))` once the cursor has been idle on the same
     /// button long enough for the tooltip to appear.
     pub fn ready_button(&self) -> Option<(u8, u8)> {
-        self.inner.ready_slot().map(Self::decode)
+        (self.hover_ticks >= PC_ACTION_TOOLTIP_DELAY_TICKS)
+            .then_some(self.hovered)
+            .flatten()
     }
 }
 
@@ -2390,6 +2929,12 @@ pub enum PortraitHitArea {
     Visage,
     /// One of the action buttons (0-based index).
     ActionButton(u8),
+    /// Allied group controls: stance, patrol, formation, follow.
+    AlliedAction(u8),
+    /// Pin a transient group or unpin a persistent group.
+    Pin,
+    PageLeft,
+    PageRight,
     /// One of the quick-action macro icons (0-based QA slot).
     QuickAction(u8),
     /// Bottom scroll (ammo count area).
@@ -2415,6 +2960,7 @@ pub struct PortraitHit {
     /// Resolved PC entity id at this slot — saves the caller from
     /// re-walking `displayed_pc_ids()`.
     pub pc_id: robin_engine::element::EntityId,
+    pub target: PortraitTarget,
     /// Which sub-area was clicked.
     pub area: PortraitHitArea,
     /// Whether this portrait's PC is burned (coma/dead).
@@ -2432,7 +2978,8 @@ pub fn hit_test_portrait(
     click_y: f32,
     num_pcs: usize,
 ) -> Option<u8> {
-    let num_slots = num_pcs.min(NUMBER_OF_SLOTS as usize);
+    let capacity = portrait_capacity(screen_width);
+    let num_slots = num_pcs.min(capacity);
     let sh = screen_height;
 
     let panel_top = sh - PORTRAIT_TOTAL_HEIGHT;
@@ -2444,7 +2991,7 @@ pub fn hit_test_portrait(
     }
 
     for slot in 0..num_slots {
-        let x = slot_left_x(screen_width, slot as u16) as f32;
+        let x = slot_left_x(screen_width, slot as u16, capacity) as f32;
         let x2 = x + ELEMENT_WIDTH as f32;
 
         if click_x >= x && click_x <= x2 {
@@ -2468,8 +3015,9 @@ pub fn hit_test_portrait_detailed(
     click_x: f32,
     click_y: f32,
 ) -> Option<PortraitHit> {
-    let displayed_pcs = engine.displayed_pc_ids();
-    let num_slots = displayed_pcs.len().min(NUMBER_OF_SLOTS as usize);
+    let (items, paged) = portrait_bar_items(engine, local_seat, screen_width);
+    let capacity = portrait_capacity(screen_width);
+    let num_slots = items.len();
     let sh = screen_height;
     let cy = click_y;
 
@@ -2480,12 +3028,83 @@ pub fn hit_test_portrait_detailed(
         return None;
     }
 
-    for (slot, &pc_id) in displayed_pcs.iter().enumerate().take(num_slots) {
-        let x = slot_left_x(screen_width, slot as u16) as f32;
-        let x2 = x + ELEMENT_WIDTH as f32;
+    if paged {
+        let representative = items
+            .first()
+            .and_then(|item| item.members.first())
+            .copied()
+            .expect("paged portrait bar has no representative entity");
+        if click_x <= 30.0 {
+            return Some(PortraitHit {
+                slot: 0,
+                pc_id: representative,
+                target: items[0].target,
+                area: PortraitHitArea::PageLeft,
+                is_burned: false,
+            });
+        }
+        if click_x >= screen_width.saturating_sub(30) as f32 {
+            return Some(PortraitHit {
+                slot: 0,
+                pc_id: representative,
+                target: items[0].target,
+                area: PortraitHitArea::PageRight,
+                is_burned: false,
+            });
+        }
+    }
+
+    for (slot, item) in items.iter().enumerate().take(num_slots) {
+        let x = slot_left_x(screen_width, slot as u16, capacity) as f32;
+        let pin_right = x + f32::from(ALLIED_PIN_LEFT + ALLIED_PIN_ICON_SIZE);
+        let x2 = if matches!(item.target, PortraitTarget::Pc(_)) {
+            x + ELEMENT_WIDTH as f32
+        } else {
+            pin_right
+        };
 
         if click_x < x || click_x > x2 {
             continue;
+        }
+
+        let pc_id = item.members[0];
+        if !matches!(item.target, PortraitTarget::Pc(_)) {
+            let selected = engine.allied_selection(local_seat) == item.members;
+            let top_scroll_top = if selected {
+                (sh - POSITION_TOP_SCROLL) as f32
+            } else {
+                (sh - CLOSE_POSITION_TOP_SCROLL) as f32
+            };
+            let visage_top = if selected {
+                (sh - POSITION_VISAGE) as f32
+            } else {
+                (sh - CLOSE_POSITION_VISAGE) as f32
+            };
+            let pin_left = x + f32::from(ALLIED_PIN_LEFT);
+            let pin_top = top_scroll_top - f32::from(ALLIED_PIN_RISE);
+            let pin_bottom = pin_top + f32::from(ALLIED_PIN_ICON_SIZE);
+            let action_top = (sh - POSITION_ACTION) as f32;
+            let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+            let area =
+                if click_x >= pin_left && click_x <= pin_right && cy >= pin_top && cy <= pin_bottom
+                {
+                    PortraitHitArea::Pin
+                } else if cy >= top_scroll_top && cy < visage_top {
+                    PortraitHitArea::TopScroll
+                } else if cy >= visage_top && (!selected || cy < action_top) {
+                    PortraitHitArea::Visage
+                } else if selected && cy >= action_top && cy < bottom_scroll_top {
+                    PortraitHitArea::AlliedAction(allied_action_index(click_x - x))
+                } else {
+                    PortraitHitArea::BottomScroll
+                };
+            return Some(PortraitHit {
+                slot: slot as u8,
+                pc_id,
+                target: item.target,
+                area,
+                is_burned: false,
+            });
         }
 
         let entity = engine.get_entity(pc_id);
@@ -2506,6 +3125,7 @@ pub fn hit_test_portrait_detailed(
                         return Some(PortraitHit {
                             slot: slot as u8,
                             pc_id,
+                            target: item.target,
                             area: PortraitHitArea::QuickAction(slot_idx),
                             is_burned: false,
                         });
@@ -2559,6 +3179,7 @@ pub fn hit_test_portrait_detailed(
             return Some(PortraitHit {
                 slot: slot as u8,
                 pc_id,
+                target: item.target,
                 area,
                 is_burned,
             });
@@ -2622,6 +3243,7 @@ pub fn hit_test_portrait_detailed(
         return Some(PortraitHit {
             slot: slot as u8,
             pc_id,
+            target: item.target,
             area,
             is_burned,
         });
@@ -2635,9 +3257,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slot_width_at_800() {
-        // screen_width=800, margin=32 each side → 736px / 5 = 147px per slot
-        assert_eq!(slot_width(800), 147);
+    fn portrait_capacity_tracks_available_width() {
+        assert_eq!(portrait_capacity(640), 5);
+        assert_eq!(portrait_capacity(800), 6);
+        assert_eq!(portrait_capacity(1024), 8);
     }
 
     #[test]
@@ -2645,7 +3268,7 @@ mod tests {
         // Each slot center should contain the 112px element
         let sw = 800u16;
         for slot in 0..5 {
-            let left = slot_left_x(sw, slot);
+            let left = slot_left_x(sw, slot, portrait_capacity(sw));
             let right = left + ELEMENT_WIDTH;
             assert!(
                 left >= MARGIN || slot == 0,
@@ -2717,6 +3340,129 @@ mod tests {
         assert_eq!(ACTION_SUB_ID_FOCUSED_SELECTED, 4);
     }
 
+    #[test]
+    fn allied_action_row_has_three_full_height_hit_columns() {
+        assert_eq!(allied_action_index(0.0), 0);
+        assert_eq!(allied_action_index(37.2), 0);
+        assert_eq!(allied_action_index(37.4), 1);
+        assert_eq!(allied_action_index(74.5), 1);
+        assert_eq!(allied_action_index(74.7), 2);
+        assert_eq!(allied_action_index(112.0), 2);
+    }
+
+    #[test]
+    fn portrait_action_tooltip_appears_quickly_and_resets_between_cells() {
+        let mut tracker = PcActionTooltipTracker::new();
+        for _ in 0..PC_ACTION_TOOLTIP_DELAY_TICKS {
+            tracker.update(Some((2, 1)));
+        }
+        assert_eq!(tracker.ready_button(), Some((2, 1)));
+        tracker.update(Some((2, 2)));
+        assert_eq!(tracker.ready_button(), None);
+    }
+
+    #[test]
+    fn embedded_allied_portrait_layers_preserve_full_alpha() {
+        let mut found_partial_alpha = false;
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_portrait_background.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_portrait_foreground.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!((width, height), (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT));
+            assert_eq!(pixels.len(), usize::from(width) * usize::from(height) * 4);
+            assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0));
+            found_partial_alpha |= pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| (1..=254).contains(&pixel[3]));
+        }
+        assert!(found_partial_alpha);
+    }
+
+    #[test]
+    fn embedded_allied_pin_icons_decode_with_transparency() {
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_pin_unpinned.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_pin_pinned.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!(
+                (width, height),
+                (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE)
+            );
+            let pixels = pixels.as_chunks::<4>().0;
+            assert!(pixels.iter().any(|pixel| pixel[3] == 0));
+            assert!(pixels.iter().any(|pixel| pixel[3] == 255));
+            assert!(pixels.iter().any(|pixel| (1..=254).contains(&pixel[3])));
+        }
+    }
+
+    #[test]
+    fn embedded_allied_state_icons_decode_with_transparency() {
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_hold.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_defensive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_aggressive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_off.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_on.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_line.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_box.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_staggered.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_flank.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!(
+                (width, height),
+                (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT)
+            );
+            let pixels = pixels.as_chunks::<4>().0;
+            assert!(pixels.iter().any(|pixel| pixel[3] == 0));
+            assert!(pixels.iter().any(|pixel| pixel[3] == 255));
+            assert!(pixels.iter().any(|pixel| (1..=254).contains(&pixel[3])));
+        }
+    }
+
     // The CharacterKind resource-lookup and sub-id tests live in
     // `robin_engine::character_kind`; the UI-panel side just delegates to
     // those methods, so no duplicate tests are needed here.
@@ -2730,7 +3476,7 @@ mod tests {
     #[test]
     fn hit_test_on_portrait_slot() {
         // screen 800x600, slot 0 starts at slot_left_x(800, 0)
-        let x = slot_left_x(800, 0) as f32 + 10.0;
+        let x = slot_left_x(800, 0, portrait_capacity(800)) as f32 + 10.0;
         let y = 600.0 - 50.0; // within the panel area
         assert_eq!(hit_test_portrait(800, 600, x, y, 3), Some(0));
     }
@@ -2738,7 +3484,7 @@ mod tests {
     #[test]
     fn hit_test_empty_slots() {
         // No PCs means no hits even inside the panel
-        let x = slot_left_x(800, 0) as f32 + 10.0;
+        let x = slot_left_x(800, 0, portrait_capacity(800)) as f32 + 10.0;
         let y = 600.0 - 50.0;
         assert_eq!(hit_test_portrait(800, 600, x, y, 0), None);
     }
@@ -2746,9 +3492,10 @@ mod tests {
     #[test]
     fn hit_test_between_slots() {
         // Click between slot boundaries (in the gap)
-        let x0_right = slot_left_x(800, 0) as f32 + ELEMENT_WIDTH as f32 + 5.0;
+        let x0_right =
+            slot_left_x(800, 0, portrait_capacity(800)) as f32 + ELEMENT_WIDTH as f32 + 5.0;
         let y = 600.0 - 50.0;
-        let x1_left = slot_left_x(800, 1) as f32;
+        let x1_left = slot_left_x(800, 1, portrait_capacity(800)) as f32;
         // Only a gap hit if the click is truly between elements
         if x0_right < x1_left {
             assert_eq!(hit_test_portrait(800, 600, x0_right, y, 3), None);

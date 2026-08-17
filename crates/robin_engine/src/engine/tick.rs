@@ -1670,6 +1670,8 @@ pub(super) fn assert_execute_owner_handler_is_linked(family: ExecuteOwnerFamily)
 thread_local! {
     static HOURGLASS_STATS: std::cell::RefCell<HourglassStats> =
         std::cell::RefCell::new(HourglassStats::default());
+    static HOURGLASS_PHASE_STATS: std::cell::RefCell<HourglassPhaseStats> =
+        std::cell::RefCell::new(HourglassPhaseStats::default());
 }
 
 /// Number of `perform_hourglass` calls between log lines.
@@ -1694,6 +1696,50 @@ pub(super) enum HourglassPhase {
     GameplaySystems,
     Sequences,
     DeferredEffectsEnd,
+}
+
+#[derive(Default)]
+struct HourglassPhaseStats {
+    count: u32,
+    total_us: [u128; 10],
+}
+
+fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
+    trace_hourglass_phase(phase);
+    let timer = tracing::enabled!(
+        target: "robin_engine::engine::tick::phase_perf",
+        tracing::Level::INFO
+    )
+    .then(web_time::Instant::now);
+    let result = f();
+    if let Some(timer) = timer {
+        HOURGLASS_PHASE_STATS.with(|cell| {
+            let mut stats = cell.borrow_mut();
+            stats.total_us[phase as usize] += timer.elapsed().as_micros();
+            if phase == HourglassPhase::DeferredEffectsEnd {
+                stats.count += 1;
+                if stats.count >= HOURGLASS_LOG_INTERVAL {
+                    tracing::info!(
+                        target: "robin_engine::engine::tick::phase_perf",
+                        count = stats.count,
+                        deferred_start_us = stats.total_us[0] / stats.count as u128,
+                        mission_us = stats.total_us[1] / stats.count as u128,
+                        npc_orders_us = stats.total_us[2] / stats.count as u128,
+                        paths_us = stats.total_us[3] / stats.count as u128,
+                        entities_us = stats.total_us[4] / stats.count as u128,
+                        entity_systems_us = stats.total_us[5] / stats.count as u128,
+                        npcs_us = stats.total_us[6] / stats.count as u128,
+                        gameplay_us = stats.total_us[7] / stats.count as u128,
+                        sequences_us = stats.total_us[8] / stats.count as u128,
+                        deferred_end_us = stats.total_us[9] / stats.count as u128,
+                        "perform_hourglass phase timing"
+                    );
+                    *stats = HourglassPhaseStats::default();
+                }
+            }
+        });
+    }
+    result
 }
 
 #[cfg(test)]
@@ -2235,41 +2281,50 @@ impl EngineInner {
         dev: &mut DevState,
         simulation_body_allowed: bool,
     ) -> GameCode {
-        trace_hourglass_phase(HourglassPhase::DeferredEffectsStart);
-        let pc_guarded = self.hourglass_phase_deferred_effects_start(sim, assets);
+        let pc_guarded = time_hourglass_phase(HourglassPhase::DeferredEffectsStart, || {
+            self.hourglass_phase_deferred_effects_start(sim, assets)
+        });
 
-        trace_hourglass_phase(HourglassPhase::MissionAndMessages);
-        if let Some(code) = self.hourglass_phase_mission_and_messages(
-            sim,
-            display,
-            assets,
-            dev,
-            pc_guarded,
-            simulation_body_allowed,
-        ) {
+        if let Some(code) = time_hourglass_phase(HourglassPhase::MissionAndMessages, || {
+            self.hourglass_phase_mission_and_messages(
+                sim,
+                display,
+                assets,
+                dev,
+                pc_guarded,
+                simulation_body_allowed,
+            )
+        }) {
             return code;
         }
 
-        trace_hourglass_phase(HourglassPhase::NpcOrders);
-        self.hourglass_phase_npc_orders(sim, assets);
+        time_hourglass_phase(HourglassPhase::NpcOrders, || {
+            self.hourglass_phase_npc_orders(sim, assets)
+        });
 
-        trace_hourglass_phase(HourglassPhase::Paths);
-        self.hourglass_phase_paths(sim, assets);
+        time_hourglass_phase(HourglassPhase::Paths, || {
+            self.hourglass_phase_paths(sim, assets)
+        });
 
-        trace_hourglass_phase(HourglassPhase::Entities);
-        let was_swordfighting = self.hourglass_phase_entities(sim, assets);
+        let was_swordfighting = time_hourglass_phase(HourglassPhase::Entities, || {
+            self.hourglass_phase_entities(sim, assets)
+        });
 
-        trace_hourglass_phase(HourglassPhase::EntitySystems);
-        let positions_before_movement = self.hourglass_phase_entity_systems(sim, display, assets);
+        let positions_before_movement = time_hourglass_phase(HourglassPhase::EntitySystems, || {
+            self.hourglass_phase_entity_systems(sim, display, assets)
+        });
 
-        trace_hourglass_phase(HourglassPhase::Npcs);
-        self.hourglass_phase_npcs(sim, assets, &positions_before_movement);
+        time_hourglass_phase(HourglassPhase::Npcs, || {
+            self.hourglass_phase_npcs(sim, assets, &positions_before_movement)
+        });
 
-        trace_hourglass_phase(HourglassPhase::GameplaySystems);
-        self.hourglass_phase_gameplay_systems(sim, display, assets);
+        time_hourglass_phase(HourglassPhase::GameplaySystems, || {
+            self.hourglass_phase_gameplay_systems(sim, display, assets)
+        });
 
-        trace_hourglass_phase(HourglassPhase::Sequences);
-        self.hourglass_phase_sequences(sim, display, assets);
+        time_hourglass_phase(HourglassPhase::Sequences, || {
+            self.hourglass_phase_sequences(sim, display, assets)
+        });
 
         // `RHSequenceElement::SetState(Terminated)` calls the owner's
         // `SendCondolationCard`, then `RHSequence::Ready`, synchronously
@@ -2290,8 +2345,9 @@ impl EngineInner {
         // final drain makes every such timer one frame late.
         self.drain_pending_immediate_actions_sync(sim, display, assets);
 
-        trace_hourglass_phase(HourglassPhase::DeferredEffectsEnd);
-        self.hourglass_phase_deferred_effects_end(sim, display, assets, was_swordfighting);
+        time_hourglass_phase(HourglassPhase::DeferredEffectsEnd, || {
+            self.hourglass_phase_deferred_effects_end(sim, display, assets, was_swordfighting)
+        });
 
         GameCode::LevelInProgress
     }
@@ -3128,6 +3184,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        self.tick_allied_control(sim, assets);
+
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 frames (or every frame in debug).
         if self.control.frame_counter.is_multiple_of(256) {
@@ -3235,6 +3293,7 @@ impl EngineInner {
         // The hulk state-machine block runs during the per-element
         // refresh pass.
         self.refresh_pc_selection_hulk();
+        self.refresh_allied_selection_hulks();
 
         // Tick the cheat-teleport hulk-rebuild fade counter on every
         // PC.  Decrementing here (rather than from the per-PC render
@@ -3268,7 +3327,7 @@ impl EngineInner {
         )
         .take_completed();
         self.trace_path_barrier_completed("take1", &completed);
-        self.apply_completed_path_work(sim, completed);
+        self.apply_completed_path_work(sim, assets, completed);
 
         MovementContext::new(
             self.control.frame_counter,
@@ -3290,7 +3349,7 @@ impl EngineInner {
             )
             .take_completed();
             self.trace_path_barrier_completed("take2", &completed);
-            self.apply_completed_path_work(sim, completed);
+            self.apply_completed_path_work(sim, assets, completed);
 
             // In Original's synchronous WAITING arm, starting the first
             // request recursively enters the READY arm.  That arm delivers
@@ -3441,6 +3500,7 @@ impl EngineInner {
     fn apply_completed_path_work(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         completed: Option<CompletedPathWork>,
     ) {
         match completed {
@@ -3467,12 +3527,45 @@ impl EngineInner {
                     sector = request.sector,
                     "path scheduling barrier: pathfind FAILED",
                 );
-                self.orders.failed_path_requests.push(
-                    super::movement::FailedPathRequest::from_pending(
-                        request,
-                        self.control.frame_counter,
-                    ),
-                );
+                if let Some(fallback) = self.allied_path_failure_fallback(request.owner) {
+                    if let Some(element) = self
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(request.seq_id, request.elem_idx)
+                    {
+                        element.command = crate::element::Command::MoveOk;
+                    }
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(request.seq_id, request.elem_idx);
+                    self.dispatch_condolations_for_owner_boundary(sim, request.owner, assets);
+                    if let Some(destination) = fallback {
+                        tracing::info!(
+                            actor = ?request.owner,
+                            failed_x = request.dest.x,
+                            failed_y = request.dest.y,
+                            fallback_x = destination.x,
+                            fallback_y = destination.y,
+                            "allied formation slot unreachable; moving toward shared command center",
+                        );
+                        self.perform_group_move(
+                            sim,
+                            assets,
+                            &[request.owner],
+                            destination,
+                            false,
+                            false,
+                            None,
+                        );
+                    }
+                } else {
+                    self.orders.failed_path_requests.push(
+                        super::movement::FailedPathRequest::from_pending(
+                            request,
+                            self.control.frame_counter,
+                        ),
+                    );
+                }
             }
             None => {}
         }
@@ -5006,7 +5099,7 @@ impl EngineInner {
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
-        let prepared = self.prepare_npc_owner_pass(sim, assets);
+        let mut prepared = self.prepare_npc_owner_pass(sim, assets);
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
@@ -5060,8 +5153,7 @@ impl EngineInner {
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
                     engine.tick_apple_smell_for(owner);
                     engine.tick_soldier_track_primary_target_for(owner);
-                    let scratch = engine.build_owner_context_scratch_without_forecast(assets);
-                    engine.tick_attacking_reactiontime_enemy_near_for(sim, assets, &scratch, owner);
+                    engine.tick_attacking_reactiontime_enemy_near_for(sim, assets, owner);
                 }
                 if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_))
                     && !engine.actors_frozen()
@@ -5223,7 +5315,7 @@ impl EngineInner {
                             sim,
                             assets,
                             positions_before_movement,
-                            prepared,
+                            &mut prepared,
                             owner,
                         );
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));

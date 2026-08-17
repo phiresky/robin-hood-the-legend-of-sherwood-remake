@@ -6,8 +6,8 @@
 //! the macro recorder).
 
 use super::{
-    HandlerAction, center_on_reselected_portrait_pc, dispatch_local_command,
-    dispatch_local_commands, required_menu_resources,
+    HandlerAction, center_on_reselected_allied_portrait, center_on_reselected_portrait_pc,
+    dispatch_local_command, dispatch_local_commands, required_menu_resources,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -16,7 +16,7 @@ use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks};
 use crate::gfx_types::GameEvent;
-use crate::host::Host;
+use crate::host::{AlliedTargetMode, Host};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
@@ -30,12 +30,13 @@ use crate::renderer::Renderer;
 use crate::sherwood_hud::{
     SherwoodButton, SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout,
 };
-use crate::ui_panel::{self, PortraitCache, PortraitHitArea};
+use crate::ui_panel::{self, PortraitCache, PortraitHitArea, PortraitTarget};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
 use robin_assets::res_descr as assets_res_descr;
 use robin_assets::resource_manager::ResourceManager;
+use robin_engine::allied_control::{AlliedFormation, AlliedStance};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
@@ -231,7 +232,8 @@ fn on_left_mouse_down(
             //     Lever / Strangle → fire the matching
             //     drag action (see `resolve_action_drag`).
             let selected_action = engine.selected_action_for_seat(local_seat);
-            let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
+            let is_swordfighting =
+                crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
             match selected_action {
                 Action::HelpToClimb => {
                     let posture_ok = engine
@@ -286,7 +288,7 @@ fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32)
         // `has_focus` gate: a UI widget that grabbed
         // focus this frame blocks the deselection-drag
         // from starting.
-        let guard_ok = !engine.is_seat_selection_swordfighting(local_seat)
+        let guard_ok = !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
             && !host.input.is_alt
             && !engine.view_locked()
@@ -325,7 +327,7 @@ fn on_mouse_move(
         if host.input.is_dragging
             && !host.input.is_alt
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
-            && engine.is_seat_selection_swordfighting(local_seat)
+            && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
         {
             host.mouse_way.add_point(mouse_pt);
         }
@@ -468,9 +470,18 @@ fn on_left_mouse_up(
                 shift: shift_held,
             };
             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            if host.control_allied_soldiers {
+                let allied_cmd = PlayerCommand::BoxSelectAlliedSoldiers {
+                    pt1: host.input.multi_selection_pt1,
+                    pt2: host.input.multi_selection_pt2,
+                    shift: shift_held,
+                };
+                dispatch_local_command(host, engine, frame_cmds, assets, &allied_cmd);
+            }
             tracing::info!(
-                "Box-select: {} PCs selected",
-                engine.seat_selection(local_seat).len()
+                "Box-select: {} PCs and {} allied soldiers selected",
+                engine.seat_selection(local_seat).len(),
+                engine.allied_selection(local_seat).len(),
             );
         } else {
             // Single click (drag too small or no drag started — e.g. panel clicks
@@ -481,7 +492,8 @@ fn on_left_mouse_up(
             // commits that gesture — skip portrait hit-testing so a release
             // over a portrait doesn't accidentally select that PC.
             let swordfight_drag =
-                engine.is_seat_selection_swordfighting(local_seat) && !host.mouse_way.is_empty();
+                crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+                    && !host.mouse_way.is_empty();
 
             // Check portrait panel first (detailed sub-area hit-test).
             let portrait_hit = if swordfight_drag {
@@ -540,6 +552,101 @@ fn on_portrait_click(
     ctrl_held: bool,
 ) -> bool {
     let local_seat = host.transport.local_seat;
+
+    if matches!(
+        hit.area,
+        PortraitHitArea::PageLeft | PortraitHitArea::PageRight
+    ) {
+        let delta = if hit.area == PortraitHitArea::PageLeft {
+            -1
+        } else {
+            1
+        };
+        let cmd = PlayerCommand::PageAlliedPortraits { delta };
+        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+        return true;
+    }
+
+    if !matches!(hit.target, PortraitTarget::Pc(_)) {
+        let members = match hit.target {
+            PortraitTarget::AlliedSelection => engine.allied_selection(local_seat).to_vec(),
+            PortraitTarget::AlliedGroup(group_id) => engine
+                .allied_pinned_groups(local_seat)
+                .iter()
+                .find(|group| group.id == group_id)
+                .unwrap_or_else(|| panic!("portrait references missing allied group {group_id}"))
+                .members
+                .clone(),
+            PortraitTarget::Pc(_) => unreachable!(),
+        };
+        match hit.area {
+            PortraitHitArea::Pin => {
+                let cmd = match hit.target {
+                    PortraitTarget::AlliedSelection => PlayerCommand::PinAlliedSelection,
+                    PortraitTarget::AlliedGroup(group_id) => {
+                        PlayerCommand::UnpinAlliedGroup { group_id }
+                    }
+                    PortraitTarget::Pc(_) => unreachable!(),
+                };
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            }
+            PortraitHitArea::AlliedAction(0) => {
+                let stance = members
+                    .first()
+                    .and_then(|id| engine.allied_order(*id))
+                    .map_or(AlliedStance::Defensive, |order| order.stance)
+                    .next();
+                let cmd = PlayerCommand::SetAlliedStance {
+                    soldiers: members,
+                    stance,
+                };
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            }
+            PortraitHitArea::AlliedAction(1) => {
+                let formation = members
+                    .first()
+                    .and_then(|id| engine.allied_order(*id))
+                    .map_or(AlliedFormation::Line, |order| order.formation);
+                host.allied_target_mode = Some(AlliedTargetMode::Patrol {
+                    soldiers: members,
+                    formation,
+                });
+            }
+            PortraitHitArea::AlliedAction(2) => {
+                let formation = members
+                    .first()
+                    .and_then(|id| engine.allied_order(*id))
+                    .map_or(AlliedFormation::Line, |order| order.formation)
+                    .next();
+                let cmd = PlayerCommand::SetAlliedFormation {
+                    soldiers: members,
+                    formation,
+                };
+                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            }
+            PortraitHitArea::TopScroll
+            | PortraitHitArea::BottomScroll
+            | PortraitHitArea::Visage => {
+                center_on_reselected_allied_portrait(
+                    host,
+                    engine,
+                    local_seat,
+                    &members,
+                    shift_held || ctrl_held,
+                    hit.area,
+                );
+                if let PortraitTarget::AlliedGroup(group_id) = hit.target {
+                    let cmd = PlayerCommand::SelectAlliedGroup {
+                        group_id,
+                        append: shift_held || ctrl_held,
+                    };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                }
+            }
+            _ => {}
+        }
+        return true;
+    }
     {
         let pc_id = hit.pc_id;
 
@@ -818,8 +925,8 @@ fn on_portrait_click(
                                 hit.slot
                             );
                         } else {
-                            let cmd2 = PlayerCommand::SelectByPortrait {
-                                portrait_index: hit.slot as u32,
+                            let cmd2 = PlayerCommand::SelectPc {
+                                pc_id,
                                 append: ctrl_held,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd2);
@@ -837,16 +944,16 @@ fn on_portrait_click(
                     center_on_reselected_portrait_pc(
                         host, engine, local_seat, pc_id, ctrl_held, hit.area,
                     );
-                    let cmd = PlayerCommand::SelectByPortrait {
-                        portrait_index: hit.slot as u32,
+                    let cmd = PlayerCommand::SelectPc {
+                        pc_id,
                         append: ctrl_held,
                     };
                     dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                     tracing::info!("Portrait select: slot {}, area {:?}", hit.slot, hit.area);
                 }
                 PortraitHitArea::QuickAction(_) => {
-                    let cmd = PlayerCommand::SelectByPortrait {
-                        portrait_index: hit.slot as u32,
+                    let cmd = PlayerCommand::SelectPc {
+                        pc_id,
                         append: ctrl_held,
                     };
                     dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
@@ -858,11 +965,17 @@ fn on_portrait_click(
                 // we fall back to a plain select rather than dropping
                 // the click.
                 PortraitHitArea::Amulet | PortraitHitArea::Guard | PortraitHitArea::Trumpet => {
-                    let cmd = PlayerCommand::SelectByPortrait {
-                        portrait_index: hit.slot as u32,
+                    let cmd = PlayerCommand::SelectPc {
+                        pc_id,
                         append: ctrl_held,
                     };
                     dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                }
+                PortraitHitArea::AlliedAction(_)
+                | PortraitHitArea::Pin
+                | PortraitHitArea::PageLeft
+                | PortraitHitArea::PageRight => {
+                    unreachable!("allied portrait hit reached PC portrait handling")
                 }
             }
         }
@@ -920,6 +1033,19 @@ fn on_world_click(
             .viewport
             .screen_to_map(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
     {
+        if let Some(AlliedTargetMode::Patrol {
+            soldiers,
+            formation,
+        }) = host.allied_target_mode.take()
+        {
+            let cmd = PlayerCommand::SetAlliedPatrol {
+                soldiers,
+                destination: map_pt,
+                formation,
+            };
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            return;
+        }
         // Resolve swordfight first, then regular click
         let mut cmds = crate::game_input::resolve_swordfight(host, engine, assets, map_pt, true);
         if cmds.is_empty() {
@@ -951,6 +1077,11 @@ fn on_right_mouse_up(
     let local_seat = host.transport.local_seat;
     {
         host.input.right_mouse_down = false;
+
+        if host.allied_target_mode.take().is_some() {
+            host.input.cancel_multi_unselection();
+            return;
+        }
 
         // When a UI widget grabbed focus earlier this
         // frame, the engine-level right-click is dropped.
@@ -1024,6 +1155,17 @@ fn on_right_mouse_up(
                 mx as f32,
                 my as f32,
             ) {
+                if !matches!(hit.target, PortraitTarget::Pc(_)) {
+                    let cmd = match hit.target {
+                        PortraitTarget::AlliedGroup(group_id) => {
+                            PlayerCommand::UnpinAlliedGroup { group_id }
+                        }
+                        PortraitTarget::AlliedSelection => PlayerCommand::ClearAlliedSelection,
+                        PortraitTarget::Pc(_) => unreachable!(),
+                    };
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                    return;
+                }
                 if let PortraitHitArea::QuickAction(slot) = hit.area {
                     let pc_id = hit.pc_id;
                     let cmd = PlayerCommand::DeleteMacro {
@@ -1190,11 +1332,19 @@ pub(super) async fn handle_pause_menu_events(
                         .unwrap_or_else(|error| {
                             panic!("in-game Options requires an active profile: {error}")
                         });
-                    let profile_settings =
-                        Some((profile.id, profile.graphic_config, profile.sound_config));
+                    let profile_settings = Some((
+                        profile.id,
+                        profile.graphic_config,
+                        profile.gameplay_config,
+                        profile.sound_config,
+                    ));
 
-                    if let Some((profile_id, mut graphic_config, mut sound_config)) =
-                        profile_settings
+                    if let Some((
+                        profile_id,
+                        mut graphic_config,
+                        mut gameplay_config,
+                        mut sound_config,
+                    )) = profile_settings
                     {
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let cursor =
@@ -1205,6 +1355,7 @@ pub(super) async fn handle_pause_menu_events(
                             resources,
                             cursor,
                             &mut graphic_config,
+                            &mut gameplay_config,
                             &mut sound_config,
                             &mut host.frontend.key_config,
                             &mut host.frontend.custom_key_config,
@@ -1228,6 +1379,7 @@ pub(super) async fn handle_pause_menu_events(
                                         .find(|profile| profile.id == profile_id)
                                         .expect("Options profile disappeared while modal was open");
                                     profile.graphic_config = graphic_config.clone();
+                                    profile.gameplay_config = gameplay_config;
                                     profile.sound_config = sound_config;
                                     if let Err(err) = mgr.save() {
                                         tracing::error!(
@@ -1238,6 +1390,17 @@ pub(super) async fn handle_pause_menu_events(
                                 .unwrap_or_else(|error| {
                                     panic!("Options profile update failed: {error}")
                                 });
+                        }
+
+                        host.control_allied_soldiers = gameplay_config.control_allied_soldiers;
+                        if !host.control_allied_soldiers {
+                            dispatch_local_command(
+                                host,
+                                engine,
+                                frame_cmds,
+                                assets,
+                                &PlayerCommand::ReleaseAlliedControl,
+                            );
                         }
 
                         if sound_config.amount_of_speaking != profile_amount_of_speaking {

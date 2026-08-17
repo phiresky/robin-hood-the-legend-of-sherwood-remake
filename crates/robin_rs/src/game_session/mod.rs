@@ -226,6 +226,55 @@ fn center_on_reselected_portrait_pc(
     true
 }
 
+fn allied_portrait_center(
+    engine: &Engine,
+    members: &[engine_element::EntityId],
+) -> Option<robin_engine::coordinates::MapPoint> {
+    let mut count = 0_u32;
+    let mut sum_x = 0.0_f32;
+    let mut sum_y = 0.0_f32;
+    for member in members {
+        let Some(entity) = engine.get_entity(*member) else {
+            tracing::warn!(?member, "Allied portrait center: group member is missing");
+            continue;
+        };
+        let point = entity.position_iface().map_position();
+        count += 1;
+        sum_x += point.x;
+        sum_y += point.y;
+    }
+    (count > 0).then(|| {
+        let reciprocal = 1.0 / count as f32;
+        robin_engine::coordinates::MapPoint::new(sum_x * reciprocal, sum_y * reciprocal)
+    })
+}
+
+fn center_on_reselected_allied_portrait(
+    host: &mut Host,
+    engine: &Engine,
+    local_seat: engine_player_command::PlayerId,
+    members: &[engine_element::EntityId],
+    append: bool,
+    area: PortraitHitArea,
+) -> bool {
+    if append
+        || !matches!(
+            area,
+            PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
+        )
+        || engine.allied_selection(local_seat) != members
+    {
+        return false;
+    }
+
+    let Some(center) = allied_portrait_center(engine, members) else {
+        tracing::warn!("Allied portrait reselect: group has no live members");
+        return false;
+    };
+    host.viewport.center_on_point(center);
+    true
+}
+
 /// Outcome of a game session (series of missions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SessionResult {
@@ -893,8 +942,9 @@ async fn run_mission_with_seed(
 #[cfg(test)]
 mod required_state_tests {
     use super::{
-        MissionOutcome, choose_pending_replay, establish_mission_restart_boundary,
-        prepare_replay_mission, required_menu_resources, simulation_config_for_level_restart,
+        MissionOutcome, allied_portrait_center, choose_pending_replay,
+        establish_mission_restart_boundary, prepare_replay_mission, required_menu_resources,
+        simulation_config_for_level_restart,
     };
     use crate::ingame_menu::IngameMenuResources;
     use robin_engine::campaign::{Campaign, CampaignValue};
@@ -903,6 +953,46 @@ mod required_state_tests {
     use robin_engine::profiles::{MissionProfile, ProfileManager};
     use robin_engine::replay::{ReplayFile, ReplayHeader};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn allied_portrait_center_uses_the_whole_group() {
+        use robin_engine::coordinates::MapPoint;
+        use robin_engine::element::{
+            ActorData, ActorSoldier, ElementData, Entity, HumanData, NpcData, SoldierData,
+        };
+        use robin_engine::element_kinds::ElementKind;
+
+        let mut assets = robin_engine::engine::LevelAssets::new();
+        let mut engine = robin_engine::engine::Engine::new_for_test(
+            800.0,
+            600.0,
+            Campaign::default(),
+            &mut assets,
+        )
+        .expect("test engine");
+        let mut add_member = |point: MapPoint| {
+            let mut element = ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            };
+            element.set_position_map(point);
+            engine.test_add_entity(Entity::Soldier(ActorSoldier {
+                element,
+                actor: ActorData::default(),
+                human: HumanData::default(),
+                npc: NpcData::default(),
+                soldier: SoldierData::default(),
+            }))
+        };
+        let left = add_member(MapPoint::new(100.0, 200.0));
+        let right = add_member(MapPoint::new(300.0, 400.0));
+
+        assert_eq!(
+            allied_portrait_center(&engine, &[left, right]),
+            Some(MapPoint::new(200.0, 300.0))
+        );
+    }
 
     fn replay_fixture(
         current_mission_idx: Option<usize>,
@@ -935,6 +1025,8 @@ mod required_state_tests {
             },
             frames: BTreeMap::new(),
             hashes: BTreeMap::new(),
+            save_markers: BTreeMap::new(),
+            load_backs: BTreeMap::new(),
         }
         .into();
         (profiles, data)
