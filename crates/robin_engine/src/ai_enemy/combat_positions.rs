@@ -4130,18 +4130,34 @@ impl EnemyAi {
         // caller's cached `my_line_jump` stays None when the best
         // candidate is the initial "stay put" entry, and the
         // table-approach path is skipped even when needed.
+        //
+        // The reference asks about the WINNING CANDIDATE'S target, not
+        // about the primary target:
+        // `pBestCombatPosition->pLineJump = mpMe->IsTableSwordfightNeeded(
+        //  pBestCombatPosition->pTarget )`
+        // (`original-code/RHartificialmalignity.cpp:15326`). The two differ
+        // whenever the winner is a `bChangeAdversary` candidate, which is
+        // exactly the case that installs a cross-sector line jump: asking
+        // about the (same-sector) primary target answers `NULL` and leaves
+        // `mpMyLineJump` unset for every later frame, so
+        // `ProposeCombatPositionsAround` then generates the 16-direction
+        // surround ring the Original replaces with its jump-line branches.
+        // `target_position` is the candidate's `posTargetPosition`, i.e.
+        // `Position(pTarget)` captured in this same call.
         if best.line_jump.is_none()
+            && best.target != 0
             && let Some(grid) = grid
         {
             let my_max_range = self
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.sword_range_maximal)
                 .unwrap_or(self.sword_range);
+            let victim = best.target_position;
             best.line_jump = crate::engine::melee::table_swordfight_jump_line(
                 grid,
                 ctx.position.sector.map(i16::from).unwrap_or(-1),
-                primary.position.sector.map(i16::from).unwrap_or(-1),
-                crate::coordinates::MapPoint::new(primary.position.x, primary.position.y),
+                victim.sector.map(i16::from).unwrap_or(-1),
+                crate::coordinates::MapPoint::new(victim.x, victim.y),
                 my_max_range as f32,
             );
         }

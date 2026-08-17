@@ -1306,6 +1306,10 @@ second wins `mpOrder->action`.
 ### `ProposeGoodCombatPosition` splits into TWO different bugs (not one)
 Entry, list sizes, drunk gate and the `rand()%3` roll are all confirmed in parity via
 `PARITY_DEBUG_ORIGINAL_RECONSIDER_SWORDFIGHT` — the divergence is entirely inside the candidate list.
+
+**ARM C IS SOLVED — see "Arm C solved: `IsTableSwordfightNeeded` was asked about the wrong target" below.
+The `IsPositionAutorized` / reachability suspicion recorded in arm C was a DEAD END: the Original never
+runs the ring loop at all there, so there is nothing for `IsReachableThick` to reject.**
 - **B, formation arm** — schema14 linux3/P001/Savegame_044 replay-003, f28893, co 254. Rust produces only
   TWO candidates: #0 stay-put (25) and #1 the formation slot right of left-neighbour 225 at
   (1490.3826, 1661.4468) with `change_position=false` (so Rust does nothing). The Original ends at goal
@@ -1503,6 +1507,38 @@ So the corpus ceiling for this campaign is **2390**, not 2430, unless someone de
 serializer for mission 22853. The fleet exited cleanly having done everything it can; nothing is stalled.
 Next step if these are wanted: run the crashing case under gdb on the rebuilt binary (it has a symtab) and
 look at `RHGame`'s save serialization for that mission.
+
+### Arm C solved: `IsTableSwordfightNeeded` was asked about the wrong target (D2 bundle, 2026-08-17)
+schema14 linux3/P003/Savegame_034 replay-014 (f19764, Soldier 77 = co 108) now matches every recorded
+frame. `PARITY_DEBUG_ORIGINAL_COMBAT_POSITION` showed the Original generating only TWO candidates there,
+so the whole 16-direction ring — including the from-behind winner that scored 7424 — is something Rust
+invents. It invents it because `mpMyLineJump` is NULL in Rust and non-NULL in the Original, which flips
+both of `ProposeCombatPositionsAround`'s guards at once:
+`bProposePositionsAround = ( mpMyLineJump == NULL )` (`RHartificialmalignity.cpp:14110`) and the SCOTCHED
+`pLineJump != NULL && mpMyLineJump != NULL` table branch (`:14143`).
+
+`mpMyLineJump` only has three write sites: the constructor, `ReconsiderEnemyApproach` (`:6836`) and
+`ReconsiderSwordfight`'s `mpMyLineJump = newCombatPosition.pLineJump` (`:13879`). The value that
+`:13879` stores comes from the tail of `ProposeGoodCombatPosition`:
+
+    // RHartificialmalignity.cpp:15323-15327
+    if ( pBestCombatPosition->pLineJump == NULL )
+        pBestCombatPosition->pLineJump = mpMe->IsTableSwordfightNeeded( pBestCombatPosition->pTarget );
+
+**Rust passed the PRIMARY target's sector/position there instead of the WINNING CANDIDATE'S target.**
+The two differ exactly when the winner is a `bChangeAdversary` candidate — which is precisely the case
+that crosses a table/jump line. In this trace the f19644 reposition picks a `change_adversary` candidate
+against handle 183 in sector 87 / level 7 while the primary target (handle 179) sits in the fighter's own
+sector 82, so Rust's query answered "same sector, no jump line", `my_line_jump` stayed None forever, and
+120 frames later the ring appeared. Fixed in `crates/robin_engine/src/ai_enemy/combat_positions.rs`
+(`propose_good_combat_position_inner` tail) by using `best.target_position` — the candidate's
+`posTargetPosition`, i.e. `Position(pTarget)` captured in the same call — plus a `best.target != 0` guard.
+
+Also found and NOT landed: `ReconsiderEnemyApproach` writes the MEMBER `mpMyLineJump` at `:6836`, while
+Rust's `ai_enemy/battle.rs` only computes a local of that name and never stores it (`begin_swordfight`
+separately overwrites `self.my_line_jump` from `tick.primary_target_jump_line`, which is a READ in the
+Original at `:7184`). Porting the member write changed no frontier in the D2 bundle, so it was left out
+rather than landed unproven; it is still a real missing statement and wants its own sweep.
 
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
