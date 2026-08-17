@@ -1487,6 +1487,23 @@ Also: trace `actor.animation` numbers are `OrderType` discriminants (8 = Transit
 123 = Hitting, 283 = NonanimationEnd) and `motion_state` is `RHmotionState`
 (0 Done, 1 Start, 2 InProgress, 3 Terminated, 4 Aborted).
 
+### Capture campaign schema14-seed1000000: 2390/2430, and the last 40 are BLOCKED BY AN ORIGINAL CRASH
+239 of 243 saves have all 10 replays. **Four saves have zero replays because the Original binary SIGSEGVs
+(rc=139) while capturing them**, always at the same point — the log's last line is
+`Serializing savegame for mission id 22853...READ`:
+`Savegame_linux3/Profile_001/QuickSave`, `Savegame_SuN1Sh1nE/Profile_004/{Continue, Restart, Savegame_039}`.
+Verified 2026-08-17:
+- It is NOT the `-PARITYSAVE refuses an active profile special slot` guard
+  (`original-code/launcher.cpp:1191`) — no refusal message is printed, and copying the saves to an external
+  fixture path (which that guard's own error message recommends) reproduces the crash identically.
+- It is NOT specific to the pinned binary: the REBUILT `build/rebuild-20260816/robin` crashes the same way
+  on the same save, so it is a genuine Original defect on these four saves, not a build artifact.
+- All four appear in the campaign's `incomplete-traces/` directory, i.e. the fleet retried and failed.
+So the corpus ceiling for this campaign is **2390**, not 2430, unless someone debugs the Original's
+serializer for mission 22853. The fleet exited cleanly having done everything it can; nothing is stalled.
+Next step if these are wanted: run the crashing case under gdb on the rebuilt binary (it has a symtab) and
+look at `RHGame`'s save serialization for that mission.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
