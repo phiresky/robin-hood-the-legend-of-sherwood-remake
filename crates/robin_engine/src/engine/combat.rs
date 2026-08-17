@@ -734,7 +734,20 @@ impl EngineInner {
             // membership before the projectile's explicit pre-add
             // Hourglass. It is therefore observable throughout flight, not
             // only after the projectile lands.
-            let initial_landing_resolution = terminal_impact.then(|| {
+            //
+            // A terminal impact that classifies as water or hole returns from
+            // `ComputeTrajectory` *before* the membership block
+            // (`RHelementprojectile.cpp:742-756`: `mbDive = true; return;` and
+            // `AddTrajectoryFallIntoHole( pSectorMaterial ); return;`, both
+            // ahead of the `if( pObstacle == 0 ) uwLayer = 0;` at line 767).
+            // Neither `AddTrajectoryFallIntoHole`
+            // (`RHelementprojectile.cpp:904-968`) nor the dive flag touches
+            // layer, sector or obstacle, so such a projectile keeps the
+            // `SetLayer( (UWORD)-1 ); SetSector( 0 ); SetObstacle( 0 )` that
+            // line 379-381 installed for the whole of its fall.
+            let terminal_membership =
+                terminal_impact && !terminal_lands_in_hole && !terminal_lands_in_water;
+            let initial_landing_resolution = terminal_membership.then(|| {
                 let end = trajectory_end.expect("terminal impact has no trajectory endpoint");
                 if let Some(obstacle) = terminal_obstacle {
                     self.world
@@ -983,7 +996,11 @@ impl EngineInner {
                     element.set_layer(resolution.layer);
                 }
             }
-            {
+            if terminal_membership {
+                // `SetObstacle( pObstacle )` lives inside the same membership
+                // block the water/hole `return`s skip
+                // (`RHelementprojectile.cpp:772`), so a projectile that ends in
+                // water or a hole stays bound to no obstacle.
                 let element = self
                     .world
                     .entities
