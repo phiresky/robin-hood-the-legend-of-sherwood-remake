@@ -28,9 +28,9 @@ use robin_engine::sim_rng::{self, AuxiliaryRngSite};
 use robin_engine::sprite::BBox;
 use std::collections::HashMap;
 
-use crate::gfx_types::Rect;
+use crate::gfx_types::{BlendMode, Rect};
 use crate::ingame_menu::{layout, widget_bridge};
-use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
+use crate::renderer::{BLIT_SOURCE_TRANSPARENT, GpuImage, Renderer};
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::resource_manager::{ResourceId, ResourceManager};
 use robin_engine::element::{Entity, EntityId};
@@ -203,10 +203,10 @@ pub struct PortraitCache {
     top_scroll_surface: Option<u32>,
     top_scroll_alt_surface: Option<u32>,
     bottom_scroll_surface: Option<u32>,
-    /// Authored 112x50 visage used by transient and pinned allied groups.
-    allied_visage_surface: Option<u32>,
-    /// Shared parchment beneath the transparent allied action icons.
-    allied_action_backing_surface: Option<u32>,
+    /// Authored 112x134 transparent scroll background for allied groups.
+    allied_portrait_background: Option<GpuImage>,
+    /// Authored 112x134 transparent soldier foreground for allied groups.
+    allied_portrait_foreground: Option<GpuImage>,
     /// State-specific artwork: three stances, two patrol states, and four
     /// formations, in that order.
     allied_action_surfaces: [Option<u32>; 9],
@@ -281,8 +281,8 @@ impl PortraitCache {
             top_scroll_surface: None,
             top_scroll_alt_surface: None,
             bottom_scroll_surface: None,
-            allied_visage_surface: None,
-            allied_action_backing_surface: None,
+            allied_portrait_background: None,
+            allied_portrait_foreground: None,
             allied_action_surfaces: [None; 9],
             border_top_left: None,
             border_top_right: None,
@@ -345,36 +345,36 @@ impl PortraitCache {
             self.surfaces.iter().filter(|s| s.is_some()).count(),
         );
 
-        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
+        let (width, height, pixels) = decode_embedded_png_rgba(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/ui/allied_soldier_portrait.png"
+            "/../../assets/ui/allied_portrait_background.png"
         )))
-        .expect("embedded allied-soldier portrait must be a valid RGB/RGBA PNG");
+        .expect("embedded allied portrait background must be a valid RGB/RGBA PNG");
         assert_eq!(
             (width, height),
-            (ELEMENT_WIDTH, VISAGE_HEIGHT),
-            "embedded allied-soldier portrait must match the native HUD visage slot"
+            (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
+            "embedded allied portrait background must match the native open HUD slot"
         );
-        self.allied_visage_surface = Some(
+        self.allied_portrait_background = Some(
             renderer
-                .create_surface_from_rgb565(width, height, &pixels)
-                .expect("embedded allied-soldier portrait dimensions must match its payload"),
+                .create_rgba_gpu_image(width, height, &pixels, "allied portrait background")
+                .expect("embedded allied portrait background dimensions must match its payload"),
         );
 
-        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
+        let (width, height, pixels) = decode_embedded_png_rgba(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/ui/allied_action_backing.png"
+            "/../../assets/ui/allied_portrait_foreground.png"
         )))
-        .expect("embedded allied-action backing must be a valid RGB/RGBA PNG");
+        .expect("embedded allied portrait foreground must be a valid RGB/RGBA PNG");
         assert_eq!(
             (width, height),
-            (ELEMENT_WIDTH, ACTION_HEIGHT),
-            "embedded allied-action backing must match the native HUD action row"
+            (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
+            "embedded allied portrait foreground must match the native open HUD slot"
         );
-        self.allied_action_backing_surface = Some(
+        self.allied_portrait_foreground = Some(
             renderer
-                .create_surface_from_rgb565(width, height, &pixels)
-                .expect("embedded allied-action backing dimensions must match its payload"),
+                .create_rgba_gpu_image(width, height, &pixels, "allied portrait foreground")
+                .expect("embedded allied portrait foreground dimensions must match its payload"),
         );
 
         for (index, bytes) in [
@@ -1133,6 +1133,38 @@ fn decode_embedded_png_rgb565(bytes: &[u8]) -> Result<(u16, u16, Vec<u16>), Stri
     Ok((info.width as u16, info.height as u16, pixels))
 }
 
+fn decode_embedded_png_rgba(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("decode embedded PNG header: {error}"))?;
+    let mut buffer = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| "embedded PNG has no known output size".to_owned())?
+    ];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("decode embedded PNG frame: {error}"))?;
+    let data = &buffer[..info.buffer_size()];
+    let pixels = match info.color_type {
+        png::ColorType::Rgba => data.to_vec(),
+        png::ColorType::Rgb => data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
+            .collect(),
+        color_type => {
+            return Err(format!(
+                "embedded PNG uses unsupported color type {color_type:?}"
+            ));
+        }
+    };
+    Ok((info.width as u16, info.height as u16, pixels))
+}
+
 /// The [`CharacterKind`] for a PC entity, if it is a PC whose profile
 /// matched one of the 10 known characters at level-load time.
 fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
@@ -1325,6 +1357,74 @@ fn allied_state_icon_index(
     }
 }
 
+fn render_allied_portrait_layer(
+    renderer: &mut Renderer,
+    image: &GpuImage,
+    x: u16,
+    sh: u16,
+    selected: bool,
+) {
+    if selected {
+        let top = sh - PORTRAIT_TOTAL_HEIGHT;
+        renderer.render_gpu_image(
+            image,
+            None,
+            Some(&bbox(
+                x,
+                top,
+                x + ELEMENT_WIDTH,
+                top + PORTRAIT_TOTAL_HEIGHT,
+            )),
+            BlendMode::Blend,
+        );
+        return;
+    }
+
+    // Closed portraits omit the 35-pixel action row. Preserve the authored
+    // layer boundaries and close the gap exactly like the native PC widget.
+    for (source, destination) in [
+        (
+            bbox(0, 0, ELEMENT_WIDTH, TOP_SCROLL_HEIGHT),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_TOP_SCROLL,
+                x + ELEMENT_WIDTH,
+                sh - CLOSE_POSITION_VISAGE,
+            ),
+        ),
+        (
+            bbox(
+                0,
+                TOP_SCROLL_HEIGHT,
+                ELEMENT_WIDTH,
+                TOP_SCROLL_HEIGHT + VISAGE_HEIGHT,
+            ),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_VISAGE,
+                x + ELEMENT_WIDTH,
+                sh - CLOSE_POSITION_BOTTOM_SCROLL,
+            ),
+        ),
+        (
+            bbox(
+                0,
+                TOP_SCROLL_HEIGHT + VISAGE_HEIGHT + ACTION_HEIGHT,
+                ELEMENT_WIDTH,
+                PORTRAIT_TOTAL_HEIGHT - BORDURE,
+            ),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_BOTTOM_SCROLL,
+                x + ELEMENT_WIDTH,
+                sh - BORDURE,
+            ),
+        ),
+    ] {
+        renderer.render_gpu_image(image, Some(&source), Some(&destination), BlendMode::Blend);
+    }
+}
+
 fn render_allied_portrait(
     renderer: &mut Renderer,
     portraits: &PortraitCache,
@@ -1341,52 +1441,25 @@ fn render_allied_portrait(
     } else {
         CLOSE_POSITION_TOP_SCROLL
     };
-    let visage = if selected {
-        POSITION_VISAGE
-    } else {
-        CLOSE_POSITION_VISAGE
-    };
-
-    if let Some(surface) = portraits.top_scroll_surface {
-        let w = renderer.surface_width(surface);
-        let h = renderer.surface_height(surface);
-        let y = sh - top_scroll;
-        blit_to_screen_widget(
-            renderer,
-            surface,
-            None,
-            Some(&bbox(x, y, x + w, y + h)),
-            BLIT_SOURCE_TRANSPARENT,
-        );
-    }
-    if let Some(surface) = portraits.bottom_scroll_surface {
-        let w = renderer.surface_width(surface);
-        let h = renderer.surface_height(surface);
-        let y = sh - POSITION_BOTTOM_SCROLL;
-        blit_to_screen_widget(
-            renderer,
-            surface,
-            None,
-            Some(&bbox(x, y, x + w, y + h)),
-            BLIT_SOURCE_TRANSPARENT,
-        );
-    }
-
-    let visage_top = sh - visage;
-    let visage_bottom = if selected {
-        sh - POSITION_ACTION
-    } else {
-        sh - CLOSE_POSITION_BOTTOM_SCROLL
-    };
-    let surface = portraits
-        .allied_visage_surface
-        .expect("allied portrait surface must be loaded before drawing the HUD");
-    blit_to_screen_widget(
+    render_allied_portrait_layer(
         renderer,
-        surface,
-        None,
-        Some(&bbox(x, visage_top, x + ELEMENT_WIDTH, visage_bottom)),
-        BLIT_SOURCE_TRANSPARENT,
+        portraits
+            .allied_portrait_background
+            .as_ref()
+            .expect("allied portrait background must be loaded before drawing the HUD"),
+        x,
+        sh,
+        selected,
+    );
+    render_allied_portrait_layer(
+        renderer,
+        portraits
+            .allied_portrait_foreground
+            .as_ref()
+            .expect("allied portrait foreground must be loaded before drawing the HUD"),
+        x,
+        sh,
+        selected,
     );
 
     // Pin/unpin button remains visible in both open and closed states.
@@ -1423,16 +1496,6 @@ fn render_allied_portrait(
     if selected {
         let action_top = sh - POSITION_ACTION;
         let action_bottom = sh - POSITION_BOTTOM_SCROLL;
-        let backing = portraits
-            .allied_action_backing_surface
-            .expect("allied action backing must be loaded before drawing the HUD");
-        blit_to_screen_widget(
-            renderer,
-            backing,
-            None,
-            Some(&bbox(x, action_top, x + ELEMENT_WIDTH, action_bottom)),
-            BLIT_SOURCE_TRANSPARENT,
-        );
         let order = item
             .members
             .first()
@@ -3256,22 +3319,35 @@ mod tests {
     }
 
     #[test]
-    fn embedded_allied_portrait_decodes_at_native_hud_size() {
-        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/ui/allied_soldier_portrait.png"
-        )))
-        .unwrap();
-        assert_eq!((width, height), (ELEMENT_WIDTH, VISAGE_HEIGHT));
-        assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
-
-        let (width, height, pixels) = decode_embedded_png_rgb565(include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/ui/allied_action_backing.png"
-        )))
-        .unwrap();
-        assert_eq!((width, height), (ELEMENT_WIDTH, ACTION_HEIGHT));
-        assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
+    fn embedded_allied_portrait_layers_preserve_full_alpha() {
+        let mut found_partial_alpha = false;
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_portrait_background.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_portrait_foreground.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!((width, height), (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT));
+            assert_eq!(pixels.len(), usize::from(width) * usize::from(height) * 4);
+            assert!(
+                pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|pixel| pixel[3] == 0)
+            );
+            found_partial_alpha |= pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| (1..=254).contains(&pixel[3]));
+        }
+        assert!(found_partial_alpha);
     }
 
     #[test]
