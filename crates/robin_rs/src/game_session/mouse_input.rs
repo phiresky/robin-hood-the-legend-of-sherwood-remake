@@ -36,7 +36,7 @@ use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
 use robin_assets::res_descr as assets_res_descr;
 use robin_assets::resource_manager::ResourceManager;
-use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
+use robin_engine::allied_control::{AlliedFormation, AlliedStance};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
@@ -604,7 +604,7 @@ fn on_portrait_click(
                 let formation = members
                     .first()
                     .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Compact, |order| order.formation);
+                    .map_or(AlliedFormation::Line, |order| order.formation);
                 host.allied_target_mode = Some(AlliedTargetMode::Patrol {
                     soldiers: members,
                     formation,
@@ -614,37 +614,10 @@ fn on_portrait_click(
                 let formation = members
                     .first()
                     .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Compact, |order| order.formation)
+                    .map_or(AlliedFormation::Line, |order| order.formation)
                     .next();
                 let cmd = PlayerCommand::SetAlliedFormation {
                     soldiers: members,
-                    formation,
-                };
-                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-            }
-            PortraitHitArea::AlliedAction(3) => {
-                let heroes = engine.displayed_pc_ids();
-                if heroes.is_empty() {
-                    tracing::warn!("allied follow action requires at least one visible hero");
-                    return true;
-                }
-                let current = members
-                    .first()
-                    .and_then(|id| engine.allied_order(*id))
-                    .and_then(|order| match order.duty {
-                        AlliedDuty::Follow { hero, .. } => Some(hero),
-                        _ => None,
-                    });
-                let next_index = current
-                    .and_then(|hero| heroes.iter().position(|candidate| *candidate == hero))
-                    .map_or(0, |index| (index + 1) % heroes.len());
-                let formation = members
-                    .first()
-                    .and_then(|id| engine.allied_order(*id))
-                    .map_or(AlliedFormation::Compact, |order| order.formation);
-                let cmd = PlayerCommand::SetAlliedFollow {
-                    soldiers: members,
-                    hero: heroes[next_index],
                     formation,
                 };
                 dispatch_local_command(host, engine, frame_cmds, assets, &cmd);

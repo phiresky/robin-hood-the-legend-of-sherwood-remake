@@ -50,20 +50,22 @@ impl AlliedStance {
 )]
 pub enum AlliedFormation {
     #[default]
-    #[serde(alias = "Line")]
-    Compact,
-    #[serde(alias = "Column")]
-    PatrolColumn,
-    #[serde(alias = "Wedge", alias = "Ring")]
-    Battle,
+    #[serde(alias = "PatrolColumn", alias = "Battle", alias = "Column")]
+    Line,
+    #[serde(alias = "Compact", alias = "Ring")]
+    Box,
+    #[serde(alias = "Wedge")]
+    Staggered,
+    Flank,
 }
 
 impl AlliedFormation {
     pub fn next(self) -> Self {
         match self {
-            Self::Compact => Self::PatrolColumn,
-            Self::PatrolColumn => Self::Battle,
-            Self::Battle => Self::Compact,
+            Self::Line => Self::Box,
+            Self::Box => Self::Staggered,
+            Self::Staggered => Self::Flank,
+            Self::Flank => Self::Line,
         }
     }
 }
@@ -88,6 +90,10 @@ pub struct AlliedSoldierOrder {
     /// in `MoveWaiting` for the generic 100-frame retry window.
     #[serde(default)]
     pub path_fallback: Option<MapPoint>,
+    /// Final Line-formation slot used after a long move first gathers the
+    /// group into its two-wide marching column.
+    #[serde(default)]
+    pub deploy_destination: Option<MapPoint>,
 }
 
 #[derive(
@@ -148,10 +154,11 @@ mod tests {
             soldier,
             AlliedSoldierOrder {
                 stance: AlliedStance::Defensive,
-                formation: AlliedFormation::Compact,
+                formation: AlliedFormation::Line,
                 duty: AlliedDuty::Hold { anchor: point },
                 last_destination: point,
                 path_fallback: None,
+                deploy_destination: None,
             },
         );
 
@@ -170,10 +177,11 @@ mod tests {
             soldier,
             AlliedSoldierOrder {
                 stance: AlliedStance::Defensive,
-                formation: AlliedFormation::Compact,
+                formation: AlliedFormation::Line,
                 duty: AlliedDuty::Hold { anchor: point },
                 last_destination: point,
                 path_fallback: Some(MapPoint::new(50.0, 60.0)),
+                deploy_destination: None,
             },
         );
 
@@ -188,9 +196,27 @@ mod tests {
             .and_then(serde_json::Value::as_object_mut)
             .expect("serialized allied order is a JSON object");
         order.remove("path_fallback");
+        order.remove("deploy_destination");
 
         let restored: AlliedControlState =
             serde_json::from_value(value).expect("older allied order deserializes");
         assert_eq!(restored.orders[&soldier].path_fallback, None);
+        assert_eq!(restored.orders[&soldier].deploy_destination, None);
+    }
+
+    #[test]
+    fn previous_formation_names_remain_loadable() {
+        assert_eq!(
+            serde_json::from_str::<AlliedFormation>("\"Compact\"").unwrap(),
+            AlliedFormation::Box
+        );
+        assert_eq!(
+            serde_json::from_str::<AlliedFormation>("\"PatrolColumn\"").unwrap(),
+            AlliedFormation::Line
+        );
+        assert_eq!(
+            serde_json::from_str::<AlliedFormation>("\"Battle\"").unwrap(),
+            AlliedFormation::Line
+        );
     }
 }

@@ -41,7 +41,6 @@ use robin_engine::sprite as engine_sprite;
 
 fn allied_action_tooltip(
     engine: &Engine,
-    portraits: &crate::ui_panel::PortraitCache,
     seat: robin_engine::player_command::PlayerId,
     hit: PortraitHit,
 ) -> String {
@@ -78,31 +77,14 @@ fn allied_action_tooltip(
             }
         }
         PortraitHitArea::AlliedAction(2) => {
-            let formation = order.map_or(AlliedFormation::Compact, |order| order.formation);
+            let formation = order.map_or(AlliedFormation::Line, |order| order.formation);
             let name = match formation {
-                AlliedFormation::Compact => "Compact",
-                AlliedFormation::PatrolColumn => "Patrol column",
-                AlliedFormation::Battle => "Battle (melee front, ranged rear)",
+                AlliedFormation::Line => "Line (melee front, ranged rear)",
+                AlliedFormation::Box => "Box (ranged protected inside)",
+                AlliedFormation::Staggered => "Staggered rows",
+                AlliedFormation::Flank => "Two flanking wings",
             };
             format!("Formation: {name} - click to change")
-        }
-        PortraitHitArea::AlliedAction(3) => {
-            let target = order.and_then(|order| match order.duty {
-                AlliedDuty::Follow { hero, .. } => Some(hero),
-                _ => None,
-            });
-            match target.and_then(|hero| engine.get_entity(hero)) {
-                Some(engine_element::Entity::Pc(pc)) => {
-                    let name = pc
-                        .pc
-                        .kind
-                        .and_then(|kind| portraits.get_localized_name(kind))
-                        .or_else(|| pc.pc.kind.map(|kind| kind.profile_name()))
-                        .unwrap_or("hero");
-                    format!("Follow: {name} - click to choose the next hero")
-                }
-                _ => "Follow: click to follow a hero".to_owned(),
-            }
         }
         _ => panic!("allied tooltip requested for non-action portrait area"),
     }
@@ -1482,9 +1464,7 @@ pub(super) fn render_frame(
             && let (Some(hit), Some(fonts)) = (hovered_hit, hud_fonts)
         {
             let text = match hit.area {
-                PortraitHitArea::AlliedAction(_) => {
-                    allied_action_tooltip(engine, portrait_cache, local_seat, hit)
-                }
+                PortraitHitArea::AlliedAction(_) => allied_action_tooltip(engine, local_seat, hit),
                 PortraitHitArea::ActionButton(btn) => {
                     let pc_id = match hit.target {
                         PortraitTarget::Pc(pc_id) => Some(pc_id),

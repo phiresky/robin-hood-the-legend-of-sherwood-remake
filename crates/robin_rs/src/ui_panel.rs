@@ -15,7 +15,7 @@
 
 use crate::host::Host;
 use robin_assets::picture::Picture;
-use robin_engine::allied_control::AlliedDuty;
+use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -207,8 +207,9 @@ pub struct PortraitCache {
     allied_visage_surface: Option<u32>,
     /// Shared parchment beneath the transparent allied action icons.
     allied_action_backing_surface: Option<u32>,
-    /// Original-game artwork for stance, patrol, formation, and follow.
-    allied_action_surfaces: [Option<u32>; 4],
+    /// State-specific artwork: three stances, two patrol states, and four
+    /// formations, in that order.
+    allied_action_surfaces: [Option<u32>; 9],
     /// Panel border frame pieces.
     border_top_left: Option<u32>,
     border_top_right: Option<u32>,
@@ -282,7 +283,7 @@ impl PortraitCache {
             bottom_scroll_surface: None,
             allied_visage_surface: None,
             allied_action_backing_surface: None,
-            allied_action_surfaces: [None; 4],
+            allied_action_surfaces: [None; 9],
             border_top_left: None,
             border_top_right: None,
             border_bottom_left: None,
@@ -376,32 +377,54 @@ impl PortraitCache {
                 .expect("embedded allied-action backing dimensions must match its payload"),
         );
 
-        // Reuse authored interface artwork instead of drawing synthetic,
-        // opaque rectangles. These resources already carry the classic
-        // color-keyed silhouettes and soft shadows used throughout the HUD.
-        for (index, (resource, label)) in [
-            (resource_ids::RHID_GUARD, "stance"),
-            (resource_ids::RHID_DISPLAY_CAMPAIGN_MAP, "patrol"),
-            (resource_ids::RHID_SELECT_ALL, "formation"),
-            (resource_ids::RHID_GO_TO_EXIT, "follow"),
+        for (index, bytes) in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_hold.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_defensive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_aggressive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_off.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_on.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_line.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_box.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_staggered.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_flank.png"
+            )),
         ]
         .into_iter()
         .enumerate()
         {
-            let picture = match res.get_picture(resource, 1) {
-                Ok(picture) => Ok(picture),
-                Err(_) => res.get_picture(resource, 0),
-            };
-            match picture {
-                Ok(picture) => {
-                    self.allied_action_surfaces[index] = Some(pic_to_surface(renderer, picture));
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        "Failed to load allied {label} icon (resource {resource}): {error}"
-                    );
-                }
-            }
+            let (width, height, pixels) = decode_embedded_png_rgb565(bytes)
+                .unwrap_or_else(|error| panic!("decode allied state icon {index}: {error}"));
+            self.allied_action_surfaces[index] = Some(
+                renderer
+                    .create_surface_from_rgb565(width, height, &pixels)
+                    .unwrap_or_else(|| panic!("allied state icon {index} has invalid dimensions")),
+            );
         }
 
         // ── Load scroll decoration surfaces (generic, shared by all portraits) ──
@@ -1272,7 +1295,34 @@ fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Enti
 }
 
 fn allied_action_index(relative_x: f32) -> u8 {
-    ((relative_x / (ELEMENT_WIDTH as f32 / 4.0)).floor() as u8).min(3)
+    ((relative_x / (ELEMENT_WIDTH as f32 / 3.0)).floor() as u8).min(2)
+}
+
+fn allied_state_icon_index(
+    action: u8,
+    order: Option<&robin_engine::allied_control::AlliedSoldierOrder>,
+) -> usize {
+    match action {
+        0 => match order.map_or(AlliedStance::Defensive, |order| order.stance) {
+            AlliedStance::Hold => 0,
+            AlliedStance::Defensive => 1,
+            AlliedStance::Aggressive => 2,
+        },
+        1 => {
+            if order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. })) {
+                4
+            } else {
+                3
+            }
+        }
+        2 => match order.map_or(AlliedFormation::Line, |order| order.formation) {
+            AlliedFormation::Line => 5,
+            AlliedFormation::Box => 6,
+            AlliedFormation::Staggered => 7,
+            AlliedFormation::Flank => 8,
+        },
+        _ => panic!("allied action index {action} is outside the three-button row"),
+    }
 }
 
 fn render_allied_portrait(
@@ -1387,20 +1437,19 @@ fn render_allied_portrait(
             .members
             .first()
             .and_then(|soldier| engine.allied_order(*soldier));
-        let button_w = ELEMENT_WIDTH / 4;
-        for index in 0..4 {
+        let button_w = ELEMENT_WIDTH / 3;
+        for index in 0..3 {
             let left = x + index as u16 * button_w;
-            let right = if index == 3 {
+            let right = if index == 2 {
                 x + ELEMENT_WIDTH
             } else {
                 left + button_w
             };
-            let active = match (index, order.map(|order| &order.duty)) {
-                (1, Some(AlliedDuty::Patrol { .. })) | (3, Some(AlliedDuty::Follow { .. })) => true,
-                _ => false,
-            };
-            let surface = portraits.allied_action_surfaces[index]
-                .unwrap_or_else(|| panic!("allied action icon {index} was not loaded"));
+            let active = index == 1
+                && order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. }));
+            let icon_index = allied_state_icon_index(index as u8, order);
+            let surface = portraits.allied_action_surfaces[icon_index]
+                .unwrap_or_else(|| panic!("allied state icon {icon_index} was not loaded"));
             let source_width = renderer.surface_width(surface);
             let source_height = renderer.surface_height(surface);
             let scale = f32::min(
@@ -2434,41 +2483,40 @@ pub fn action_button_tooltip_mt_id(action: robin_engine::profiles::Action) -> Op
     })
 }
 
-/// Hover-idle tracker for the three PC portrait action buttons.
-/// Wraps [`RequirementsTooltipTracker`] keyed on the `(portrait slot,
-/// button index)` pair encoded as `slot * 4 + btn` — each portrait has
-/// at most 3 buttons so the 4x stride leaves a unique slot id per
-/// button.  The shared 75-tick idle-hover delay is inherited from
-/// `RequirementsTooltipTracker`.
+/// Hover-idle tracker for portrait action buttons. These compact controls
+/// need much quicker feedback than the large requirements-bar widgets.
 #[derive(Default, Clone)]
 pub struct PcActionTooltipTracker {
-    inner: RequirementsTooltipTracker,
+    hovered: Option<(u8, u8)>,
+    hover_ticks: u32,
 }
+
+pub const PC_ACTION_TOOLTIP_DELAY_TICKS: u32 = 12;
 
 impl PcActionTooltipTracker {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Encode `(slot, btn)` into the shared slot-index space.
-    fn encode(slot: u8, btn: u8) -> usize {
-        (slot as usize) * 4 + (btn as usize)
-    }
-
-    fn decode(encoded: usize) -> (u8, u8) {
-        ((encoded / 4) as u8, (encoded % 4) as u8)
-    }
-
     /// Call once per frame with the hovered `(slot, btn)` pair, or
     /// `None` when the cursor is not over any PC action button.
     pub fn update(&mut self, hovered: Option<(u8, u8)>) {
-        self.inner.update(hovered.map(|(s, b)| Self::encode(s, b)));
+        if hovered == self.hovered {
+            if hovered.is_some() {
+                self.hover_ticks = self.hover_ticks.saturating_add(1);
+            }
+        } else {
+            self.hovered = hovered;
+            self.hover_ticks = u32::from(hovered.is_some());
+        }
     }
 
     /// `Some((slot, btn))` once the cursor has been idle on the same
     /// button long enough for the tooltip to appear.
     pub fn ready_button(&self) -> Option<(u8, u8)> {
-        self.inner.ready_slot().map(Self::decode)
+        (self.hover_ticks >= PC_ACTION_TOOLTIP_DELAY_TICKS)
+            .then_some(self.hovered)
+            .flatten()
     }
 }
 
@@ -3187,15 +3235,24 @@ mod tests {
     }
 
     #[test]
-    fn allied_action_row_has_four_equal_hit_columns() {
+    fn allied_action_row_has_three_full_height_hit_columns() {
         assert_eq!(allied_action_index(0.0), 0);
-        assert_eq!(allied_action_index(27.9), 0);
-        assert_eq!(allied_action_index(28.0), 1);
-        assert_eq!(allied_action_index(55.9), 1);
-        assert_eq!(allied_action_index(56.0), 2);
-        assert_eq!(allied_action_index(83.9), 2);
-        assert_eq!(allied_action_index(84.0), 3);
-        assert_eq!(allied_action_index(112.0), 3);
+        assert_eq!(allied_action_index(37.2), 0);
+        assert_eq!(allied_action_index(37.4), 1);
+        assert_eq!(allied_action_index(74.5), 1);
+        assert_eq!(allied_action_index(74.7), 2);
+        assert_eq!(allied_action_index(112.0), 2);
+    }
+
+    #[test]
+    fn portrait_action_tooltip_appears_quickly_and_resets_between_cells() {
+        let mut tracker = PcActionTooltipTracker::new();
+        for _ in 0..PC_ACTION_TOOLTIP_DELAY_TICKS {
+            tracker.update(Some((2, 1)));
+        }
+        assert_eq!(tracker.ready_button(), Some((2, 1)));
+        tracker.update(Some((2, 2)));
+        assert_eq!(tracker.ready_button(), None);
     }
 
     #[test]
@@ -3215,6 +3272,56 @@ mod tests {
         .unwrap();
         assert_eq!((width, height), (ELEMENT_WIDTH, ACTION_HEIGHT));
         assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
+    }
+
+    #[test]
+    fn embedded_allied_state_icons_decode_with_transparency() {
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_hold.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_defensive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_stance_aggressive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_off.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_patrol_on.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_line.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_box.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_staggered.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/ui/allied_formation_flank.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgb565(bytes).unwrap();
+            assert_eq!((width, height), (34, 32));
+            assert!(
+                pixels
+                    .iter()
+                    .any(|pixel| *pixel == crate::renderer::TRANSPARENT_COLOR_KEY_16)
+            );
+        }
     }
 
     // The CharacterKind resource-lookup and sub-id tests live in
