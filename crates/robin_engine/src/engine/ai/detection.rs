@@ -3424,12 +3424,11 @@ impl EngineInner {
                             right_combat_neighbour: me_snap.right_combat_neighbour,
                             is_in_recovery_animation: me_snap.in_recovery,
                             in_sword_action_state: me_snap.action_state.is_sword(),
-                            seek_position: crate::ai::Position {
-                                x: me_snap.seek_position.x,
-                                y: me_snap.seek_position.y,
-                                sector: None,
-                                level: my_layer,
-                            },
+                            // `mposSeekPosition` is a full `RHposition`: it
+                            // keeps the sector and level it was written with
+                            // and is never re-levelled from the soldier's
+                            // current element layer.
+                            seek_position: me_snap.ai_seek_position,
                             archer_behind_me: me_snap.archer_behind_me,
                             ai_state: me_snap.ai_state,
                             shield_bearer_before_me: me_snap.shield_bearer_before_me,
@@ -3437,12 +3436,7 @@ impl EngineInner {
                             hth_weapon_id: me_snap.hth_weapon_id,
                             action_state: me_snap.action_state,
                             shield_bearer_direction: me_snap.shield_bearer_direction,
-                            shield_bearer_seek_position: crate::ai::Position {
-                                x: me_snap.seek_position.x,
-                                y: me_snap.seek_position.y,
-                                sector: None,
-                                level: my_layer,
-                            },
+                            shield_bearer_seek_position: me_snap.ai_seek_position,
                             bow_max_range: me_snap.bow_max_range,
                             elevation: f32::from(me_snap.elevation),
                         });
@@ -3518,12 +3512,9 @@ impl EngineInner {
                             right_combat_neighbour: ss.right_combat_neighbour,
                             is_in_recovery_animation: ss.in_recovery,
                             in_sword_action_state: ss.action_state.is_sword(),
-                            seek_position: crate::ai::Position {
-                                x: ss.seek_position.x,
-                                y: ss.seek_position.y,
-                                sector: None,
-                                level: ss.layer,
-                            },
+                            // Same as the self entry: keep the level and
+                            // sector `mposSeekPosition` was written with.
+                            seek_position: ss.ai_seek_position,
                             archer_behind_me: ss.archer_behind_me,
                             ai_state: ss.ai_state,
                             shield_bearer_before_me: ss.shield_bearer_before_me,
@@ -3531,12 +3522,7 @@ impl EngineInner {
                             hth_weapon_id: ss.hth_weapon_id,
                             action_state: ss.action_state,
                             shield_bearer_direction: ss.shield_bearer_direction,
-                            shield_bearer_seek_position: crate::ai::Position {
-                                x: ss.seek_position.x,
-                                y: ss.seek_position.y,
-                                sector: None,
-                                level: ss.layer,
-                            },
+                            shield_bearer_seek_position: ss.ai_seek_position,
                             bow_max_range: ss.bow_max_range,
                             elevation: f32::from(ss.elevation),
                         });

@@ -1426,8 +1426,22 @@ impl EnemyAi {
         if let Some(g) = grid {
             let bearer_pt = crate::coordinates::MapPoint::new(bearer_pos.x, bearer_pos.y);
             let cover_pt = crate::coordinates::MapPoint::new(behind.x, behind.y);
-            if !g.is_straight_movement_authorized(bearer_pt, cover_pt, behind.level, &ctx.move_box)
-            {
+            let ok =
+                g.is_straight_movement_authorized(bearer_pt, cover_pt, behind.level, &ctx.move_box);
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "COVER_POS frame={} me={} bearer={} sub={} bearer_pos={:?} bearer_dir={} bearer_raw={:?} behind={:?} straight_ok={ok}",
+                    ctx.frame,
+                    self.base.me,
+                    shield_bearer,
+                    snap.current_substate,
+                    bearer_pos,
+                    snap.shield_bearer_direction,
+                    snap.position,
+                    behind,
+                );
+            }
+            if !ok {
                 return None;
             }
         }

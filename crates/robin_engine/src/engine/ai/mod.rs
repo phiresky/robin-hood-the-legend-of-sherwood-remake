@@ -4175,12 +4175,15 @@ impl EngineInner {
                 .has_animation(crate::order::OrderType::WaitingShield);
             let is_shield_bearer = weapon_is_shield && has_shield_anim;
             let in_recovery = self.actor_is_in_sword_recovery(EntityId::Soldier(SoldierId(handle)));
-            let seek_position = Position {
-                x: enemy_ai_other.base.seek_position.x,
-                y: enemy_ai_other.base.seek_position.y,
-                sector: enemy_ai_other.base.seek_position.sector,
-                level: s.element.layer(),
-            };
+            // `mposSeekPosition` is an `RHposition` and carries its own
+            // `uwLevel`; it is never re-levelled from the soldier's current
+            // element layer. `ComputePositionBehindMyShieldBearer`
+            // (`original-code/RHartificialmalignity.cpp:18005-18011`) copies
+            // that level into the cover point and hands it to
+            // `IsStraightMovementAutorized`, so a shield bearer running from
+            // one layer to a phalanx slot on another must keep the slot's
+            // level here.
+            let seek_position = enemy_ai_other.base.seek_position;
             let opponent_handles: Vec<u32> =
                 s.human.opponents.iter().map(|id| id.index()).collect();
             let number_of_opponents = opponent_handles.len().min(u16::MAX as usize) as u16;

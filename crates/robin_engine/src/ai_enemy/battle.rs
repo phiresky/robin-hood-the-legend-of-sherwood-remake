@@ -2190,6 +2190,20 @@ impl EnemyAi {
                                 )
                             });
                         let d = pos_diff(&target_pos, &cover_pos);
+                        if crate::ai_enemy::battle_decision_debug_enabled() {
+                            eprintln!(
+                                "COVER_ARM frame={} me={} bearer={} cover={:?} target={} target_pos={:?} sq={} sq_view={} grid={}",
+                                ctx.frame,
+                                self.base.me,
+                                cover_shield_bearer,
+                                cover_pos,
+                                self.base.primary_target,
+                                target_pos,
+                                square_norm(d),
+                                ctx.sq_standard_view_radius,
+                                grid.is_some(),
+                            );
+                        }
                         if square_norm(d) >= ctx.sq_standard_view_radius {
                             // Cover point too far from target — fall back to shoot
                             self.update_shield_bearer_before_me(0);
@@ -2231,6 +2245,15 @@ impl EnemyAi {
                                 remark: Remark::ArchersBehindShieldBearers,
                             });
                     } else {
+                        if crate::ai_enemy::battle_decision_debug_enabled() {
+                            eprintln!(
+                                "COVER_ARM frame={} me={} bearer={} cover=None grid={}",
+                                ctx.frame,
+                                self.base.me,
+                                cover_shield_bearer,
+                                grid.is_some(),
+                            );
+                        }
                         // Can't compute position — give up cover attempt.
                         self.update_shield_bearer_before_me(0);
                         decision = Decision::Shoot;
