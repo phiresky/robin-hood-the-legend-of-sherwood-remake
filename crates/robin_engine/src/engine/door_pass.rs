@@ -1780,12 +1780,13 @@ impl EngineInner {
     /// With `Some(obstacle_idx)`: the actor's sprite takes the
     /// obstacle's material and its top-plane coefficients.  With
     /// `None`: clears the obstacle and falls back to the sound-sector
-    /// material at the actor's current position — iterate sound
-    /// sectors and pick the material of the first one that contains
-    /// the point, or the map's default material when none match.  The
-    /// Rust port uses
-    /// [`crate::material_sectors::MaterialSectors::material_at`] which
-    /// encapsulates both steps.
+    /// material at the actor's current position — iterate the sound
+    /// sectors the fast-find grid holds **for the actor's own layer**
+    /// and pick the material of the first one that contains the point,
+    /// or the map's default material when none match
+    /// (`RHpositioninterface.cpp:610-625`).  The Rust port uses
+    /// [`crate::material_sectors::MaterialSectors::material_at_layer`]
+    /// which encapsulates both steps.
     ///
     /// Updates both `ElementData` (obstacle_index, material) and the
     /// actor's `PositionInterface` (obstacle, plane, material).
@@ -1807,14 +1808,17 @@ impl EngineInner {
             }
             None => {
                 // No obstacle: clear plane, then resolve footstep
-                // material from the sound-sector list at the actor's
-                // current map position, with the default material as
-                // the fallback.
-                let point = self
-                    .get_entity(entity_id)
-                    .map(|e| e.position_iface())
-                    .map(|pi| pi.map_position());
-                let material = point.map(|p| assets.material_sectors.material_at(p));
+                // material from the sound sectors registered on the
+                // actor's own layer at its current map position, with
+                // the default material as the fallback.
+                let probe = self.get_entity(entity_id).map(|e| {
+                    (
+                        e.position_iface().map_position(),
+                        e.element_data().layer(),
+                    )
+                });
+                let material = probe
+                    .map(|(point, layer)| assets.material_sectors.material_at_layer(point, layer));
                 (material, None)
             }
         };
