@@ -491,12 +491,13 @@ impl EngineInner {
                     .get_entity(*id)
                     .expect("controllable allied soldier disappeared during box selection");
                 let pos = entity.element_data().position_map();
-                let sprite_box = entity
-                    .sprite()
-                    .bounding_box_at(entity.cxx_position_sprite());
-                selection_box.is_intersecting(&sprite_box)
-                    || selection_box
-                        .contains_point(crate::coordinates::ScreenPoint::new(pos.x, pos.y))
+                // Soldier sprites are anchored at their feet and extend
+                // primarily up and left. Intersecting the whole sprite made
+                // the top/left sides of a drag box select units far outside
+                // it, while the bottom/right sides appeared accurate. The
+                // ground point is also the center of the persistent selection
+                // circle, so it is the stable selection coordinate.
+                selection_box.contains_point(crate::coordinates::ScreenPoint::new(pos.x, pos.y))
             })
             .collect();
         self.select_allied_soldiers(seat, &selected, shift);

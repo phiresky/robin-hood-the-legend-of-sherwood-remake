@@ -1122,7 +1122,7 @@ pub(super) fn render_frame(
     // edge case lines up with the dragging-state semantics.
     if let Some(trail) = mouse_trail_renderer
         && host.input.is_dragging
-        && engine.is_seat_selection_swordfighting(local_seat)
+        && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
         && !host.mouse_way.is_empty()
     {
         trail.render(&mut host.mouse_way, renderer);

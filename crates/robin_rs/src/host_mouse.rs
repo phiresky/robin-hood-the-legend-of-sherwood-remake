@@ -117,7 +117,9 @@ pub fn choose_mouse_pointer_for_no_action(
     let local_seat = host.transport.local_seat;
     let selected = engine.seat_selection(local_seat);
 
-    if host.input.left_mouse_down && engine.is_seat_selection_swordfighting(local_seat) {
+    if host.input.left_mouse_down
+        && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+    {
         return RHMOUSE_SWORDFIGHT_YES;
     }
 
@@ -150,7 +152,7 @@ pub fn choose_mouse_pointer_for_no_action(
     }
 
     // Iterate display order checking select/use/sword.
-    let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
+    let is_swordfighting = crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
     let selected_pc = selected.first().copied();
     let recording_macro = engine.is_recording_macro();
 

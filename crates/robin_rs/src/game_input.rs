@@ -2682,6 +2682,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn allied_box_selection_uses_ground_points_not_sprite_bounds() {
+        let (mut engine, assets, _host) = fixture();
+        let opponent = add_soldier(&mut engine, 100.0, 100.0, 100);
+        let inside = add_fighting_allied_soldier(&mut engine, 10.0, 10.0, opponent);
+        let outside = add_fighting_allied_soldier(&mut engine, -1.0, -1.0, opponent);
+
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::BoxSelectAlliedSoldiers {
+                pt1: MapPoint::new(0.0, 0.0),
+                pt2: MapPoint::new(20.0, 20.0),
+                shift: false,
+            },
+        );
+
+        assert_eq!(engine.allied_selection(PlayerId(0)), &[inside]);
+        assert_ne!(inside, outside);
+    }
+
     // ── determine_use_command ──
 
     #[test]

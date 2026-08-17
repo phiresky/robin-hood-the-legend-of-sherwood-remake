@@ -409,7 +409,7 @@ fn substitute_int(template: &str, value: i32) -> String {
 /// rectangle on the map.
 ///
 /// Rules:
-/// * If any selected PC is swordfighting, cancel both the selection
+/// * If any selected controllable unit is swordfighting, cancel both the selection
 ///   and unselection drags and skip rendering.
 /// * Otherwise, once the drag exceeds `MULTI_SELECTION_THRESHOLD`
 ///   squared distance, latch `draw_multi_selection = true` so
@@ -418,7 +418,7 @@ fn substitute_int(template: &str, value: i32) -> String {
 /// * When latched, paint the four edges in the select/unselect color.
 pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
     // ── Swordfighting cancel ──
-    if engine.is_seat_selection_swordfighting(host.transport.local_seat) {
+    if crate::game_input::is_selected_unit_swordfighting(engine, host.transport.local_seat) {
         host.input.multi_selection_active = false;
         host.input.multi_unselection_active = false;
         return;
