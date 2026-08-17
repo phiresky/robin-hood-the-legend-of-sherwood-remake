@@ -1,0 +1,20 @@
+## state:actor.command:ParrySword->SwordstrikeThrustA  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003-session-0001.jsonl.zst
+
+## state:actor.command:ParryShield->RaiseShieldInstantly  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-015-session-0001.jsonl.zst
+
+## state:actor.command:MoveWaiting->EnterSwordfight  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_032/replay-002-session-0001.jsonl.zst
+
+## state:actor.command:HitCmd->Wait  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-006-session-0001.jsonl.zst
+
+## state:actor.command:Wait->LowerShield  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_013/replay-005-session-0001.jsonl.zst
+
+## rng:DrunkCombatFreeze  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_034/replay-014-session-0001.jsonl.zst
+
+## rng:  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_001/Savegame_047/replay-010-session-0001.jsonl.zst

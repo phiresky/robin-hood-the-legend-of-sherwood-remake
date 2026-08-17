@@ -1,0 +1,21 @@
+## state:direction_goal  (2)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_039/replay-003-session-0001.jsonl.zst
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_051/replay-004-session-0001.jsonl.zst
+
+## state:actor.command:TurnElement->Wait  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_022/replay-012-session-0001.jsonl.zst
+
+## state:sprite_frame  (1)
+  parity-save-replays/15-no-input/traces/Savegame_SuN1Sh1nE/Profile_004/QuickSave-session-0001.jsonl.zst
+
+## state:layer  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_029/replay-013-session-0001.jsonl.zst
+
+## state:elevation  (1)
+  parity-save-replays/60s-random-input/schema14/traces/Savegame_linux3/Profile_003/Savegame_029/replay-001-session-0001.jsonl.zst
+
+## state:detection.detectables.length  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_051/replay-001-session-0001.jsonl.zst
+
+## state:actor.command:EquipBow->MoveWaiting  (1)
+  parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_071/replay-010-session-0001.jsonl.zst
