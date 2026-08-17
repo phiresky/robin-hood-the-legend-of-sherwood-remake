@@ -1690,3 +1690,44 @@ diverging `Soldier(SoldierId(223))`, `us=5`, `them=1`, `rank=0` = `RANK_SOLDIER`
 score 772 against 25, which is why the Original leaves substate 160 for 173 while Rust stays in the
 swordfight. **Rust is missing the whole line-formation branch (or its neighbour selection) for this
 fighter**, not mis-scoring a candidate it has.
+
+## Wave D assignment map (2026-08-17, from `remaining-32.snapshot`)
+
+Runner `0c69baf45`, sha256 `44434df0f9632821b3e699e99dcdbd305e2a0ec0fb6035c43e9a951c81b9c962`.
+Brief: `output/parity-audits/batch24-0c69baf45/AGENT_BRIEF.md`. Bundles in the sibling `bundles/`.
+27 groups over 32 traces; **23 are singletons and the largest group is 3**, which is why this wave is
+organised by theme rather than by cluster label.
+
+| bundle | theme | traces |
+|---|---|---|
+| (pre-existing) | composite sequence-launch interleave | `nicouzouf/Savegame_022/replay-012` (`TurnElement->Wait`, f1413) |
+| (pre-existing) | pre-motion seek arrival | `linux3/P003/Savegame_074` replay-001 (30s) + replay-002 (schema12), f74062/f74569 |
+| D1 | `state:ai.substate` | `SuN1Sh1nE/Savegame_024/r004`, `linux3/P003/Savegame_005/r008`, `linux3/P003/Savegame_051/r008` |
+| D2 | swordfight / parade / shield | `SuN1Sh1nE/Savegame_004/r003`, `SuN1Sh1nE/Savegame_013/r005`, `SuN1Sh1nE/Savegame_024/r015`, `linux2/Savegame_032/r002`, `linux3/P003/Savegame_034/r014` |
+| D3 | movement / door-pass commands | `linux2/Savegame_024/r013`, `linux3/P001/Savegame_029/r006`, `linux3/P001/Savegame_034/r013`, `linux2/Savegame_031/r015`, `linux3/P001/Savegame_009/r004`, `linux3/P001/Savegame_044/r003` |
+
+**Unassigned (15):** `15-no-input/SuN1Sh1nE/QuickSave` (sprite_frame); `30s/linux3/P003/Savegame_019/r001`
+(MacroRand); schema12 `SuN1Sh1nE/Savegame_024/r006` (Wait->MoveWaiting), `SuN1Sh1nE/Savegame_024/r014`
+(EnterAttentiveMode->Wait), `linux2/Savegame_031/r011` (SeekPointSelection), `linux3/P001/Savegame_018/r002`
+and `nicouzouf/Savegame_020/r014` (both Wait->MoveOk — a genuine 2-member group),
+`nicouzouf/Savegame_037/r005` (VipIdleRemark), `nicouzouf/Savegame_071/r010` (EquipBow->MoveWaiting);
+schema14 `linux2/Savegame_039/r003` and `linux3/P003/Savegame_051/r004` (both direction_goal — a genuine
+2-member group), `linux3/P001/Savegame_047/r010` (rng, unlabelled — **the tiredness trace, see below**),
+`linux3/P003/Savegame_029/r001` (elevation), `linux3/P003/Savegame_046/r011` (motion_state).
+
+### Probe readings already routed to the agents holding those traces
+Findings 1, 3 and 4 of the instrumentation agent land inside D2 and D3 and have been forwarded, including
+the warning that probe `co=` is `GetCreationOrder()` and not the trace entity index. **Findings 3 and 4
+are probably one bug**: two independent traces show Rust generating the 16-position ring where the
+Original takes a jump-line branch (`mpMyLineJump != NULL`) or a line-formation branch
+(`ProposeCombatPositionsRightOf`/`Between`, `line_pos=1 bonus=500`). The suspect is branch selection in
+`ProposeGoodCombatPosition` / `ProposeCombatPositionsAround`, not the scoring weights. D2 and D3 have been
+told to coordinate before either one edits that function.
+
+### Finding 2 is NOT yet assigned — ready-to-dispatch task
+`linux3/P001/Savegame_047/replay-010` f84324: the Original's `muwTiredness` is **90**, not >= 100, so
+Rust runs at least 10 ahead. Full Original trail for `co=128` (endurance 100):
+`f83968 10→0`, `84020 0→10`, `84049 →25`, `84098 →40`, **`84114 40→30` (parry-smalltalk decrement)**,
+`84167 →50`, `84237 →70`, `84278 →80`, `84324 80→90`, `84354 90→110`.
+Recuperation fires only when `frame & 63 == co & 31` AND the actor is neither swordfighting nor moving.
+Prime suspects for the Rust lead: the f84114 parry-smalltalk drain, and the three recuperation ticks.
