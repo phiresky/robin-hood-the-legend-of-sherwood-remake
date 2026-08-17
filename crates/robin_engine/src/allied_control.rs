@@ -83,6 +83,11 @@ pub struct AlliedSoldierOrder {
     /// Last destination sent to the path system. Follow orders use this to
     /// avoid replacing an active route for insignificant hero movement.
     pub last_destination: MapPoint,
+    /// One-shot reachable fallback for a formation slot. A failed slot moves
+    /// toward the command's shared center instead of leaving the actor frozen
+    /// in `MoveWaiting` for the generic 100-frame retry window.
+    #[serde(default)]
+    pub path_fallback: Option<MapPoint>,
 }
 
 #[derive(
@@ -146,6 +151,7 @@ mod tests {
                 formation: AlliedFormation::Compact,
                 duty: AlliedDuty::Hold { anchor: point },
                 last_destination: point,
+                path_fallback: None,
             },
         );
 
@@ -153,5 +159,38 @@ mod tests {
         let restored: AlliedControlState =
             serde_json::from_str(&json).expect("allied control state deserializes");
         assert_eq!(restored.orders.get(&soldier), state.orders.get(&soldier));
+    }
+
+    #[test]
+    fn older_controlled_orders_default_missing_path_fallback() {
+        let soldier = EntityId::Soldier(SoldierId(17));
+        let point = MapPoint::new(12.0, 34.0);
+        let mut state = AlliedControlState::default();
+        state.orders.insert(
+            soldier,
+            AlliedSoldierOrder {
+                stance: AlliedStance::Defensive,
+                formation: AlliedFormation::Compact,
+                duty: AlliedDuty::Hold { anchor: point },
+                last_destination: point,
+                path_fallback: Some(MapPoint::new(50.0, 60.0)),
+            },
+        );
+
+        let mut value = serde_json::to_value(state).expect("allied control state serializes");
+        let orders = value
+            .get_mut("orders")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("serialized allied orders are a JSON object");
+        let order = orders
+            .values_mut()
+            .next()
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("serialized allied order is a JSON object");
+        order.remove("path_fallback");
+
+        let restored: AlliedControlState =
+            serde_json::from_value(value).expect("older allied order deserializes");
+        assert_eq!(restored.orders[&soldier].path_fallback, None);
     }
 }

@@ -493,10 +493,20 @@ impl EngineInner {
             .filter(|id| self.is_controllable_allied_soldier(*id))
             .collect();
         let slots = self.allied_formation_slots(assets, &valid, destination, formation);
-        for &(id, slot) in &slots {
+        for &(id, _) in &slots {
             self.set_allied_ai_locked(id, true);
-            self.perform_group_move(sim, assets, &[id], slot, running, true, None);
         }
+        let actor_ids: Vec<_> = slots.iter().map(|(id, _)| *id).collect();
+        let destinations: Vec<_> = slots.iter().map(|(_, point)| *point).collect();
+        self.perform_group_move_to_slots(
+            sim,
+            assets,
+            &actor_ids,
+            destination,
+            &destinations,
+            running,
+            true,
+        );
         slots
     }
 
@@ -526,6 +536,8 @@ impl EngineInner {
                     formation,
                     duty: AlliedDuty::Hold { anchor: slot },
                     last_destination: slot,
+                    path_fallback: (distance_squared(slot, destination) > 1.0)
+                        .then_some(destination),
                 },
             );
         }
@@ -551,6 +563,7 @@ impl EngineInner {
                     formation: AlliedFormation::default(),
                     duty: AlliedDuty::Hold { anchor: position },
                     last_destination: position,
+                    path_fallback: None,
                 });
             order.stance = stance;
             if stance == AlliedStance::Hold {
@@ -585,6 +598,7 @@ impl EngineInner {
                     formation,
                     duty: AlliedDuty::Hold { anchor: position },
                     last_destination: position,
+                    path_fallback: None,
                 });
             order.formation = formation;
         }
@@ -624,6 +638,8 @@ impl EngineInner {
                         next: 1,
                     },
                     last_destination: slot,
+                    path_fallback: (distance_squared(slot, destination) > 1.0)
+                        .then_some(destination),
                 },
             );
         }
@@ -674,6 +690,7 @@ impl EngineInner {
                     // Causes the next allied-control tick to issue an initial
                     // route when this soldier is outside the follow radius.
                     last_destination: current_position,
+                    path_fallback: None,
                 },
             );
         }
@@ -687,6 +704,36 @@ impl EngineInner {
             }
         }
         self.players.allied = Default::default();
+    }
+
+    /// Consume the one-shot center fallback for a controlled soldier whose
+    /// formation slot has no path. Returning `Some(None)` identifies a
+    /// controlled ally with no fallback, which must still fail immediately
+    /// instead of retaining the generic PC-style 100-frame waiting pose.
+    pub(super) fn allied_path_failure_fallback(
+        &mut self,
+        id: EntityId,
+    ) -> Option<Option<MapPoint>> {
+        if !self.is_controllable_allied_soldier(id) {
+            return None;
+        }
+        let order = self.players.allied.orders.get_mut(&id).unwrap_or_else(|| {
+            panic!("controllable allied soldier {id:?} has no control order after path failure")
+        });
+        let fallback = order.path_fallback.take();
+        if let Some(point) = fallback {
+            match &mut order.duty {
+                AlliedDuty::Hold { anchor } => *anchor = point,
+                AlliedDuty::Patrol { points, next } => points[usize::from(*next)] = point,
+                AlliedDuty::Follow { .. } => {
+                    // Follow targets move continuously. Suppress an immediate
+                    // retry loop; the next meaningful hero displacement will
+                    // request a fresh path.
+                }
+            }
+            order.last_destination = point;
+        }
+        Some(fallback)
     }
 
     pub(super) fn tick_allied_control(

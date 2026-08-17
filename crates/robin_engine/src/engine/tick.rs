@@ -3314,7 +3314,7 @@ impl EngineInner {
         )
         .take_completed();
         self.trace_path_barrier_completed("take1", &completed);
-        self.apply_completed_path_work(sim, completed);
+        self.apply_completed_path_work(sim, assets, completed);
 
         MovementContext::new(
             self.control.frame_counter,
@@ -3336,7 +3336,7 @@ impl EngineInner {
             )
             .take_completed();
             self.trace_path_barrier_completed("take2", &completed);
-            self.apply_completed_path_work(sim, completed);
+            self.apply_completed_path_work(sim, assets, completed);
 
             // In Original's synchronous WAITING arm, starting the first
             // request recursively enters the READY arm.  That arm delivers
@@ -3487,6 +3487,7 @@ impl EngineInner {
     fn apply_completed_path_work(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         completed: Option<CompletedPathWork>,
     ) {
         match completed {
@@ -3513,12 +3514,45 @@ impl EngineInner {
                     sector = request.sector,
                     "path scheduling barrier: pathfind FAILED",
                 );
-                self.orders.failed_path_requests.push(
-                    super::movement::FailedPathRequest::from_pending(
-                        request,
-                        self.control.frame_counter,
-                    ),
-                );
+                if let Some(fallback) = self.allied_path_failure_fallback(request.owner) {
+                    if let Some(element) = self
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(request.seq_id, request.elem_idx)
+                    {
+                        element.command = crate::element::Command::MoveOk;
+                    }
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(request.seq_id, request.elem_idx);
+                    self.dispatch_condolations_for_owner_boundary(sim, request.owner, assets);
+                    if let Some(destination) = fallback {
+                        tracing::info!(
+                            actor = ?request.owner,
+                            failed_x = request.dest.x,
+                            failed_y = request.dest.y,
+                            fallback_x = destination.x,
+                            fallback_y = destination.y,
+                            "allied formation slot unreachable; moving toward shared command center",
+                        );
+                        self.perform_group_move(
+                            sim,
+                            assets,
+                            &[request.owner],
+                            destination,
+                            false,
+                            false,
+                            None,
+                        );
+                    }
+                } else {
+                    self.orders.failed_path_requests.push(
+                        super::movement::FailedPathRequest::from_pending(
+                            request,
+                            self.control.frame_counter,
+                        ),
+                    );
+                }
             }
             None => {}
         }
