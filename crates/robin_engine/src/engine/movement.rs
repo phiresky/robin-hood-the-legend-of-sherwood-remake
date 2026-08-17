@@ -2240,6 +2240,20 @@ pub(crate) fn adapt_source_to_current_door(
 /// `GetDoor()` at that callback even though the translated movement element
 /// can keep executing its far-side walk, so later commands must use the live
 /// position/sector instead of adapting through the completed gate.
+///
+/// The direction reported here is the pass's live traversal direction, not the
+/// movement element's retained `mswDirection`. `RHSequence::AppendMoveToSequence`
+/// reads `pTarget->GetDoorDirection()` (`original-code/RHsequence.cpp:369`),
+/// which is `RHPositionInterface::mbDoorDirection`
+/// (`original-code/RHpositioninterface.h:297-298`). That field is written by
+/// `SetDoor( pDoor, <live direction> )` inside `RHElementActor::Translate`
+/// (`original-code/RHelementactor.cpp:4035`, `:4053`, `:4080`, `:4110`,
+/// `:4165`, `:4199`, `:4242`, `:4295`), where the direction comes from the
+/// `GetSector() == pSectorIn` test performed at launch — the same test
+/// `PassDoor::dispatch` reproduces into `ActiveDoorPass::direct`.
+/// `ActiveDoorPass::position_direct` mirrors the *element's* serialized
+/// `mswDirection` (`original-code/RHSequenceElementMovement.cpp:394-407`),
+/// which only `RHArtificialIntelligence::Position` consumes.
 pub(crate) fn current_door_for_route_source(
     entity: &crate::element::Entity,
 ) -> (crate::position_interface::DoorHandle, bool) {
@@ -2250,7 +2264,7 @@ pub(crate) fn current_door_for_route_source(
         .map(|pass| {
             (
                 crate::position_interface::DoorHandle(pass.door_index.0),
-                pass.position_direct,
+                pass.direct,
             )
         })
         .unwrap_or_else(|| {
@@ -2270,13 +2284,21 @@ mod route_source_tests {
     use crate::position_interface::DoorHandle;
 
     fn pc_with_door_pass(triggers_fired: u8) -> Entity {
+        pc_with_door_pass_directions(triggers_fired, true, true)
+    }
+
+    fn pc_with_door_pass_directions(
+        triggers_fired: u8,
+        direct: bool,
+        position_direct: bool,
+    ) -> Entity {
         Entity::Pc(ActorPc {
             element: ElementData::default(),
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {
                     door_index: DoorIndex(53),
-                    direct: true,
-                    position_direct: true,
+                    direct,
+                    position_direct,
                     steps: Default::default(),
                     triggers_fired,
                     current_action: OrderType::WalkingUpright,
@@ -2305,6 +2327,19 @@ mod route_source_tests {
             current_door_for_route_source(&pc),
             (DoorHandle::NULL, false)
         );
+    }
+
+    #[test]
+    fn route_source_reports_live_traversal_direction_not_element_direction() {
+        // `RHSequence::AppendMoveToSequence` reads `GetDoorDirection()`
+        // (`original-code/RHsequence.cpp:369`), the position interface field
+        // `SetDoor` writes from the live `GetSector() == pSectorIn` test at
+        // launch. A v48-restored movement element can carry a different
+        // serialized `mswDirection`; that value belongs to
+        // `RHArtificialIntelligence::Position`, not to route sourcing.
+        let pc = pc_with_door_pass_directions(0, true, false);
+
+        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(53), true));
     }
 
     #[test]
@@ -6185,6 +6220,12 @@ impl EngineInner {
                     Some(entity_id),
                 ));
             }
+            if intent.enter_swordfight_before_move {
+                prefix.push(Self::goto_enter_swordfight_element(
+                    prefix.len() as u16 + 1,
+                    entity_id,
+                ));
+            }
             if intent.stop_menace_before_move {
                 prefix.push(crate::sequence::SequenceElement::new(
                     prefix.len() as u16 + 1,
@@ -6257,6 +6298,7 @@ impl EngineInner {
 
         let move_level = 1
             + u16::from(intent.quit_swordfight_before_move)
+            + u16::from(intent.enter_swordfight_before_move)
             + u16::from(intent.stop_menace_before_move)
             + u16::from(intent.lower_shield_before_move);
         let mut elem = crate::sequence::SequenceElement::new_movement(
@@ -6299,6 +6341,12 @@ impl EngineInner {
                 Some(entity_id),
             ));
         }
+        if intent.enter_swordfight_before_move {
+            let level = sequence
+                .last()
+                .map_or(1, |element| element.command_level.saturating_add(1));
+            sequence.append_element(Self::goto_enter_swordfight_element(level, entity_id));
+        }
         if intent.stop_menace_before_move {
             sequence.append_element(crate::sequence::SequenceElement::new(
                 sequence
@@ -6335,6 +6383,36 @@ impl EngineInner {
             "AI movement launched via sequence element"
         );
         Some(sequence_id)
+    }
+
+    /// The raise-sword element `RHArtificialIntelligence::GoTo` inserts into
+    /// the movement's own sequence for `GOTO_SWORD` when the actor is not
+    /// already in a sword action state
+    /// (`original-code/RHartificialintelligence.cpp:2486-2495`): a generic
+    /// `ENTER_SWORDFIGHT` with a null opponent, no jump-line destination and
+    /// `SWORDFIGHT_PREPARED` cleared.
+    fn goto_enter_swordfight_element(
+        command_level: u16,
+        entity_id: EntityId,
+    ) -> crate::sequence::SequenceElement {
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            command_level,
+            crate::element::Command::EnterSwordfight,
+            Some(entity_id),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::SwordfightPrepared,
+            crate::sequence::FieldValue::Bool(false),
+        );
+        element
     }
 
     /// Build the exact tail authored by

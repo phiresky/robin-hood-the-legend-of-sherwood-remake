@@ -156,7 +156,10 @@ impl LegacyTailRuntimeAdoptionPlan {
                 });
             }
             let remaining = match element.get_property(Field::Timer) {
-                Some(FieldValue::Integer(value)) => *value,
+                // Signed `int` in the Original; the property word is stored
+                // unsigned, so a countdown that already went negative in the
+                // saved game must reinterpret rather than saturate.
+                Some(FieldValue::Integer(value)) => *value as i32,
                 _ => {
                     return Err(LegacyTailRuntimeAdoptError::InvalidTimerProperty { index });
                 }

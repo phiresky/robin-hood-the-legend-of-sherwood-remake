@@ -728,7 +728,7 @@ impl EngineInner {
     /// when the timer elapses.
     pub(crate) fn add_timer(
         &mut self,
-        remaining_frames: u32,
+        remaining_frames: i32,
         element_ref: crate::sequence::SequenceElementRef,
     ) {
         self.orders.timer_elements.push(TimerEntry {

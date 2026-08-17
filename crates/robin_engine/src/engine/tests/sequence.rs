@@ -57,10 +57,12 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
         Some(OrderType::WaitingAlerted),
         "the regression must enter the actual soldier WaitingAlerted Execute arm"
     );
-    assert_eq!(outcomes.execute_sides.waiting_alerted_leave, [owner]);
-    engine.drain_waiting_alerted_leave(std::mem::take(
-        &mut outcomes.execute_sides.waiting_alerted_leave,
-    ));
+    assert_eq!(outcomes.execute_sides.waiting_alerted, [owner]);
+    engine.drain_waiting_alerted(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        std::mem::take(&mut outcomes.execute_sides.waiting_alerted),
+    );
 
     let matching: Vec<_> = engine
         .orders
@@ -99,7 +101,11 @@ fn waiting_alerted_execute_does_not_duplicate_a_leave_already_waiting_to_launch(
         Some(owner),
     ));
 
-    engine.drain_waiting_alerted_leave(vec![owner]);
+    engine.drain_waiting_alerted(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        vec![owner],
+    );
 
     let matching = engine
         .orders
@@ -126,7 +132,11 @@ fn waiting_alerted_execute_preserves_attentive_requested_state() {
     enemy.attentive = true;
     enemy.will_be_attentive = true;
 
-    engine.drain_waiting_alerted_leave(vec![owner]);
+    engine.drain_waiting_alerted(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        vec![owner],
+    );
 
     assert!(
         !engine

@@ -2560,7 +2560,9 @@ impl TimerImmediateContext<'_> {
             .get_element(seq_id, elem_idx)
             .and_then(|element| element.get_property(crate::sequence::Field::Timer))
             .and_then(|value| match value {
-                crate::sequence::FieldValue::Integer(value) => Some(*value),
+                // `RHFIELD_TIMER` is a signed `int` in the Original; the
+                // sequence-element property table stores it as a `u32` word.
+                crate::sequence::FieldValue::Integer(value) => Some(*value as i32),
                 _ => None,
             })
             .unwrap_or(0);
