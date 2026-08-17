@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::campaign::CampaignValue;
+use crate::gameplay_config::GameplayConfig;
 use crate::graphic_config::GraphicConfig;
 use crate::sound_config::SoundConfig;
 
@@ -145,6 +146,8 @@ pub struct PlayerProfile {
     pub minimap_x: f32,
     pub minimap_y: f32,
     pub graphic_config: GraphicConfig,
+    #[serde(default)]
+    pub gameplay_config: GameplayConfig,
     pub sound_config: SoundConfig,
     // KeyConfig moved to host (robin_rs) — it's input binding config,
     // not sim state. See Decision 5B. Host keeps a parallel KeyConfig
@@ -169,6 +172,7 @@ impl PlayerProfile {
             minimap_x: 65536.0,
             minimap_y: 65536.0,
             graphic_config: GraphicConfig::default(),
+            gameplay_config: GameplayConfig::default(),
             sound_config: SoundConfig::default(),
             active: false,
         }

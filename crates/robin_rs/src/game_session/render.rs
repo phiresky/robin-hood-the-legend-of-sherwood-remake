@@ -959,6 +959,12 @@ pub(super) fn render_frame(
         {
             host.input.marked_pc_ids.push(guard_id);
         }
+
+        if host.control_allied_soldiers {
+            host.input
+                .marked_pc_ids
+                .extend_from_slice(engine.allied_selection(local_seat));
+        }
     }
 
     // ── GPU phase: selection / hover outlines ──

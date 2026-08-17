@@ -8,18 +8,18 @@
 use crate::host::ViewportState;
 use crate::native_font::{self, NativeFont};
 use crate::renderer::Renderer;
-use crate::ui_panel::PortraitCache;
+use crate::ui_panel::{
+    PortraitCache, PortraitTarget, portrait_bar_items, portrait_capacity, slot_left_x,
+};
 use robin_engine::character_kind as engine_character_kind;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::element::{Entity, EntityId};
+use robin_engine::element::{Camp, Entity, EntityId};
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles;
 
 // ─── Layout constants (matching ui_panel.rs) ─────────────────────
 
-const MARGIN: u16 = 32;
-const NUMBER_OF_SLOTS: u16 = 5;
 const ELEMENT_WIDTH: u16 = 112;
 const BORDURE: u16 = 3;
 const BOTTOM_SCROLL_HEIGHT: u16 = 23;
@@ -152,16 +152,24 @@ fn entity_display_name(
             }
             Some(kind.profile_name().to_string())
         }
-        Entity::Soldier(s) => assets
-            .profile_manager
-            .get_soldier(s.soldier.soldier_profile_index)
-            .map(|p| {
-                if p.display_name.is_empty() {
-                    p.profile_name.clone()
-                } else {
-                    p.display_name.clone()
-                }
-            }),
+        Entity::Soldier(s) => {
+            if s.soldier.cached_camp == Camp::Royalists
+                && let Some(name) = assets.random_peasant_name(id.index() as usize)
+            {
+                Some(name)
+            } else {
+                assets
+                    .profile_manager
+                    .get_soldier(s.soldier.soldier_profile_index)
+                    .map(|p| {
+                        if p.display_name.is_empty() {
+                            p.profile_name.clone()
+                        } else {
+                            p.display_name.clone()
+                        }
+                    })
+            }
+        }
         Entity::Civilian(c) => {
             let civ_profile = assets
                 .profile_manager
@@ -227,18 +235,6 @@ pub enum Alignment {
     Left,
     Centered,
     Right,
-}
-
-// ─── Slot geometry helpers ───────────────────────────────────────
-
-fn slot_width(screen_width: u16) -> u16 {
-    (screen_width - 2 * MARGIN) / NUMBER_OF_SLOTS
-}
-
-fn slot_left_x(screen_width: u16, slot_index: u16) -> u16 {
-    let sw = slot_width(screen_width);
-    let position_in_slot = MARGIN + (sw - ELEMENT_WIDTH) / 2;
-    slot_index * sw + position_in_slot
 }
 
 // ─── Rendering helpers ───────────────────────────────────────────
@@ -570,16 +566,20 @@ fn render_portrait_text_gpu(
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
 
-    let num_portraits = engine.pc_ids().len().min(NUMBER_OF_SLOTS as usize);
+    let (items, _) = portrait_bar_items(engine, local_seat, sw);
+    let capacity = portrait_capacity(sw);
 
-    for slot in 0..num_portraits {
-        let pc_id = engine.pc_ids()[slot];
+    for (slot, item) in items.iter().enumerate() {
+        let pc_id = item.members[0];
         let entity = match engine.get_entity(pc_id) {
             Some(e) => e,
             None => continue,
         };
 
-        let is_selected = engine.seat_selection(local_seat).contains(&pc_id);
+        let is_selected = match item.target {
+            PortraitTarget::Pc(_) => engine.seat_selection(local_seat).contains(&pc_id),
+            _ => engine.allied_selection(local_seat) == item.members,
+        };
         let is_burned = matches!(entity, Entity::Pc(pc) if pc.pc.life_points <= 0);
         if is_burned {
             continue;
@@ -591,7 +591,7 @@ fn render_portrait_text_gpu(
             CLOSE_POSITION_VISAGE
         };
 
-        let x = slot_left_x(sw, slot as u16) as i32;
+        let x = slot_left_x(sw, slot as u16, capacity) as i32;
 
         let is_sword_fighting =
             matches!(entity, Entity::Pc(pc) if pc.actor.action_state.is_sword());
@@ -599,10 +599,14 @@ fn render_portrait_text_gpu(
             is_sword_fighting && (is_selected || (engine.frame_counter() / 10).is_multiple_of(2));
 
         let vis_top = (sh - pos_visage) as i32;
-        let name =
+        let mut name =
             entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_default();
+        if !matches!(item.target, PortraitTarget::Pc(_)) && item.members.len() > 1 {
+            name = format!("{name}\n+{}", item.members.len() - 1);
+        }
         if !name.is_empty() && !sword_visible {
-            let vip = is_vip_character(assets, entity);
+            let vip =
+                matches!(item.target, PortraitTarget::Pc(_)) && is_vip_character(assets, entity);
             let display_name = prepare_portrait_name(&name, vip);
             let name_x = x + TEXT_OFFSET_X;
             let name_y = vis_top + TEXT_OFFSET_Y;
@@ -743,10 +747,13 @@ fn render_ammo_counts_gpu(
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
 
-    let num_portraits = engine.pc_ids().len().min(NUMBER_OF_SLOTS as usize);
+    let (items, _) = portrait_bar_items(engine, local_seat, sw);
+    let capacity = portrait_capacity(sw);
 
-    for slot in 0..num_portraits {
-        let pc_id = engine.pc_ids()[slot];
+    for (slot, item) in items.iter().enumerate() {
+        let PortraitTarget::Pc(pc_id) = item.target else {
+            continue;
+        };
         if !engine.seat_selection(local_seat).contains(&pc_id) {
             continue;
         }
@@ -763,7 +770,7 @@ fn render_ammo_counts_gpu(
             (&[ACTION1_WIDTH, ACTION2_WIDTH, ACTION3_WIDTH], 3)
         };
 
-        let x = slot_left_x(sw, slot as u16) as i32;
+        let x = slot_left_x(sw, slot as u16, capacity) as i32;
         let scroll_top = (sh - POSITION_BOTTOM_SCROLL) as i32;
         let scroll_bot = (sh - BORDURE) as i32;
         let ammo_y = scroll_top + (scroll_bot - scroll_top - font.height() as i32) / 2;
@@ -790,9 +797,9 @@ mod tests {
 
     #[test]
     fn slot_geometry_matches_ui_panel() {
-        assert_eq!(slot_width(800), 147);
-        for slot in 0..5 {
-            let left = slot_left_x(800, slot);
+        assert_eq!(portrait_capacity(800), 6);
+        for slot in 0..portrait_capacity(800) {
+            let left = slot_left_x(800, slot as u16, portrait_capacity(800));
             let right = left + ELEMENT_WIDTH;
             assert!(right <= 800, "slot {} overflows screen", slot);
         }

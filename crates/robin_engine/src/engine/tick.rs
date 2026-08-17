@@ -3115,6 +3115,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        self.tick_allied_control(sim, assets);
+
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 frames (or every frame in debug).
         if self.control.frame_counter.is_multiple_of(256) {

@@ -1,0 +1,128 @@
+//! Deterministic state for the optional direct-control allied soldier system.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{coordinates::MapPoint, element::EntityId};
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub enum AlliedStance {
+    /// Do not acquire targets or leave the assigned position.
+    Hold,
+    /// Return fire, but resume the assigned patrol/follow duty afterwards.
+    #[default]
+    Defensive,
+    /// Let the soldier AI pursue threats without a defensive leash.
+    Aggressive,
+}
+
+impl AlliedStance {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hold => Self::Defensive,
+            Self::Defensive => Self::Aggressive,
+            Self::Aggressive => Self::Hold,
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub enum AlliedFormation {
+    #[default]
+    Line,
+    Column,
+    Wedge,
+    Ring,
+}
+
+impl AlliedFormation {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Line => Self::Column,
+            Self::Column => Self::Wedge,
+            Self::Wedge => Self::Ring,
+            Self::Ring => Self::Line,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum AlliedDuty {
+    Hold { anchor: MapPoint },
+    Patrol { points: [MapPoint; 2], next: u8 },
+    Follow { hero: EntityId, offset: MapPoint },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AlliedSoldierOrder {
+    pub stance: AlliedStance,
+    pub formation: AlliedFormation,
+    pub duty: AlliedDuty,
+    /// Last destination sent to the path system. Follow orders use this to
+    /// avoid replacing an active route for insignificant hero movement.
+    pub last_destination: MapPoint,
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct AlliedPinnedGroup {
+    pub id: u32,
+    pub members: Vec<EntityId>,
+}
+
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct AlliedSeatState {
+    pub selection: Vec<EntityId>,
+    pub pinned_groups: Vec<AlliedPinnedGroup>,
+    pub first_visible_portrait: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AlliedControlState {
+    pub seats: Vec<AlliedSeatState>,
+    pub orders: BTreeMap<EntityId, AlliedSoldierOrder>,
+    pub next_group_id: u32,
+}
+
+impl Default for AlliedControlState {
+    fn default() -> Self {
+        Self {
+            seats: vec![AlliedSeatState::default()],
+            orders: BTreeMap::new(),
+            next_group_id: 1,
+        }
+    }
+}
+
+impl AlliedControlState {
+    pub fn ensure_seat(&mut self, seat: usize) -> &mut AlliedSeatState {
+        if self.seats.len() <= seat {
+            self.seats.resize_with(seat + 1, AlliedSeatState::default);
+        }
+        &mut self.seats[seat]
+    }
+}

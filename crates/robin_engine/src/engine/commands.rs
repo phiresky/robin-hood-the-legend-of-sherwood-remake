@@ -837,6 +837,47 @@ impl EngineInner {
                 self.select_by_portrait_index(assets, seat, *portrait_index as u8, *append);
                 self.update_recording_after_selection_change();
             }
+            SelectAlliedSoldiers { soldiers, append } => {
+                self.select_allied_soldiers(seat, soldiers, *append);
+            }
+            BoxSelectAlliedSoldiers { pt1, pt2, shift } => {
+                self.box_select_allied_soldiers(seat, *pt1, *pt2, *shift);
+            }
+            ClearAlliedSelection => {
+                self.players.allied.ensure_seat(seat).selection.clear();
+            }
+            PinAlliedSelection => self.pin_allied_selection(seat),
+            UnpinAlliedGroup { group_id } => self.unpin_allied_group(seat, *group_id),
+            SelectAlliedGroup { group_id, append } => {
+                self.select_allied_group(seat, *group_id, *append);
+            }
+            PageAlliedPortraits { delta } => self.page_allied_portraits(seat, *delta),
+            MoveAlliedSoldiers {
+                soldiers,
+                destination,
+                running,
+                formation,
+            } => {
+                self.command_allied_move(sim, assets, soldiers, *destination, *running, *formation)
+            }
+            SetAlliedStance { soldiers, stance } => {
+                self.set_allied_stance(soldiers, *stance);
+            }
+            SetAlliedFormation {
+                soldiers,
+                formation,
+            } => self.set_allied_formation(soldiers, *formation),
+            SetAlliedPatrol {
+                soldiers,
+                destination,
+                formation,
+            } => self.set_allied_patrol(sim, assets, soldiers, *destination, *formation),
+            SetAlliedFollow {
+                soldiers,
+                hero,
+                formation,
+            } => self.set_allied_follow(soldiers, *hero, *formation),
+            ReleaseAlliedControl => self.release_allied_control(),
 
             // ── Special ─────────────────────────────────────────
             ResetComa { pc_id } => self.reset_coma(assets, *pc_id),

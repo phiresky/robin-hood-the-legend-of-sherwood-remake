@@ -41,6 +41,7 @@ pub(crate) async fn show_main_menu_options(
         .unwrap_or_else(|error| panic!("Main menu Options requires an active profile: {error}"));
     let active_profile_id = profile.id;
     let mut graphic = profile.graphic_config;
+    let mut gameplay = profile.gameplay_config;
     let mut sound_cfg = profile.sound_config;
     let (active, custom) = application_context
         .active_key_configs()
@@ -102,6 +103,7 @@ pub(crate) async fn show_main_menu_options(
             0,
         )),
         &mut graphic,
+        &mut gameplay,
         &mut sound_cfg,
         &mut key_cfg.active,
         &mut key_cfg.custom,
@@ -128,6 +130,7 @@ pub(crate) async fn show_main_menu_options(
                     .find(|profile| profile.id == active_profile_id)
                     .expect("active profile disappeared while Options was open");
                 profile.graphic_config = graphic;
+                profile.gameplay_config = gameplay;
                 profile.sound_config = sound_cfg;
                 if let Err(err) = mgr.save() {
                     tracing::error!("Main menu Options: failed to save profile manager: {err:#}");

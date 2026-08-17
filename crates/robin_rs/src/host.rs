@@ -9,6 +9,7 @@
 use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
 use robin_assets::shipping_datadir::ShippingDatadir;
+use robin_engine::allied_control::AlliedFormation;
 use robin_engine::coordinates::{
     MapPoint, MapSize, ScreenPoint, ScreenSize, ScreenVec, WorldPoint3D,
 };
@@ -36,6 +37,15 @@ use crate::sound::SoundManager;
 
 const PANNEL_HEIGHT: f32 = engine_api::PANNEL_HEIGHT;
 const DISPLAY_INFO_SAMPLES: usize = 16;
+
+/// A world-space target still required by an allied portrait action.
+#[derive(Debug, Clone)]
+pub enum AlliedTargetMode {
+    Patrol {
+        soldiers: Vec<EntityId>,
+        formation: AlliedFormation,
+    },
+}
 
 /// Mutable application services shared by clones of one
 /// [`ApplicationContext`]. Separate contexts allocate separate service sets,
@@ -68,6 +78,7 @@ struct HostContextSnapshot {
     shipping: Option<Arc<ShippingDatadir>>,
     key_config: KeyConfig,
     custom_key_config: KeyConfig,
+    control_allied_soldiers: bool,
 }
 
 impl ApplicationContext {
@@ -322,6 +333,10 @@ impl ApplicationContext {
             shipping: services.shipping.clone(),
             key_config,
             custom_key_config,
+            control_allied_soldiers: self
+                .active_profile_snapshot()?
+                .gameplay_config
+                .control_allied_soldiers,
         })
     }
 
@@ -553,6 +568,14 @@ pub struct HostFrontend {
 
     // ── Input ────────────────────────────────────────────────────
     pub input: InputState,
+
+    /// Active profile's opt-in allied-soldier control setting. Host-local
+    /// because resolved player commands, rather than UI preferences, cross
+    /// replay and multiplayer boundaries.
+    pub control_allied_soldiers: bool,
+
+    /// Host-local targeting prompt armed by the allied patrol portrait button.
+    pub allied_target_mode: Option<AlliedTargetMode>,
 
     /// Back-to-front entity draw order.  Host-cached derived state —
     /// recomputed from [`Engine::compute_display_order`] once per frame
@@ -940,6 +963,7 @@ impl Host {
                 shipping: snapshot.shipping,
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
+                control_allied_soldiers: snapshot.control_allied_soldiers,
                 ..Default::default()
             },
             ..Default::default()

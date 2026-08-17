@@ -9,6 +9,7 @@
 //! and command types determined at resolution time.  During replay,
 //! the same commands are applied verbatim without re-resolving.
 
+use crate::allied_control::{AlliedFormation, AlliedStance};
 use crate::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
 use crate::element::{Command, EntityId};
 use crate::engine::EngineStateRequest;
@@ -259,6 +260,54 @@ pub enum PlayerCommand {
         portrait_index: u32,
         append: bool,
     },
+
+    // ── Optional allied-soldier control ─────────────────────────
+    SelectAlliedSoldiers {
+        soldiers: Vec<EntityId>,
+        append: bool,
+    },
+    BoxSelectAlliedSoldiers {
+        pt1: MapPoint,
+        pt2: MapPoint,
+        shift: bool,
+    },
+    ClearAlliedSelection,
+    PinAlliedSelection,
+    UnpinAlliedGroup {
+        group_id: u32,
+    },
+    SelectAlliedGroup {
+        group_id: u32,
+        append: bool,
+    },
+    PageAlliedPortraits {
+        delta: i8,
+    },
+    MoveAlliedSoldiers {
+        soldiers: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+        formation: AlliedFormation,
+    },
+    SetAlliedStance {
+        soldiers: Vec<EntityId>,
+        stance: AlliedStance,
+    },
+    SetAlliedFormation {
+        soldiers: Vec<EntityId>,
+        formation: AlliedFormation,
+    },
+    SetAlliedPatrol {
+        soldiers: Vec<EntityId>,
+        destination: MapPoint,
+        formation: AlliedFormation,
+    },
+    SetAlliedFollow {
+        soldiers: Vec<EntityId>,
+        hero: EntityId,
+        formation: AlliedFormation,
+    },
+    ReleaseAlliedControl,
 
     // ── Special ──────────────────────────────────────────────────
     ResetComa {

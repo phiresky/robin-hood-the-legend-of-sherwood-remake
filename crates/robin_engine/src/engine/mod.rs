@@ -11,6 +11,7 @@
 mod ai;
 pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod ale;
+mod allied_control;
 mod animation;
 pub(crate) mod anti_collision;
 mod beggar;
