@@ -1337,6 +1337,46 @@ in `mlistThem` it is fully recomputed locally, so Rust's "some candidate friend 
 substitution is equivalent. The staleness would require an enemy read not in `mlistThem`, which
 `:14958-14966` cannot produce. Do not spend time on it.
 
+### Invented-invariant class, 5th/6th sites (found, NOT yet fixed — no trace proves them)
+- `crates/robin_engine/src/ai_enemy/battle.rs:1206` guards `archer_is_too_near_to_enemy` with
+  `primary_target != 0` where the C++ calls it unconditionally.
+- `battle.rs:1800-1804` and `:1814-1818` invent a `.unwrap_or(ctx.position)` fallback for a missing target
+  snapshot — exactly the "defensive fallback instead of failing loud" pattern the campaign rules forbid.
+
+### Archer decision chain: the divergence is UPSTREAM of the shield-bearer search
+schema12 nicouzouf/P001/Savegame_071 replay-010, f995, Soldier 115. Rust's
+`get_nearest_free_shield_bearer` is FAITHFUL (`original-code/RHartificialmalignity.cpp:17714-17755`): only
+substates 187/188 pass, bearer 116 is already claimed by archer 94, and 129 is genuinely free at
+MaxNorm 268 < 500. So do not re-audit it. The divergence is in the `else if` chain at
+`RHartificialmalignity.cpp:7578-7648`. **Prime suspect:** `ChooseGoodShootingPoint` returns true in the
+Original -> `DECISION_RUN_TO_ARCHERY_POINT` -> `ArcheryPathGetWaypoint()` NULL or owned -> the RETAIL build
+falls through `assert(false)` to `decision = DECISION_SHOOT; bDecisionChange = true` (`:8018-8025`),
+yielding exactly `EquipBow` / `SUBSTATE_ATTACKING_BOW_LOADING`. Note `ChooseGoodShootingPoint` also has the
+side effect `SetMyShootingPoint(NULL)` on EVERY path including its `false` returns, and leaves
+`uwIndexNearestEntryPoint` uninitialised when `pNearestEntryPoint == NULL`. This is a schema-12 trace, so
+neither Original binary can reproduce it — likely why it has survived this long.
+
+### `PointTo` sector is on a knife edge (1 trace) — audit `PositionToPoint3D`, not the origin
+schema14 linux2/P002/Savegame_039 replay-003, f10950. From soldier 138 (1380.83, 1342.346, elev 18.654)
+to PC 171 (1374.604, 1325.902, elev 29.074): `dx = -6.226`, `dy_world = -6.024` — the vector sits exactly
+ON a sector boundary, so a sub-unit difference in `PositionToPoint3D(target).z` (the projection-area sample
+and its `z_max` tie-break) flips 6 <-> 7. **The origin is NOT the problem** — it was fixed in `a1d5973ab`
+and retested. Audit `crates/robin_engine/src/engine/ai/contexts.rs:613-632` against the C++
+`PositionToPoint3D`.
+
+### Two negative results worth not re-deriving
+- **`GetMoveBox(RHposture)` unconditionally returns `mboxMove`** in the shipping build — the posture switch
+  is commented out (`original-code/RHpositioninterface.cpp:530-570`). So
+  `GetHalfDiagonal(postureAfterTransition)` vs Rust's current-posture accessor is a NON-ISSUE.
+- The Original's 10-frame chase re-issue in substate 155 is **AI-driven, not `PerformSeek`**:
+  `PARITY_DEBUG_REACHABILITY` fires at f29238 (matching) and is silent at f29247/29248, and an
+  instrumented `#[track_caller]` on `apply_seek_refresh` recorded ZERO calls in a 29k-frame run.
+
+### Entity-id spaces: the runner's `--dump-entity` takes ORIGINAL indices
+Divergence reports name **Rust** ids and the two are not equal. Measured examples: original pc 171 <->
+rust `Pc(174)`; original pc 179 <-> rust `Pc(183)`. Check `entity_mapping` in the dump before analysing or
+you will dump the wrong actor. (Third agent to hit this.)
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
