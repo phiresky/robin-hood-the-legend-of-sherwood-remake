@@ -393,7 +393,7 @@ pub(super) struct AiWorldView {
 }
 
 impl EngineInner {
-    fn ai_position_at_owner_boundary(
+    pub(super) fn ai_position_at_owner_boundary(
         &self,
         target_id: EntityId,
         owner_boundary: Option<(

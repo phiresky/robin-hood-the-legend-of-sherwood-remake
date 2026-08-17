@@ -537,7 +537,7 @@ impl Game {
         // ticking while in a building / flying / nothing selected,
         // and re-selecting after an idle period would jump to a
         // different visible frame.
-        if engine.any_selected_pc_drawing_selection_mark() {
+        if engine.any_selection_drawing_selection_mark(host.transport.local_seat) {
             host.selection_mark.tick();
         }
         let viewport = &host.frontend.viewport;

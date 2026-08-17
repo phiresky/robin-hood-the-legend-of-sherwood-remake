@@ -15,6 +15,7 @@
 
 use crate::host::Host;
 use robin_assets::picture::Picture;
+use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -32,15 +33,12 @@ use crate::ingame_menu::{layout, widget_bridge};
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::resource_manager::{ResourceId, ResourceManager};
-use robin_engine::element::Entity;
+use robin_engine::element::{Entity, EntityId};
 use robin_engine::minimap::HitMask;
 use robin_engine::profiles::Action;
 use robin_engine::titbit::SpriteRow;
 
 // ─── Layout constants ─────────────────────────────────────────────
-
-/// Number of portrait slots across the panel.
-const NUMBER_OF_SLOTS: u16 = 5;
 
 /// Horizontal margin on each side of the portrait area (pixels).
 const MARGIN: u16 = 32;
@@ -211,6 +209,8 @@ pub struct PortraitCache {
     border_bottom_left: Option<u32>,
     border_bottom_right: Option<u32>,
     border_middle: Option<u32>,
+    portrait_page_left: Option<u32>,
+    portrait_page_right: Option<u32>,
     /// Fighting sword overlay surface per character.
     fighting_surfaces: [Option<u32>; CharacterKind::COUNT],
     /// Guard indicator surface (RHID_GUARD=209).
@@ -279,6 +279,8 @@ impl PortraitCache {
             border_bottom_left: None,
             border_bottom_right: None,
             border_middle: None,
+            portrait_page_left: None,
+            portrait_page_right: None,
             fighting_surfaces: [None; CharacterKind::COUNT],
             guard_surface: None,
             trumpet_surface: None,
@@ -380,6 +382,28 @@ impl PortraitCache {
                 Err(e) => {
                     tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
                 }
+            }
+        }
+
+        for (res_id, field, label) in [
+            (
+                resource_ids::RHID_PORTRAIT_SCROLL_LEFT,
+                &mut self.portrait_page_left as &mut Option<u32>,
+                "portrait page left",
+            ),
+            (
+                resource_ids::RHID_PORTRAIT_SCROLL_RIGHT,
+                &mut self.portrait_page_right,
+                "portrait page right",
+            ),
+        ] {
+            let picture = match res.get_picture(res_id, 1) {
+                Ok(picture) => Ok(picture),
+                Err(_) => res.get_picture(res_id, 0),
+            };
+            match picture {
+                Ok(pic) => *field = Some(pic_to_surface(renderer, pic)),
+                Err(error) => tracing::warn!("Failed to load {label}: {error}"),
             }
         }
 
@@ -986,15 +1010,69 @@ fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
 // ─── Helpers ───────────────────────────────────────────────────────
 
 /// Compute the pixel width of each portrait slot.
-fn slot_width(screen_width: u16) -> u16 {
-    (screen_width - 2 * MARGIN) / NUMBER_OF_SLOTS
+pub fn portrait_capacity(screen_width: u16) -> usize {
+    usize::from(((screen_width.saturating_sub(2 * MARGIN)) / ELEMENT_WIDTH).max(1))
 }
 
 /// Compute the left X of a portrait element within its slot.
-fn slot_left_x(screen_width: u16, slot_index: u16) -> u16 {
-    let sw = slot_width(screen_width);
-    let position_in_slot = MARGIN + (sw - ELEMENT_WIDTH) / 2;
+pub(crate) fn slot_left_x(screen_width: u16, slot_index: u16, slot_count: usize) -> u16 {
+    let sw = screen_width.saturating_sub(2 * MARGIN) / slot_count.max(1) as u16;
+    let position_in_slot = MARGIN + sw.saturating_sub(ELEMENT_WIDTH) / 2;
     slot_index * sw + position_in_slot
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortraitTarget {
+    Pc(EntityId),
+    AlliedSelection,
+    AlliedGroup(u32),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PortraitBarItem {
+    pub target: PortraitTarget,
+    pub members: Vec<EntityId>,
+}
+
+pub(crate) fn portrait_bar_items(
+    engine: &Engine,
+    seat: PlayerId,
+    screen_width: u16,
+) -> (Vec<PortraitBarItem>, bool) {
+    let mut all: Vec<_> = engine
+        .displayed_pc_ids()
+        .into_iter()
+        .map(|pc| PortraitBarItem {
+            target: PortraitTarget::Pc(pc),
+            members: vec![pc],
+        })
+        .collect();
+    for group in engine.allied_pinned_groups(seat) {
+        all.push(PortraitBarItem {
+            target: PortraitTarget::AlliedGroup(group.id),
+            members: group.members.clone(),
+        });
+    }
+    let selection = engine.allied_selection(seat);
+    if !selection.is_empty()
+        && !engine
+            .allied_pinned_groups(seat)
+            .iter()
+            .any(|group| group.members == selection)
+    {
+        all.push(PortraitBarItem {
+            target: PortraitTarget::AlliedSelection,
+            members: selection.to_vec(),
+        });
+    }
+    let capacity = portrait_capacity(screen_width);
+    let paged = all.len() > capacity;
+    if paged {
+        let offset = engine.allied_first_visible_portrait(seat) % all.len();
+        all.rotate_left(offset);
+        all.truncate(capacity);
+    }
+    (all, paged)
 }
 
 fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
@@ -1079,6 +1157,304 @@ fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Enti
         .iter()
         .position(|a| *a == pc.current_action)
         .map(|i| i as u8)
+}
+
+fn render_allied_portrait(
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    engine: &Engine,
+    seat: PlayerId,
+    item: &PortraitBarItem,
+    x: u16,
+    sh: u16,
+) {
+    let selected = engine.allied_selection(seat) == item.members;
+    let top_scroll = if selected {
+        POSITION_TOP_SCROLL
+    } else {
+        CLOSE_POSITION_TOP_SCROLL
+    };
+    let visage = if selected {
+        POSITION_VISAGE
+    } else {
+        CLOSE_POSITION_VISAGE
+    };
+
+    if let Some(surface) = portraits.top_scroll_surface {
+        let w = renderer.surface_width(surface);
+        let h = renderer.surface_height(surface);
+        let y = sh - top_scroll;
+        blit_to_screen_widget(
+            renderer,
+            surface,
+            None,
+            Some(&bbox(x, y, x + w, y + h)),
+            BLIT_SOURCE_TRANSPARENT,
+        );
+    }
+    if let Some(surface) = portraits.bottom_scroll_surface {
+        let w = renderer.surface_width(surface);
+        let h = renderer.surface_height(surface);
+        let y = sh - POSITION_BOTTOM_SCROLL;
+        blit_to_screen_widget(
+            renderer,
+            surface,
+            None,
+            Some(&bbox(x, y, x + w, y + h)),
+            BLIT_SOURCE_TRANSPARENT,
+        );
+    }
+
+    let visage_top = sh - visage;
+    let visage_bottom = if selected {
+        sh - POSITION_ACTION
+    } else {
+        sh - CLOSE_POSITION_BOTTOM_SCROLL
+    };
+    renderer.fill_screen(
+        Some(&bbox(x, visage_top, x + ELEMENT_WIDTH, visage_bottom)),
+        Renderer::create_color_16(67, 62, 42),
+    );
+    renderer.draw_rect_outline_screen(
+        i32::from(x + 3),
+        i32::from(visage_top + 2),
+        i32::from(x + ELEMENT_WIDTH - 4),
+        i32::from(visage_bottom.saturating_sub(2)),
+        Renderer::create_color_16(142, 119, 72),
+    );
+    for index in 0..item.members.len().min(12) {
+        let px = x + 10 + (index % 6) as u16 * 16;
+        let py = visage_top + 7 + (index / 6) as u16 * 17;
+        // Small helmet-and-tunic silhouettes read as soldiers even at the
+        // original game's low HUD resolution.
+        renderer.fill_screen(
+            Some(&bbox(px + 2, py, px + 8, py + 5)),
+            Renderer::create_color_16(200, 184, 126),
+        );
+        renderer.fill_screen(
+            Some(&bbox(px, py + 5, px + 10, py + 11)),
+            Renderer::create_color_16(54, 112, 55),
+        );
+    }
+
+    // Pin/unpin button remains visible in both open and closed states.
+    let pin_y = sh - top_scroll + 4;
+    let pin_color = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
+        Renderer::create_color_16(238, 192, 55)
+    } else {
+        Renderer::create_color_16(91, 73, 42)
+    };
+    renderer.fill_screen(
+        Some(&bbox(
+            x + ELEMENT_WIDTH - 14,
+            pin_y,
+            x + ELEMENT_WIDTH - 5,
+            pin_y + 5,
+        )),
+        pin_color,
+    );
+    renderer.draw_line_screen(
+        i32::from(x + ELEMENT_WIDTH - 10),
+        i32::from(pin_y + 4),
+        i32::from(x + ELEMENT_WIDTH - 10),
+        i32::from(pin_y + 12),
+        pin_color,
+    );
+    renderer.draw_line_screen(
+        i32::from(x + ELEMENT_WIDTH - 13),
+        i32::from(pin_y + 8),
+        i32::from(x + ELEMENT_WIDTH - 7),
+        i32::from(pin_y + 8),
+        pin_color,
+    );
+
+    if selected {
+        let action_top = sh - POSITION_ACTION;
+        let action_bottom = sh - POSITION_BOTTOM_SCROLL;
+        let order = item
+            .members
+            .first()
+            .and_then(|soldier| engine.allied_order(*soldier));
+        let stance = order.map_or(AlliedStance::Defensive, |order| order.stance);
+        let formation = order.map_or(AlliedFormation::Compact, |order| order.formation);
+        let glyph = Renderer::create_color_16(224, 211, 157);
+        let highlight = Renderer::create_color_16(141, 119, 73);
+        let shadow = Renderer::create_color_16(35, 31, 23);
+        let button_w = ELEMENT_WIDTH / 2;
+        let button_h = (action_bottom - action_top) / 2;
+        for index in 0..4 {
+            let column = index % 2;
+            let row = index / 2;
+            let left = x + column as u16 * button_w;
+            let right = if column == 1 {
+                x + ELEMENT_WIDTH
+            } else {
+                left + button_w
+            };
+            let top = action_top + row as u16 * button_h;
+            let bottom = if row == 1 {
+                action_bottom
+            } else {
+                top + button_h
+            };
+            let active = match (index, order.map(|order| &order.duty)) {
+                (1, Some(AlliedDuty::Patrol { .. })) | (3, Some(AlliedDuty::Follow { .. })) => true,
+                _ => false,
+            };
+            renderer.fill_screen(
+                Some(&bbox(left + 1, top + 1, right - 1, bottom - 1)),
+                if active {
+                    Renderer::create_color_16(92, 78, 39)
+                } else {
+                    Renderer::create_color_16(62, 57, 39)
+                },
+            );
+            renderer.draw_line_screen(
+                i32::from(left + 1),
+                i32::from(top + 1),
+                i32::from(right - 2),
+                i32::from(top + 1),
+                highlight,
+            );
+            renderer.draw_line_screen(
+                i32::from(left + 1),
+                i32::from(top + 1),
+                i32::from(left + 1),
+                i32::from(bottom - 2),
+                highlight,
+            );
+            renderer.draw_line_screen(
+                i32::from(left + 1),
+                i32::from(bottom - 2),
+                i32::from(right - 2),
+                i32::from(bottom - 2),
+                shadow,
+            );
+            let center = (left + right) / 2;
+            let cy = (top + bottom) / 2;
+            match index {
+                // Stance: stop bar, shield, or crossed aggressive blades.
+                0 => match stance {
+                    AlliedStance::Hold => {
+                        renderer.fill_screen(
+                            Some(&bbox(center - 8, cy - 2, center + 8, cy + 2)),
+                            glyph,
+                        );
+                    }
+                    AlliedStance::Defensive => {
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy - 7),
+                            i32::from(center + 7),
+                            i32::from(cy - 7),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy - 7),
+                            i32::from(center - 5),
+                            i32::from(cy + 4),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center + 7),
+                            i32::from(cy - 7),
+                            i32::from(center + 5),
+                            i32::from(cy + 4),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center - 5),
+                            i32::from(cy + 4),
+                            i32::from(center),
+                            i32::from(cy + 8),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center + 5),
+                            i32::from(cy + 4),
+                            i32::from(center),
+                            i32::from(cy + 8),
+                            glyph,
+                        );
+                    }
+                    AlliedStance::Aggressive => {
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy + 7),
+                            i32::from(center + 7),
+                            i32::from(cy - 7),
+                            glyph,
+                        );
+                        renderer.draw_line_screen(
+                            i32::from(center - 7),
+                            i32::from(cy - 7),
+                            i32::from(center + 7),
+                            i32::from(cy + 7),
+                            glyph,
+                        );
+                    }
+                },
+                // Patrol: two waypoints, route, and return arrowhead.
+                1 => {
+                    renderer
+                        .fill_screen(Some(&bbox(center - 9, cy - 7, center - 5, cy - 3)), glyph);
+                    renderer
+                        .fill_screen(Some(&bbox(center + 5, cy + 3, center + 9, cy + 7)), glyph);
+                    renderer.draw_line_screen(
+                        i32::from(center - 5),
+                        i32::from(cy - 4),
+                        i32::from(center + 7),
+                        i32::from(cy + 4),
+                        glyph,
+                    );
+                    renderer.draw_line_screen(
+                        i32::from(center + 7),
+                        i32::from(cy + 4),
+                        i32::from(center + 2),
+                        i32::from(cy + 3),
+                        glyph,
+                    );
+                }
+                // Formation: miniature current formation.
+                2 => {
+                    let dots: &[(i16, i16)] = match formation {
+                        AlliedFormation::Compact => &[(-6, -5), (5, -4), (-5, 5), (6, 5)],
+                        AlliedFormation::PatrolColumn => &[(0, -8), (-6, 0), (6, 0), (0, 8)],
+                        AlliedFormation::Battle => &[(-7, -5), (0, -5), (7, -5), (-4, 6), (4, 6)],
+                    };
+                    for &(dx, dy) in dots {
+                        let px = (center as i16 + dx) as u16;
+                        let py = (cy as i16 + dy) as u16;
+                        renderer.fill_screen(Some(&bbox(px, py, px + 4, py + 4)), glyph);
+                    }
+                }
+                // Follow: a small leader above two followers.
+                3 => {
+                    renderer.draw_line_screen(
+                        i32::from(center),
+                        i32::from(cy - 5),
+                        i32::from(center - 7),
+                        i32::from(cy + 4),
+                        glyph,
+                    );
+                    renderer.draw_line_screen(
+                        i32::from(center),
+                        i32::from(cy - 5),
+                        i32::from(center + 7),
+                        i32::from(cy + 4),
+                        glyph,
+                    );
+                    for (dx, dy) in [(0i16, -9i16), (-7, 5), (7, 5)] {
+                        let px = (center as i16 + dx) as u16;
+                        let py = (cy as i16 + dy) as u16;
+                        renderer.fill_screen(Some(&bbox(px - 2, py - 2, px + 3, py + 3)), glyph);
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
 }
 
 // ─── Public API ────────────────────────────────────────────────────
@@ -1260,8 +1636,9 @@ pub fn draw_panel(
     // Hidden-interface PCs don't consume a slot, so filter on
     // `pc.interface_hidden` via `engine.displayed_pc_ids()` rather than
     // walking `pc_ids` directly.
-    let displayed_pcs = engine.displayed_pc_ids();
-    let num_portraits = displayed_pcs.len().min(NUMBER_OF_SLOTS as usize) as u16;
+    let (portrait_items, paged) = portrait_bar_items(engine, local_seat, sw);
+    let num_portraits = portrait_items.len() as u16;
+    let capacity = portrait_capacity(sw);
     let frame = engine.frame_counter();
     let hovered_action =
         hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y)
@@ -1272,11 +1649,38 @@ pub fn draw_panel(
 
     let mut titbit_renderer_opt = titbit_renderer;
 
+    if paged {
+        for (surface, x) in [
+            (portraits.portrait_page_left, 4),
+            (portraits.portrait_page_right, sw.saturating_sub(28)),
+        ] {
+            if let Some(surface) = surface {
+                let w = renderer.surface_width(surface);
+                let h = renderer.surface_height(surface);
+                let y = sh.saturating_sub(PORTRAIT_TOTAL_HEIGHT / 2 + h / 2);
+                blit_to_screen_widget(
+                    renderer,
+                    surface,
+                    None,
+                    Some(&bbox(x, y, x + w, y + h)),
+                    BLIT_SOURCE_TRANSPARENT,
+                );
+            }
+        }
+    }
+
     for slot in 0..num_portraits {
-        let x = slot_left_x(sw, slot);
+        let x = slot_left_x(sw, slot, capacity);
         let x2 = x + ELEMENT_WIDTH;
 
-        let pc_id = displayed_pcs[slot as usize];
+        let item = &portrait_items[slot as usize];
+        if !matches!(item.target, PortraitTarget::Pc(_)) {
+            render_allied_portrait(renderer, portraits, engine, local_seat, item, x, sh);
+            continue;
+        }
+        let PortraitTarget::Pc(pc_id) = item.target else {
+            unreachable!()
+        };
         let entity = engine.get_entity(pc_id);
         let is_selected = engine.seat_selection(local_seat).contains(&pc_id);
 
@@ -2390,6 +2794,12 @@ pub enum PortraitHitArea {
     Visage,
     /// One of the action buttons (0-based index).
     ActionButton(u8),
+    /// Allied group controls: stance, patrol, formation, follow.
+    AlliedAction(u8),
+    /// Pin a transient group or unpin a persistent group.
+    Pin,
+    PageLeft,
+    PageRight,
     /// One of the quick-action macro icons (0-based QA slot).
     QuickAction(u8),
     /// Bottom scroll (ammo count area).
@@ -2415,6 +2825,7 @@ pub struct PortraitHit {
     /// Resolved PC entity id at this slot — saves the caller from
     /// re-walking `displayed_pc_ids()`.
     pub pc_id: robin_engine::element::EntityId,
+    pub target: PortraitTarget,
     /// Which sub-area was clicked.
     pub area: PortraitHitArea,
     /// Whether this portrait's PC is burned (coma/dead).
@@ -2432,7 +2843,8 @@ pub fn hit_test_portrait(
     click_y: f32,
     num_pcs: usize,
 ) -> Option<u8> {
-    let num_slots = num_pcs.min(NUMBER_OF_SLOTS as usize);
+    let capacity = portrait_capacity(screen_width);
+    let num_slots = num_pcs.min(capacity);
     let sh = screen_height;
 
     let panel_top = sh - PORTRAIT_TOTAL_HEIGHT;
@@ -2444,7 +2856,7 @@ pub fn hit_test_portrait(
     }
 
     for slot in 0..num_slots {
-        let x = slot_left_x(screen_width, slot as u16) as f32;
+        let x = slot_left_x(screen_width, slot as u16, capacity) as f32;
         let x2 = x + ELEMENT_WIDTH as f32;
 
         if click_x >= x && click_x <= x2 {
@@ -2468,8 +2880,9 @@ pub fn hit_test_portrait_detailed(
     click_x: f32,
     click_y: f32,
 ) -> Option<PortraitHit> {
-    let displayed_pcs = engine.displayed_pc_ids();
-    let num_slots = displayed_pcs.len().min(NUMBER_OF_SLOTS as usize);
+    let (items, paged) = portrait_bar_items(engine, local_seat, screen_width);
+    let capacity = portrait_capacity(screen_width);
+    let num_slots = items.len();
     let sh = screen_height;
     let cy = click_y;
 
@@ -2480,12 +2893,80 @@ pub fn hit_test_portrait_detailed(
         return None;
     }
 
-    for (slot, &pc_id) in displayed_pcs.iter().enumerate().take(num_slots) {
-        let x = slot_left_x(screen_width, slot as u16) as f32;
+    if paged {
+        let representative = items
+            .first()
+            .and_then(|item| item.members.first())
+            .copied()
+            .expect("paged portrait bar has no representative entity");
+        if click_x <= 30.0 {
+            return Some(PortraitHit {
+                slot: 0,
+                pc_id: representative,
+                target: items[0].target,
+                area: PortraitHitArea::PageLeft,
+                is_burned: false,
+            });
+        }
+        if click_x >= screen_width.saturating_sub(30) as f32 {
+            return Some(PortraitHit {
+                slot: 0,
+                pc_id: representative,
+                target: items[0].target,
+                area: PortraitHitArea::PageRight,
+                is_burned: false,
+            });
+        }
+    }
+
+    for (slot, item) in items.iter().enumerate().take(num_slots) {
+        let x = slot_left_x(screen_width, slot as u16, capacity) as f32;
         let x2 = x + ELEMENT_WIDTH as f32;
 
         if click_x < x || click_x > x2 {
             continue;
+        }
+
+        let pc_id = item.members[0];
+        if !matches!(item.target, PortraitTarget::Pc(_)) {
+            let selected = engine.allied_selection(local_seat) == item.members;
+            let top_scroll_top = if selected {
+                (sh - POSITION_TOP_SCROLL) as f32
+            } else {
+                (sh - CLOSE_POSITION_TOP_SCROLL) as f32
+            };
+            let visage_top = if selected {
+                (sh - POSITION_VISAGE) as f32
+            } else {
+                (sh - CLOSE_POSITION_VISAGE) as f32
+            };
+            let action_top = (sh - POSITION_ACTION) as f32;
+            let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+            let area = if cy >= top_scroll_top && cy < visage_top {
+                if click_x >= x + ELEMENT_WIDTH as f32 - 18.0 {
+                    PortraitHitArea::Pin
+                } else {
+                    PortraitHitArea::TopScroll
+                }
+            } else if cy >= visage_top && (!selected || cy < action_top) {
+                PortraitHitArea::Visage
+            } else if selected && cy >= action_top && cy < bottom_scroll_top {
+                let column = (((click_x - x) / (ELEMENT_WIDTH as f32 / 2.0)).floor() as u8).min(1);
+                let row = (((cy - action_top) / ((bottom_scroll_top - action_top) / 2.0)).floor()
+                    as u8)
+                    .min(1);
+                let index = row * 2 + column;
+                PortraitHitArea::AlliedAction(index)
+            } else {
+                PortraitHitArea::BottomScroll
+            };
+            return Some(PortraitHit {
+                slot: slot as u8,
+                pc_id,
+                target: item.target,
+                area,
+                is_burned: false,
+            });
         }
 
         let entity = engine.get_entity(pc_id);
@@ -2506,6 +2987,7 @@ pub fn hit_test_portrait_detailed(
                         return Some(PortraitHit {
                             slot: slot as u8,
                             pc_id,
+                            target: item.target,
                             area: PortraitHitArea::QuickAction(slot_idx),
                             is_burned: false,
                         });
@@ -2559,6 +3041,7 @@ pub fn hit_test_portrait_detailed(
             return Some(PortraitHit {
                 slot: slot as u8,
                 pc_id,
+                target: item.target,
                 area,
                 is_burned,
             });
@@ -2622,6 +3105,7 @@ pub fn hit_test_portrait_detailed(
         return Some(PortraitHit {
             slot: slot as u8,
             pc_id,
+            target: item.target,
             area,
             is_burned,
         });
@@ -2635,9 +3119,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slot_width_at_800() {
-        // screen_width=800, margin=32 each side → 736px / 5 = 147px per slot
-        assert_eq!(slot_width(800), 147);
+    fn portrait_capacity_tracks_available_width() {
+        assert_eq!(portrait_capacity(640), 5);
+        assert_eq!(portrait_capacity(800), 6);
+        assert_eq!(portrait_capacity(1024), 8);
     }
 
     #[test]
@@ -2645,7 +3130,7 @@ mod tests {
         // Each slot center should contain the 112px element
         let sw = 800u16;
         for slot in 0..5 {
-            let left = slot_left_x(sw, slot);
+            let left = slot_left_x(sw, slot, portrait_capacity(sw));
             let right = left + ELEMENT_WIDTH;
             assert!(
                 left >= MARGIN || slot == 0,
@@ -2730,7 +3215,7 @@ mod tests {
     #[test]
     fn hit_test_on_portrait_slot() {
         // screen 800x600, slot 0 starts at slot_left_x(800, 0)
-        let x = slot_left_x(800, 0) as f32 + 10.0;
+        let x = slot_left_x(800, 0, portrait_capacity(800)) as f32 + 10.0;
         let y = 600.0 - 50.0; // within the panel area
         assert_eq!(hit_test_portrait(800, 600, x, y, 3), Some(0));
     }
@@ -2738,7 +3223,7 @@ mod tests {
     #[test]
     fn hit_test_empty_slots() {
         // No PCs means no hits even inside the panel
-        let x = slot_left_x(800, 0) as f32 + 10.0;
+        let x = slot_left_x(800, 0, portrait_capacity(800)) as f32 + 10.0;
         let y = 600.0 - 50.0;
         assert_eq!(hit_test_portrait(800, 600, x, y, 0), None);
     }
@@ -2746,9 +3231,10 @@ mod tests {
     #[test]
     fn hit_test_between_slots() {
         // Click between slot boundaries (in the gap)
-        let x0_right = slot_left_x(800, 0) as f32 + ELEMENT_WIDTH as f32 + 5.0;
+        let x0_right =
+            slot_left_x(800, 0, portrait_capacity(800)) as f32 + ELEMENT_WIDTH as f32 + 5.0;
         let y = 600.0 - 50.0;
-        let x1_left = slot_left_x(800, 1) as f32;
+        let x1_left = slot_left_x(800, 1, portrait_capacity(800)) as f32;
         // Only a gap hit if the click is truly between elements
         if x0_right < x1_left {
             assert_eq!(hit_test_portrait(800, 600, x0_right, y, 3), None);

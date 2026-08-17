@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{element::EntityId, engine::SeatState, macro_store::MacroStore, profiles::Action};
+use crate::{
+    allied_control::AlliedControlState, element::EntityId, engine::SeatState,
+    macro_store::MacroStore, profiles::Action,
+};
 
 /// Deterministic per-player selection, input-mode, and quick-action state.
 #[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -16,6 +19,8 @@ pub(crate) struct PlayerRuntime {
     pub(crate) qa_recording_for: Vec<EntityId>,
     pub(crate) qa_recording_slot: u8,
     pub(crate) action_before_recording_macro: Action,
+    #[serde(default)]
+    pub(crate) allied: AlliedControlState,
 }
 
 impl PlayerRuntime {
@@ -29,6 +34,7 @@ impl PlayerRuntime {
             qa_recording_for: Vec::new(),
             qa_recording_slot: 0,
             action_before_recording_macro: Action::NoAction,
+            allied: AlliedControlState::default(),
         }
     }
 }

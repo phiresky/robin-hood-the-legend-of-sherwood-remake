@@ -1,0 +1,157 @@
+//! Deterministic state for the optional direct-control allied soldier system.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{coordinates::MapPoint, element::EntityId};
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub enum AlliedStance {
+    /// Do not acquire targets or leave the assigned position.
+    Hold,
+    /// Return fire, but resume the assigned patrol/follow duty afterwards.
+    #[default]
+    Defensive,
+    /// Let the soldier AI pursue threats without a defensive leash.
+    Aggressive,
+}
+
+impl AlliedStance {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hold => Self::Defensive,
+            Self::Defensive => Self::Aggressive,
+            Self::Aggressive => Self::Hold,
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub enum AlliedFormation {
+    #[default]
+    #[serde(alias = "Line")]
+    Compact,
+    #[serde(alias = "Column")]
+    PatrolColumn,
+    #[serde(alias = "Wedge", alias = "Ring")]
+    Battle,
+}
+
+impl AlliedFormation {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Compact => Self::PatrolColumn,
+            Self::PatrolColumn => Self::Battle,
+            Self::Battle => Self::Compact,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum AlliedDuty {
+    Hold { anchor: MapPoint },
+    Patrol { points: [MapPoint; 2], next: u8 },
+    Follow { hero: EntityId, offset: MapPoint },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AlliedSoldierOrder {
+    pub stance: AlliedStance,
+    pub formation: AlliedFormation,
+    pub duty: AlliedDuty,
+    /// Last destination sent to the path system. Follow orders use this to
+    /// avoid replacing an active route for insignificant hero movement.
+    pub last_destination: MapPoint,
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct AlliedPinnedGroup {
+    pub id: u32,
+    pub members: Vec<EntityId>,
+}
+
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct AlliedSeatState {
+    pub selection: Vec<EntityId>,
+    pub pinned_groups: Vec<AlliedPinnedGroup>,
+    pub first_visible_portrait: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AlliedControlState {
+    pub seats: Vec<AlliedSeatState>,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
+    pub orders: BTreeMap<EntityId, AlliedSoldierOrder>,
+    pub next_group_id: u32,
+}
+
+impl Default for AlliedControlState {
+    fn default() -> Self {
+        Self {
+            seats: vec![AlliedSeatState::default()],
+            orders: BTreeMap::new(),
+            next_group_id: 1,
+        }
+    }
+}
+
+impl AlliedControlState {
+    pub fn ensure_seat(&mut self, seat: usize) -> &mut AlliedSeatState {
+        if self.seats.len() <= seat {
+            self.seats.resize_with(seat + 1, AlliedSeatState::default);
+        }
+        &mut self.seats[seat]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity_id::SoldierId;
+
+    #[test]
+    fn controlled_orders_serialize_to_json() {
+        let soldier = EntityId::Soldier(SoldierId(17));
+        let point = MapPoint::new(12.0, 34.0);
+        let mut state = AlliedControlState::default();
+        state.orders.insert(
+            soldier,
+            AlliedSoldierOrder {
+                stance: AlliedStance::Defensive,
+                formation: AlliedFormation::Compact,
+                duty: AlliedDuty::Hold { anchor: point },
+                last_destination: point,
+            },
+        );
+
+        let json = serde_json::to_string(&state).expect("allied control state serializes");
+        let restored: AlliedControlState =
+            serde_json::from_str(&json).expect("allied control state deserializes");
+        assert_eq!(restored.orders.get(&soldier), state.orders.get(&soldier));
+    }
+}

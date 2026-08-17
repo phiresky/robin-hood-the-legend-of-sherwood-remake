@@ -23,10 +23,11 @@ use crate::save_file::{THUMB_HEIGHT, THUMB_WIDTH, Thumbnail};
 use crate::sherwood_hud::{self, SherwoodButtonEnable, SherwoodTooltipTracker};
 use crate::sound::MusicMode;
 use crate::stature_hud::{self, StatureEnable, StatureHoverState, StatureTooltipTracker};
-use crate::ui_panel::{PortraitHitArea, hit_test_portrait_detailed};
+use crate::ui_panel::{PortraitHit, PortraitHitArea, PortraitTarget, hit_test_portrait_detailed};
 use crate::widget::blazon_bar;
 use crate::widget::requirements::{RequirementSlot, build_requirements_state};
 use crate::zoom_hud::{self, ZoomButtonEnable, ZoomHoverState, ZoomTooltipTracker};
+use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
 use robin_engine::element::Posture;
@@ -37,6 +38,75 @@ use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids as engine_resource_ids;
 use robin_engine::sprite as engine_sprite;
+
+fn allied_action_tooltip(
+    engine: &Engine,
+    portraits: &crate::ui_panel::PortraitCache,
+    seat: robin_engine::player_command::PlayerId,
+    hit: PortraitHit,
+) -> String {
+    let members: Vec<_> = match hit.target {
+        PortraitTarget::AlliedSelection => engine.allied_selection(seat).to_vec(),
+        PortraitTarget::AlliedGroup(group_id) => engine
+            .allied_pinned_groups(seat)
+            .iter()
+            .find(|group| group.id == group_id)
+            .unwrap_or_else(|| panic!("tooltip references missing allied group {group_id}"))
+            .members
+            .clone(),
+        PortraitTarget::Pc(_) => panic!("allied tooltip requested for PC portrait"),
+    };
+    let order = members
+        .first()
+        .and_then(|soldier| engine.allied_order(*soldier));
+    match hit.area {
+        PortraitHitArea::AlliedAction(0) => {
+            let stance = order.map_or(AlliedStance::Defensive, |order| order.stance);
+            let name = match stance {
+                AlliedStance::Hold => "Hold position",
+                AlliedStance::Defensive => "Defensive",
+                AlliedStance::Aggressive => "Aggressive",
+            };
+            format!("Stance: {name} - click to change")
+        }
+        PortraitHitArea::AlliedAction(1) => {
+            let active = order.is_some_and(|order| matches!(order.duty, AlliedDuty::Patrol { .. }));
+            if active {
+                "Patrol: active - click, then choose a new route point".to_owned()
+            } else {
+                "Patrol: click, then choose a route point".to_owned()
+            }
+        }
+        PortraitHitArea::AlliedAction(2) => {
+            let formation = order.map_or(AlliedFormation::Compact, |order| order.formation);
+            let name = match formation {
+                AlliedFormation::Compact => "Compact",
+                AlliedFormation::PatrolColumn => "Patrol column",
+                AlliedFormation::Battle => "Battle (melee front, ranged rear)",
+            };
+            format!("Formation: {name} - click to change")
+        }
+        PortraitHitArea::AlliedAction(3) => {
+            let target = order.and_then(|order| match order.duty {
+                AlliedDuty::Follow { hero, .. } => Some(hero),
+                _ => None,
+            });
+            match target.and_then(|hero| engine.get_entity(hero)) {
+                Some(engine_element::Entity::Pc(pc)) => {
+                    let name = pc
+                        .pc
+                        .kind
+                        .and_then(|kind| portraits.get_localized_name(kind))
+                        .or_else(|| pc.pc.kind.map(|kind| kind.profile_name()))
+                        .unwrap_or("hero");
+                    format!("Follow: {name} - click to choose the next hero")
+                }
+                _ => "Follow: click to follow a hero".to_owned(),
+            }
+        }
+        _ => panic!("allied tooltip requested for non-action portrait area"),
+    }
+}
 
 /// Update the zoom-HUD presentation area once for the current simulation
 /// frame. The renderer retains the frame-addressed immutable snapshot so all
@@ -860,10 +930,14 @@ pub(super) fn render_frame(
     render_door_overlays(host, engine, assets, renderer, shift_held);
 
     // Draw rotating selection circles BELOW the characters' feet for
-    // every selected PC.  C++ draws selection marks after
+    // every selected hero and directly controlled ally. C++ draws selection marks after
     // ShowDetectionPolygon and before ground marks/entities.  Skipped when
     // the PC is inside a building or in POSTURE_FLYING.
-    for &pc_id in engine.seat_selection(local_seat) {
+    for &pc_id in engine
+        .seat_selection(local_seat)
+        .iter()
+        .chain(engine.allied_selection(local_seat))
+    {
         if !engine.pc_draws_selection_mark(pc_id) {
             continue;
         }
@@ -1386,31 +1460,49 @@ pub(super) fn render_frame(
         );
     }
 
-    // ── PC action-button hover tooltip ──
-    // Each of the three per-PC action buttons gets a localized
-    // tooltip via the shared hover-delay pipeline.  Only the selected
-    // portrait shows its action buttons, so
+    // ── Portrait action-button hover tooltip ──
+    // Hero actions use localized game strings; allied controls describe
+    // both the action and its current state/target. Only the selected
+    // portrait shows action buttons, so
     // `hit_test_portrait_detailed` already gates on that.
     {
         let mp = threaded_input.position();
         let sw = renderer.screen_width();
         let sh = renderer.screen_height();
-        let hovered_action_btn =
-            hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y)
-                .and_then(|hit| match hit.area {
-                    PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
-                    _ => None,
-                });
+        let hovered_hit =
+            hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y);
+        let hovered_action_btn = hovered_hit.and_then(|hit| match hit.area {
+            PortraitHitArea::ActionButton(btn) | PortraitHitArea::AlliedAction(btn) => {
+                Some((hit.slot, btn))
+            }
+            _ => None,
+        });
         pc_action_tooltip.update(hovered_action_btn);
-        if let Some((slot, btn)) = pc_action_tooltip.ready_button()
-            && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
-            && let Some(&pc_id) = engine.pc_ids().get(slot as usize)
-            && let Some(engine_element::Entity::Pc(pc)) = engine.get_entity(pc_id)
-            && let Some(profile) = assets.profile_manager.get_character(pc.pc.profile_index)
-            && let Some(&action) = profile.actions.get(btn as usize)
-            && let Some(mt_id) = crate::ui_panel::action_button_tooltip_mt_id(action)
+        if pc_action_tooltip.ready_button().is_some()
+            && let (Some(hit), Some(fonts)) = (hovered_hit, hud_fonts)
         {
-            let text = resources.menu_text.get(mt_id);
+            let text = match hit.area {
+                PortraitHitArea::AlliedAction(_) => {
+                    allied_action_tooltip(engine, portrait_cache, local_seat, hit)
+                }
+                PortraitHitArea::ActionButton(btn) => {
+                    let pc_id = match hit.target {
+                        PortraitTarget::Pc(pc_id) => Some(pc_id),
+                        _ => None,
+                    };
+                    pc_id
+                        .and_then(|pc_id| engine.get_entity(pc_id))
+                        .and_then(engine_element::Entity::pc_data)
+                        .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
+                        .and_then(|profile| profile.actions.get(btn as usize))
+                        .and_then(|action| crate::ui_panel::action_button_tooltip_mt_id(*action))
+                        .and_then(|mt_id| {
+                            menu_resources.map(|resources| resources.menu_text.get(mt_id))
+                        })
+                        .unwrap_or_default()
+                }
+                _ => String::new(),
+            };
             if !text.is_empty() {
                 let (cw, ch) = cursor_renderer.current_frame_size();
                 crate::ui_panel::draw_screen_tooltip(

@@ -159,6 +159,13 @@ pub struct CliArgs {
     #[arg(long, value_name = "PROTO", requires = "mission")]
     pub proto: Option<String>,
 
+    /// Mount a vanilla custom-mission zip before launching `--mission`.
+    /// This is the command-line equivalent of selecting that archive in the
+    /// Custom Missions menu. Spellforge missions must still use the menu so
+    /// their shared Lua library and compatibility mode are detected.
+    #[arg(long, value_name = "ZIP", requires = "mission")]
+    pub custom_mission: Option<std::path::PathBuf>,
+
     /// Run only the headless multiplayer lobby broker on this WebSocket
     /// bind address.  With no value, binds `0.0.0.0:7879`.
     #[arg(
@@ -336,6 +343,7 @@ impl Default for CliArgs {
             force_main_menu: false,
             mission: None,
             proto: None,
+            custom_mission: None,
             lobby_server: None,
             http_server: crate::http_server::DEFAULT_PORT,
             fast_forward: false,
@@ -506,6 +514,30 @@ mod tests {
 
         assert_eq!(args.mission.as_deref(), Some("Dem_Lei_MP"));
         assert_eq!(args.proto.as_deref().unwrap_or("Dem_Lei_MP"), "Dem_Lei_MP");
+    }
+
+    #[test]
+    fn custom_mission_zip_requires_and_preserves_mission() {
+        let args = try_parse_cli_from([
+            "robin",
+            "--mission",
+            "Str03_Yor_MK",
+            "--proto",
+            "Str03_Yor",
+            "--custom-mission",
+            "mods/york.zip",
+        ])
+        .unwrap();
+
+        assert_eq!(args.mission.as_deref(), Some("Str03_Yor_MK"));
+        assert_eq!(args.proto.as_deref(), Some("Str03_Yor"));
+        assert_eq!(
+            args.custom_mission.as_deref(),
+            Some(std::path::Path::new("mods/york.zip"))
+        );
+
+        let err = try_parse_cli_from(["robin", "--custom-mission", "mods/york.zip"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]

@@ -1610,7 +1610,13 @@ pub(crate) fn render_selection_outlines_gpu(
             continue;
         }
 
-        let outline_color_565 = if is_focused || is_action_marked {
+        let is_selected_allied = host.control_allied_soldiers
+            && engine
+                .allied_selection(host.transport.local_seat)
+                .contains(&entity_id);
+        let outline_color_565 = if is_selected_allied && hulk_running && !is_focused {
+            robin_engine::element_kinds::outline_colors::pc_default()
+        } else if is_focused || is_action_marked {
             elem.outline_colors[OutlineColorName::Default as usize]
         } else {
             elem.active_outline_color()

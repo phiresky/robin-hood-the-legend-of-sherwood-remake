@@ -10,6 +10,7 @@
 use crate::host::Host;
 use crate::mouse_way::MouseWayPattern;
 use crate::shadow_polygon::ASPECT_RATIO;
+use robin_engine::allied_control::AlliedFormation;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
@@ -44,6 +45,26 @@ pub fn resolve_left_click(
     let local_seat = host.transport.local_seat;
     let selected = engine.seat_selection(local_seat);
     let num_selected = selected.len();
+    let allied_selected = engine.allied_selection(local_seat).to_vec();
+
+    // The optional allied-control layer keeps soldier selection separate from
+    // the original PC selection so scripts and hero action bars retain their
+    // five-PC assumptions. A direct click still feels like ordinary unit
+    // selection and may coexist with heroes when Shift is held.
+    if host.control_allied_soldiers
+        && let Some(soldier) =
+            engine.find_controllable_allied_soldier(assets, &host.draw_order.ids, map_pt)
+    {
+        let mut commands = Vec::new();
+        if !shift_held {
+            commands.push(PlayerCommand::UnselectAllPcs);
+        }
+        commands.push(PlayerCommand::SelectAlliedSoldiers {
+            soldiers: vec![soldier],
+            append: shift_held,
+        });
+        return commands;
+    }
 
     // Pre-process for double-clicks: when an action is armed and any
     // selected PC's profile lacks the action or has it disabled, abort
@@ -137,9 +158,22 @@ pub fn resolve_left_click(
             engine.find_focusable_entity(assets, &host.draw_order.ids, map_pt, Focus::Select)
         {
             host.input.element_old_click = Some(pc_id);
-            return vec![PlayerCommand::SelectPc {
+            let mut commands = Vec::new();
+            if !shift_held && !allied_selected.is_empty() {
+                commands.push(PlayerCommand::ClearAlliedSelection);
+            }
+            commands.push(PlayerCommand::SelectPc {
                 pc_id,
                 append: shift_held,
+            });
+            return commands;
+        }
+        if host.control_allied_soldiers && !allied_selected.is_empty() {
+            return vec![PlayerCommand::MoveAlliedSoldiers {
+                formation: selected_allied_formation(engine, &allied_selected),
+                soldiers: allied_selected,
+                destination: map_pt,
+                running: is_double,
             }];
         }
         host.input.element_old_click = None;
@@ -156,10 +190,15 @@ pub fn resolve_left_click(
         if ctrl_held {
             return vec![PlayerCommand::TogglePcSelection { pc_id }];
         } else {
-            return vec![PlayerCommand::SelectPc {
+            let mut commands = Vec::new();
+            if !shift_held && !allied_selected.is_empty() {
+                commands.push(PlayerCommand::ClearAlliedSelection);
+            }
+            commands.push(PlayerCommand::SelectPc {
                 pc_id,
                 append: shift_held,
-            }];
+            });
+            return commands;
         }
     }
 
@@ -322,13 +361,22 @@ pub fn resolve_left_click(
             engine_sector::SectorNumber::new(patch.sector as i16),
             patch.layer,
         ));
-        return vec![PlayerCommand::GroupMove {
+        let mut commands = vec![PlayerCommand::GroupMove {
             actors,
             destination: patch.waypoint,
             running: is_double,
             show_marker: false,
             goal_override,
         }];
+        if host.control_allied_soldiers && !allied_selected.is_empty() {
+            commands.push(PlayerCommand::MoveAlliedSoldiers {
+                formation: selected_allied_formation(engine, &allied_selected),
+                soldiers: allied_selected.clone(),
+                destination: patch.waypoint,
+                running: is_double,
+            });
+        }
+        return commands;
     }
 
     // Sector-click branch — gated on both predicates.
@@ -352,13 +400,29 @@ pub fn resolve_left_click(
                 }
             })
     });
-    vec![PlayerCommand::GroupMove {
+    let mut commands = vec![PlayerCommand::GroupMove {
         actors,
         destination: map_pt,
         running: is_double,
         show_marker: true,
         goal_override,
-    }]
+    }];
+    if host.control_allied_soldiers && !allied_selected.is_empty() {
+        commands.push(PlayerCommand::MoveAlliedSoldiers {
+            formation: selected_allied_formation(engine, &allied_selected),
+            soldiers: allied_selected.clone(),
+            destination: map_pt,
+            running: is_double,
+        });
+    }
+    commands
+}
+
+fn selected_allied_formation(engine: &Engine, soldiers: &[EntityId]) -> AlliedFormation {
+    soldiers
+        .iter()
+        .find_map(|soldier| engine.allied_order(*soldier).map(|order| order.formation))
+        .unwrap_or_default()
 }
 
 /// Update the click-and-drag target cache after a successful action-mode
@@ -1183,7 +1247,10 @@ fn resolve_double_click_repeat(
 pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
     let selected = engine.seat_selection(local_seat);
     if selected.is_empty() {
-        return vec![];
+        return (!engine.allied_selection(local_seat).is_empty())
+            .then_some(PlayerCommand::ClearAlliedSelection)
+            .into_iter()
+            .collect();
     }
 
     // Swordfighting → parry

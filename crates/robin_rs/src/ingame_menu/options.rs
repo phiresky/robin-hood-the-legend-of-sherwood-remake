@@ -17,6 +17,7 @@ use crate::hardware::Hardware;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
+use robin_engine::gameplay_config::GameplayConfig;
 use robin_engine::graphic_config::GraphicConfig;
 use robin_engine::sound_config::SoundConfig;
 
@@ -47,7 +48,8 @@ pub struct OptionsOutcome {
 const BUTTON_GRAPHICS: u32 = 0;
 const BUTTON_SOUNDS: u32 = 1;
 const BUTTON_SHORTCUTS: u32 = 2;
-const BUTTON_BACK: u32 = 3;
+const BUTTON_ALLIED_CONTROL: u32 = 3;
+const BUTTON_BACK: u32 = 4;
 
 /// Display the in-game options hub.
 ///
@@ -64,6 +66,7 @@ pub async fn show_options(
     resources: &IngameMenuResources,
     mut cursor: Option<ModalCursor<'_>>,
     graphic_config: &mut GraphicConfig,
+    gameplay_config: &mut GameplayConfig,
     sound_config: &mut SoundConfig,
     key_config: &mut KeyConfig,
     custom_key_config: &mut KeyConfig,
@@ -88,11 +91,20 @@ pub async fn show_options(
         let graphics_label = resources.menu_text.get(MT_BTN_GRAPHICS);
         let sounds_label = resources.menu_text.get(MT_BTN_SOUNDS);
         let shortcuts_label = resources.menu_text.get(MT_BTN_SHORTCUTS);
+        let allied_control_label = format!(
+            "Control Allied Soldiers: {}",
+            if gameplay_config.control_allied_soldiers {
+                "On"
+            } else {
+                "Off"
+            }
+        );
         let back_label = resources.menu_text.get(MT_BTN_BACK);
         let labels: &[(&str, bool)] = &[
             (&graphics_label, true),
             (&sounds_label, true),
             (&shortcuts_label, true),
+            (&allied_control_label, true),
             (&back_label, true),
         ];
         let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
@@ -227,6 +239,15 @@ pub async fn show_options(
                         // shortcuts does not spuriously mark the
                         // graphic/sound profile dirty.
                         outcome.key_config_changed |= changed;
+                    }
+                    BUTTON_ALLIED_CONTROL => {
+                        gameplay_config.control_allied_soldiers =
+                            !gameplay_config.control_allied_soldiers;
+                        outcome.changed = true;
+                        // Rebuild the hub so the button label reflects the
+                        // newly persisted setting immediately.
+                        re_display = true;
+                        done = true;
                     }
                     BUTTON_BACK => done = true,
                     _ => {}
