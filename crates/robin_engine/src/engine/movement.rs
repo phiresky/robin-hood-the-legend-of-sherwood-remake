@@ -7189,7 +7189,27 @@ impl EngineInner {
             // command for one frame before its lowering order starts.
             return None;
         }
-        if self.actors_frozen() {
+        // `IsFrozenAll()` is read ONLY inside `RHSprite`
+        // (`original-code/RHsprite.cpp:739`, `:985`, `:1042`, `:1084`, `:1124`,
+        // `:1430`) and in the NPC AI gates; `RHElementActor::Execute` itself is
+        // never gated on it. Its `RHNONANIMATION_PASSING_DOOR` arm
+        // (`original-code/RHelementactor.cpp:2786-2807`) reaches no Sprite
+        // method at all: it calls `PassDoor()` / restores anti-collision,
+        // forwards `MSG_STATURE`, and returns `RHMOTION_TERMINATED` whatever
+        // the global freeze is. A `FreezeAll(true)` landing on the frame that
+        // owns the door action point must therefore not defer it — doing so
+        // held the pass open one extra frame and delayed every successor
+        // (AI unlock, the route's own WaitTimer, the next path request).
+        let selected_is_door_pass_action_point = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .and_then(|element| element.current_order())
+            .is_some_and(|order| {
+                order.order_id == selected.order_id
+                    && order.order_type == OrderType::PassingDoor
+            });
+        if self.actors_frozen() && !selected_is_door_pass_action_point {
             // A globally frozen Sprite::PerformMotion returns IN_PROGRESS
             // before touching any row/frame state, and that is what the
             // movement Execute arm hands back to the actor. Latch it here:
