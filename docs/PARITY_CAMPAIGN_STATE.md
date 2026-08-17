@@ -1594,3 +1594,99 @@ difference is recorded here because campaign.env names only the original binary.
 `uwIndex > Size()` instead of `>=`, so `index == Size()` reads one past the end. It cannot fire today
 (pools always hold exactly one entry, `RHsoundcache.cpp:1009-1011`) and fixing it would convert an
 out-of-bounds read into a fatal error — a behaviour change, so it stays.
+
+## Three new Original-side probes (2026-08-17) — `original-code` commit `1b9330f`
+
+Three investigations were stuck because only the Original could answer them. All three now have an
+env-gated probe, and all three questions are answered below. Build:
+`build/rebuild-20260816/robin` (rebuild it with
+`TMPDIR=$PWD/build/rebuild-20260816/compiler-tmp cmake --build $PWD/build/rebuild-20260816`).
+
+**Equivalence proof, probes disabled** — 300 frames of `Savegame_linux3/Profile_001/Savegame_008`,
+`-PARITYSEED 1 -PARITYRANDOMINPUT 14`, vs the pinned `build/native-full/robin-schema14-capture`: all
+303 trace lines identical field-for-field, only `draws.callsite_offsets` differ (raw code addresses).
+
+Every probe reads its environment once into a function-local static, prints to stderr, and evaluates
+nothing but a comparison when off. Each takes an optional `_FRAME` and `_CREATION_ORDER` filter;
+omit them to trace everything. **`co=` is the C++ `GetCreationOrder()`, which is NOT the trace's
+`SoldierId`/`PcId` index** — map it through the trace's `elements[].creation_order`.
+
+### `PARITY_DEBUG_ORIGINAL_ENTER_SWORDFIGHT` (+ `_FRAME`, `_CREATION_ORDER` — matches either side)
+`RHelementactorhuman.cpp` `CanEnterSwordfightWith` and `EnterSwordFight`. Prints `phase=can_enter
+reason=<clause>` (the clause chain re-evaluated in the same order and with the same short circuits),
+then one `phase=gate gate=… result=pass|reject` line per later gate with its operands — `can_enter`,
+`elevation` (both elevations, `|delta|`, `MAX_ELEVATION_SWORDFIGHT`, sector identity), `range3d`
+(distance + bits, both UBER ranges, both 3D positions), `opaque_los` (both eye points),
+`sword_hurted` (own opponent count, opponent swordfighting, principal opponent's count),
+`charging_rider` — and a final `phase=accept`.
+
+**Answered — schema14 `linux2/P002/Savegame_032/replay-002` f17627: NO gate rejected, because the
+Original never calls `EnterSwordFight` for this pairing at all.** Over the whole 1400-frame replay
+(`-PARITYSAVE Savegame_linux2/Profile_002/Savegame_032 -PARITYSEED 1 -PARITYRANDOMINPUT 2`) the probe
+emits 34 lines and **not one of them mentions `co=141`** — the creation order of the diverging
+`Soldier(SoldierId(110))` — nor any call at frame 17627. Rust has `Pc(170)` (`co=201`) succeed at
+`EnterSwordFight(Soldier(110))`; the Original's `co=201` only ever pairs with `co=140`
+(`Soldier(109)`), at f17314/17349/17642. The Rust-side audit that found "all gates present and
+correctly ordered" was auditing the wrong stage: **the divergence is upstream of `EnterSwordFight`** —
+whatever makes Rust's PC issue the call. Consistent with the recorded frame, where the Original keeps
+`Soldier(110)` in substate 155 `AttackingRunningToEnemy` and queues a path event that Rust does not.
+
+### `PARITY_DEBUG_ORIGINAL_TIREDNESS` (+ `_FRAME`, `_CREATION_ORDER`)
+`RHelementactorhuman.cpp`. `before=`/`after=` at every `muwTiredness` write plus the threshold read:
+`site=recuperation` (and `recuperation_skipped`, naming swordfighting/moving) in `Hourglass`,
+`smalltalk_strike_terminated`, `smalltalk_parry_terminated`, `strike_energy` (with strike id and
+energy), `weakness_action_running` / `weakness_action_done` in `ExecuteWeakness`, and
+`weak_threshold_read` at the `muwTiredness >= 100` test in `EvaluateSwordfight`.
+
+**Answered — schema14 `linux3/P001/Savegame_047/replay-010` f84324: the Original's counter is 90 at
+that frame, and it does not reach 100 until f84354.** Full trail for the actor (`co=128`,
+endurance 100, so recuperation = 10 and the smalltalk decrement = 10):
+
+```
+f83968 recuperation   10 -> 0
+f84020 strike_energy   0 -> 10   (strike 3, +10)
+f84049 strike_energy  10 -> 25   (strike 6, +15)
+f84098 strike_energy  25 -> 40   (strike 5, +15)
+f84114 smalltalk_parry_terminated 40 -> 30   <-- the decrement most likely missing in Rust
+f84167 strike_energy  30 -> 50   (strike 7, +20)
+f84237 strike_energy  50 -> 70   (strike 2, +20)
+f84278 strike_energy  70 -> 80   (strike 3, +10)
+f84324 strike_energy  80 -> 90   (strike 4, +10)   <-- divergence frame; 90 < 100, no weak strike
+f84354 strike_energy  90 -> 110  <-- the Original's first crossing
+```
+`recuperation` fires only on frames where `frame & 63 == creationOrder & 31` **and** the actor is
+neither swordfighting nor moving; during the fight it is skipped, so the earlier drops
+(f83776 30->20, f83840 20->10, f83968 10->0) all happen between engagements. Rust is ≥10 ahead by
+f84324; the single-decrement candidates are the f84114 parry-smalltalk drain and the three
+recuperation ticks.
+
+### `PARITY_DEBUG_ORIGINAL_COMBAT_POSITION` (+ `_FRAME`, `_CREATION_ORDER`)
+`RHartificialmalignity.cpp`. Traces the whole `ProposeGoodCombatPosition` pipeline: `propose_begin`
+(lock, blood alcohol, rank, us/them sizes, formation flag, candidates already in the list),
+`propose_mode` (`surround`), one `generated` line per candidate before cleanup, one `clean` line per
+candidate with the verdict and the clause behind it (`cannot_leave_adversary` / `too_far` /
+`not_allowed_to_attack` / `too_near_enemy` / `too_near_friend`, plus the offending human and the
+distance), one `survivor` line, an `estimate_damage` line exposing the from-behind test and the IQ
+threshold, a `score` line per candidate and a final `best` line. Positions print both readably and as
+raw bits, so a 1-ULP goal difference is visible.
+
+**Answered — schema14 `linux3/P003/Savegame_034/replay-014` f19764: the Original generates only TWO
+candidates and there is no candidate 6.** `co=108`, `surround=1`, `them=2`:
+`gen_idx=0` is the stay-put position against `co=211` (score −42) and `gen_idx=1` is a table-jump
+position against `co=210` (`has_jump=1`, `bonus=-20` after cleanup, score −98). Winner: `idx=0`,
+score −42. `ProposeCombatPositionsAround` never emits the 16 ring positions here — for the primary
+target it takes `bProposePositionsAround = ( mpMyLineJump == NULL )` (false: this fighter is on a
+jump line), and for the other enemy it takes the `pLineJump != NULL && mpMyLineJump != NULL` branch,
+which emits exactly one on-line candidate. **So Rust generating a ring at all is the bug**, and the
+from-behind bonus is a red herring twice over: the Original's `estimate_damage` lines report
+`from_behind=0` and a damage of 13, nowhere near Rust's 7424.
+
+**Answered — schema14 `linux3/P001/Savegame_044/replay-003` f28893: the Original also generates two
+candidates, but its second one is a LINE-FORMATION position Rust does not produce.** `co=254` (the
+diverging `Soldier(SoldierId(223))`, `us=5`, `them=1`, `rank=0` = `RANK_SOLDIER`, `formation=1`, so
+`surround=0`): `gen_idx=0` is stay-put (score 25) and `gen_idx=1` is
+`(1492.24353, 1678.29358)` bits `(44ba87cb, 44d1c965)` with `line_pos=1`, `bonus=500`, `left_co=146`
+— the `ProposeCombatPositionsRightOf`/`Between` branch of `ProposeCombatPositions`. It wins with
+score 772 against 25, which is why the Original leaves substate 160 for 173 while Rust stays in the
+swordfight. **Rust is missing the whole line-formation branch (or its neighbour selection) for this
+fighter**, not mis-scoring a candidate it has.
