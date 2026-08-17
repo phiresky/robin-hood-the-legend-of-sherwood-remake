@@ -13,8 +13,8 @@ use super::{EngineInner, LevelAssets};
 const ARRIVAL_DISTANCE: f32 = 32.0;
 const FOLLOW_DISTANCE: f32 = 85.0;
 const FOLLOW_REPATH_DISTANCE: f32 = 24.0;
-const FORMATION_SPACING: f32 = 19.0;
-const STAGGERED_SPACING: f32 = 27.0;
+const FORMATION_SPACING: f32 = 22.0;
+const STAGGERED_SPACING: f32 = 31.0;
 const LINE_TO_COLUMN_DISTANCE: f32 = 240.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -190,6 +190,31 @@ mod tests {
     }
 
     #[test]
+    fn box_protects_crossbows_inside_melee_troops() {
+        let roles = [
+            FormationRole::Officer,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Melee,
+            FormationRole::Knight,
+            FormationRole::Ranged,
+            FormationRole::Ranged,
+            FormationRole::Ranged,
+        ];
+        let offsets = assign_formation_offsets(&roles, box_offsets(&roles), AlliedFormation::Box);
+        let minimum_melee_radius = offsets[1..5]
+            .iter()
+            .map(|point| point.x * point.x + point.y * point.y)
+            .fold(f32::MAX, f32::min);
+
+        for ranged in &offsets[6..9] {
+            let radius = ranged.x * ranged.x + ranged.y * ranged.y;
+            assert!(radius < minimum_melee_radius);
+        }
+    }
+
+    #[test]
     fn selected_heroes_reserve_the_command_center() {
         let anchor = formation_anchor_behind_leaders(
             MapPoint::new(0.0, 100.0),
@@ -241,6 +266,61 @@ fn row_offsets(count: usize, columns: usize, spacing: f32, staggered: bool) -> V
             )
         })
         .collect()
+}
+
+fn centered_grid_offsets(count: usize, columns: usize, spacing: f32) -> Vec<MapPoint> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let rows = count.div_ceil(columns);
+    (0..count)
+        .map(|index| {
+            let row = index / columns;
+            let members_in_row = (count - row * columns).min(columns);
+            let column = index % columns;
+            MapPoint::new(
+                (column as f32 - (members_in_row.saturating_sub(1) as f32 / 2.0)) * spacing,
+                (rows.saturating_sub(1) as f32 / 2.0 - row as f32) * spacing,
+            )
+        })
+        .collect()
+}
+
+fn box_offsets(roles: &[FormationRole]) -> Vec<MapPoint> {
+    let outer_count = roles
+        .iter()
+        .filter(|role| matches!(role, FormationRole::Shield | FormationRole::Melee))
+        .count();
+    let inner_count = roles.len() - outer_count;
+    let inner_columns = (inner_count as f32).sqrt().ceil().max(1.0) as usize;
+    let mut offsets = centered_grid_offsets(inner_count, inner_columns, FORMATION_SPACING);
+    if outer_count == 0 {
+        return offsets;
+    }
+
+    let inner_half_width = offsets
+        .iter()
+        .map(|point| point.x.abs())
+        .fold(0.0, f32::max);
+    let inner_half_depth = offsets
+        .iter()
+        .map(|point| point.y.abs())
+        .fold(0.0, f32::max);
+    let half_width = inner_half_width + FORMATION_SPACING;
+    let half_depth = inner_half_depth + FORMATION_SPACING;
+
+    if outer_count == 1 {
+        offsets.push(MapPoint::new(0.0, half_depth));
+        return offsets;
+    }
+    for index in 0..outer_count {
+        let angle =
+            std::f32::consts::FRAC_PI_4 + std::f32::consts::TAU * index as f32 / outer_count as f32;
+        let direction = MapPoint::new(angle.cos(), angle.sin());
+        let scale = (half_width / direction.x.abs()).min(half_depth / direction.y.abs());
+        offsets.push(MapPoint::new(direction.x * scale, direction.y * scale));
+    }
+    offsets
 }
 
 fn flank_offsets(count: usize, reserve_command_center: bool) -> Vec<MapPoint> {
@@ -679,22 +759,7 @@ impl EngineInner {
                 let columns = ((soldiers.len() as f32 * 2.0).sqrt().ceil() as usize).max(1);
                 row_offsets(soldiers.len(), columns, FORMATION_SPACING, false)
             }
-            AlliedFormation::Box => {
-                let columns = (soldiers.len() as f32).sqrt().ceil() as usize;
-                let rows = soldiers.len().div_ceil(columns);
-                (0..soldiers.len())
-                    .map(|index| {
-                        let row = index / columns;
-                        let members_in_row = (soldiers.len() - row * columns).min(columns);
-                        let column = index % columns;
-                        MapPoint::new(
-                            (column as f32 - (members_in_row.saturating_sub(1) as f32 / 2.0))
-                                * FORMATION_SPACING,
-                            (rows.saturating_sub(1) as f32 / 2.0 - row as f32) * FORMATION_SPACING,
-                        )
-                    })
-                    .collect()
-            }
+            AlliedFormation::Box => box_offsets(&roles),
             AlliedFormation::Staggered => {
                 let columns = ((soldiers.len() as f32 * 2.0).sqrt().ceil() as usize).max(1);
                 row_offsets(soldiers.len(), columns, STAGGERED_SPACING, true)

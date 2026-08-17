@@ -21,9 +21,9 @@ pub enum AlliedStance {
     /// Do not acquire targets or leave the assigned position.
     Hold,
     /// Return fire, but resume the assigned patrol/follow duty afterwards.
-    #[default]
     Defensive,
     /// Let the soldier AI pursue threats without a defensive leash.
+    #[default]
     Aggressive,
 }
 
@@ -144,6 +144,11 @@ impl AlliedControlState {
 mod tests {
     use super::*;
     use crate::entity_id::SoldierId;
+
+    #[test]
+    fn default_stance_preserves_normal_autonomous_ai() {
+        assert_eq!(AlliedStance::default(), AlliedStance::Aggressive);
+    }
 
     #[test]
     fn controlled_orders_serialize_to_json() {
