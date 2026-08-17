@@ -41,6 +41,70 @@ use serde::{Deserialize, Serialize};
 
 use crate::game::GamePersistentState;
 use crate::sound::SoundManager;
+use sha2::{Digest, Sha256};
+
+/// Stable identity of the complete runtime payload captured by a save.
+///
+/// This intentionally excludes [`SaveHeader`] metadata such as timestamps and
+/// display text. Two payloads compare equal only when their engine, sound, and
+/// host-owned persistent game state serialize identically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ReplaySaveIdentity([u8; 32]);
+
+/// Complete in-mission state needed to reproduce the effect of loading a save.
+///
+/// Replay playback keeps these snapshots in memory at save-marker boundaries.
+/// Restoring only `Engine` is insufficient: normal save loading also restores
+/// sound and persistent `Game` flags and runs engine/host post-load fixups.
+#[derive(Clone)]
+pub(crate) struct GameRuntimeSnapshot {
+    engine: Engine,
+    sound: SoundManager,
+    game_persistent: GamePersistentState,
+}
+
+impl GameRuntimeSnapshot {
+    pub(crate) fn capture(engine: &Engine, host: &Host, game: &crate::game::Game) -> Self {
+        let mut game_persistent = game.persistent.clone();
+        game_persistent.draw_hidden = host.input.draw_hidden;
+        Self {
+            engine: engine.clone(),
+            sound: host.audio.sound.clone(),
+            game_persistent,
+        }
+    }
+
+    pub(crate) fn replay_identity(&self) -> Result<ReplaySaveIdentity> {
+        replay_save_identity(&self.engine, &self.sound, &self.game_persistent)
+    }
+
+    pub(crate) fn apply_to_with_game(
+        self,
+        engine: &mut Engine,
+        host: &mut Host,
+        game: &mut crate::game::Game,
+        assets: &LevelAssets,
+    ) -> std::result::Result<(), SnapshotRestoreError> {
+        let draw_hidden = self.game_persistent.draw_hidden;
+        engine.try_restore(&mut host.engine_display, self.engine, assets)?;
+        host.audio.sound = self.sound;
+        host.audio.sound.after_load(&engine.sound_sim().sources);
+        host.post_load_reset();
+        game.persistent = self.game_persistent;
+        host.input.draw_hidden = draw_hidden;
+        Ok(())
+    }
+}
+
+fn replay_save_identity(
+    engine: &Engine,
+    sound: &SoundManager,
+    game_persistent: &GamePersistentState,
+) -> Result<ReplaySaveIdentity> {
+    let bytes = serde_json::to_vec(&(engine, sound, game_persistent))
+        .context("serializing replay save identity")?;
+    Ok(ReplaySaveIdentity(Sha256::digest(bytes).into()))
+}
 
 // ─── Thumbnail ───────────────────────────────────────────────────────
 
@@ -482,17 +546,18 @@ impl GameSaveFile {
         mission_id: u32,
         display_text: String,
     ) -> Self {
-        let mut persistent = game.persistent.clone();
-        // The live `draw_hidden` flag lives on `InputState` so renderers
-        // read it cheaply; snapshot it here so the debug toggle
-        // round-trips through save/load.
-        persistent.draw_hidden = host.input.draw_hidden;
+        let snapshot = GameRuntimeSnapshot::capture(engine, host, game);
         Self {
             header: SaveHeader::new(mission_id, display_text),
-            engine: engine.clone(),
-            sound: host.audio.sound.clone(),
-            game_persistent: persistent,
+            engine: snapshot.engine,
+            sound: snapshot.sound,
+            game_persistent: snapshot.game_persistent,
         }
+    }
+
+    /// Identity of the serialized runtime payload, excluding header metadata.
+    pub(crate) fn replay_identity(&self) -> Result<ReplaySaveIdentity> {
+        replay_save_identity(&self.engine, &self.sound, &self.game_persistent)
     }
 
     /// Apply a save file to the engine, replacing it wholesale.
@@ -533,15 +598,12 @@ impl GameSaveFile {
         game: &mut crate::game::Game,
         assets: &LevelAssets,
     ) -> std::result::Result<(), SnapshotRestoreError> {
-        let draw_hidden = self.game_persistent.draw_hidden;
-        let persistent = self.game_persistent.clone();
-        self.apply_to(engine, host, assets)?;
-        game.persistent = persistent;
-        // Restore the debug `draw_hidden` toggle.  Must run after
-        // `apply_to` because `Host::post_load_reset` may reset
-        // transient input state.
-        host.input.draw_hidden = draw_hidden;
-        Ok(())
+        let snapshot = GameRuntimeSnapshot {
+            engine: self.engine,
+            sound: self.sound,
+            game_persistent: self.game_persistent,
+        };
+        snapshot.apply_to_with_game(engine, host, game, assets)
     }
 
     /// Write the save file to disk as JSON.

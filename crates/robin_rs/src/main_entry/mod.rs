@@ -33,9 +33,10 @@ pub use init::{
 
 pub use callbacks::{PendingLevelLoad, PostLoadSync, SaveBannerKind, SaveLoadRequest};
 pub(crate) use callbacks::{
-    RustCallbacks, current_mission_id, detect_demo_mode_with_context, execute_app_effects,
-    perform_pending_save_load, picture_to_surface, preflight_or_use_decoded_load,
-    resolve_loading_pak, validate_save_mission, validated_save_reload_target,
+    RustCallbacks, SaveLoadEvent, current_mission_id,
+    detect_demo_mode_with_context, execute_app_effects, perform_pending_save_load,
+    picture_to_surface, preflight_or_use_decoded_load, resolve_loading_pak, validate_save_mission,
+    validated_save_reload_target,
 };
 
 pub use run::{run_rust_game, run_rust_game_headless};

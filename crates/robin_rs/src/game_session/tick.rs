@@ -210,6 +210,10 @@ pub(super) fn drain_steps(
     rewind_buffer: &mut RewindBuffer,
     rollback_checker: &mut Option<RollbackChecker>,
     replay_player: &mut Option<ReplayPlayer>,
+    playback_pinned_saves: &mut std::collections::BTreeMap<
+        u32,
+        crate::save_file::GameRuntimeSnapshot,
+    >,
     manual_pause: &mut bool,
     active_modal: &mut Option<ActiveModal>,
 ) {
@@ -237,6 +241,7 @@ pub(super) fn drain_steps(
                     rewind_buffer,
                     rollback_checker,
                     replay_player,
+                    playback_pinned_saves,
                     n,
                 );
                 // Stepping bypasses the checker's begin_frame/end_frame
@@ -294,6 +299,7 @@ pub(super) fn drain_steps(
                             rewind_buffer,
                             rollback_checker,
                             replay_player,
+                            playback_pinned_saves,
                             delta,
                         ) {
                             Ok((advanced, dismissed_during)) => {
@@ -372,14 +378,31 @@ pub(super) fn run_forward_ticks(
     rewind_buffer: &mut RewindBuffer,
     rollback_checker: &mut Option<RollbackChecker>,
     replay_player: &mut Option<ReplayPlayer>,
+    playback_pinned_saves: &mut std::collections::BTreeMap<
+        u32,
+        crate::save_file::GameRuntimeSnapshot,
+    >,
     n: u32,
 ) -> Result<(u32, usize), String> {
-    let engine = &mut manager.engine;
-    let sim_frame = &mut manager.sim_frame;
-    let start = *sim_frame;
+    let start = manager.sim_frame;
     let mut dismissed = 0usize;
     for _ in 0..n {
-        let frame = *sim_frame;
+        let frame = manager.sim_frame;
+        // Stepping into a save-marker / load-back frame must pin or swap
+        // state exactly like the normal playback admission path.
+        if let Some(player) = replay_player.as_ref()
+            && !player.is_finished()
+        {
+            super::runtime::apply_replay_timeline_events_at_boundary(
+                player,
+                playback_pinned_saves,
+                rewind_buffer,
+                host,
+                game,
+                manager,
+                assets,
+            )?;
+        }
         let buffered_cmds = if frame < rewind_buffer.next_record_frame() {
             let Some(recorded) = rewind_buffer.commands_for(frame) else {
                 return Err(format!(
@@ -395,6 +418,7 @@ pub(super) fn run_forward_ticks(
         // HTTP stepping can advance multiple ticks inside one host frame,
         // so each tick needs its own pre-tick checkpoints. The outer mission
         // frame only opened the first one.
+        let engine = &mut manager.engine;
         rewind_buffer.begin_frame(frame, engine, assets);
         if let Some(checker) = rollback_checker.as_mut() {
             checker.begin_frame(frame, engine);
@@ -440,7 +464,7 @@ pub(super) fn run_forward_ticks(
         if buffered_cmds.is_none() {
             rewind_buffer.end_frame(frame_cmds);
         }
-        *sim_frame += 1;
+        manager.sim_frame += 1;
 
         // If the tick queued any modal, drop it silently and keep
         // going.  Without this the caller's `step N` would stop at
@@ -451,7 +475,7 @@ pub(super) fn run_forward_ticks(
             dismissed += dismiss_pending_modals(host);
         }
     }
-    Ok((*sim_frame - start, dismissed))
+    Ok((manager.sim_frame - start, dismissed))
 }
 
 /// Rewind to `target`, restoring rollback state from the rewind
@@ -574,6 +598,7 @@ mod tests {
         let mut game = Game::default();
         let mut rollback_checker = None;
         let mut replay_player = None;
+        let mut playback_pinned_saves = std::collections::BTreeMap::new();
 
         let (advanced, _) = run_forward_ticks(
             &mut manager,
@@ -584,6 +609,7 @@ mod tests {
             &mut rewind_buffer,
             &mut rollback_checker,
             &mut replay_player,
+            &mut playback_pinned_saves,
             1,
         )
         .expect("forward scrub should reuse frame 250");

@@ -337,11 +337,36 @@ struct PreTickTimelineOutput {
     consumed_buffered: bool,
 }
 
+/// Drop pending load-type requests while a replay is playing back.
+///
+/// The replay stream owns the deterministic state during playback: recorded
+/// loads arrive as load-back records applied at the frame boundary, so
+/// re-running the request against on-disk saves (which may differ or be
+/// missing on this machine) would corrupt or abort playback.  Save-type
+/// requests still flush — writing a save during playback is harmless.
+fn suppress_load_requests_during_playback(
+    runtime: &super::runtime::TimelineRuntime,
+    callbacks: &mut RustCallbacks,
+) {
+    if runtime.replay_player.is_some()
+        && callbacks
+            .pending
+            .as_ref()
+            .is_some_and(|request| !request.writes_save_payload())
+    {
+        tracing::info!(
+            "replay playback: dropping live load request; recorded load-backs own the timeline"
+        );
+        callbacks.pending = None;
+    }
+}
+
 /// Admit replay commands and reconcile rewind history after all live/network
 /// commands for the frame are known.
 fn prepare_pre_tick_timeline(
     runtime: &mut super::runtime::TimelineRuntime,
     host: &mut Host,
+    game: &mut crate::game::Game,
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &robin_engine::engine::LevelAssets,
     frame: &mut MissionFrame,
@@ -349,6 +374,11 @@ fn prepare_pre_tick_timeline(
     rewind_active: bool,
     mut paused: bool,
 ) -> Result<PreTickTimelineOutput, String> {
+    if runtime.replay_player.is_some() && !paused {
+        // Recorded save markers pin the boundary state and load-back
+        // records swap a pinned state in, before this frame's commands.
+        runtime.apply_playback_timeline_events(host, game, manager, assets)?;
+    }
     if let Some(ref mut player) = runtime.replay_player
         && !paused
     {
@@ -701,7 +731,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let callbacks = &mut *services.callbacks;
         let profiles = services.profiles;
         let PreparationPhaseState {
-            frame,
+            mut frame,
             mp_clock_pause,
             pause_closed_this_frame,
             rewind_active,
@@ -802,7 +832,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             tracing::info!("Game exited with: {:?}", exit_code);
             // Flush any pending save before returning (e.g. the
             // quit-time continue save).
-            let save_load_processed = perform_pending_save_load(
+            suppress_load_requests_during_playback(runtime, callbacks);
+            let save_load = perform_pending_save_load(
                 host,
                 game,
                 callbacks,
@@ -811,8 +842,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 profiles,
                 pending_thumbnail.clone(),
             );
-            if save_load_processed && let Some(ref mut checker) = runtime.rollback_checker {
+            if save_load.processed
+                && let Some(ref mut checker) = runtime.rollback_checker
+            {
                 checker.reset();
+            }
+            if let Some(event) = save_load.event {
+                runtime.note_save_load_event(event, &mut frame, &manager.engine);
             }
             if callbacks.pending_level_restart {
                 callbacks.pending_level_restart = false;
@@ -829,7 +865,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             runtime.trace(FrameContractStage::Exit);
             return Ok(Some(FrameControl::Exit(MissionExit::new(exit_code))));
         }
-        let save_load_processed = perform_pending_save_load(
+        suppress_load_requests_during_playback(runtime, callbacks);
+        let save_load = perform_pending_save_load(
             host,
             game,
             callbacks,
@@ -838,8 +875,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             profiles,
             pending_thumbnail,
         );
-        if save_load_processed && let Some(ref mut checker) = runtime.rollback_checker {
+        if save_load.processed
+            && let Some(ref mut checker) = runtime.rollback_checker
+        {
             checker.reset();
+        }
+        if let Some(event) = save_load.event {
+            runtime.note_save_load_event(event, &mut frame, &manager.engine);
         }
 
         // A rejected/missing/unappliable Restart payload must leave this
@@ -918,7 +960,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         } = runtime;
         let MissionWorld {
             host,
-            game: _,
+            game,
             manager,
             assets,
             ..
@@ -979,6 +1021,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         } = prepare_pre_tick_timeline(
             runtime,
             host,
+            game,
             manager,
             assets.as_ref(),
             &mut frame,

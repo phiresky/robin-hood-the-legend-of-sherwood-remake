@@ -1802,6 +1802,8 @@ mod tests {
             },
             frames: BTreeMap::new(),
             hashes: BTreeMap::new(),
+            save_markers: BTreeMap::new(),
+            load_backs: BTreeMap::new(),
         }
         .into()
     }

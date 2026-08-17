@@ -87,7 +87,8 @@ A list of which additional features we have added, which ones we might still wan
   save at a clean frame boundary writes a save-marker record (`sv`, the
   state hash at capture), and loading a save made in the same session writes
   a load-back record (`lb`) pointing at that marker's frame. Playback pins
-  an engine clone at each marker and swaps it back in at the load-back, so
+  the complete engine, sound, host-input, and persistent game state at each
+  marker and restores it through the normal post-load path, so
   quicksave/quickload and script-triggered restarts replay bit-exactly
   without embedding save payloads. Loads of saves from other sessions cannot
   be expressed this way and log a warning that the recording is no longer

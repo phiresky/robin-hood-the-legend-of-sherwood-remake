@@ -154,6 +154,46 @@ pub enum SaveLoadRequest {
     Sherwood { mission_id: u32 },
 }
 
+/// Which replay-timeline-relevant effect a flushed save/load request had.
+///
+/// Consumed by `TimelineRuntime::note_save_load_event`, which turns saves
+/// into replay save markers and same-session loads into linear load-back
+/// records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveLoadEvent {
+    /// A save payload capturing the current engine state was written.
+    SaveWritten {
+        identity: crate::save_file::ReplaySaveIdentity,
+    },
+    /// A save payload was applied to the live engine, replacing its state.
+    LoadApplied {
+        /// Identity computed from the decoded payload before post-load fixups
+        /// mutate the live engine.
+        identity: crate::save_file::ReplaySaveIdentity,
+        /// Whether the decoded payload came from the Continue auto-save.
+        is_continue: bool,
+    },
+}
+
+/// Result of flushing a pending save/load request.
+pub(crate) struct SaveLoadFlushResult {
+    /// A request was present and handled (successfully or not).
+    pub processed: bool,
+    /// The state-affecting event that actually completed, if any.
+    pub event: Option<SaveLoadEvent>,
+}
+
+impl SaveLoadFlushResult {
+    const NOT_PENDING: Self = Self {
+        processed: false,
+        event: None,
+    };
+    const NO_EVENT: Self = Self {
+        processed: true,
+        event: None,
+    };
+}
+
 impl RustCallbacks {
     pub fn new(application_context: ApplicationContext) -> Self {
         let save_manager = SaveGameManager::open_for_context(&application_context);
@@ -470,6 +510,34 @@ pub(crate) fn execute_app_effects(
 /// screenshot path, so thumbnail contents never depend on stale render
 /// target state.  If the capture failed or the caller has no renderer
 /// handy, pass `None` and the save is written without a thumbnail.
+fn replay_save_written_event(
+    engine: &engine_api::Engine,
+    host: &crate::host::Host,
+    game: &crate::game::Game,
+) -> Option<SaveLoadEvent> {
+    match crate::save_file::GameRuntimeSnapshot::capture(engine, host, game).replay_identity() {
+        Ok(identity) => Some(SaveLoadEvent::SaveWritten { identity }),
+        Err(error) => {
+            tracing::error!(
+                "save succeeded, but its replay identity could not be computed: {error:#}"
+            );
+            None
+        }
+    }
+}
+
+fn replay_loaded_identity(
+    save: &crate::save_file::GameSaveFile,
+) -> Option<crate::save_file::ReplaySaveIdentity> {
+    match save.replay_identity() {
+        Ok(identity) => Some(identity),
+        Err(error) => {
+            tracing::error!("loaded save has no usable replay identity: {error:#}");
+            None
+        }
+    }
+}
+
 pub(crate) fn perform_pending_save_load(
     host: &mut crate::host::Host,
     game: &mut crate::game::Game,
@@ -478,11 +546,12 @@ pub(crate) fn perform_pending_save_load(
     assets: &engine_api::LevelAssets,
     profiles: &engine_profiles::ProfileManager,
     thumbnail: Option<crate::save_file::Thumbnail>,
-) -> bool {
+) -> SaveLoadFlushResult {
     let Some(request) = callbacks.pending.take() else {
-        return false;
+        return SaveLoadFlushResult::NOT_PENDING;
     };
     let thumb_ref = thumbnail.as_ref();
+    let mut event = None;
     match request {
         SaveLoadRequest::Save { slot, mission_id } => {
             // `slot = None` ⇒ auto Continue-save.
@@ -524,6 +593,7 @@ pub(crate) fn perform_pending_save_load(
                 tracing::error!("Save failed: {err:#}");
             } else {
                 tracing::info!("Save completed (mission={mission_id})");
+                event = replay_save_written_event(engine, host, game);
                 // Mirror the manual save into the Continue slot. The
                 // guard keeps Continue→Continue copies from clobbering
                 // themselves; Restart / Sherwood slots also skip the
@@ -572,7 +642,7 @@ pub(crate) fn perform_pending_save_load(
                 Ok(resolved) => resolved,
                 Err(error) => {
                     tracing::error!("Load preflight failed: {error:#}");
-                    return true;
+                    return SaveLoadFlushResult::NO_EVENT;
                 }
             };
             match resolved {
@@ -583,7 +653,7 @@ pub(crate) fn perform_pending_save_load(
                             Ok(target) => target,
                             Err(error) => {
                                 tracing::error!("Load preflight rejected slot {idx}: {error}");
-                                return true;
+                                return SaveLoadFlushResult::NO_EVENT;
                             }
                         };
                     if let Some(target_mission_id) = reload_target {
@@ -598,9 +668,10 @@ pub(crate) fn perform_pending_save_load(
                             target_mission_id,
                             save,
                         });
-                        return true;
+                        return SaveLoadFlushResult::NO_EVENT;
                     }
                     let validated_mission_id = save.header.mission_id;
+                    let replay_identity = replay_loaded_identity(&save);
                     match save.apply_to_with_game(engine, host, game, assets) {
                         Err(err) => {
                             tracing::error!("Load failed: {err:#}");
@@ -647,6 +718,10 @@ pub(crate) fn perform_pending_save_load(
                                 callbacks.pending_save_banner = Some(SaveBannerKind::Loaded);
                             }
                             tracing::info!("Load completed from slot {idx}");
+                            event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {
+                                identity,
+                                is_continue,
+                            });
                         }
                     }
                 }
@@ -667,10 +742,12 @@ pub(crate) fn perform_pending_save_load(
                 thumb_ref,
             ) {
                 tracing::error!("Restart save failed: {err:#}");
+            } else {
+                event = replay_save_written_event(engine, host, game);
             }
         }
         SaveLoadRequest::LoadRestart => {
-            let restore_result = (|| -> anyhow::Result<()> {
+            let restore_result = (|| -> anyhow::Result<_> {
                 let (_idx, save) = callbacks
                     .save_manager
                     .preflight_restart_save()?
@@ -684,14 +761,19 @@ pub(crate) fn perform_pending_save_load(
                         "save mission {target_mission_id} does not match active mission {active_mission_id}"
                     );
                 }
+                let replay_identity = replay_loaded_identity(&save);
                 save.apply_to_with_game(engine, host, game, assets)?;
-                Ok(())
+                Ok(replay_identity)
             })();
             match restore_result {
-                Ok(()) => {
+                Ok(replay_identity) => {
                     // Restart = never Continue slot; still sync campaign-map state.
                     callbacks.post_load_sync = Some(PostLoadSync { is_continue: false });
                     tracing::info!("Restart snapshot restored");
+                    event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {
+                        identity,
+                        is_continue: false,
+                    });
                 }
                 Err(error) => {
                     tracing::error!(
@@ -712,6 +794,8 @@ pub(crate) fn perform_pending_save_load(
                 thumb_ref,
             ) {
                 tracing::error!("Continue save failed: {err:#}");
+            } else {
+                event = replay_save_written_event(engine, host, game);
             }
         }
         SaveLoadRequest::QuickSave { mission_id } => {
@@ -728,6 +812,7 @@ pub(crate) fn perform_pending_save_load(
                 }
                 _ => {
                     tracing::info!("Quick save written (mission={mission_id})");
+                    event = replay_save_written_event(engine, host, game);
                     // QuickSave is neither Continue nor Restart, so the
                     // Continue-slot mirror runs.
                     if let Err(err) = callbacks.save_manager.write_continue_save(
@@ -774,7 +859,7 @@ pub(crate) fn perform_pending_save_load(
                                 Ok(target) => target,
                                 Err(error) => {
                                     tracing::error!("Quick load ({slot_name}) rejected: {error}");
-                                    return true;
+                                    return SaveLoadFlushResult::NO_EVENT;
                                 }
                             };
                             if let Some(target_mission_id) = reload_target {
@@ -786,13 +871,14 @@ pub(crate) fn perform_pending_save_load(
                                     target_mission_id,
                                     save,
                                 });
-                                return true;
+                                return SaveLoadFlushResult::NO_EVENT;
                             }
                             let validated_mission_id = save.header.mission_id;
+                            let replay_identity = replay_loaded_identity(&save);
                             if let Err(error) = save.apply_to_with_game(engine, host, game, assets)
                             {
                                 tracing::error!("Quick load ({slot_name}) failed: {error:#}");
-                                return true;
+                                return SaveLoadFlushResult::NO_EVENT;
                             }
                             // QuickSave is not the Continue slot; just re-sync
                             // campaign-map state.
@@ -811,6 +897,10 @@ pub(crate) fn perform_pending_save_load(
                             );
                             callbacks.pending_save_banner = Some(SaveBannerKind::Loaded);
                             tracing::info!("Quick save loaded from {slot_name}");
+                            event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {
+                                identity,
+                                is_continue: false,
+                            });
                         }
                     }
                 }
@@ -831,11 +921,15 @@ pub(crate) fn perform_pending_save_load(
                 }
                 _ => {
                     tracing::info!("Sherwood checkpoint saved (mission={mission_id})");
+                    event = replay_save_written_event(engine, host, game);
                 }
             }
         }
     }
-    true
+    SaveLoadFlushResult {
+        processed: true,
+        event,
+    }
 }
 
 // ─── Resource helpers ───────────────────────────────────────────────
