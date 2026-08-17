@@ -892,6 +892,47 @@ pub fn add_strike_tiredness(current_tiredness: u16, strike_energy: u16) -> u16 {
     current_tiredness.wrapping_add(strike_energy)
 }
 
+/// Rust-side mirror of the Original's `PARITY_DEBUG_ORIGINAL_TIREDNESS` probe
+/// (`original-code/RHelementactorhuman.cpp:205-217`).
+///
+/// `PARITY_DEBUG_TIREDNESS` enables it; the optional
+/// `PARITY_DEBUG_TIREDNESS_CREATION_ORDER` narrows it to one actor, matched on
+/// the Original `GetCreationOrder()` value so the two trails line up
+/// frame-for-frame. Every `HumanData::tiredness` write and the
+/// `EvaluateSwordfight` threshold read prints one `RUST_TIREDNESS` line.
+pub fn tiredness_debug_enabled() -> bool {
+    tiredness_debug_filter().is_some()
+}
+
+pub fn tiredness_debug_matches(creation_order: u32) -> bool {
+    match tiredness_debug_filter() {
+        None => false,
+        Some(None) => true,
+        Some(Some(wanted)) => *wanted == creation_order,
+    }
+}
+
+/// `None` when the probe is off, `Some(None)` for every actor, `Some(Some(co))`
+/// for a single creation order. Resolved once so the per-entity, per-frame
+/// write sites do not pay for an environment scan.
+fn tiredness_debug_filter() -> &'static Option<Option<u32>> {
+    static FILTER: std::sync::OnceLock<Option<Option<u32>>> = std::sync::OnceLock::new();
+    FILTER.get_or_init(|| {
+        if std::env::var_os("PARITY_DEBUG_TIREDNESS").is_none() {
+            return None;
+        }
+        Some(
+            std::env::var("PARITY_DEBUG_TIREDNESS_CREATION_ORDER")
+                .ok()
+                .map(|raw| {
+                    raw.parse::<u32>().unwrap_or_else(|error| {
+                        panic!("invalid PARITY_DEBUG_TIREDNESS_CREATION_ORDER: {error}")
+                    })
+                }),
+        )
+    })
+}
+
 /// Tiredness recovery per frame when not fighting or moving.
 /// Based on endurance stat.
 pub fn tiredness_recovery(current_tiredness: u16, endurance: u16) -> u16 {

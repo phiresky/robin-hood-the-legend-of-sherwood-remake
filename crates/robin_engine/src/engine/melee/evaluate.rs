@@ -853,6 +853,21 @@ impl EngineInner {
             return;
         }
 
+        {
+            let creation_order = self.world.original_creation_order(entity_id);
+            if crate::combat::tiredness_debug_matches(creation_order) {
+                eprintln!(
+                    "RUST_TIREDNESS frame={} co={creation_order} site=weak_threshold_read \
+                     tiredness={tiredness} verdict={}",
+                    self.control.frame_counter,
+                    if tiredness >= TIREDNESS_WEAK_THRESHOLD {
+                        "tired"
+                    } else {
+                        "ok"
+                    }
+                );
+            }
+        }
         if tiredness >= TIREDNESS_WEAK_THRESHOLD {
             self.launch_element(crate::sequence::SequenceElement::new(
                 1,

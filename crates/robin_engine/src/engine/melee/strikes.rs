@@ -813,10 +813,20 @@ impl EngineInner {
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
             Some(profile) => {
                 let energy = combat::strike_energy_cost(profile, strike);
+                let frame = self.control.frame_counter;
+                let creation_order = self.world.original_creation_order(actor_id);
                 if let Some(entity) = self.get_entity_mut(actor_id)
                     && let Some(human) = entity.human_data_mut()
                 {
+                    let before = human.tiredness;
                     human.tiredness = combat::add_strike_tiredness(human.tiredness, energy);
+                    if combat::tiredness_debug_matches(creation_order) {
+                        eprintln!(
+                            "RUST_TIREDNESS frame={frame} co={creation_order} site=strike_energy \
+                             before={before} after={} strike={} energy={energy}",
+                            human.tiredness, strike as u32
+                        );
+                    }
                 }
             }
             None => tracing::warn!(

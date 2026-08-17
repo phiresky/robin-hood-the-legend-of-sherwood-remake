@@ -1447,6 +1447,7 @@ mod tests {
             OrderType::ParryingLeftSmalltalk,
             MotionState::Start,
             &profiles,
+            None,
         );
 
         assert_eq!(entity.element_data().posture, Posture::Upright);
@@ -1460,6 +1461,7 @@ mod tests {
             OrderType::ParryingLeftSmalltalk,
             MotionState::Terminated,
             &profiles,
+            None,
         );
 
         assert_eq!(entity.human_data().unwrap().tiredness, 19);
@@ -3452,6 +3454,7 @@ fn apply_smalltalk_start_and_recovery_side_effect(
     anim_type: OrderType,
     motion: MotionState,
     profile_manager: &crate::profiles::ProfileManager,
+    probe: Option<(u32, u32)>,
 ) {
     let is_smalltalk = matches!(
         anim_type,
@@ -3483,7 +3486,16 @@ fn apply_smalltalk_start_and_recovery_side_effect(
                 return;
             };
             if let Some(human) = entity.human_data_mut() {
+                let before = human.tiredness;
                 human.tiredness = human.tiredness.saturating_sub(endurance / 10);
+                if let Some((frame, creation_order)) = probe {
+                    eprintln!(
+                        "RUST_TIREDNESS frame={frame} co={creation_order} \
+                         site=smalltalk_terminated before={before} after={} \
+                         endurance={endurance} animation={anim_type:?}",
+                        human.tiredness
+                    );
+                }
             }
         }
         _ => {}
@@ -4456,6 +4468,10 @@ impl EngineInner {
                 self.world.original_creation_order(entity_id)
             });
         let sprite_row_diagnostic = diagnostic_creation_order.is_some();
+        let tiredness_probe = crate::combat::tiredness_debug_enabled()
+            .then(|| self.world.original_creation_order(entity_id))
+            .filter(|co| crate::combat::tiredness_debug_matches(*co))
+            .map(|co| (diagnostic_frame, co));
 
         // Production enters through the owner coordinator, which stamps this
         // before choosing a specialized arm. Keep this helper self-contained
@@ -6108,6 +6124,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             &assets.profile_manager,
+                            tiredness_probe,
                         );
                         apply_striking_down_sword_side_effect(
                             entity,
