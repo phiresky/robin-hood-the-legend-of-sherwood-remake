@@ -101,8 +101,16 @@ fn replay_save_identity(
     sound: &SoundManager,
     game_persistent: &GamePersistentState,
 ) -> Result<ReplaySaveIdentity> {
-    let bytes = serde_json::to_vec(&(engine, sound, game_persistent))
-        .context("serializing replay save identity")?;
+    replay_identity_digest(&(engine, sound, game_persistent))
+}
+
+fn replay_identity_digest<T: Serialize + ?Sized>(value: &T) -> Result<ReplaySaveIdentity> {
+    // Engine state contains maps keyed by domain types. Reuse the same
+    // JSON-compatible serde conversion as the engine-dump endpoints so those
+    // keys receive their stable string representation before JSON encoding.
+    let value = crate::json_value::to_json_value(value)
+        .context("converting replay save identity to string-keyed JSON")?;
+    let bytes = serde_json::to_vec(&value).context("serializing replay save identity")?;
     Ok(ReplaySaveIdentity(Sha256::digest(bytes).into()))
 }
 
@@ -712,6 +720,16 @@ mod tests {
         assert_eq!(header.mission_id, 42);
         assert_eq!(header.display_text, "My Save");
         header.validate().unwrap();
+    }
+
+    #[test]
+    fn replay_identity_stringifies_structured_map_keys() {
+        let value = std::collections::BTreeMap::from([((1_u32, 2_u32), 3_u32)]);
+
+        let first = replay_identity_digest(&value).expect("structured-key identity");
+        let second = replay_identity_digest(&value).expect("stable structured-key identity");
+
+        assert_eq!(first, second);
     }
 
     #[test]
