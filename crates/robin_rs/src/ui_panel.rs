@@ -47,6 +47,11 @@ const MARGIN: u16 = 32;
 const ELEMENT_WIDTH: u16 = 112;
 const ALLIED_ACTION_ICON_WIDTH: u16 = 34;
 const ALLIED_ACTION_ICON_HEIGHT: u16 = 32;
+const ALLIED_PIN_ICON_SIZE: u16 = 27;
+// Scale the old 18px icon around its center, then move that center 9px
+// right/up. The resulting pin hangs slightly over the scroll's top-right.
+const ALLIED_PIN_LEFT: u16 = 86;
+const ALLIED_PIN_RISE: u16 = 10;
 
 /// Border gap at the very bottom of the screen.
 const BORDURE: u16 = 3;
@@ -405,8 +410,8 @@ impl PortraitCache {
                 .expect("embedded allied pin icon must be a valid RGB/RGBA PNG");
             assert_eq!(
                 (width, height),
-                (18, 18),
-                "embedded allied pin icon must be 18x18"
+                (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE),
+                "embedded allied pin icon must be 27x27"
             );
             self.allied_pin_icons[index] = Some(
                 renderer
@@ -1503,7 +1508,8 @@ fn render_allied_portrait(
     }
 
     // Pin/unpin button remains visible in both open and closed states.
-    let pin_y = sh - top_scroll + 4;
+    let pin_x = x + ALLIED_PIN_LEFT;
+    let pin_y = sh - top_scroll - ALLIED_PIN_RISE;
     let pin_index = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
         1
     } else {
@@ -1516,10 +1522,10 @@ fn render_allied_portrait(
         pin,
         None,
         Some(&bbox(
-            x + ELEMENT_WIDTH - 30,
+            pin_x,
             pin_y,
-            x + ELEMENT_WIDTH - 12,
-            pin_y + 18,
+            pin_x + ALLIED_PIN_ICON_SIZE,
+            pin_y + ALLIED_PIN_ICON_SIZE,
         )),
         BlendMode::Blend,
     );
@@ -3050,7 +3056,12 @@ pub fn hit_test_portrait_detailed(
 
     for (slot, item) in items.iter().enumerate().take(num_slots) {
         let x = slot_left_x(screen_width, slot as u16, capacity) as f32;
-        let x2 = x + ELEMENT_WIDTH as f32;
+        let pin_right = x + f32::from(ALLIED_PIN_LEFT + ALLIED_PIN_ICON_SIZE);
+        let x2 = if matches!(item.target, PortraitTarget::Pc(_)) {
+            x + ELEMENT_WIDTH as f32
+        } else {
+            pin_right
+        };
 
         if click_x < x || click_x > x2 {
             continue;
@@ -3069,21 +3080,24 @@ pub fn hit_test_portrait_detailed(
             } else {
                 (sh - CLOSE_POSITION_VISAGE) as f32
             };
+            let pin_left = x + f32::from(ALLIED_PIN_LEFT);
+            let pin_top = top_scroll_top - f32::from(ALLIED_PIN_RISE);
+            let pin_bottom = pin_top + f32::from(ALLIED_PIN_ICON_SIZE);
             let action_top = (sh - POSITION_ACTION) as f32;
             let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
-            let area = if cy >= top_scroll_top && cy < visage_top {
-                if click_x >= x + ELEMENT_WIDTH as f32 - 32.0 {
+            let area =
+                if click_x >= pin_left && click_x <= pin_right && cy >= pin_top && cy <= pin_bottom
+                {
                     PortraitHitArea::Pin
-                } else {
+                } else if cy >= top_scroll_top && cy < visage_top {
                     PortraitHitArea::TopScroll
-                }
-            } else if cy >= visage_top && (!selected || cy < action_top) {
-                PortraitHitArea::Visage
-            } else if selected && cy >= action_top && cy < bottom_scroll_top {
-                PortraitHitArea::AlliedAction(allied_action_index(click_x - x))
-            } else {
-                PortraitHitArea::BottomScroll
-            };
+                } else if cy >= visage_top && (!selected || cy < action_top) {
+                    PortraitHitArea::Visage
+                } else if selected && cy >= action_top && cy < bottom_scroll_top {
+                    PortraitHitArea::AlliedAction(allied_action_index(click_x - x))
+                } else {
+                    PortraitHitArea::BottomScroll
+                };
             return Some(PortraitHit {
                 slot: slot as u8,
                 pc_id,
@@ -3386,7 +3400,10 @@ mod tests {
             )),
         ] {
             let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
-            assert_eq!((width, height), (18, 18));
+            assert_eq!(
+                (width, height),
+                (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE)
+            );
             let pixels = pixels.as_chunks::<4>().0;
             assert!(pixels.iter().any(|pixel| pixel[3] == 0));
             assert!(pixels.iter().any(|pixel| pixel[3] == 255));

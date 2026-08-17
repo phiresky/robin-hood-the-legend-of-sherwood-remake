@@ -277,6 +277,56 @@ mod tests {
         };
         assert!(!allied_order_locks_ai(&idle_aggressive, false));
     }
+
+    #[test]
+    fn direct_control_lock_discards_a_pending_bored_order() {
+        let mut engine = EngineInner::new();
+        let mut npc = crate::element::NpcData {
+            life_points: 100,
+            ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+            ..Default::default()
+        };
+        npc.ai_brain
+            .base_mut()
+            .expect("test soldier has enemy AI")
+            .outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                crate::order::OrderType::WaitingUprightBored,
+                0.0,
+                0.0,
+            ));
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc,
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+
+        engine.set_allied_ai_locked(soldier, true);
+
+        let ai = engine
+            .get_entity(soldier)
+            .and_then(Entity::ai_controller)
+            .expect("controlled test soldier retains AI");
+        assert!(ai.script_locked);
+        assert!(ai.remember_events);
+        assert!(ai.outbox.actor.orders.is_empty());
+        assert!(
+            !ai.outbox.actor.halt,
+            "direct-control lock must not queue a halt behind the new movement"
+        );
+    }
 }
 
 fn march_column_offsets(count: usize) -> Vec<MapPoint> {
@@ -699,11 +749,29 @@ impl EngineInner {
         let entity = self
             .get_entity_mut(id)
             .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"));
+        let is_unconscious = entity
+            .human_data()
+            .expect("controlled allied soldier has no human data")
+            .unconscious;
         let Some(ai) = entity.ai_controller_mut() else {
             panic!("controlled allied soldier {id:?} has no AI controller");
         };
-        ai.script_locked = locked;
-        ai.remember_events = locked;
+        if locked {
+            if !ai.script_locked {
+                // Direct-control movement is about to launch immediately.
+                // Use the real script-lock cleanup so an already-queued bored
+                // animation or return-to-duty order cannot dispatch after and
+                // replace that movement, but suppress script_lock's halt: a
+                // deferred halt would cancel the new player order instead.
+                ai.script_lock(true, true);
+            } else {
+                ai.remember_events = true;
+            }
+        } else if ai.script_locked {
+            ai.script_unlock(is_unconscious);
+        } else {
+            ai.remember_events = false;
+        }
     }
 
     fn allied_formation_slots(
