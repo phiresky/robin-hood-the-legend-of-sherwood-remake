@@ -1377,6 +1377,63 @@ Divergence reports name **Rust** ids and the two are not equal. Measured example
 rust `Pc(174)`; original pc 179 <-> rust `Pc(183)`. Check `entity_mapping` in the dump before analysing or
 you will dump the wrong actor. (Third agent to hit this.)
 
+### DISPROVEN AND REPLACED: the civilian-62 "script-VM 41 frames late" theory
+The earlier claim that `AssignPost` runs 41 frames late is **wrong**. Measured with probes on 30s
+linux3/P003/Savegame_074 replay-001: the `AssignPost` native is NOT late and does NOT come from the script
+Hourglass — it comes from `Global.ProcessMessage(555)`, and **both engines run it in the same frame step**
+(74062->74063). Message 555 is the post-seek tail of
+`RecordSeekActorMessage(actor 62, target, style 1, dist 40, God(), 555)` (`H12_Not_MP.scb` @1493-1508);
+its handler @2459-2477 is `AssignPost(actor62, GetActorLocation(actor62), GetActorDirection(actor62))`.
+The Original attaches that `RHCOMMAND_SEND_MESSAGE` element with `mpOwner == 0` (`RHScript.cpp:2989-3010`)
+so `ExecutedImmediately()` fires it inline at LaunchSequence time — and **Rust models this correctly**.
+
+**The real cause is `actor.action_state` at the two `FaceTo`s inside that frame.** Rust reaches the second
+`FaceTo(12)` with `action_state == Waiting`, so `FaceTo`'s early return
+(`original-code/RHartificialintelligence.cpp:2751-2763`) fires -> same-frame `EVENT_DONE` ->
+`DefaultOnPost` + `LaunchTimer(GetBoredTime())` = the extra leading `AiRandomValueRectangle`, and
+`direction_goal` is left at 9 from the first turn. The Original was still `MOVING_FAST` at both `FaceTo`s,
+so its second one launched a real zero-length TURN -> substate 8 + `direction_goal` 12.
+**Hard trace evidence for why:** civ 62 was mid-`TransitionRunningUprightWaitingUpright` from f74053 and in
+the Original the transition FROZE — `position_map` and `sprite_frame` are byte-identical at 74061 and 74062
+and the animation flips straight to 50. So `PerformMotion` never ran that frame: `PerformSeek`'s
+**pre-`PerformMotion`** tolerance arm (`original-code/RHelementactor.cpp:7893-7900`) fired
+`StartPostSeekSequence()` first, terminating the element mid-transition with no state effect.
+**The Rust gap:** that pre-motion arm exists ONLY in
+`crates/robin_engine/src/engine/movement.rs:6601-6725` (`execute_globally_frozen_pre_motion_owner`), gated
+on `self.actors_frozen()` (`:7189-7202`). On the ordinary path Rust detects seek arrival only AFTER motion
+(`final_entity_seek_arrival`, `:10225-10325`), so the stop transition's `(Upright, Waiting)`
+`movement_state_effect` (`:7774-7789`) lands before `post_seek_arrivals` runs `start_post_seek_sequence`
+(`:8012-8014`).
+**Already tried and DOES NOT WORK:** moving the `post_seek_arrivals` loop above the
+`movement_state_effects` loop — both traces still fail at identical frames, so the `Waiting` is written
+earlier than that deferred block. The real fix is to give UNFROZEN seek owners the Original's pre-motion
+tolerance check. Arrival position is bit-identical at f74061, so adding the arm should not shift which
+frame the arrival happens on.
+
+### Trace-reading correction: `ai.state` is NOT the script's `AISTATE_*` numbering
+The snapshot's `ai.state` uses the internal `RHstate` ordering (**4 = Attacking**), not the `AISTATE_*`
+script defines (where 4 = MENACING). Read it through `robin_engine::ai::model::AiState`
+(Sleeping, Default, Wondering, Seeking, Attacking, Menacing, Fleeing).
+Substate names decoded this wave: 23/24 `DEFAULT_PATROL_ENROUTE`(`_WAITING`), 29 `WONDERING_WATCHING`,
+71 `SEEKING_HEARDSTEPS_REACTIONTIME`, 73 `SEEKING_SEEKPOINT`, 203 `ATTACKING_DOOR_FIGHT_DELAY`,
+236 `ATTACKING_SWORDFIGHT_STEP_BACK`.
+
+### Two more open singletons, precisely measured
+- **Door-fight wait timer torn down** — schema12 linux2/P002/Savegame_031 replay-015, f11979, Soldier 43,
+  substate 203 `ATTACKING_DOOR_FIGHT_DELAY`. Both engines match at f11978 with `wait_time` 50; the Original
+  keeps counting (50->49...) while Rust's element terminates after ONE frame -> `Wait`, `wait_time` 0.
+  Entered from `EVENT_DOOR_COMBAT` (`RHartificialmalignity.cpp:6658-6668`, `LaunchTimer(uwDelay)`) right
+  after a `pass_door`. **The AI timer launched fine — the SEQUENCE ELEMENT is being torn down.**
+- **Attentive-mode element lifetime** — schema12 SuN1Sh1nE/P004/Savegame_024 replay-014, f1426,
+  Soldier 146, substate 29 `WONDERING_WATCHING`. The Original holds `EnterAttentiveMode`/anim 141/motion 2
+  for more than one frame; Rust drops to `Wait`/anim 3/motion 1 after one frame.
+
+### Confirmed empirically: the schema-12 Savegame_074 traces cannot be reproduced by any binary
+A fresh schema-14 capture of `reference-saves/Savegame_linux3/Profile_003/Savegame_074` with the REBUILT
+binary runs fine and produces a rich `[DBG]` stream, but the Rust runner reports
+`parity trace matched every recorded frame` on it — the regenerated input stream does not reproduce the
+schema-12 divergence. Previously assumed; now measured.
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
