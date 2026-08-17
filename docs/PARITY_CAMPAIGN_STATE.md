@@ -788,12 +788,20 @@ own cause:
   goal (836,1142) vs (851,1120)).
 
 ### Melee leftovers, per-member attribution (from the B2 bundle)
-- **AiPanic, schema14 SuN1Sh1nE/P004/Savegame_013 replay-006 f1963** — NOT an AI bug. Rust's re-fired
-  `EventReachPoint` after `EventCouldntReachPoint` is faithful (`RHartificialintelligence.cpp:2044-2070`
-  really does recurse). The upstream cause: Rust's `GOTO_RUN|GOTO_STRAIGHT|GOTO_ASKOBSTACLE` panic segment
-  resolved the `MoveOk` element **Impossible** (`crates/robin_engine/src/engine/soldier_helpers.rs:1125`)
-  where the Original's succeeded, and the path queue was empty — so this is the **straight-move obstacle
-  test**, not the pathfinder. Movement/obstacle family.
+- **AiPanic, schema12 SuN1Sh1nE/P004/Savegame_013 replay-006 f1963 — retired pending a schema-15
+  re-record.** Rust's recursive `EventCouldntReachPoint` -> `EventReachPoint` is source-faithful
+  (`RHartificialintelligence.cpp:2044-2070`); the extra draws follow only because Rust rejects the first
+  straight panic segment. The recorded draws select sector 11 and distance 148, giving destination
+  `(815.942626953125,2563.306640625)`. This trace's own Original path events prove half-diagonal index 0
+  is `(6,4)`, which the civilian constructor installs (`rhelementactorcivilian.cpp:350-353`), so the
+  destination box is `(809.942626953125,2559.306640625)` to
+  `(821.942626953125,2567.306640625)`. Its Original motion snapshot simultaneously records the active
+  layer-0 `LINE_MOTION|LINE_REPULSIVE` edge `(809,2549)->(812,2566)` with no line changes: endpoint
+  `(812,2566)` is literally inside that box. Original `IsPositionAutorized` must retrieve and reject the
+  edge (`RHfastfindgrid.cpp:8042-8053`; `SBGeoBoundingBox2D.cpp:1154-1180`), yet the recording reports
+  `MoveOk`, FleeingPanic substate 224, and only the two initial `AiPanic` draws. No source-faithful Rust
+  exception can reproduce this internally contradictory record. Re-record it with schema 15's move-box
+  and straight-authorization observations before returning it to the authoritative sweep.
 - **`ParrySword->SwordstrikeThrustA`, schema14 SuN1Sh1nE/P004/Savegame_004 replay-003 f16552** — a
   spurious `CivilianBeggarSpeechGate` draw. Both engines consume 9 draws, but Rust's FIRST draw is the
   beggar gate where the Original's is the PC's `SwordStrikeSelection` skill roll, so the values swap: the
@@ -1235,10 +1243,8 @@ Remember offsets are NOT comparable across capture generations.
   `collect_arc_victims` (`crates/robin_engine/src/engine/melee/mod.rs:2046-2090`) uses `position_map()` for
   both.
 - **Straight-move panic segment resolves Impossible** — schema12 SuN1Sh1nE/P004/Savegame_013 replay-006,
-  f1963. Movement, not melee. The `ask_obstacle` pre-flight
-  (`crates/robin_engine/src/engine/movement.rs:5853-5875`) passes `pi.map_position()` where the Original
-  passes `Point(mpMe)` = `PositionToPoint(Position(mpMe))` (`RHartificialintelligence.h:1178`) — i.e. the
-  SNAPPING `Position()`. That is the door-pass position class; unaudited here.
+  f1963. Retired as source-inconsistent; see the exact active-line/destination-box contradiction above.
+  The earlier snapped-`Position()` lead did not explain the destination-position rejection.
 - **Reactive step-back vs plain swordfight** — schema12 SuN1Sh1nE/P004/Savegame_024 replay-004, f912.
   **RNG matches exactly** (3x `SwordStrikeSelection` + 5x `MeleeNonMutualGate`), so both sides ran
   `ProposeGoodSwordStrike` the same number of times — it is NOT a missing/extra call. Rust's parade gate

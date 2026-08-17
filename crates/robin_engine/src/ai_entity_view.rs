@@ -221,8 +221,9 @@ pub struct AiEntityView {
     /// fix-radius fallbacks.
     pub has_patrol_path: bool,
 
-    /// The NPC's spawn point (guard post, waypoint-0 fallback).
-    /// Copied out of `ActorData::initial_position_*` for the view.
+    /// The NPC's current assigned post (guard post, waypoint-0 fallback).
+    /// Read from `AiController::initial_position`, which is the Rust mirror
+    /// of mutable Original `RHElementActorNPC::GetInitialPosition()`.
     pub initial_position: Position,
 
     /// Current arrow count.  Exposed so archers can check reserves
@@ -714,21 +715,29 @@ pub fn entity_view_from_entity(
         _ => false,
     };
 
-    // Spawn point stored on the NPC data (NPCs only — PCs don't
-    // really have a "guard post").
+    // Original `GetInitialPosition()` is mutated by AssignNewPost and the
+    // no-path AssignNewPatrolPath branches. Rust's controller owns that live
+    // value; the NPC fields retain their level-load/save snapshot and can be
+    // stale after a script changes the post.
     let initial_position = match entity {
-        Entity::Soldier(s) => Position {
-            x: s.npc.initial_position_x,
-            y: s.npc.initial_position_y,
-            sector: s.npc.initial_position_sector,
-            level: s.npc.initial_position_level,
-        },
-        Entity::Civilian(c) => Position {
-            x: c.npc.initial_position_x,
-            y: c.npc.initial_position_y,
-            sector: c.npc.initial_position_sector,
-            level: c.npc.initial_position_level,
-        },
+        Entity::Soldier(s) => authoritative_initial_position(
+            s.npc.ai_brain.base(),
+            Position {
+                x: s.npc.initial_position_x,
+                y: s.npc.initial_position_y,
+                sector: s.npc.initial_position_sector,
+                level: s.npc.initial_position_level,
+            },
+        ),
+        Entity::Civilian(c) => authoritative_initial_position(
+            c.npc.ai_brain.base(),
+            Position {
+                x: c.npc.initial_position_x,
+                y: c.npc.initial_position_y,
+                sector: c.npc.initial_position_sector,
+                level: c.npc.initial_position_level,
+            },
+        ),
         _ => position,
     };
 
@@ -924,6 +933,15 @@ pub fn entity_view_from_entity(
     }
 }
 
+fn authoritative_initial_position(
+    controller: Option<&crate::ai::AiController>,
+    serialized_npc_fallback: Position,
+) -> Position {
+    controller
+        .map(|controller| controller.initial_position)
+        .unwrap_or(serialized_npc_fallback)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -944,5 +962,26 @@ mod tests {
             patrol_path_view_fields(&base),
             (4, 3, false, crate::ai::PathId::new(33))
         );
+    }
+
+    #[test]
+    fn entity_view_uses_mutable_ai_post_over_stale_npc_snapshot() {
+        let stale = Position {
+            x: 1163.0,
+            y: 97.0,
+            ..Position::default()
+        };
+        let mut controller = crate::ai::AiController::new(17);
+        controller.initial_position = Position {
+            x: 956.9903,
+            y: 404.00244,
+            ..Position::default()
+        };
+
+        assert_eq!(
+            authoritative_initial_position(Some(&controller), stale),
+            controller.initial_position
+        );
+        assert_eq!(authoritative_initial_position(None, stale), stale);
     }
 }

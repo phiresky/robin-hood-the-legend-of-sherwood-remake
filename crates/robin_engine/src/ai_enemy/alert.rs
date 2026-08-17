@@ -8,15 +8,25 @@
 use crate::ai::*;
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::parameters_ai;
-use crate::position_interface::INVERSE_ASPECT_RATIO;
+use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
-use super::util::{ai_max_norm_distance, vec_to_sector};
+use super::util::{ai_max_norm_distance, vec_to_sector, vec_to_sector_ar};
 use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, combat, task_priority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandSoldiersStart {
     Pending,
     Rejected,
+}
+
+/// Direction seed used by Original's officer formation sweeps.
+///
+/// `AlertSoldiers` and `CommandSoldiersToAttack` both call
+/// `SBGeoVector2D::GetSector0to15(ASPECT_RATIO)` here. Keep the aspect
+/// argument explicit: using the aspect-1 classifier changes diagonal map-space
+/// vectors by a sector.
+fn formation_direction(dx: f32, dy: f32) -> u16 {
+    vec_to_sector_ar(dx, dy, ASPECT_RATIO)
 }
 
 /// Direction used by Original's officer attack-point sequence:
@@ -67,6 +77,22 @@ fn alert_soldier_sort_distance(
     let dy = (soldier_position.y - officer_position.y) * INVERSE_ASPECT_RATIO;
     let dz = soldier_position.z - officer_position.z;
     dx * dx + dy * dy + dz * dz
+}
+
+/// Normal (non-drunken) `Q_SHALL_I_STAY_ON_MY_POST` branch selection.
+///
+/// Original enters the outdoor answers only when
+/// `IsActiveAndOutsideBuilding()` is true. Inactive soldiers therefore use
+/// the indoor answer (`false`) and are allowed to leave even when their
+/// profile marks them as duty soldiers.
+fn alert_soldier_stays_on_post(
+    active: bool,
+    in_building: bool,
+    is_tower_guard: bool,
+    duty_flag: bool,
+    company_number: u16,
+) -> bool {
+    active && !in_building && (is_tower_guard || duty_flag || company_number == 100)
 }
 
 fn sort_alerted_soldiers(alerted: &mut [(HumanHandle, f32, usize)]) {
@@ -356,7 +382,7 @@ impl EnemyAi {
             if !ctx.in_building
                 && let Some(grid) = grid
             {
-                let avg_dir_start = vec_to_sector(avg_dir_vec_x, avg_dir_vec_y);
+                let avg_dir_start = formation_direction(avg_dir_vec_x, avg_dir_vec_y);
                 let mut slots: Option<Vec<Position>> = None;
                 let mut slot_direction: u16 = avg_dir_start;
                 for offset in 0..16u16 {
@@ -442,7 +468,7 @@ impl EnemyAi {
             let enemy_max_norm = me_to_target_x.abs().max(me_to_target_y.abs());
             if enemy_max_norm > 150.0 {
                 // Turn to the soldiers (face average direction).
-                let avg_dir = vec_to_sector(avg_dir_vec_x, avg_dir_vec_y);
+                let avg_dir = formation_direction(avg_dir_vec_x, avg_dir_vec_y);
                 let mut turn_elem = SequenceElement::new_generic(level, Command::Turn, owner);
                 turn_elem.set_property(Field::Direction, FieldValue::Integer(avg_dir as u32));
                 seq.append_element(turn_elem);
@@ -545,12 +571,17 @@ impl EnemyAi {
             // returns true outdoors for tower guards, duty soldiers, and
             // company-100 soldiers; indoors (L11057) it always returns
             // false, so they're always allowed to leave.
-            let cs_in_building = ctx
-                .entity_view(cs.handle)
-                .map(|v| v.in_building)
-                .unwrap_or(false);
-            let stays_on_post =
-                !cs_in_building && (cs.is_tower_guard || cs.duty_flag || cs.company_number == 100);
+            // Original's AnswerQuestion first checks
+            // IsActiveAndOutsideBuilding(). Inactive soldiers are absent
+            // from `entity_views`, but that must select the indoor answer,
+            // not be treated as active and outdoors.
+            let stays_on_post = alert_soldier_stays_on_post(
+                cs.active,
+                cs.in_building,
+                cs.is_tower_guard,
+                cs.duty_flag,
+                cs.company_number,
+            );
             let allowed_to_leave = !stays_on_post;
             let patrol_chief_is_me = cs
                 .patrol_chief
@@ -712,10 +743,10 @@ impl EnemyAi {
             };
             let step = (nx * 30.0, ny * 30.0);
             // Average direction = door_vector sector.
-            let avg_dir = vec_to_sector(vdx, vdy);
+            let avg_dir = formation_direction(vdx, vdy);
             (avg_dir, Some((door, step)))
         } else {
-            (vec_to_sector(avg_dir_vec_x, avg_dir_vec_y), None)
+            (formation_direction(avg_dir_vec_x, avg_dir_vec_y), None)
         };
 
         // Try directions / door-step positions
@@ -1716,6 +1747,24 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formation_direction_uses_original_aspect_ratio_classifier() {
+        assert_eq!(formation_direction(1.0, 1.0), 7);
+        assert_eq!(formation_direction(-1.0, 1.0), 9);
+        assert_ne!(
+            formation_direction(1.0, 1.0),
+            crate::position_interface::vector_to_sector_0_to_15_with_aspect(1.0, 1.0, 1.0) as u16,
+            "the aspect-1 classifier would start the formation sweep one sector early"
+        );
+    }
+
+    #[test]
+    fn inactive_duty_soldier_uses_indoor_stay_on_post_answer() {
+        assert!(!alert_soldier_stays_on_post(false, false, false, true, 0));
+        assert!(alert_soldier_stays_on_post(true, false, false, true, 0));
+        assert!(!alert_soldier_stays_on_post(true, true, false, true, 0));
+    }
 
     #[test]
     fn attack_point_direction_uses_world_y() {

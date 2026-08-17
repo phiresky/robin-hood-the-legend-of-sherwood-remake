@@ -2642,6 +2642,20 @@ impl EngineInner {
                         );
                     }
                     if let Some(step_back_goal) = step_back_goal {
+                        // ProposeGoodStepBackGoal returns the actor's current
+                        // position when the incoming push/circle strike is
+                        // already farther away than `good_dist`. Original
+                        // still calls GoTo, whose synchronous completion
+                        // reaches EVENT_REACHPOINT on this ConsiderToBeginParade
+                        // stack and immediately restores the ordinary
+                        // swordfight substate. Preserve the GoTo publication
+                        // below, but surface that zero-distance completion at
+                        // the same owner boundary.
+                        let already_at_step_back_goal = step_back_goal.level == victim_ai_pos.level
+                            && (step_back_goal.x - victim_ai_pos.x)
+                                .abs()
+                                .max((step_back_goal.y - victim_ai_pos.y).abs())
+                                < 5.0;
                         let ctx = step_back_ctx.take().unwrap_or_else(|| {
                             panic!(
                                 "ConsiderToBeginParade step-back victim {} has no retained GoTo context",
@@ -2665,6 +2679,10 @@ impl EngineInner {
                                 flags,
                                 &ctx,
                             );
+                            if already_at_step_back_goal {
+                                ai.base.completion_latch_inside_think = true;
+                                ai.base.already_on_point = true;
+                            }
                             if let Some(debug) = step_back_debug {
                                 eprintln!(
                                     "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",

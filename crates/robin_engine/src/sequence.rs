@@ -3073,7 +3073,13 @@ impl SequenceManager {
             if let Some(element) =
                 self.get_element_mut(element_ref.sequence_id, element_ref.element_index)
             {
+                // Replacement movements use the typed cache, while deferred
+                // FaceTo stores the same snapshot as a Generic property until
+                // the manager instructs its Turn. Both are Rust mirrors of
+                // the one Original PositionGoalMap value owned and cleared by
+                // Actor::SendCondolationCard (`RHelementactor.cpp:6698-6700`).
                 element.retained_movement_goal = None;
+                element.remove_property(Field::RetainedMovementGoal);
             }
         }
     }
@@ -5765,6 +5771,16 @@ impl SequenceManager {
             if this.postponed_element_index.is_some() || this.cross_postponed.is_some() {
                 return false;
             }
+            // Stop severs `mpsqeNextSequenceElement` after recursively
+            // interrupting that successor (`RHsequenceelement.cpp:549-555`).
+            // Runtime-authored sequences remain physically adjacent in Rust,
+            // so honor the explicit null-pointer mirror before walking to the
+            // next vector element. Otherwise IsLastRealAction can see through
+            // a Halt-severed edge into dead AssertPosition/Move elements and
+            // suppress the selected element's condolence stimulus.
+            if this.next_link_severed {
+                return true;
+            }
             // RHElementActorNPC::IsLastRealAction follows the raw
             // GetFollowingElement pointer without requiring the next element
             // to have the same owner. This differs deliberately from the
@@ -8296,6 +8312,66 @@ mod tests {
         assert!(
             !mgr.is_last_real_action(sequence_id, 0),
             "Original follows GetFollowingElement without an owner-identity gate"
+        );
+    }
+
+    #[test]
+    fn last_real_action_stops_at_halt_severed_following_edge() {
+        let owner = EntityId::Civilian(crate::entity_id::CivilianId(1));
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::PassDoor, Some(owner)));
+        sequence.append_element(SequenceElement::new(
+            2,
+            Command::AssertPosition,
+            Some(owner),
+        ));
+        sequence.append_element(SequenceElement::new(3, Command::Move, Some(owner)));
+        let sequence_id = mgr.launch_sequence(sequence);
+
+        assert!(
+            !mgr.is_last_real_action(sequence_id, 0),
+            "an intact skipped AssertPosition edge must still expose the following Move"
+        );
+        mgr.get_element_mut(sequence_id, 0)
+            .expect("PassDoor exists")
+            .next_link_severed = true;
+        assert!(
+            mgr.is_last_real_action(sequence_id, 0),
+            "Halt's nulled following pointer must hide physically adjacent dead elements"
+        );
+    }
+
+    #[test]
+    fn clearing_actor_goal_snapshots_removes_typed_and_generic_caches() {
+        let owner = EntityId::Civilian(crate::entity_id::CivilianId(1));
+        let mut mgr = SequenceManager::new();
+        let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
+        turn.set_property(
+            Field::RetainedMovementGoal,
+            FieldValue::GeoPoint2D { x: 12.0, y: 34.0 },
+        );
+        let turn_id = mgr.launch_element(turn);
+        let movement_id = mgr.launch_element(movement_elem(owner, OrderType::WalkingUpright));
+        mgr.get_element_mut(movement_id, 0)
+            .expect("movement exists")
+            .retained_movement_goal = Some(crate::coordinates::MapPoint::new(56.0, 78.0));
+
+        mgr.clear_retained_movement_goals_for_actor(owner);
+
+        assert!(
+            mgr.get_element(turn_id, 0)
+                .expect("Turn exists")
+                .get_property(Field::RetainedMovementGoal)
+                .is_none(),
+            "deferred FaceTo must not restore a movement goal cleared by the outgoing card"
+        );
+        assert!(
+            mgr.get_element(movement_id, 0)
+                .expect("movement exists")
+                .retained_movement_goal
+                .is_none(),
+            "typed replacement movement snapshots must still be cleared"
         );
     }
 

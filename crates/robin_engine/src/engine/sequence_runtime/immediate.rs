@@ -825,6 +825,12 @@ impl EngineInner {
             Some(
                 command @ (Command::DisplayMap | Command::PlayDialog | Command::DisplayPopupText),
             ) => {
+                // TODO(parity): DisplayPopupText also re-enters Refresh when
+                // RHMenuPopupScroll::NeededBkgndColorization accepts that
+                // universal frame. Model its static same-frame suppression
+                // when a trace exposes the presentation/RNG consequence.
+                let refreshes_during_dialogue =
+                    command == Command::PlayDialog && !self.control.fast_forward;
                 PresentationCommandContext {
                     display,
                     fast_forward: self.control.fast_forward,
@@ -833,6 +839,13 @@ impl EngineInner {
                     sequence_manager: &mut self.orders.sequence_manager,
                 }
                 .dispatch(command, seq_id, elem_idx);
+                if refreshes_during_dialogue {
+                    // `RHMenuDialogue::Display` constructs an RHMenuScreen
+                    // inline. Its colorized-background constructor calls
+                    // `RHGame::Refresh(false, false)` before returning to the
+                    // sequence manager, hence before RecordFrame.
+                    self.refresh_arrows_for_presentation(sim);
+                }
             }
             Some(Command::Freeze | Command::FreezeAll) => {
                 FreezeImmediateContext {

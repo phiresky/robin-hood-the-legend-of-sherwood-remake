@@ -275,3 +275,39 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_023/replay-001-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_023/replay-002-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_023/replay-003-session-0001.jsonl.zst
+# Internally source-inconsistent straight-panic authorization. The recorded
+# sector-11/distance-148 destination box, using this trace's own Original
+# pathfinder half-diagonal (6,4), contains endpoint (812,2566) of an active
+# LINE_MOTION edge, so RHFastFindGrid::IsPositionAutorized must reject it.
+# The same frame instead records MoveOk and only the two initial AiPanic draws.
+# Re-record with schema 15 move-box and straight-authorization observations.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_013/replay-006-session-0001.jsonl.zst
+# Schema-15 replacement (same save/RNG/input seed, 1,500 frames):
+# parity-save-replays/60s-random-input/schema15-replacements-20260817/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_013/replay-006-session-0001.jsonl.zst
+# Source-inconsistent swordfight trajectory. A detached rebuild of the schema-12
+# Original snapshot 203d704 with this trace's exact Savegame_020 fixture,
+# -PARITYSEED 1, and -PARITYRANDOMINPUT 9014 matches Soldier creation-order 104
+# through frame 971. At frame 972 the archive launches command 51 / animation
+# 53, while the rebuilt Original launches MoveOk / animation 303 from the same
+# bit-exact (902,370) position. By frame 1257 the rebuilt Original is already at
+# (871.305969,361.174835), so the archive's later Wait at (902,370) cannot be
+# used to infer UpdateSwordfightDistance gates. Recapture instead of adding a
+# Rust compatibility suppression.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_020/replay-014-session-0001.jsonl.zst
+# Schema-15 replacement (same save/RNG/input seed, 1,500 frames):
+# parity-save-replays/60s-random-input/schema15-replacements-20260817/traces/Savegame_nicouzouf/Profile_001/Savegame_020/replay-014-session-0001.jsonl.zst
+# Source-inconsistent PC WarnForStrike result. At frame 16553 the recorded raw
+# SwordStrikeSelection draw is 141294146 (% 100 == 46), so Will Scarlet's
+# fighting ability 20 passes ProposeGoodSwordStrike's max(50, ability) gate and
+# cannot enter the parade-only branch. The serialized/preceding proposal
+# history reduces strike-A boredom to zero on this call. Its principal opponent
+# is bit-exactly 62.30 map units away, inside Will's authored strike-A maximum
+# 65; straight strikes test only that principal range, and the opponent's
+# weapon profile leaves positive estimated damage. Current Original source must
+# therefore select thrust A, but the archive records ParrySword. The earlier
+# frame-16522 parry cannot explain it: the later same-priority thrust E
+# interrupts that parry in RHElementActor::DecidePriorities. Re-record with
+# schema 15 strike-proposal inputs/results instead of adding a Rust exception.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003-session-0001.jsonl.zst
+# Schema-15 replacement (same save/RNG/input seed, 1,500 frames):
+# parity-save-replays/60s-random-input/schema15-replacements-20260817/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003-session-0001.jsonl.zst

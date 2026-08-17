@@ -616,7 +616,10 @@ impl<'a> PassDoorLaunchContext<'a> {
                     *action,
                     element.posture_after_transition,
                     element.action_state_after_transition,
-                    element.legacy_v48.is_some(),
+                    element
+                        .legacy_v48
+                        .as_ref()
+                        .is_some_and(|legacy| !legacy.order_state.is_empty()),
                 )),
                 _ => None,
             });
@@ -627,7 +630,7 @@ impl<'a> PassDoorLaunchContext<'a> {
             authored_action,
             posture_after_transition,
             action_state_after_transition,
-            restored_from_v48,
+            restored_translated_from_v48,
         ) = movement.unwrap_or_else(|| {
             panic!(
                 "PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} is not movement data"
@@ -716,13 +719,14 @@ impl<'a> PassDoorLaunchContext<'a> {
             posture_after_transition,
             action_state_after_transition,
         );
-        // A live PassDoor writes its traversal direction onto the movement
-        // element before the actor crosses the gate. That field survives a
-        // v48 save, while the actor sector may already be the destination
-        // side. Rebuild the remaining physical steps from the live sector,
-        // but retain the element's C++ truth value for `Position(actor)` and
-        // committed route-source queries.
-        if restored_from_v48 {
+        // A translated PassDoor writes its traversal direction onto the
+        // movement element before the actor crosses the gate. Its saved
+        // orders prove that translation occurred, so retain that C++ truth
+        // value for `Position(actor)` and committed route-source queries even
+        // when the actor has already crossed. Queued, untranslated v48
+        // PassDoor elements have no orders and their dormant direction word
+        // is not authoritative; Original derives those from the live sector.
+        if restored_translated_from_v48 {
             built.pass.position_direct = saved_direction != 0;
         }
         // The original PassDoor translation only rewrites the movement
@@ -1811,12 +1815,9 @@ impl EngineInner {
                 // material from the sound sectors registered on the
                 // actor's own layer at its current map position, with
                 // the default material as the fallback.
-                let probe = self.get_entity(entity_id).map(|e| {
-                    (
-                        e.position_iface().map_position(),
-                        e.element_data().layer(),
-                    )
-                });
+                let probe = self
+                    .get_entity(entity_id)
+                    .map(|e| (e.position_iface().map_position(), e.element_data().layer()));
                 let material = probe
                     .map(|(point, layer)| assets.material_sectors.material_at_layer(point, layer));
                 (material, None)
@@ -1994,7 +1995,10 @@ mod tests {
         PcData, SoldierData,
     };
     use crate::engine::movement::DoorPassAdvance;
-    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+    use crate::sequence::{
+        LegacyV48OrderState, LegacyV48SequenceElementState, SequenceElement, SequenceElementData,
+        SequenceState,
+    };
 
     fn make_soldier(sector: Option<u16>) -> Entity {
         let mut element = ElementData {
@@ -2068,6 +2072,29 @@ mod tests {
         posture_after_transition: Posture,
         action_state_after_transition: crate::element::ActionState,
     ) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
+        dispatch_pass_with_element_mutation(
+            engine,
+            doors,
+            owner,
+            authored_action,
+            flags,
+            posture_after_transition,
+            action_state_after_transition,
+            |_| {},
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_pass_with_element_mutation(
+        engine: &mut EngineInner,
+        doors: &[crate::gate::Door],
+        owner: EntityId,
+        authored_action: OrderType,
+        flags: crate::sequence::MoveFlags,
+        posture_after_transition: Posture,
+        action_state_after_transition: crate::element::ActionState,
+        mutate_element: impl FnOnce(&mut SequenceElement),
+    ) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
         for sector_number in doors
             .iter()
             .flat_map(|door| [door.sector_out, door.sector_in])
@@ -2121,6 +2148,7 @@ mod tests {
         };
         *gate_id = Some(crate::gate::DoorIndex(0));
         *element_flags = flags;
+        mutate_element(&mut element);
         let seq_id = engine.orders.sequence_manager.launch_element(element);
         let barrier = PassDoorLaunchContext::new(
             doors,
@@ -3828,5 +3856,129 @@ mod tests {
                 actor.passing_door_directly
             );
         }
+    }
+
+    fn loaded_v48_pass_state(
+        order_state: Vec<LegacyV48OrderState>,
+    ) -> LegacyV48SequenceElementState {
+        LegacyV48SequenceElementState {
+            deleted: false,
+            script_driven: false,
+            raw_dormant_posture_after_transition: None,
+            raw_dormant_action_state_after_transition: None,
+            next: None,
+            postponed: None,
+            mummy: None,
+            linked_seek: Some(None),
+            damage_arrow: None,
+            raw_sword_strike: None,
+            raw_dormant_movement_action: None,
+            order_state,
+            generic_raw_unions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn untranslated_loaded_pass_door_ignores_dormant_saved_direction() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(7));
+        let action_state = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state;
+        let door = crate::gate::Door {
+            door_type: DoorType::Building,
+            ..default_door()
+        };
+
+        dispatch_pass_with_element_mutation(
+            &mut engine,
+            &[door],
+            owner,
+            OrderType::WalkingUpright,
+            crate::sequence::MoveFlags::empty(),
+            Posture::Upright,
+            action_state,
+            |element| {
+                let SequenceElementData::Movement { direction, .. } = &mut element.data else {
+                    unreachable!()
+                };
+                *direction = 0;
+                element.legacy_v48 = Some(loaded_v48_pass_state(Vec::new()));
+            },
+        );
+
+        let actor = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap();
+        assert_eq!(
+            actor
+                .active_door_pass
+                .as_ref()
+                .map(|pass| pass.position_direct),
+            Some(true)
+        );
+        assert!(actor.passing_door_directly);
+    }
+
+    #[test]
+    fn translated_loaded_pass_door_retains_saved_direction() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(7));
+        let action_state = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state;
+        let door = crate::gate::Door {
+            door_type: DoorType::Building,
+            ..default_door()
+        };
+
+        dispatch_pass_with_element_mutation(
+            &mut engine,
+            &[door],
+            owner,
+            OrderType::WalkingUpright,
+            crate::sequence::MoveFlags::empty(),
+            Posture::Upright,
+            action_state,
+            |element| {
+                let SequenceElementData::Movement { direction, .. } = &mut element.data else {
+                    unreachable!()
+                };
+                *direction = 0;
+                element.legacy_v48 = Some(loaded_v48_pass_state(vec![LegacyV48OrderState {
+                    legacy_id: 1,
+                }]));
+            },
+        );
+
+        let actor = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap();
+        assert_eq!(
+            actor
+                .active_door_pass
+                .as_ref()
+                .map(|pass| pass.position_direct),
+            Some(false)
+        );
+        assert!(!actor.passing_door_directly);
     }
 }

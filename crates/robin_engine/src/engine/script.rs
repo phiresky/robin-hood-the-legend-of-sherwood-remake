@@ -4943,6 +4943,10 @@ impl EngineInner {
                         .pending_side_effects
                         .pending_dialogues
                         .push(dialog_id);
+                    // Original StartDialog is synchronous and its menu-screen
+                    // constructor re-enters RHGame::Refresh before returning
+                    // to the script VM.
+                    self.refresh_arrows_for_presentation(sim);
                     self.orders
                         .messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));

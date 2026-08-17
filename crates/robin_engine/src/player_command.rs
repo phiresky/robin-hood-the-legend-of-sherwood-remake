@@ -629,6 +629,12 @@ pub enum PlayerCommand {
     DisconnectSeat {
         player_id: PlayerId,
     },
+    /// Preserve `RHElementActorCivilian::MouseClicked`'s target-side
+    /// cooldown stamp. A non-macro double-click discards the Pay interaction
+    /// after recording only `make_pc_fast`, but this mutation still occurs.
+    BeggarDontTalkStamp {
+        beggar_id: EntityId,
+    },
 }
 
 fn default_true() -> bool {

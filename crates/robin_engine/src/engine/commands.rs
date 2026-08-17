@@ -904,6 +904,7 @@ impl EngineInner {
             // transitions get rewritten, not just the element-level
             // action.
             MakePcFast { pc_id } => self.actor_make_fast(sim, *pc_id),
+            BeggarDontTalkStamp { beggar_id } => self.stamp_beggar_dont_talk_counter(*beggar_id),
             MakePcSlow { pc_id } => self.actor_make_slow(sim, *pc_id),
             MakePcUpright { pc_id } => self.actor_make_upright(sim, *pc_id),
             MakePcCrouched { pc_id } => self.actor_make_crouched(sim, *pc_id),
@@ -2510,11 +2511,22 @@ impl EngineInner {
         // The Pay click resolver has already validated that this target is the
         // eligible beggar. Preserve the existing direct Civilian + FriendlyAi
         // mutation semantics here.
-        if let Some(crate::element::Entity::Civilian(c)) = self.get_entity_mut(target)
-            && let crate::element::AiBrain::Friendly(ref mut ai) = c.npc.ai_brain
-        {
-            ai.set_beggar_dont_talk_counter(3);
-        }
+        let entity = self.get_entity_mut(target).unwrap_or_else(|| {
+            panic!("beggar cooldown stamp target {} is missing", target.index())
+        });
+        let crate::element::Entity::Civilian(civilian) = entity else {
+            panic!(
+                "beggar cooldown stamp target {} is not a civilian",
+                target.index()
+            )
+        };
+        let crate::element::AiBrain::Friendly(ai) = &mut civilian.npc.ai_brain else {
+            panic!(
+                "beggar cooldown stamp target {} has no friendly AI",
+                target.index()
+            )
+        };
+        ai.set_beggar_dont_talk_counter(3);
     }
 
     /// Build the ordinary interaction route, optionally retaining quick-action
@@ -6684,6 +6696,23 @@ mod tests {
                 .flat_map(|sequence| sequence.elements.iter())
                 .all(|element| !matches!(element.command, Command::Pay | Command::Seek))
         );
+    }
+
+    #[test]
+    fn recorded_beggar_click_stamp_restores_discarded_double_click_side_effect() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, _pc_id) = setup_pc_engine(&[]);
+        let beggar_id = spawn_friendly_civilian(&mut engine);
+
+        engine.apply_command(
+            &sim,
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::BeggarDontTalkStamp { beggar_id },
+        );
+
+        assert_eq!(friendly_beggar_dont_talk_counter(&engine, beggar_id), 3);
     }
 
     #[test]

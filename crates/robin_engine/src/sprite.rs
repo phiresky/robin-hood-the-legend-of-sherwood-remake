@@ -1953,6 +1953,20 @@ impl Sprite {
     /// Frames remaining from current position until action-done.
     /// Returns -1 if action-done has already passed.
     pub fn frames_from_now_till_action_done(&self) -> i16 {
+        let num_frames = self.num_frames_for_row(self.current_row);
+        if self.action_done_frame >= num_frames {
+            // `InitializeActionDone` uses `(UWORD)-1` when the current row
+            // has no usable action-done marker (RHsprite.cpp:706-719).  The
+            // Original getter walks beyond `auwDelay` for that sentinel, but
+            // its callers define -1 as "action done unavailable/already
+            // passed".  Preserve that observable contract deterministically
+            // instead of turning the invalid marker into a zero-frame
+            // deadline (or reproducing the legacy out-of-bounds read).
+            // TODO(parity): determine why some authored two-frame animation
+            // rows produce this malformed marker; the legacy OOB result is
+            // allocation-layout dependent and cannot itself be reproduced.
+            return -1;
+        }
         if self.current_frame > self.action_done_frame {
             return -1;
         }
@@ -1972,32 +1986,7 @@ impl Sprite {
 
         // (2) Intermediate frames.
         //
-        // `RHsprite.cpp:1261` loops all the way to `muwActionDoneFrame`, but
-        // `InitializeActionDone` stores the impossible sentinel `(UWORD)-1`
-        // there whenever a row's action-done frame lands on the last frame of
-        // a two-frame row (`RHsprite.cpp:706-719`).  That sentinel survives
-        // until the sprite performs its next order, so a soldier whose order
-        // action has already advanced to a sword strike while the sprite still
-        // shows the previous two-frame transition row reaches
-        // `RHElementActorHuman::ProposeGoodSwordStrike`
-        // (`RHelementactorhuman.cpp:12672`) with `muwActionDoneFrame == 0xFFFF`.
-        // The Original then indexes `auwDelay` tens of thousands of entries
-        // past its end — undefined behaviour that sums unrelated heap.  Sum
-        // only the delays that exist; the frames beyond the row contribute
-        // nothing, which is what the recorded Original streams show.
-        let num_frames = self.num_frames_for_row(self.current_row);
-        let last_frame = self.action_done_frame.min(num_frames);
-        if last_frame != self.action_done_frame {
-            tracing::debug!(
-                row = self.current_row,
-                frame = self.current_frame,
-                action_done_frame = self.action_done_frame,
-                num_frames,
-                "action-done frame is beyond the current sprite row; \
-                 summing only the delays this row actually has"
-            );
-        }
-        for i in (self.current_frame + 1)..last_frame {
+        for i in (self.current_frame + 1)..self.action_done_frame {
             sum += self.wait_time(self.current_row, i) as i32;
         }
 
@@ -2527,6 +2516,15 @@ mod tests {
 
         // Already past action done
         s.current_frame = 3;
+        assert_eq!(s.frames_from_now_till_action_done(), -1);
+
+        // InitializeActionDone stores 0xffff when a two-frame row has no
+        // usable action-done marker. Callers such as ProposeGoodSwordStrike
+        // map -1 to their explicit permissive fallback.
+        s.current_frame = 1;
+        s.frame_count = 0;
+        s.action_done_frame = u16::MAX;
+        s.action_done_counter = 0;
         assert_eq!(s.frames_from_now_till_action_done(), -1);
     }
 

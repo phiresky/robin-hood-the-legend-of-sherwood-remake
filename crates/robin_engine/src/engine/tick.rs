@@ -2181,6 +2181,19 @@ impl EngineInner {
             return;
         }
 
+        self.refresh_arrows_for_presentation(sim);
+    }
+
+    /// Run the arrow portion of `RHGame::Refresh` immediately.
+    ///
+    /// Besides the ordinary post-snapshot refresh, Original can re-enter
+    /// `RHGame::Refresh(false, false)` while constructing an in-game modal.
+    /// Dialogue commands do that synchronously, so a newly-created arrow can
+    /// publish its orientation before the same frame's parity snapshot.
+    pub(crate) fn refresh_arrows_for_presentation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+    ) {
         // Refresh walks the full SortForDisplay result. Its FX-polyline merge
         // can interleave (and even reverse) two non-animation arrows that an
         // arrow-only depth sort would leave together. That exact order is
@@ -4511,7 +4524,17 @@ impl EngineInner {
                         }
                         if !validity_short_circuited
                             && explicit_execute_motion.is_none()
-                            && selected_owner_family.is_some()
+                            // Generic animation owns its completion through
+                            // `tick_actor_animation_for` below.  In
+                            // particular TURNING deliberately ignores the
+                            // visual sprite's Done edge while `Turn()` still
+                            // reports that the body rotated this frame.  A
+                            // stale Done retained by the looping alerted-turn
+                            // sprite must therefore not complete the order
+                            // ahead of that authoritative Execute result.
+                            && selected_owner_family.is_some_and(|family| {
+                                family != ExecuteOwnerFamily::GenericAnimation
+                            })
                             && self.world.entities.get(entity_id).is_some_and(|entity| {
                                 entity.element_data().sprite.last_motion_state
                                     == Some(crate::sprite::MotionState::Done)

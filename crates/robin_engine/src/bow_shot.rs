@@ -9048,6 +9048,27 @@ mod tests {
     }
 
     #[test]
+    fn nested_dialogue_refresh_publishes_new_arrow_in_creation_frame() {
+        // QuickSave frame 35731 creates an arrow during actor Hourglass and
+        // then executes PlayDialog from SequenceManager::Hourglass. The
+        // dialogue's nested RHGame::Refresh exposes the orientation before
+        // RecordFrame instead of waiting for the ordinary deferred pass.
+        let mut arrow = refresh_test_arrow();
+        arrow.element.sprite.current_row = 0;
+        arrow.element.sprite.current_frame = 0;
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame
+            ),
+            (4, 8)
+        );
+    }
+
+    #[test]
     fn falling_arrow_refresh_consumes_exactly_one_draw_and_rotates_afterward() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.falling = true;
