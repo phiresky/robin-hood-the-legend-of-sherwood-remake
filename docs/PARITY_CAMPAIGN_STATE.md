@@ -1548,3 +1548,49 @@ look at `RHGame`'s save serialization for that mission.
 4. Spawn agents for #20 (attach wip patch as head-start), #21 (ditto), #39, and further board items as slots allow. Spawn template: Agent tool with isolation:"worktree"; prompt = symlink setup block (original-code, datadirs, corpora → absolute paths into this repo) + task text + rules (debug builds only; never --release/clippy/filtered cargo; faithful C++ only, no invented guards; validate 2-4 repros + 2-3 short controls; cargo fmt; commit on own branch; report worktree+branch+root cause+validation).
 5. After merging a batch: release build + freeze runner + **FULL-UNIVERSE re-sweep 14** via `scripts/build_parity_full_snapshot.sh`. Failure-only sweeps are banned until a clean post-#36 full-universe result verifies the passing set.
 6. Continue the wave loop (previous section) until 100% parity. Do not stop.
+
+## Capture ceiling resolved — the SherwoodOutro SIGSEGV (2026-08-17)
+
+The seed-1000000 capture campaign stalled at **2390/2430** because four saves crashed the Original's
+serializer with `eip=0x0` and no diagnostic. Root cause found and fixed (`original-code` commit
+`a289c0b`, two files); the four saves now capture 1500 frames each.
+
+**Three layers, all reachable in ordinary gameplay:**
+
+1. `datadirs/fullgame_linux/Data/Musics/The_Last_Dance.ogg` is **not** Ogg — it is a RIFF/WAVE stub
+   (8-bit mono 11025 Hz, 5558 bytes of silence). A mislabeled shipping data file.
+2. `mixer/music.c:380-474` — `Mix_LoadMUS` reads 4 magic bytes at line 389 but every type test at
+   line 451+ is `extension-says-so OR magic-says-so` with the **extension tested first**. So the name
+   beats the contents: the RIFF file went to `OGG_new()`, vorbisfile returned `OV_ENOTVORBIS`,
+   `Mix_LoadMUS` returned NULL. (`RHsound.cpp:1717-1734` probes `.wav` then `.ogg`; no `.wav` exists.)
+   Fix: clear the extension hint when the magic is a signature we recognise (MThd/OggS/RIFF/FORM), so
+   the signature decides and the extension only remains a fallback for headerless formats (MP3/MOD).
+3. `sblibng/SBDebug.cpp:309` — `SBError` called `(*pTerminationCallback)(...)` unconditionally.
+   `SetTerminationCallback` is **never called anywhere in the tree**, so the pointer is always its NULL
+   initialiser at `SBDebug.cpp:54` and *every fatal error in this build* jumps to address 0, dying
+   before `exit(-1)`. Fix: guard the call, and echo fatal messages to `std::cerr` in the `_FINAL`
+   branch — a `_FINAL` build writes only to the bzip2-compressed `Data/Configuration/release.log`, so
+   without the echo a fatal error leaves nothing at all on the console. **This is why the crash looked
+   like a mystery: the diagnostic existed, it was just compressed and then jumped over.**
+
+Why exactly those four: all sit in mission id **22853 = `SherwoodOutro`**, whose `green_music`,
+`yellow_music` and `red_music` are all `The_Last_Dance` (`Data/Configuration/profile.json`,
+missions[62]). Every other mission's three tracks are genuine Oggs. **This is a live bug in normal
+play** — entering or loading the ending mission with sound enabled crashed the game.
+
+**Equivalence proof** (mandatory before any rebuilt binary is trusted): `build/fixmusic-20260817/robin`
+vs the pinned `build/native-full/robin-schema14-capture`, 300 frames of
+`Savegame_linux3/Profile_001/Savegame_008` at `-PARITYSEED 1 -PARITYRANDOMINPUT 14` — all 303 trace
+lines identical field-for-field, only `draws.callsite_offsets` differ (112 bytes, raw code addresses).
+The fix cannot perturb the simulation by construction: `LoadMusicLoop`/`OpenStream` draw no RNG, and a
+genuine `.ogg` takes the identical branch.
+
+**Corpus provenance note:** the 40 SherwoodOutro replays are captured with
+`build/fixmusic-20260817/robin` (sha256 `72d435beaafb0475…`), not the campaign.env binary
+`robin-schema14-capture` (sha256 `0c5353187819fe89…`). They are equivalent per the proof above, but the
+difference is recorded here because campaign.env names only the original binary.
+
+**Follow-up left deliberately undone:** `RHsoundcache.cpp:1563,1591,1619` bound-check with
+`uwIndex > Size()` instead of `>=`, so `index == Size()` reads one past the end. It cannot fire today
+(pools always hold exactly one entry, `RHsoundcache.cpp:1009-1011`) and fixing it would convert an
+out-of-bounds read into a fatal error — a behaviour change, so it stays.
