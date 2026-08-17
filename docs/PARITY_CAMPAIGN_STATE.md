@@ -1706,14 +1706,19 @@ organised by theme rather than by cluster label.
 | D2 | swordfight / parade / shield | `SuN1Sh1nE/Savegame_004/r003`, `SuN1Sh1nE/Savegame_013/r005`, `SuN1Sh1nE/Savegame_024/r015`, `linux2/Savegame_032/r002`, `linux3/P003/Savegame_034/r014` |
 | D3 | movement / door-pass commands | `linux2/Savegame_024/r013`, `linux3/P001/Savegame_029/r006`, `linux3/P001/Savegame_034/r013`, `linux2/Savegame_031/r015`, `linux3/P001/Savegame_009/r004`, `linux3/P001/Savegame_044/r003` |
 
-**Unassigned (15):** `15-no-input/SuN1Sh1nE/QuickSave` (sprite_frame); `30s/linux3/P003/Savegame_019/r001`
-(MacroRand); schema12 `SuN1Sh1nE/Savegame_024/r006` (Wait->MoveWaiting), `SuN1Sh1nE/Savegame_024/r014`
-(EnterAttentiveMode->Wait), `linux2/Savegame_031/r011` (SeekPointSelection), `linux3/P001/Savegame_018/r002`
-and `nicouzouf/Savegame_020/r014` (both Wait->MoveOk — a genuine 2-member group),
-`nicouzouf/Savegame_037/r005` (VipIdleRemark), `nicouzouf/Savegame_071/r010` (EquipBow->MoveWaiting);
-schema14 `linux2/Savegame_039/r003` and `linux3/P003/Savegame_051/r004` (both direction_goal — a genuine
-2-member group), `linux3/P001/Savegame_047/r010` (rng, unlabelled — **the tiredness trace, see below**),
-`linux3/P003/Savegame_029/r001` (elevation), `linux3/P003/Savegame_046/r011` (motion_state).
+**All 32 are now assigned** (wave E dispatched 2026-08-17, closing the gap):
+
+| bundle | theme | traces |
+|---|---|---|
+| E1 | RNG-labelled singletons | `linux3/P001/Savegame_047/r010` (tiredness, pre-solved from the Original side), `30s linux3/P003/Savegame_019/r001` (MacroRand), `linux2/Savegame_031/r011` (SeekPointSelection), `nicouzouf/Savegame_037/r005` (VipIdleRemark), `SuN1Sh1nE/Savegame_013/r006` (AiPanic) |
+| E2 | geometry / sprite / motion state | `linux2/Savegame_039/r003` + `linux3/P003/Savegame_051/r004` (direction_goal pair), `linux3/P003/Savegame_029/r001` (elevation), `linux3/P003/Savegame_046/r011` (motion_state), `15-no-input SuN1Sh1nE/QuickSave` (sprite_frame) |
+| E3 | idle / attention / equip transitions | `linux3/P001/Savegame_018/r002` + `nicouzouf/Savegame_020/r014` (Wait->MoveOk pair), `SuN1Sh1nE/Savegame_024/r006` (Wait->MoveWaiting), `SuN1Sh1nE/Savegame_024/r014` (EnterAttentiveMode->Wait), `nicouzouf/Savegame_071/r010` (EquipBow->MoveWaiting) |
+
+Bundle composition notes worth keeping: **E2 is entirely schema-14**, so every member is reproducible
+under gdb with the Original binaries, and one member is a 15-no-input trace (the cheapest repro in the
+remaining set). **E3 is entirely schema-12**, so gdb against the Original is unavailable to it by
+construction and it must attribute from the Rust side plus the trace — that limitation was stated in its
+task rather than left for it to discover.
 
 ### Probe readings already routed to the agents holding those traces
 Findings 1, 3 and 4 of the instrumentation agent land inside D2 and D3 and have been forwarded, including
