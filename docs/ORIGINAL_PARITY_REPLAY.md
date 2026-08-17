@@ -788,6 +788,79 @@ reviewed call site, and raw Original `rand()` value. Use
 can be isolated with inclusive `ROBIN_TRACE_RNG_FROM` and
 `ROBIN_TRACE_RNG_THROUGH` draw indices.
 
+The runner normally appends authoritative RNG draws as each cached frame is
+read, avoiding a redundant full-trace decode before replay. It still preloads
+the complete stream for a loaded save whose RNG prefix is empty, because save
+reconstruction can consume future draws before frame 1. Set
+`PARITY_PRELOAD_RNG=1` to force the former full-preload path when A/B checking
+an apparent RNG-streaming regression.
+
+### Profile-guided optimization for large replay sweeps
+
+PGO can substantially improve replay throughput, but train it on a varied,
+representative corpus before using it for a production sweep. A single trace
+over-specializes the profile and does not exercise enough missions, save
+origins, actor populations, or diagnostic paths. Keep the generate, control,
+and use builds isolated so this experiment never overwrites `target/parity`.
+Keep the source revision and Rust toolchain unchanged throughout the workflow:
+
+```sh
+PGO_DATA=$(mktemp -d /tmp/robin-parity-pgo.XXXXXX)
+rustup component add llvm-tools-preview
+LLVM_PROFDATA="$(dirname "$(rustc --print target-libdir)")/bin/llvm-profdata"
+
+CARGO_TARGET_DIR=target/pgo-generate CARGO_INCREMENTAL=0 \
+  RUSTFLAGS="-Cprofile-generate=$PGO_DATA -Ctarget-cpu=native" \
+  cargo build --release --example original_parity_replay
+
+# Replace these with traces spanning the datadirs and replay shapes in the
+# intended sweep. Every training invocation must finish with an exact match.
+for TRACE_JSONL in /path/to/training-trace-1.jsonl.zst \
+                   /path/to/training-trace-2.jsonl.zst; do
+  LLVM_PROFILE_FILE="$PGO_DATA/%m_%p.profraw" \
+    ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
+    target/pgo-generate/release/examples/original_parity_replay \
+    --no-auto-dump "$TRACE_JSONL" || exit 1
+done
+
+"$LLVM_PROFDATA" merge -o "$PGO_DATA/merged.profdata" \
+  "$PGO_DATA"/*.profraw
+
+CARGO_TARGET_DIR=target/pgo-control CARGO_INCREMENTAL=0 \
+  RUSTFLAGS='-Ctarget-cpu=native' \
+  cargo build --release --example original_parity_replay
+CARGO_TARGET_DIR=target/pgo-use CARGO_INCREMENTAL=0 \
+  RUSTFLAGS="-Cprofile-use=$PGO_DATA/merged.profdata -Ctarget-cpu=native" \
+  cargo build --release --example original_parity_replay
+```
+
+`target-cpu=native` makes both binaries specific to the build machine's CPU;
+omit it from both builds if the binary must run on other CPU generations. Run
+the same held-out traces through `target/pgo-control` and `target/pgo-use` with
+`PARITY_PROFILE_TIMING=1`, require `parity trace matched every recorded frame`
+and clean EOF from both, and compare repeated wall/CPU timings under similar
+machine load. Do not adopt a PGO binary merely because its training trace is
+faster.
+
+```sh
+HELD_OUT_TRACE=/path/to/held-out-trace.jsonl.zst
+for REPLAY in target/pgo-control/release/examples/original_parity_replay \
+              target/pgo-use/release/examples/original_parity_replay; do
+  ROBINHOOD_DATA_DIR=datadirs/fullgame_linux PARITY_PROFILE_TIMING=1 \
+    "$REPLAY" --no-auto-dump "$HELD_OUT_TRACE" || exit 1
+done
+```
+
+After validation, remove the isolated build and profile artifacts:
+
+```sh
+cargo clean --target-dir target/pgo-generate
+cargo clean --target-dir target/pgo-control
+cargo clean --target-dir target/pgo-use
+find "$PGO_DATA" -type f -delete
+rmdir "$PGO_DATA"
+```
+
 To watch that same authoritative replay, add `--visual`. The window freezes on
 the first divergence while the normal logical mismatch report is printed:
 

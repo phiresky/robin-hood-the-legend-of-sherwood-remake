@@ -12,13 +12,15 @@
 #![recursion_limit = "256"]
 
 use std::fmt::Write as _;
-use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
 use base64::Engine as _;
+use fs2::FileExt as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
@@ -256,8 +258,8 @@ enum TraceStartState {
 
 fn validate_trace_schema(schema: u32) {
     assert!(
-        matches!(schema, 12 | 13 | 14),
-        "unsupported parity trace schema {schema}; schemas 12, 13 and 14 are supported"
+        matches!(schema, 12 | 13 | 14 | 15),
+        "unsupported parity trace schema {schema}; schemas 12 through 15 are supported"
     );
 }
 
@@ -282,7 +284,7 @@ fn validate_trace_header(header: &TraceHeader) {
     match header.schema {
         // Schema 14 revises 12's recorder contract without adopting 13's
         // per-frame payload, which no writer ever produced.
-        12 | 14 => assert!(
+        12 | 14 | 15 => assert!(
             header.authoritative_state.is_none(),
             "schema-{} trace unexpectedly declares per-frame authoritative state",
             header.schema
@@ -302,14 +304,14 @@ fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
         header.start_state,
         header.initial_save.as_ref(),
     ) {
-        (12 | 13 | 14, TraceStartState::MissionStart, None) => None,
-        (12 | 13 | 14, TraceStartState::MissionStart, Some(_)) => {
+        (12 | 13 | 14 | 15, TraceStartState::MissionStart, None) => None,
+        (12 | 13 | 14 | 15, TraceStartState::MissionStart, Some(_)) => {
             panic!("mission_start traces must not contain initial_save")
         }
-        (12 | 13 | 14, TraceStartState::LoadedSave, None) => {
+        (12 | 13 | 14 | 15, TraceStartState::LoadedSave, None) => {
             panic!("loaded_save traces require initial_save")
         }
-        (12 | 13 | 14, TraceStartState::LoadedSave, Some(initial_save)) => {
+        (12 | 13 | 14 | 15, TraceStartState::LoadedSave, Some(initial_save)) => {
             let mission_index = header
                 .campaign
                 .current_mission_index
@@ -1322,6 +1324,86 @@ struct TraceActor {
     command_name: String,
     motion_state: u32,
     wait_time: u32,
+    #[serde(default)]
+    passing_door_directly: Option<bool>,
+    /// Outer `None` means schema 14 or earlier did not record the field;
+    /// inner `None` is schema 15's explicit null for no active PassDoor.
+    #[serde(default, deserialize_with = "deserialize_present_nullable_pass_door")]
+    active_pass_door: Option<Option<TracePassDoor>>,
+    /// Retained for schema-15 diagnostics. Rust does not yet expose a stable
+    /// public current-sequence snapshot with Original's element identities.
+    /// TODO(parity-schema15): compare the remaining fields once that capture
+    /// can be produced without walking mutable sequence-manager internals.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_sequence_element"
+    )]
+    sequence_element: Option<Option<TraceSequenceElement>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TracePassDoor {
+    gate_id: u32,
+    direct: bool,
+    direction: i16,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceSequenceElement {
+    id: u32,
+    #[serde(rename = "type")]
+    element_type: u8,
+    state: u32,
+    command_level: u16,
+    command: u16,
+    command_name: String,
+    order_count: u16,
+    priority: u32,
+    posture_after_transition: u32,
+    action_state_after_transition: u32,
+    #[serde(default)]
+    movement: Option<TraceSequenceMovement>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceSequenceMovement {
+    action: u32,
+    #[serde(default)]
+    pass_door: Option<TracePassDoor>,
+}
+
+fn deserialize_present_nullable_pass_door<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<TracePassDoor>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<TracePassDoor>::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_present_nullable_sequence_element<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<TraceSequenceElement>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<TraceSequenceElement>::deserialize(deserializer).map(Some)
+}
+
+fn trace_pass_door_key(pass: &TracePassDoor) -> (u32, bool) {
+    assert_eq!(
+        pass.direct,
+        pass.direction != 0,
+        "schema-15 active PassDoor direct flag disagrees with its direction"
+    );
+    (pass.gate_id, pass.direct)
+}
+
+fn active_pass_door_keys_match(
+    expected: Option<&TracePassDoor>,
+    actual: Option<(u32, bool)>,
+) -> bool {
+    expected.map(trace_pass_door_key) == actual
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1531,6 +1613,29 @@ struct TraceFlightStep {
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceRouteConstructionEvent {
+    kind: String,
+    actor: TraceEntityId,
+    source: TracePoint,
+    source_sector: u16,
+    source_level: u16,
+    goal: TracePoint,
+    goal_sector: u16,
+    goal_level: u16,
+    gates: Vec<TraceRouteGate>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceRouteGate {
+    gate_id: u32,
+    direct: bool,
+    sector_out: u16,
+    level_out: u16,
+    sector_in: u16,
+    level_in: u16,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceFrame {
     #[serde(rename = "type")]
@@ -1551,6 +1656,12 @@ struct TraceFrame {
     rng_draws: TraceRngBatch,
     motion_line_changes: Vec<TraceMotionLineChange>,
     path_events: Vec<TracePathEvent>,
+    /// Present in schema 15. Retained and printed on divergence; Rust has no
+    /// side-effect-free route-construction event capture yet.
+    /// TODO(parity-schema15): compare once the sequence builders publish the
+    /// same source/goal and ordered gate list.
+    #[serde(default)]
+    route_construction_events: Option<Vec<TraceRouteConstructionEvent>>,
     resolved_exclamations: Vec<TraceResolvedExclamation>,
     #[serde(default)]
     movement_steps: Vec<TraceMovementStep>,
@@ -1655,7 +1766,16 @@ struct TraceFailedPathRequest {
 
 fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
     match schema {
-        12 | 14 => frame.campaign.is_none() && frame.engine_state.is_none(),
+        12 | 14 => {
+            frame.campaign.is_none()
+                && frame.engine_state.is_none()
+                && frame.route_construction_events.is_none()
+        }
+        15 => {
+            frame.campaign.is_none()
+                && frame.engine_state.is_none()
+                && frame.route_construction_events.is_some()
+        }
         13 => frame.campaign.is_some() && frame.engine_state.is_some(),
         _ => unreachable!("trace schema was validated before frame parsing"),
     }
@@ -1663,7 +1783,7 @@ fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
 
 fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     match schema {
-        12 | 14 => assert!(
+        12 | 14 | 15 => assert!(
             trace_frame_envelope_matches(schema, frame),
             "schema-{schema} frame unexpectedly contains schema-13 authoritative state"
         ),
@@ -1675,8 +1795,10 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 57;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v57.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 59;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v59.native-bincode.zst";
+const TRACE_CACHE_FOOTER_MAGIC: [u8; 16] = *b"RHPRCACHEFOOTER!";
+const TRACE_CACHE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -1706,6 +1828,14 @@ enum BinaryTraceRecord {
 struct BinaryTraceReader {
     path: PathBuf,
     reader: Box<dyn Read>,
+    footer: BinaryTraceFooter,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BinaryTraceFooter {
+    version: u32,
+    frame_count: u64,
+    final_frame: u64,
 }
 
 struct Options {
@@ -2175,6 +2305,7 @@ async fn capture_full_frame_zero_screenshot(
 }
 
 fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWindow>) -> i32 {
+    let replay_started = Instant::now();
     let scan_all = options.scan_all;
     let no_auto_dump = options.no_auto_dump;
     let trace_path = options.trace_path;
@@ -2190,6 +2321,21 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         (options, BufWriter::new(file))
     });
     let cached_header = read_binary_trace_header(&cache_path);
+    // Normally grow the replay RNG one frame at a time so loading the trace
+    // does not decode every large frame twice. Zero-prefix loaded saves need
+    // future draws during deterministic reconstruction. The environment
+    // override keeps an exact full-preload A/B path for diagnosing either
+    // strategy without another build.
+    let preload_complete_rng_stream = should_preload_complete_rng_stream(
+        cached_header.trace.start_state,
+        cached_header.rng_prefix.draws.gameplay_draw_count(),
+        std::env::var_os("PARITY_PRELOAD_RNG").is_some(),
+    );
+    let initial_rng_draws = if preload_complete_rng_stream {
+        read_all_rng_draws(&cache_path)
+    } else {
+        simulation_rng_draws(&cached_header.rng_prefix.draws)
+    };
     let header = cached_header.trace;
     validate_trace_header(&header);
     validate_trace_start(
@@ -2198,7 +2344,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         header.initial_frame,
     );
     let initial_save = decode_and_validate_initial_save(&header);
-    let all_rng_draws = read_all_rng_draws(&cache_path);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
@@ -2245,13 +2390,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     }
 
     assert!(
-        all_rng_draws.len() >= prefix_end,
-        "RNG pre-scan is shorter than prefix"
+        initial_rng_draws.len() >= prefix_end,
+        "loaded simulation RNG stream is shorter than prefix"
     );
     let rewind_loaded_save_rng =
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
     let (mut engine, assets, mut host, background, mission_scb, menu_text) =
-        initialize_engine(&header, all_rng_draws.clone());
+        initialize_engine(&header, initial_rng_draws.clone());
     let mut loaded_save_host = None;
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
@@ -2302,7 +2447,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let setup_draws = engine
             .original_rng_replay_cursor()
             .expect("loaded-save reconstruction lost Original RNG replay");
-        engine.replace_original_rng_replay(all_rng_draws);
+        engine.replace_original_rng_replay(initial_rng_draws);
         eprintln!("rewound loaded-save RNG after {setup_draws} deterministic construction draws");
     }
     let mut motion_line_parity = MotionLineParity::build(&engine, &header.motion_grid);
@@ -2376,6 +2521,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     // invented even when Rust never reached that site.
     let debug_rng_site_map = std::env::var_os("PARITY_DEBUG_RNG_SITE_MAP").is_some();
     let mut rng_site_map: BTreeMap<u32, BTreeSet<String>> = BTreeMap::new();
+    let profile_timing = std::env::var_os("PARITY_PROFILE_TIMING").is_some();
+    let mut simulation_time = Duration::ZERO;
+    let mut comparison_time = Duration::ZERO;
+    let mut rng_diagnostic_time = Duration::ZERO;
 
     let mut line_index = 0_usize;
     let terminator = loop {
@@ -2417,6 +2566,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let rng_start = gameplay_rng_index;
         let rng_end = rng_start + frame.rng_draws.gameplay_draw_count();
         gameplay_rng_index = rng_end;
+        if !preload_complete_rng_stream {
+            engine.append_original_rng_replay(simulation_rng_draws(&frame.rng_draws));
+        }
         let capture_commands = automatic_dump_enabled
             || dump
                 .as_ref()
@@ -2522,6 +2674,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }
         print_debug_element("before", &engine, &frame);
         robin_engine::movement_diagnostics::begin_parity_movement_capture();
+        let simulation_started = Instant::now();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass_with_body_gate(
                 &mut display,
@@ -2530,6 +2683,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.simulation_body_ran,
             )
         }));
+        if profile_timing {
+            simulation_time += simulation_started.elapsed();
+        }
         let actual_visibility_queries =
             robin_engine::sight_obstacle::take_parity_visibility_capture();
         // Restart immediately so post-frame work and the next frame's
@@ -2648,6 +2804,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_startup_actors("after Rust frame 1", &engine, &frame, map);
         }
 
+        let comparison_started = Instant::now();
         map.validate_building_sector_mapping(&engine, &frame);
         let mut differences =
             motion_line_parity.apply_changes_and_compare(&engine, &frame.motion_line_changes);
@@ -2669,6 +2826,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             map,
             &late_movement_retranslations,
         ));
+        if profile_timing {
+            comparison_time += comparison_started.elapsed();
+        }
         if debug_stage_timing {
             eprintln!(
                 "parity stage: compared Rust frame {} ({} differences)",
@@ -2676,12 +2836,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 differences.len()
             );
         }
+        let rng_diagnostic_started = Instant::now();
         let rust_rng_sites = engine
             .original_rng_replay_sites(rng_start..actual_rng_end)
             .expect("original RNG site history unexpectedly disabled");
         let rust_rng_diagnostics = engine
             .original_rng_replay_diagnostics(rng_start..actual_rng_end)
             .expect("original RNG diagnostics unexpectedly disabled");
+        if profile_timing {
+            rng_diagnostic_time += rng_diagnostic_started.elapsed();
+        }
         if let Some((options, writer)) = &mut dump
             && options.includes(frame.frame_after)
         {
@@ -2860,6 +3024,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         .expect("serialize Rust path-event diagnostics")
                 );
             }
+            if let Some(route_events) = &frame.route_construction_events
+                && !route_events.is_empty()
+            {
+                eprintln!(
+                    "  Original route-construction events this frame: {}",
+                    serde_json::to_string(route_events)
+                        .expect("serialize Original route-construction diagnostics")
+                );
+            }
             if automatic_dump_enabled {
                 write_automatic_rolling_dump(
                     &rolling_dump,
@@ -2909,12 +3082,34 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }
     };
 
+    if profile_timing {
+        eprintln!(
+            "parity timing: total={:.3}s simulation={:.3}s comparison={:.3}s rng_diagnostics={:.3}s other={:.3}s",
+            replay_started.elapsed().as_secs_f64(),
+            simulation_time.as_secs_f64(),
+            comparison_time.as_secs_f64(),
+            rng_diagnostic_time.as_secs_f64(),
+            replay_started
+                .elapsed()
+                .saturating_sub(simulation_time + comparison_time + rng_diagnostic_time)
+                .as_secs_f64(),
+        );
+    }
+
     match terminator {
         BinaryTraceRecord::End {
             rng_suffix: Some(_),
             final_frame: Some(final_frame),
             frame_count: Some(frame_count),
         } => {
+            records
+                .validate_terminator(frame_count, final_frame)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "parity trace cache {} has an invalid terminal record: {error}",
+                        cache_path.display()
+                    )
+                });
             assert_eq!(
                 frame_count,
                 u64::try_from(line_index).expect("parity frame count exceeds u64"),
@@ -3670,12 +3865,46 @@ fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
 
 fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
     let cache_path = binary_trace_cache_path(trace_path);
+    let mut lock_name = cache_path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    let lock_path = PathBuf::from(lock_name);
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "open parity trace cache lock {}: {error}",
+                lock_path.display()
+            )
+        });
+    lock_file.lock_exclusive().unwrap_or_else(|error| {
+        panic!(
+            "lock parity trace cache generation {}: {error}",
+            lock_path.display()
+        )
+    });
     let fingerprint = trace_source_fingerprint(trace_path);
     match try_read_binary_trace_header(&cache_path) {
         Ok(header)
             if header.version == TRACE_CACHE_VERSION
                 && header.source_fingerprint == fingerprint =>
         {
+            let footer = read_binary_trace_footer(&cache_path).unwrap_or_else(|error| {
+                panic!(
+                    "parity trace cache {} has a corrupt or missing fixed footer: {error}; remove the derived cache and retry",
+                    cache_path.display()
+                )
+            });
+            validate_binary_trace_footer(&footer, header.trace.initial_frame).unwrap_or_else(
+                |error| {
+                    panic!(
+                        "parity trace cache {} has an invalid fixed footer: {error}; remove the derived cache and retry",
+                        cache_path.display()
+                    )
+                },
+            );
             eprintln!("loaded parity trace cache {}", cache_path.display());
             return cache_path;
         }
@@ -3685,8 +3914,8 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
             header.version,
             header.source_fingerprint
         ),
-        Err(error) if cache_path.exists() => eprintln!(
-            "rebuilding unreadable parity trace cache {}: {error}",
+        Err(error) if cache_path.exists() => panic!(
+            "parity trace cache {} is unreadable: {error}; remove the derived cache and retry",
             cache_path.display()
         ),
         Err(_) => eprintln!(
@@ -3734,6 +3963,7 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
     });
     let started = std::time::Instant::now();
     let mut frame_count = 0_u64;
+    let final_frame;
     {
         let mut encoder = zstd::stream::write::Encoder::new(
             BufWriter::new(temporary.as_file_mut()),
@@ -3742,8 +3972,9 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|error| panic!("start parity trace cache compression: {error}"));
         write_binary_record(&mut encoder, &header, "parity trace cache header");
 
-        let mut wrote_end = false;
-        for (record_index, line) in lines.enumerate() {
+        let mut records = lines.enumerate();
+        let mut terminal_metadata = None;
+        while let Some((record_index, line)) = records.next() {
             let line_number = record_index + 3;
             let line = line.unwrap_or_else(|error| {
                 panic!("read parity trace record on line {line_number}: {error}")
@@ -3786,24 +4017,36 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
                     },
                     "parity trace cache terminator",
                 );
-                wrote_end = true;
+                terminal_metadata = Some((suffix.frame_count, suffix.final_frame));
+                if let Some((trailing_index, trailing)) = records.next() {
+                    let trailing_line = trailing_index + 3;
+                    trailing.unwrap_or_else(|error| {
+                        panic!("read trailing parity trace line {trailing_line}: {error}")
+                    });
+                    panic!(
+                        "parity trace has a record after its rng_suffix terminator on line {trailing_line}"
+                    );
+                }
                 break;
             }
         }
-        if !wrote_end {
-            write_binary_record(
-                &mut encoder,
-                &BinaryTraceRecord::End {
-                    rng_suffix: None,
-                    final_frame: None,
-                    frame_count: None,
-                },
-                "parity trace cache terminator",
-            );
-        }
+        let (terminal_frame_count, terminal_final_frame) = terminal_metadata.unwrap_or_else(|| {
+            panic!("parity trace ended without an rng_suffix terminator; refusing to publish cache")
+        });
+        assert_eq!(terminal_frame_count, frame_count);
+        final_frame = terminal_final_frame;
         let mut writer = encoder
             .finish()
             .unwrap_or_else(|error| panic!("finish parity trace cache compression: {error}"));
+        write_binary_trace_footer(
+            &mut writer,
+            BinaryTraceFooter {
+                version: TRACE_CACHE_VERSION,
+                frame_count,
+                final_frame,
+            },
+        )
+        .unwrap_or_else(|error| panic!("write parity trace cache fixed footer: {error}"));
         writer
             .flush()
             .unwrap_or_else(|error| panic!("flush parity trace cache: {error}"));
@@ -3833,17 +4076,34 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
 
 impl BinaryTraceReader {
     fn open(path: &std::path::Path) -> Self {
-        let file = File::open(path)
-            .unwrap_or_else(|error| panic!("open parity trace cache {}: {error}", path.display()));
-        let decoder = zstd::stream::read::Decoder::new(file).unwrap_or_else(|error| {
+        let footer = read_binary_trace_footer(path).unwrap_or_else(|error| {
             panic!(
-                "start parity trace cache decompression {}: {error}",
+                "read parity trace cache fixed footer {}: {error}",
                 path.display()
             )
         });
+        let file = File::open(path)
+            .unwrap_or_else(|error| panic!("open parity trace cache {}: {error}", path.display()));
+        let compressed_len = file
+            .metadata()
+            .expect("stat parity trace cache before decompression")
+            .len()
+            .checked_sub(TRACE_CACHE_FOOTER_LEN)
+            .expect("validated parity trace cache is shorter than its footer");
+        // The fixed footer is outside the zstd stream so it can be checked
+        // without decoding a potentially ABI-incompatible cache. Bound zstd
+        // to the compressed bytes or it treats the footer as another frame.
+        let decoder =
+            zstd::stream::read::Decoder::new(file.take(compressed_len)).unwrap_or_else(|error| {
+                panic!(
+                    "start parity trace cache decompression {}: {error}",
+                    path.display()
+                )
+            });
         Self {
             path: path.to_owned(),
             reader: Box::new(decoder),
+            footer,
         }
     }
 
@@ -3864,6 +4124,90 @@ impl BinaryTraceReader {
             )
         })
     }
+
+    fn validate_terminator(&mut self, frame_count: u64, final_frame: u64) -> Result<(), String> {
+        if self.footer.frame_count != frame_count || self.footer.final_frame != final_frame {
+            return Err(format!(
+                "decoded terminator says frame_count={frame_count} final_frame={final_frame}, fixed footer says frame_count={} final_frame={}",
+                self.footer.frame_count, self.footer.final_frame
+            ));
+        }
+        let mut trailing = [0_u8; 1];
+        match self.reader.read(&mut trailing) {
+            Ok(0) => Ok(()),
+            Ok(_) => Err("decoded cache contains data after its first End record".to_owned()),
+            Err(error) => Err(format!(
+                "decompress cache after its first End record: {error}"
+            )),
+        }
+    }
+}
+
+fn write_binary_trace_footer(
+    writer: &mut impl Write,
+    footer: BinaryTraceFooter,
+) -> std::io::Result<()> {
+    writer.write_all(&TRACE_CACHE_FOOTER_MAGIC)?;
+    writer.write_all(&footer.version.to_le_bytes())?;
+    writer.write_all(&footer.frame_count.to_le_bytes())?;
+    writer.write_all(&footer.final_frame.to_le_bytes())?;
+    Ok(())
+}
+
+fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter, String> {
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    let length = file.metadata().map_err(|error| error.to_string())?.len();
+    if length < TRACE_CACHE_FOOTER_LEN {
+        return Err(format!(
+            "file is {length} bytes, shorter than the {TRACE_CACHE_FOOTER_LEN}-byte footer"
+        ));
+    }
+    file.seek(SeekFrom::End(
+        -i64::try_from(TRACE_CACHE_FOOTER_LEN).unwrap(),
+    ))
+    .map_err(|error| error.to_string())?;
+    let mut magic = [0_u8; TRACE_CACHE_FOOTER_MAGIC.len()];
+    file.read_exact(&mut magic)
+        .map_err(|error| error.to_string())?;
+    if magic != TRACE_CACHE_FOOTER_MAGIC {
+        return Err(format!("footer magic is {magic:?}"));
+    }
+    let mut version = [0_u8; 4];
+    let mut frame_count = [0_u8; 8];
+    let mut final_frame = [0_u8; 8];
+    file.read_exact(&mut version)
+        .map_err(|error| error.to_string())?;
+    file.read_exact(&mut frame_count)
+        .map_err(|error| error.to_string())?;
+    file.read_exact(&mut final_frame)
+        .map_err(|error| error.to_string())?;
+    Ok(BinaryTraceFooter {
+        version: u32::from_le_bytes(version),
+        frame_count: u64::from_le_bytes(frame_count),
+        final_frame: u64::from_le_bytes(final_frame),
+    })
+}
+
+fn validate_binary_trace_footer(
+    footer: &BinaryTraceFooter,
+    initial_frame: u64,
+) -> Result<(), String> {
+    if footer.version != TRACE_CACHE_VERSION {
+        return Err(format!(
+            "footer version {} does not match runner version {TRACE_CACHE_VERSION}",
+            footer.version
+        ));
+    }
+    let expected_final = initial_frame
+        .checked_add(footer.frame_count)
+        .ok_or_else(|| "footer initial_frame + frame_count overflows u64".to_owned())?;
+    if footer.final_frame != expected_final {
+        return Err(format!(
+            "footer final_frame {} does not equal initial_frame {initial_frame} + frame_count {}",
+            footer.final_frame, footer.frame_count
+        ));
+    }
+    Ok(())
 }
 
 fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHeader, String> {
@@ -3930,16 +4274,36 @@ fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
     let header = reader.read_header();
     let mut result = Vec::new();
     let mut original_index = 0_usize;
+    let mut frame_count = 0_u64;
     append_simulation_rng_draws(&mut result, &mut original_index, &header.rng_prefix.draws);
     loop {
         match reader.read_record() {
             BinaryTraceRecord::Frame(frame) => {
                 append_simulation_rng_draws(&mut result, &mut original_index, &frame.rng_draws);
+                frame_count += 1;
             }
-            BinaryTraceRecord::End { rng_suffix, .. } => {
+            BinaryTraceRecord::End {
+                rng_suffix,
+                final_frame,
+                frame_count: terminal_frame_count,
+            } => {
                 if let Some(batch) = rng_suffix {
                     append_simulation_rng_draws(&mut result, &mut original_index, &batch);
                 }
+                let terminal_frame_count = terminal_frame_count
+                    .unwrap_or_else(|| panic!("parity cache RNG pre-scan found incomplete End"));
+                let final_frame = final_frame
+                    .unwrap_or_else(|| panic!("parity cache RNG pre-scan found incomplete End"));
+                assert_eq!(terminal_frame_count, frame_count);
+                assert_eq!(final_frame, header.trace.initial_frame + frame_count);
+                reader
+                    .validate_terminator(terminal_frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "parity trace cache {} has an invalid terminal record during RNG pre-scan: {error}",
+                            cache_path.display()
+                        )
+                    });
                 break;
             }
         }
@@ -3968,6 +4332,24 @@ fn append_simulation_rng_draws(
             .zip(batch.domains.iter().copied())
             .filter_map(|(value, domain)| (domain == TraceRngDomain::Simulation).then_some(value)),
     );
+}
+
+fn simulation_rng_draws(batch: &TraceRngBatch) -> Vec<u32> {
+    batch
+        .values
+        .iter()
+        .copied()
+        .zip(batch.domains.iter().copied())
+        .filter_map(|(value, domain)| (domain == TraceRngDomain::Simulation).then_some(value))
+        .collect()
+}
+
+fn should_preload_complete_rng_stream(
+    start_state: TraceStartState,
+    prefix_draw_count: usize,
+    forced: bool,
+) -> bool {
+    forced || (start_state == TraceStartState::LoadedSave && prefix_draw_count == 0)
 }
 
 fn difference_field(difference: &str) -> &str {
@@ -6044,7 +6426,10 @@ fn compare_frame(
         // index, and the two are frequently unequal (e.g. Original pc:171 is
         // Rust Pc(PcId(174))). Four investigations lost hours to that mismatch, so
         // every diff root spells the pairing out.
-        let id_label = EntityLabel { id, original_index: expected.entity_id.index };
+        let id_label = EntityLabel {
+            id,
+            original_index: expected.entity_id.index,
+        };
         let Some(actual) = engine.get_entity(id) else {
             differences.push(format!("{id_label:?}: missing in Rust entity table"));
             continue;
@@ -6341,6 +6726,41 @@ fn compare_frame(
                 command_from_stable_name(&expected_actor.command_name),
                 engine.actor_command(id),
             );
+            if let Some(expected_direct) = expected_actor.passing_door_directly {
+                compare(
+                    &mut differences,
+                    id,
+                    "actor.passing_door_directly",
+                    expected_direct,
+                    actual_actor.passing_door_directly,
+                );
+            }
+            if let Some(expected_pass) = &expected_actor.active_pass_door {
+                let expected_pass_key = expected_pass.as_ref().map(trace_pass_door_key);
+                let actual_pass = actual_actor.active_door_pass.as_ref().map(|pass| {
+                    (
+                        u32::from(pass.door_index.0),
+                        // Original's movement-element direction is retained
+                        // across resumed door traversal, matching this field
+                        // rather than Rust's reconstructed physical direction.
+                        pass.position_direct,
+                    )
+                });
+                if !active_pass_door_keys_match(expected_pass.as_ref(), actual_pass) {
+                    differences.push(format!(
+                        "{id:?}.actor.active_pass_door.(gate_id,direct): original={expected_pass_key:?} rust={actual_pass:?}"
+                    ));
+                }
+            }
+            if let Some(Some(expected_sequence)) = &expected_actor.sequence_element {
+                compare(
+                    &mut differences,
+                    id,
+                    "actor.sequence_element.command",
+                    command_from_stable_name(&expected_sequence.command_name),
+                    engine.actor_command(id),
+                );
+            }
         }
         if let Some(expected_human) = &expected.human {
             let actual_camp = actual.camp();
@@ -6660,19 +7080,15 @@ fn compare_frame(
                 controller.view_alert_status as u32,
             );
 
-            let actual_detectables = npc
-                .detectable_lists
-                .iter()
-                .flat_map(|list| list.iter())
-                .collect::<Vec<_>>();
+            let actual_detectables_len = npc.detectable_lists.iter().map(Vec::len).sum::<usize>();
             compare(
                 &mut differences,
                 id,
                 "detection.detectables.length",
                 expected_detection.detectables.len(),
-                actual_detectables.len(),
+                actual_detectables_len,
             );
-            if expected_detection.detectables.len() != actual_detectables.len()
+            if expected_detection.detectables.len() != actual_detectables_len
                 && std::env::var_os("PARITY_DEBUG_DETECTABLE_DIFF").is_some()
             {
                 // Side-by-side dump of both flattened detectable lists for the
@@ -6683,7 +7099,7 @@ fn compare_frame(
                 eprintln!(
                     "DETDIFF owner={id:?} original_len={} rust_len={}",
                     expected_detection.detectables.len(),
-                    actual_detectables.len()
+                    actual_detectables_len
                 );
                 for (i, d) in expected_detection.detectables.iter().enumerate() {
                     eprintln!(
@@ -6699,7 +7115,12 @@ fn compare_frame(
                         d.last_visibility
                     );
                 }
-                for (i, d) in actual_detectables.iter().enumerate() {
+                for (i, d) in npc
+                    .detectable_lists
+                    .iter()
+                    .flat_map(|list| list.iter())
+                    .enumerate()
+                {
                     eprintln!(
                         "DETDIFF rust[{i}] type={} target={:?} seen_now={} seen_last={} heard_last={} shadow_now={} shadow_last={} vis={}",
                         detectable_type_ordinal(d.detectable_type),
@@ -6716,66 +7137,80 @@ fn compare_frame(
             for (detectable_index, (expected_detectable, actual_detectable)) in expected_detection
                 .detectables
                 .iter()
-                .zip(actual_detectables)
+                .zip(npc.detectable_lists.iter().flat_map(|list| list.iter()))
                 .enumerate()
             {
-                let field =
-                    |name: &str| format!("detection.detectables[{detectable_index}].{name}");
-                compare(
+                compare_indexed(
                     &mut differences,
                     id,
-                    &field("type"),
+                    "detection.detectables",
+                    detectable_index,
+                    "type",
                     expected_detectable.detectable_type,
                     detectable_type_ordinal(actual_detectable.detectable_type),
                 );
-                compare(
+                compare_indexed(
                     &mut differences,
                     id,
-                    &field("target"),
+                    "detection.detectables",
+                    detectable_index,
+                    "target",
                     entity_map.translate(expected_detectable.target),
                     actual_detectable.element.unwrap_or_else(|| {
                         panic!("NPC {id:?} detectable {detectable_index} has no target element")
                     }),
                 );
-                compare(
+                compare_indexed(
                     &mut differences,
                     id,
-                    &field("seen_now"),
+                    "detection.detectables",
+                    detectable_index,
+                    "seen_now",
                     expected_detectable.seen_now,
                     actual_detectable.seen_now,
                 );
-                compare(
+                compare_indexed(
                     &mut differences,
                     id,
-                    &field("seen_last_frame"),
+                    "detection.detectables",
+                    detectable_index,
+                    "seen_last_frame",
                     expected_detectable.seen_last_frame,
                     actual_detectable.seen_last_frame,
                 );
-                compare(
+                compare_indexed(
                     &mut differences,
                     id,
-                    &field("heard_last_frame"),
+                    "detection.detectables",
+                    detectable_index,
+                    "heard_last_frame",
                     expected_detectable.heard_last_frame,
                     actual_detectable.heard_last_frame,
                 );
-                compare(
+                compare_indexed(
                     &mut differences,
                     id,
-                    &field("shadow_seen_now"),
+                    "detection.detectables",
+                    detectable_index,
+                    "shadow_seen_now",
                     expected_detectable.shadow_seen_now,
                     actual_detectable.shadow_seen_now,
                 );
-                compare(
+                compare_indexed(
                     &mut differences,
                     id,
-                    &field("shadow_seen_last_frame"),
+                    "detection.detectables",
+                    detectable_index,
+                    "shadow_seen_last_frame",
                     expected_detectable.shadow_seen_last_frame,
                     actual_detectable.shadow_seen_last_frame,
                 );
-                compare_float(
+                compare_float_indexed(
                     &mut differences,
                     id,
-                    &field("last_visibility"),
+                    "detection.detectables",
+                    detectable_index,
+                    "last_visibility",
                     expected_detectable.last_visibility,
                     actual_detectable.last_visibility,
                 );
@@ -6795,6 +7230,22 @@ fn compare<T: std::fmt::Debug + PartialEq>(
     if expected != actual {
         differences.push(format!(
             "{id:?}.{field}: original={expected:?} rust={actual:?}"
+        ));
+    }
+}
+
+fn compare_indexed<T: std::fmt::Debug + PartialEq>(
+    differences: &mut Vec<String>,
+    id: EntityId,
+    collection: &str,
+    index: usize,
+    field: &str,
+    expected: T,
+    actual: T,
+) {
+    if expected != actual {
+        differences.push(format!(
+            "{id:?}.{collection}[{index}].{field}: original={expected:?} rust={actual:?}"
         ));
     }
 }
@@ -6922,8 +7373,8 @@ fn compare_point(
     expected: TracePoint,
     actual: MapPoint,
 ) {
-    compare_float(differences, id, &format!("{field}.x"), expected.x, actual.x);
-    compare_float(differences, id, &format!("{field}.y"), expected.y, actual.y);
+    compare_float_component(differences, id, field, "x", expected.x, actual.x, 0.0);
+    compare_float_component(differences, id, field, "y", expected.y, actual.y, 0.0);
 }
 
 fn compare_point_with_absolute_tolerance(
@@ -6934,22 +7385,76 @@ fn compare_point_with_absolute_tolerance(
     actual: MapPoint,
     absolute_tolerance: f32,
 ) {
-    compare_float_with_absolute_tolerance(
+    compare_float_component(
         differences,
         id,
-        &format!("{field}.x"),
+        field,
+        "x",
         expected.x,
         actual.x,
         absolute_tolerance,
     );
-    compare_float_with_absolute_tolerance(
+    compare_float_component(
         differences,
         id,
-        &format!("{field}.y"),
+        field,
+        "y",
         expected.y,
         actual.y,
         absolute_tolerance,
     );
+}
+
+fn compare_float_component(
+    differences: &mut Vec<String>,
+    id: EntityId,
+    field: &str,
+    component: &str,
+    expected: TraceFloat,
+    actual: f32,
+    absolute_tolerance: f32,
+) {
+    let expected_value = expected.value();
+    let scale = expected_value.abs().max(actual.abs()).max(1.0);
+    let logically_equal = (expected_value.is_nan() && actual.is_nan())
+        || (expected_value.is_finite()
+            && actual.is_finite()
+            && (expected_value - actual).abs() <= (1.0e-5 * scale).max(absolute_tolerance));
+    if !logically_equal {
+        differences.push(format!(
+            "{id:?}.{field}.{component}: original={} (0x{:08x}) rust={} (0x{:08x})",
+            expected.value(),
+            expected.bits,
+            actual,
+            actual.to_bits()
+        ));
+    }
+}
+
+fn compare_float_indexed(
+    differences: &mut Vec<String>,
+    id: EntityId,
+    collection: &str,
+    index: usize,
+    field: &str,
+    expected: TraceFloat,
+    actual: f32,
+) {
+    let expected_value = expected.value();
+    let scale = expected_value.abs().max(actual.abs()).max(1.0);
+    let logically_equal = (expected_value.is_nan() && actual.is_nan())
+        || (expected_value.is_finite()
+            && actual.is_finite()
+            && (expected_value - actual).abs() <= 1.0e-5 * scale);
+    if !logically_equal {
+        differences.push(format!(
+            "{id:?}.{collection}[{index}].{field}: original={} (0x{:08x}) rust={} (0x{:08x})",
+            expected.value(),
+            expected.bits,
+            actual,
+            actual.to_bits()
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -6970,6 +7475,106 @@ mod tests {
         assert!(
             TRACE_CACHE_SUFFIX.contains(&format!("-v{TRACE_CACHE_VERSION}.")),
             "native parity-cache suffix {TRACE_CACHE_SUFFIX:?} does not identify header version {TRACE_CACHE_VERSION}"
+        );
+    }
+
+    fn write_test_cache_records(
+        records: &[BinaryTraceRecord],
+        footer: Option<BinaryTraceFooter>,
+    ) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        {
+            let mut encoder = zstd::stream::write::Encoder::new(
+                BufWriter::new(file.as_file_mut()),
+                TRACE_CACHE_ZSTD_LEVEL,
+            )
+            .unwrap();
+            for record in records {
+                write_binary_record(&mut encoder, record, "test parity cache record");
+            }
+            let mut writer = encoder.finish().unwrap();
+            if let Some(footer) = footer {
+                write_binary_trace_footer(&mut writer, footer).unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        file.as_file().sync_all().unwrap();
+        file
+    }
+
+    fn complete_test_end(frame_count: u64, final_frame: u64) -> BinaryTraceRecord {
+        BinaryTraceRecord::End {
+            rng_suffix: Some(TraceRngBatch {
+                first_index: 0,
+                values: Vec::new(),
+                callsite_offsets: Vec::new(),
+                main_thread: Vec::new(),
+                domains: Vec::new(),
+            }),
+            final_frame: Some(final_frame),
+            frame_count: Some(frame_count),
+        }
+    }
+
+    #[test]
+    fn fixed_cache_footer_rejects_early_end_and_trailing_records() {
+        let footer = BinaryTraceFooter {
+            version: TRACE_CACHE_VERSION,
+            frame_count: 2,
+            final_frame: 12,
+        };
+        let early = write_test_cache_records(&[complete_test_end(1, 11)], Some(footer));
+        let mut reader = BinaryTraceReader::open(early.path());
+        assert!(matches!(
+            reader.read_record(),
+            BinaryTraceRecord::End { .. }
+        ));
+        assert!(
+            reader
+                .validate_terminator(1, 11)
+                .unwrap_err()
+                .contains("fixed footer says frame_count=2")
+        );
+
+        let footer = BinaryTraceFooter {
+            version: TRACE_CACHE_VERSION,
+            frame_count: 0,
+            final_frame: 10,
+        };
+        let trailing = write_test_cache_records(
+            &[complete_test_end(0, 10), complete_test_end(0, 10)],
+            Some(footer),
+        );
+        let mut reader = BinaryTraceReader::open(trailing.path());
+        assert!(matches!(
+            reader.read_record(),
+            BinaryTraceRecord::End { .. }
+        ));
+        assert!(
+            reader
+                .validate_terminator(0, 10)
+                .unwrap_err()
+                .contains("first End")
+        );
+    }
+
+    #[test]
+    fn fixed_cache_footer_rejects_missing_and_malformed_data() {
+        let missing = write_test_cache_records(&[complete_test_end(0, 10)], None);
+        let missing_error = read_binary_trace_footer(missing.path()).unwrap_err();
+        assert!(
+            missing_error.contains("footer magic") || missing_error.contains("shorter than"),
+            "unexpected missing-footer error: {missing_error}"
+        );
+
+        let mut malformed = tempfile::NamedTempFile::new().unwrap();
+        malformed
+            .write_all(&vec![0_u8; TRACE_CACHE_FOOTER_LEN as usize])
+            .unwrap();
+        assert!(
+            read_binary_trace_footer(malformed.path())
+                .unwrap_err()
+                .contains("footer magic")
         );
     }
 
@@ -7070,10 +7675,10 @@ mod tests {
         assert!(flight.snapped_to_goal);
 
         let encoded = bincode::encode_to_vec(&parsed, bincode::config::standard())
-            .expect("encode instrumented frame with cache-v57 layout");
+            .expect("encode instrumented frame with cache-v58 layout");
         let (roundtrip, consumed): (TraceFrame, usize) =
             bincode::decode_from_slice(&encoded, bincode::config::standard())
-                .expect("decode instrumented frame with cache-v57 layout");
+                .expect("decode instrumented frame with cache-v58 layout");
         assert_eq!(consumed, encoded.len());
         assert_eq!(roundtrip.movement_steps.len(), 1);
         assert_eq!(roundtrip.movement_steps[0].entity.index, 344);
@@ -7213,6 +7818,91 @@ mod tests {
     #[test]
     fn refused_action_schema_fourteen_is_accepted() {
         validate_trace_schema(14);
+    }
+
+    #[test]
+    fn door_and_route_diagnostics_schema_fifteen_are_accepted() {
+        validate_trace_schema(15);
+
+        let actor: TraceActor = serde_json::from_value(serde_json::json!({
+            "action_state": 1,
+            "animation": 12,
+            "command": 19,
+            "command_name": "pass_door",
+            "motion_state": 2,
+            "wait_time": 0,
+            "passing_door_directly": true,
+            "active_pass_door": { "gate_id": 51, "direct": true, "direction": 1 },
+            "sequence_element": {
+                "id": 160,
+                "type": 4,
+                "state": 2,
+                "command_level": 7,
+                "command": 19,
+                "command_name": "pass_door",
+                "order_count": 3,
+                "priority": 8,
+                "posture_after_transition": 1,
+                "action_state_after_transition": 1,
+                "movement": {
+                    "action": 12,
+                    "pass_door": { "gate_id": 51, "direct": true, "direction": 1 }
+                }
+            }
+        }))
+        .expect("parse schema-15 actor diagnostics");
+        assert_eq!(actor.passing_door_directly, Some(true));
+        assert_eq!(
+            actor
+                .active_pass_door
+                .as_ref()
+                .and_then(Option::as_ref)
+                .map(|pass| (pass.gate_id, pass.direction)),
+            Some((51, 1))
+        );
+        let pass = actor
+            .active_pass_door
+            .as_ref()
+            .and_then(Option::as_ref)
+            .unwrap();
+        assert!(active_pass_door_keys_match(Some(pass), Some((51, true))));
+        assert!(!active_pass_door_keys_match(Some(pass), Some((51, false))));
+        assert!(!active_pass_door_keys_match(Some(pass), None));
+        assert_eq!(
+            actor
+                .sequence_element
+                .as_ref()
+                .and_then(Option::as_ref)
+                .map(|element| (element.id, element.order_count)),
+            Some((160, 3))
+        );
+
+        let mut frame_json = minimal_frame_json();
+        frame_json["route_construction_events"] = serde_json::json!([{
+            "kind": "move",
+            "actor": { "kind": "soldier", "index": 43 },
+            "source": { "x": { "bits": 1154109440_u32 }, "y": { "bits": 1153748992_u32 } },
+            "source_sector": 61,
+            "source_level": 11,
+            "goal": { "x": { "bits": 1155563520_u32 }, "y": { "bits": 1147920384_u32 } },
+            "goal_sector": 72,
+            "goal_level": 11,
+            "gates": [{
+                "gate_id": 51,
+                "direct": false,
+                "sector_out": 60,
+                "level_out": 11,
+                "sector_in": 61,
+                "level_in": 11
+            }]
+        }]);
+        let frame: TraceFrame = serde_json::from_value(frame_json)
+            .expect("parse schema-15 route-construction diagnostics");
+        validate_trace_frame_envelope(15, &frame);
+        let route = &frame.route_construction_events.as_ref().unwrap()[0];
+        assert_eq!(route.actor.index, 43);
+        assert_eq!(route.gates[0].gate_id, 51);
+        assert!(!route.gates[0].direct);
     }
 
     #[test]
@@ -7363,7 +8053,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "schemas 12, 13 and 14 are supported")]
+    #[should_panic(expected = "schemas 12 through 15 are supported")]
     fn schema_eleven_is_rejected() {
         validate_trace_schema(11);
     }
@@ -7879,6 +8569,31 @@ mod tests {
         };
         assert_eq!(batch.gameplay_draw_count(), 1);
         assert_eq!(batch.gameplay_callsite_offsets(), vec![3_305_465]);
+        assert_eq!(simulation_rng_draws(&batch), vec![1]);
+    }
+
+    #[test]
+    fn rng_preload_is_limited_to_reconstruction_or_diagnostic_override() {
+        assert!(!should_preload_complete_rng_stream(
+            TraceStartState::MissionStart,
+            0,
+            false
+        ));
+        assert!(!should_preload_complete_rng_stream(
+            TraceStartState::LoadedSave,
+            1,
+            false
+        ));
+        assert!(should_preload_complete_rng_stream(
+            TraceStartState::LoadedSave,
+            0,
+            false
+        ));
+        assert!(should_preload_complete_rng_stream(
+            TraceStartState::MissionStart,
+            1,
+            true
+        ));
     }
 
     #[test]

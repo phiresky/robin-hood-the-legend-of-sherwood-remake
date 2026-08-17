@@ -3614,6 +3614,7 @@ dependencies = [
  "ffmpeg-next",
  "flate2",
  "font8x8",
+ "fs2",
  "futures-util",
  "geo",
  "getrandom 0.4.3",
