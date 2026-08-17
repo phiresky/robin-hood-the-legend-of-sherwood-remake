@@ -212,6 +212,9 @@ Logging verbosity is controlled by `RUST_LOG` (`info`, `debug`,
 - `--check-sound-data` — validate cached sound data during startup
 - `--record <file.rhrec.jsonl>` — record a replay of this session
 - `--replay <file.rhrec.jsonl>` — replay a previously recorded session
+- `--mission <name> [--proto <map>]` — launch a mission directly
+- `--custom-mission <zip>` — mount a vanilla custom-mission archive for a
+  direct `--mission` launch
 - `--view-cones` — render every NPC's view cone continuously
 - `--rollback-check` / `--no-rollback-check` — per-frame rewind + replay
   desync detector (on by default in debug builds)

@@ -16,6 +16,26 @@ pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
 }
 
 #[test]
+fn add_entity_assigns_original_script_element_index() {
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let second = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    for id in [first, second] {
+        assert_eq!(
+            u32::from(
+                engine
+                    .get_entity(id)
+                    .expect("inserted entity exists")
+                    .element_data()
+                    .index_in_elements_list
+            ),
+            id.index()
+        );
+    }
+}
+
+#[test]
 fn owner_boundary_positions_follow_original_creation_order_not_entity_slots() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::entities::{BoundaryPosition, EntitySlots};

@@ -4,6 +4,10 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Direct custom-mission launch.** `--custom-mission <zip>` mounts a vanilla
+  mod archive for the lifetime of a direct `--mission <name>` launch. Pair it
+  with `--proto <map>` when the mission and proto-level basenames differ.
+
 - **Optional allied-soldier control.** A persistent `Control Allied Soldiers`
   game option enables direct control of active green/Royalist soldiers. Click
   or drag a selection box to create a temporary portrait beside the heroes;

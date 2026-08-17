@@ -104,6 +104,7 @@ pub struct AlliedSeatState {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct AlliedControlState {
     pub seats: Vec<AlliedSeatState>,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub orders: BTreeMap<EntityId, AlliedSoldierOrder>,
     pub next_group_id: u32,
 }
@@ -124,5 +125,32 @@ impl AlliedControlState {
             self.seats.resize_with(seat + 1, AlliedSeatState::default);
         }
         &mut self.seats[seat]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity_id::SoldierId;
+
+    #[test]
+    fn controlled_orders_serialize_to_json() {
+        let soldier = EntityId::Soldier(SoldierId(17));
+        let point = MapPoint::new(12.0, 34.0);
+        let mut state = AlliedControlState::default();
+        state.orders.insert(
+            soldier,
+            AlliedSoldierOrder {
+                stance: AlliedStance::Defensive,
+                formation: AlliedFormation::Line,
+                duty: AlliedDuty::Hold { anchor: point },
+                last_destination: point,
+            },
+        );
+
+        let json = serde_json::to_string(&state).expect("allied control state serializes");
+        let restored: AlliedControlState =
+            serde_json::from_str(&json).expect("allied control state deserializes");
+        assert_eq!(restored.orders.get(&soldier), state.orders.get(&soldier));
     }
 }

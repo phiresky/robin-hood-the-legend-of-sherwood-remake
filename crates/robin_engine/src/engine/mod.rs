@@ -1119,6 +1119,18 @@ impl EngineInner {
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
         let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
 
+        // Original RHScript::AddElement assigns the element's script-list
+        // index as soon as it enters the entity list. AI door passing uses
+        // this required identity to resolve the actor's committed gate-side
+        // position from the shared entity views.
+        entity.element_data_mut().index_in_elements_list = u16::try_from(id.index())
+            .unwrap_or_else(|_| {
+                panic!(
+                    "entity slot {} exceeds legacy element-list index range",
+                    id.index()
+                )
+            });
+
         if let Entity::Pc(pc) = &mut entity {
             let position = pc.element.position_map();
             pc.actor.produced_noise = Some(crate::ai::Noise {

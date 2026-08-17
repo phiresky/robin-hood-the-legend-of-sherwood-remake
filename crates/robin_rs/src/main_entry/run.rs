@@ -122,6 +122,17 @@ pub async fn run_rust_game(
         return Ok(0);
     }
 
+    // Keep the same archive overlay alive for the entire direct mission that
+    // the Custom Missions menu would mount around run_session.
+    let _custom_mission_mount = args
+        .custom_mission
+        .as_deref()
+        .map(|zip| {
+            crate::mod_pack::mount_for_launch(zip, false, std::path::Path::new("."))
+                .map_err(|error| format!("--custom-mission: {error}"))
+        })
+        .transpose()?;
+
     // ── `--mission`: original-launcher style direct mission forcing. ──
     // Mirrors `-MISSION foo [-PROTO bar]`: select an existing profile
     // when present, otherwise append a synthetic profile and launch it.
