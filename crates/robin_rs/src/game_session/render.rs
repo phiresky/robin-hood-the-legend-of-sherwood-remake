@@ -27,6 +27,7 @@ use crate::ui_panel::{PortraitHit, PortraitHitArea, PortraitTarget, hit_test_por
 use crate::widget::blazon_bar;
 use crate::widget::requirements::{RequirementSlot, build_requirements_state};
 use crate::zoom_hud::{self, ZoomButtonEnable, ZoomHoverState, ZoomTooltipTracker};
+use robin_engine::ai::{DetachedPatrolPathStatus, PathId, PatrolPath};
 use robin_engine::allied_control::{AlliedDuty, AlliedFormation, AlliedStance};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
@@ -38,6 +39,150 @@ use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids as engine_resource_ids;
 use robin_engine::sprite as engine_sprite;
+use std::collections::HashSet;
+
+#[derive(Debug, Clone, PartialEq)]
+struct PatrolRouteOverlay {
+    points: Vec<engine_coordinates::MapPoint>,
+    active_waypoint: usize,
+}
+
+fn authored_patrol_route(
+    path: Option<&PatrolPath>,
+    detached: &DetachedPatrolPathStatus,
+    has_patrol_path: bool,
+    hiking_paths: &[robin_engine::level_data::RawHikingPath],
+) -> Option<(PathId, PatrolRouteOverlay)> {
+    if !has_patrol_path {
+        return None;
+    }
+
+    let (path_id, current_waypoint) = match path {
+        Some(path) => (
+            path.hiking_path_index,
+            usize::from(path.current_waypoint_index),
+        ),
+        None => (
+            detached.hiking_path_index?,
+            usize::from(detached.current_waypoint_index),
+        ),
+    };
+    let raw_path = hiking_paths.get(usize::from(path_id)).unwrap_or_else(|| {
+        panic!("selected soldier patrol references missing hiking path {path_id}")
+    });
+    if raw_path.waypoints.is_empty() {
+        return None;
+    }
+    assert!(
+        current_waypoint < raw_path.waypoints.len(),
+        "selected soldier patrol path {path_id} has waypoint {current_waypoint}, but only {} waypoints",
+        raw_path.waypoints.len()
+    );
+
+    Some((
+        path_id,
+        PatrolRouteOverlay {
+            points: raw_path
+                .waypoints
+                .iter()
+                .map(|waypoint| {
+                    engine_coordinates::MapPoint::new(f32::from(waypoint.x), f32::from(waypoint.y))
+                })
+                .collect(),
+            active_waypoint: current_waypoint,
+        },
+    ))
+}
+
+fn selected_allied_patrol_routes(
+    engine: &Engine,
+    assets: &engine_api::LevelAssets,
+    seat: robin_engine::player_command::PlayerId,
+) -> Vec<PatrolRouteOverlay> {
+    let mut routes = Vec::new();
+    let mut shown_authored_paths = HashSet::new();
+
+    for &soldier_id in engine.allied_selection(seat) {
+        if let Some(order) = engine.allied_order(soldier_id)
+            && let AlliedDuty::Patrol { points, next } = &order.duty
+        {
+            routes.push(PatrolRouteOverlay {
+                points: points.to_vec(),
+                active_waypoint: usize::from(*next),
+            });
+            continue;
+        }
+
+        let entity = engine
+            .get_entity(soldier_id)
+            .unwrap_or_else(|| panic!("selected allied soldier {soldier_id:?} disappeared"));
+        let ai = entity.ai_controller().unwrap_or_else(|| {
+            panic!("selected allied soldier {soldier_id:?} has no AI controller")
+        });
+        let Some((path_id, route)) = authored_patrol_route(
+            ai.patrol_path.as_ref(),
+            &ai.detached_patrol_path_status,
+            ai.has_patrol_path,
+            &assets.hiking_paths,
+        ) else {
+            continue;
+        };
+        if shown_authored_paths.insert(path_id) {
+            routes.push(route);
+        }
+    }
+
+    routes
+}
+
+fn render_selected_allied_patrol_routes(
+    host: &Host,
+    engine: &Engine,
+    assets: &engine_api::LevelAssets,
+    seat: robin_engine::player_command::PlayerId,
+    renderer: &mut crate::renderer::Renderer,
+) {
+    const ROUTE_COLOR: u32 = 0x42_CE_72;
+    const WAYPOINT_COLOR: u32 = 0x8A_EA_9E;
+    const ACTIVE_COLOR: u32 = 0xFF_D2_55;
+    const DOT_SPACING: f32 = 9.0;
+
+    let routes = selected_allied_patrol_routes(engine, assets, seat);
+    if routes.is_empty() {
+        return;
+    }
+
+    // Advancing the phase makes the dots flow along the route without adding
+    // presentation state to the deterministic simulation.
+    let mut phase = (engine.frame_counter() % 18) as f32 * 0.5;
+    let route_color = host.draw_manager.pack_color(ROUTE_COLOR);
+    let waypoint_color = host.draw_manager.pack_color(WAYPOINT_COLOR);
+    let active_color = host.draw_manager.pack_color(ACTIVE_COLOR);
+    let pulse_radius = 6 + ((engine.frame_counter() / 4) % 3) as u16;
+
+    for route in routes {
+        for segment in route.points.windows(2) {
+            host.draw_manager.draw_dotted_line(
+                renderer,
+                segment[0],
+                segment[1],
+                &mut phase,
+                DOT_SPACING,
+                1.25,
+                route_color,
+            );
+        }
+        for (index, &point) in route.points.iter().enumerate() {
+            if index == route.active_waypoint {
+                host.draw_manager
+                    .draw_ellipse(renderer, point, pulse_radius, active_color);
+            } else {
+                host.draw_manager
+                    .draw_ellipse(renderer, point, 4, waypoint_color);
+            }
+        }
+    }
+}
 
 fn allied_portrait_tooltip(
     engine: &Engine,
@@ -1132,6 +1277,8 @@ pub(super) fn render_frame(
     // Walks each PC's recorded macro slots and draws a dotted
     // polyline from the PC through its titbit waypoints.  Advances
     // the persistent dotted-line phase stored on `PcMacroState`.
+    // Allied patrol routes share this foreground, floating-chain layer.
+    render_selected_allied_patrol_routes(host, engine, assets, local_seat, renderer);
     crate::ui_panel::render_macro_dotted_chains(host, engine, renderer);
 
     // ── GPU phase: UI panel, minimap ──
@@ -1679,6 +1826,7 @@ pub(super) fn draw_rewind_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     #[test]
     fn print_screen_modifier_request_priority_matches_reference() {
@@ -1709,5 +1857,74 @@ mod tests {
         let out = median_filter_rgba_3x3(3, 3, &rgba);
         let center = (3 + 1) * 4;
         assert_eq!(&out[center..center + 4], &[50, 50, 50, 5]);
+    }
+
+    #[test]
+    fn authored_patrol_overlay_uses_runtime_waypoint_cursor() {
+        let paths = vec![RawHikingPath {
+            waypoints: vec![
+                RawWaypoint {
+                    x: 10,
+                    y: 20,
+                    sector: 1,
+                    level: 0,
+                    command: WaypointCommand::None,
+                },
+                RawWaypoint {
+                    x: 30,
+                    y: 40,
+                    sector: 1,
+                    level: 0,
+                    command: WaypointCommand::None,
+                },
+            ],
+        }];
+        let path_id = PathId::new(0).unwrap();
+        let mut patrol = PatrolPath::new(path_id, &paths).unwrap();
+        patrol.current_waypoint_index = 1;
+
+        let (resolved_id, route) = authored_patrol_route(
+            Some(&patrol),
+            &DetachedPatrolPathStatus::default(),
+            true,
+            &paths,
+        )
+        .unwrap();
+
+        assert_eq!(resolved_id, path_id);
+        assert_eq!(route.active_waypoint, 1);
+        assert_eq!(
+            route.points,
+            vec![
+                engine_coordinates::MapPoint::new(10.0, 20.0),
+                engine_coordinates::MapPoint::new(30.0, 40.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn authored_patrol_overlay_supports_detached_mission_path_state() {
+        let paths = vec![RawHikingPath {
+            waypoints: vec![RawWaypoint {
+                x: 50,
+                y: 60,
+                sector: 2,
+                level: 1,
+                command: WaypointCommand::None,
+            }],
+        }];
+        let path_id = PathId::new(0).unwrap();
+        let detached = DetachedPatrolPathStatus {
+            hiking_path_index: Some(path_id),
+            ..Default::default()
+        };
+
+        let (_, route) = authored_patrol_route(None, &detached, true, &paths).unwrap();
+
+        assert_eq!(
+            route.points[0],
+            engine_coordinates::MapPoint::new(50.0, 60.0)
+        );
+        assert_eq!(route.active_waypoint, 0);
     }
 }

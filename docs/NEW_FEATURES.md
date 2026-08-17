@@ -13,7 +13,10 @@ A list of which additional features we have added, which ones we might still wan
   or drag a selection box to create a temporary portrait beside the heroes;
   its illustrated pin button preserves an individual or group portrait. Allied portraits
   expose cycling hold/defensive/aggressive stances, two-point patrol targeting,
-  and type-aware line, box, staggered, and flank formations. Line formation
+  and type-aware line, box, staggered, and flank formations. Selecting soldiers
+  visualizes both player-issued patrols and authored mission patrol paths as an
+  animated dotted world-space chain with waypoint and next-destination markers.
+  Line formation
   places officers at the command center, knights in close escort, shield and
   melee troops on the fighting edge, and ranged troops in protected rear or
   central positions. When heroes move with the selection, soldiers deploy
