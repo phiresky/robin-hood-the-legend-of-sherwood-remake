@@ -2580,6 +2580,20 @@ impl EnemyAi {
                 )
             })
         };
+        // `mpMyLineJump = mpMe->IsTableSwordfightNeeded( mpPrimaryTarget )`
+        // (`original-code/RHartificialmalignity.cpp:6836`) writes the AI
+        // MEMBER, not a local: the answer persists after this decision
+        // returns and is read again by `BeginSwordfight`
+        // (`:7184`), by the "too far to adversary" gate in
+        // `ReconsiderSwordfight` (`:13931`) and — the case that matters
+        // here — by `ProposeCombatPositionsAround`'s
+        // `bProposePositionsAround = ( mpMyLineJump == NULL )` and its
+        // SCOTCHED `mpMyLineJump != NULL` guard (`:14110`, `:14143`).
+        // Rust only computed a local, so a fighter standing on a jump
+        // line still looked line-less once the fight started and fell
+        // through to the 16-direction surround ring the Original never
+        // generates.
+        self.my_line_jump = my_line_jump;
         let target_animation = if target_snapshot_is_current {
             tick.primary_target_animation
         } else {
