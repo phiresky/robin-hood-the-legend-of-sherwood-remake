@@ -1434,6 +1434,59 @@ binary runs fine and produces a rich `[DBG]` stream, but the Rust runner reports
 `parity trace matched every recorded frame` on it — the regenerated input stream does not reproduce the
 schema-12 divergence. Previously assumed; now measured.
 
+### Invented-invariant class, 7th site — FIXED (`04313df5a`)
+`crates/robin_engine/src/abilities.rs::begin_hit` returned `Impossible` when the victim's life points were
+already <= 0. `RHElementActorHuman::Instruct` (`original-code/RHelementactorhuman.cpp:2098-2117`) has **no
+such gate** — the `RHCOMMAND_HIT` arm unconditionally allocates the HITTING order. The Original rejects an
+out-of-order victim one step LATER, at HITTING init via `CheckSequenceElementValidity(..., true)`
+(`:4583-4590`, HIT arm `:6771-6816` testing `IsOutOfOrder()`), which Rust already runs. Ground truth: the
+Original shows `command=HitCmd` for frames 993-996 (walk->wait transition splice at anim 8, then anim 123
+`Hitting` at 996) and only aborts at 997; Rust skipped straight to `Wait`.
+
+### Tiredness accounting drifts over a long fight (1 trace, all write sites verified present)
+schema14 linux3/P001/Savegame_047 replay-010, f84324, Soldier 97 (VIP, life 230, 1v1). Rust hits
+`tiredness >= TIREDNESS_WEAK_THRESHOLD` in `EvaluateSwordfight`
+(`crates/robin_engine/src/engine/melee/evaluate.rs:856`, port of `RHelementactorhuman.cpp:8514-8518`) and
+launches `SwordstrikeTired` with NO draw; the Original is not tired, rolls `MeleeInitiative` (offset
+1814391) and issues `SwordstrikeThrustC`. **All four Original write sites are present in Rust** — per-frame
+recuperation (`:393-405` <-> `melee/speech.rs:651`), smalltalk-strike and parry-smalltalk TERMINATED
+decrements (`:4092`, `:4118` <-> `animation.rs:3486`), strike-energy add (`:4195` <->
+`melee/strikes.rs:819`), weak-sword `WEAKNESS_DISMISH` (`:10412-10434` <-> `animation.rs:3816-3851`).
+`muwTiredness` is untraced, so this needs a gdb / rebuilt-binary read of the counter across the fight.
+
+### Phalanx break: the divergence is INSIDE BattleDecisions
+schema12 SuN1Sh1nE/P004/Savegame_013 replay-005, f2165. Soldier 81 leaves substate 187 `AttackingPhalanx`
+on the exact frame `list_them` gains `pc:173` and `list_us` gains `soldier:85`. Both engines reach
+`ReconsiderPhalanx()` -> `BreakPhalanx()` -> `BattleDecisions()` (`RHartificialmalignity.cpp:17983`,
+`:18442-18475`). Original -> 183 `AttackingProtectingWithShield` + Wait/anim 283; Rust -> 166
+`AttackingApproachToObserve` + LowerShield/anim 173 — i.e. **Rust stops treating the soldier as a shield
+bearer**. Use `PARITY_DEBUG_BATTLE_DECISION`.
+
+### `ParryShield` member: the AI path was AVAILABLE to the Original too
+schema12 SuN1Sh1nE/P004/Savegame_024 replay-015, f1397. Note `EVENT_ARROW_LAUNCHED`'s `bProtect` for
+substate 183 is `GetAnimation() != RHANIMATION_WAITING_SHIELD` (`RHartificialmalignity.cpp:6398-6402`) —
+with anim 40 that is TRUE, so the AI path was open to the Original as well, and it nevertheless took the
+physical shield hit (`RHelementprojectile.cpp:2193-2201`). So this is purely within-frame ORDERING between
+`EVENT_ARROW_LAUNCHED` and `GetHitShieldHolder`, not a gate difference.
+
+### Beggar-gate narrowing (the `ParrySword->SwordstrikeThrustA` member)
+The Original's two draws at f16552 are BOTH `SwordStrikeSelection` (offsets 1804390 and 1805189 — the skill
+roll and the PC parade re-roll, 799 bytes apart inside `ProposeGoodSwordStrike`). Rust's extra
+`CivilianBeggarSpeechGate` draw shifts the values by one and flips the roll. `IsBeggar`
+(`original-code/rhelementactorcivilian.cpp:454`) and every `muwBeggarDontTalkCounter` set/decrement site
+(`:609`, `:736`, `RHartificialbonhomie.cpp:1194-1196`) are FAITHFUL in Rust — so the suspect is
+`ubFramePhase` (i.e. `register_number`) or the `mCurrentRemark` lifetime.
+
+### TOOLING DEBT: the entity-id mismatch has now cost FOUR agents hours each
+The runner's divergence report names **Rust** ids while `--dump-entity` and the trace's
+`elements[].entity_id.index` use **Original** indices, and they are frequently unequal (measured: original
+pc 171 <-> `Pc(174)`; original pc 179 <-> `Pc(183)`). The dump's `entity_mapping` field is authoritative.
+One agent lost "three early hours" to a phantom "the trace doesn't contain this command". **Worth fixing in
+the runner** — print the paired original index alongside every Rust id in the divergence report.
+Also: trace `actor.animation` numbers are `OrderType` discriminants (8 = TransitionWalkingUprightWaitingUpright,
+123 = Hitting, 283 = NonanimationEnd) and `motion_state` is `RHmotionState`
+(0 Done, 1 Start, 2 InProgress, 3 Terminated, 4 Aborted).
+
 ### Highest-value unassigned leads
 1. **Wait-completion-vs-interruption** (dispatched): at f231 Original draws 1, Rust draws 4 because Rust
    raises a spurious `EVENT_DONE` on a `Wait` the Original interrupts with a same-frame reactive parry.
