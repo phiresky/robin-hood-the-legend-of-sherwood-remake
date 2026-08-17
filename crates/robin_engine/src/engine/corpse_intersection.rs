@@ -166,6 +166,18 @@ impl EngineInner {
         let corpse_layer = entity.element_data().layer();
         let corpse_pos = entity.element_data().position_map();
 
+        // Opt-in trace for the anti-collision repulsive-radius frontier:
+        // reports every lying-transition callback with the spatial keys the
+        // intersect test uses.  Stderr only, outside serialized state.
+        if std::env::var_os("PARITY_DEBUG_CORPSE_INTERSECTION").is_some() {
+            eprintln!(
+                "[CORPSE frame={} corpse={corpse:?} added={b_added} sector={corpse_sector:?} building={} layer={corpse_layer} pos={corpse_pos:?} staged={:?}]",
+                self.control.frame_counter,
+                self.sector_is_building(corpse_sector),
+                logically_lying,
+            );
+        }
+
         if self.sector_is_building(corpse_sector) {
             return;
         }
@@ -188,6 +200,10 @@ impl EngineInner {
                 /* candidate_small_flag */ false,
                 logically_lying,
             );
+
+            if std::env::var_os("PARITY_DEBUG_CORPSE_INTERSECTION").is_some() {
+                eprintln!("[CORPSE   victims={victims:?}]");
+            }
 
             if !victims.is_empty() {
                 if let Some(h) = self.get_entity_mut(corpse).and_then(|e| e.human_data_mut()) {

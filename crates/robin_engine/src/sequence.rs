@@ -932,6 +932,14 @@ pub struct SequenceElement {
     /// while another sword strike sequence is mid-walk).
     pub cross_postponed: Option<(SequenceId, usize)>,
 
+    /// `RHSequenceElement::Stop` nulls `mpsqeNextSequenceElement` once the
+    /// recursive stop leaves that successor `RHSEQ_INTERRUPTED`
+    /// (`RHsequenceelement.cpp:547-556`). Runtime-authored elements derive
+    /// their successor from append order rather than from a stored pointer,
+    /// so record the severing explicitly. Loaded v48 elements clear
+    /// `legacy_v48.next` instead, exactly as the Original save does.
+    pub next_link_severed: bool,
+
     /// Original-only authoritative members retained during v48 adoption.
     ///
     /// TODO(legacy-sequence-runtime): route `next`, `mummy`, linked-seek,
@@ -1006,6 +1014,7 @@ impl SequenceElement {
             data: SequenceElementData::Simple,
             postponed_element_index: None,
             cross_postponed: None,
+            next_link_severed: false,
             legacy_v48: None,
         }
     }
@@ -1755,7 +1764,12 @@ impl Sequence {
     /// collecting element indices that need to be started.
     ///
     /// Returns a list of element indices that should be dispatched.
-    pub fn next_elements_go(&mut self) -> Vec<(usize, bool)> {
+    ///
+    /// The `RHSEQ_INTERRUPTED` guard and the `GetPriority() ==
+    /// RHPRIORITY_WAIT` test of `original-code/RHsequence.cpp:277-286` are
+    /// re-read per iteration by the caller, not snapshotted here — an earlier
+    /// sibling's inline execution can change both.
+    pub fn next_elements_go(&mut self) -> Vec<usize> {
         debug_assert_eq!(self.running_elements, 0);
 
         let list_size = self.elements.len();
@@ -1784,17 +1798,7 @@ impl Sequence {
 
         let end_index = self.cursor;
 
-        // Collect elements to start, noting whether they are WAIT priority
-        let mut to_go = Vec::new();
-        for idx in start_index..end_index {
-            let elem = &self.elements[idx];
-            if elem.state != SequenceState::Interrupted {
-                let is_wait = elem.priority == SequencePriority::Wait;
-                to_go.push((idx, is_wait));
-            }
-        }
-
-        to_go
+        (start_index..end_index).collect()
     }
 
     /// Called when an element at the current level finishes.
@@ -2214,6 +2218,9 @@ impl Sequence {
     /// non-adjacent links.
     fn following_element_index(&self, elem_idx: usize) -> Option<usize> {
         let element = self.elements.get(elem_idx)?;
+        if element.next_link_severed {
+            return None;
+        }
         if let Some(legacy) = &element.legacy_v48 {
             let next = legacy.next?;
             // TODO(legacy-sequence-runtime): promote cascade effects from
@@ -2407,15 +2414,17 @@ impl Sequence {
                     "stop_element after next"
                 );
                 if self.elements[next_idx].state == SequenceState::Interrupted {
+                    // `mpsqeNextSequenceElement = NULL`
+                    // (`RHsequenceelement.cpp:552-555`). The edge is gone for
+                    // every later reader, not just for cascades: a movement
+                    // element that survives this Stop must afterwards see
+                    // `IsNextMovementOrJump() == false`
+                    // (`RHSequenceElementMovement.cpp:1251-1257`) and grow the
+                    // end transition when `MakeFast` re-runs PostProcessPath.
                     if let Some(legacy) = self.elements[elem_idx].legacy_v48.as_mut() {
                         legacy.next = None;
-                    } else {
-                        // TODO(sequence-runtime): runtime-authored elements
-                        // infer next from append order and cannot yet retain
-                        // Original's Stop-time pointer severing. The reached
-                        // successor is already terminal, so no current replay
-                        // behavior depends on traversing this edge again.
                     }
+                    self.elements[elem_idx].next_link_severed = true;
                 }
             }
         }
@@ -2493,6 +2502,50 @@ pub enum SequenceAction {
         sequence_id: SequenceId,
         element_index: usize,
     },
+}
+
+/// One slot of the manager's synchronous-registration buffer.
+///
+/// `RHSequence::NextSequenceElementsGo` (`original-code/RHsequence.cpp:272-288`)
+/// walks the elements of one command level **one at a time**, and each step
+/// either calls `Go()` (RHPRIORITY_WAIT) or
+/// `RHSequenceManager::RegisterSequenceElementToGo`
+/// (`original-code/RHsequencemanager.cpp:967-978`), whose
+/// `RHSequenceElement::ExecutedImmediately()` branch
+/// (`original-code/RHsequenceelement.cpp:916-958`) runs the command **inline**.
+/// Whatever that inline execution does therefore happens before the loop even
+/// looks at the next sibling — in particular `RHElementActor::Stop` ->
+/// `StopNotYetLaunchedSequenceElements` (`RHsequencemanager.cpp:1031-1054`)
+/// cannot see siblings that have not been registered yet.
+///
+/// Rust cannot execute those commands inside the manager, so a still-pending
+/// loop iteration is parked in the same ordered buffer as the action it must
+/// follow.  Draining the buffer resumes the loop at exactly the point the
+/// original call stack would have returned to.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum PendingSyncEntry {
+    /// An action the engine must dispatch.
+    Action(SequenceAction),
+    /// A `NextSequenceElementsGo` iteration that has not run yet.
+    Register {
+        sequence_id: SequenceId,
+        element_index: usize,
+    },
+}
+
+impl PendingSyncEntry {
+    fn as_action(&self) -> Option<&SequenceAction> {
+        match self {
+            PendingSyncEntry::Action(action) => Some(action),
+            PendingSyncEntry::Register { .. } => None,
+        }
+    }
+
+    fn is_register(&self) -> bool {
+        matches!(self, PendingSyncEntry::Register { .. })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2597,7 +2650,11 @@ pub struct SequenceManager {
     /// siblings. External entry-point wrappers can continue to drain only
     /// the immediate subset through
     /// [`take_pending_immediate_actions`](Self::take_pending_immediate_actions).
-    pending_synchronous_actions: VecDeque<SequenceAction>,
+    ///
+    /// The buffer also carries not-yet-run
+    /// `RHSequence::NextSequenceElementsGo` iterations
+    /// ([`PendingSyncEntry::Register`]); see that type for why.
+    pending_synchronous_actions: VecDeque<PendingSyncEntry>,
 
     /// Pending `SendCondolationCard` notifications.  Populated whenever
     /// a sequence element transitions to Terminated / Interrupted /
@@ -3063,14 +3120,8 @@ impl SequenceManager {
         self.sequences.insert(id, sequence);
         self.index_sequence_actor_refs(id);
 
-        // Register elements for dispatch
-        for (elem_idx, is_wait) in to_go {
-            if is_wait {
-                self.register_wait_element_to_go(id, elem_idx);
-            } else {
-                self.register_element_to_go(id, elem_idx);
-            }
-        }
+        // Register elements for dispatch, one loop iteration at a time.
+        self.register_level_elements_to_go(id, to_go);
 
         id
     }
@@ -3207,6 +3258,29 @@ impl SequenceManager {
     /// Read-only exposure for the opt-in goal/condolence ownership trace.
     pub(crate) fn goal_owner_debug_translating(&self) -> Option<(EntityId, SequenceElementRef)> {
         self.actor_translating
+    }
+
+    /// Release the translation selection when its own element is the one that
+    /// just detached the actor's `mpSequenceElement`.
+    ///
+    /// `RHElementActor::SendCondolationCard` writes `mpSequenceElement = NULL`
+    /// whenever the terminal element is the selected one
+    /// (`RHelementactor.cpp:6696-6701`). A command body can reach that state
+    /// from inside its own `Translate` — `RHPathFinder::AddPathRequest` calls
+    /// `Stop()` on the actor whose Move is being translated
+    /// (`RHpathfinder.cpp:464`) — and everything the same `Translate` does
+    /// afterwards, including the `Wait()` it launches next, must observe the
+    /// cleared pointer. Rust holds the translation identity until after the
+    /// deferred condolence dispatch, so drop it here instead.
+    pub(crate) fn clear_translating_element_if_selected(
+        &mut self,
+        actor: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        if self.actor_translating == Some((actor, SequenceElementRef::new(seq_id, elem_idx))) {
+            self.actor_translating = None;
+        }
     }
 
     /// Select an incoming element while the outgoing element's synchronous
@@ -3354,6 +3428,97 @@ impl SequenceManager {
 
     // ─── Element dispatch registration ──────────────────────────
 
+    /// Run `RHSequence::NextSequenceElementsGo`'s per-element registration
+    /// loop (`original-code/RHsequence.cpp:272-288`).
+    ///
+    /// The loop body is *not* a batch: `RHPRIORITY_WAIT` elements call `Go()`
+    /// and `RHSequenceManager::RegisterSequenceElementToGo` executes the
+    /// `ExecutedImmediately()` command group inline
+    /// (`original-code/RHsequencemanager.cpp:967-978`,
+    /// `RHsequenceelement.cpp:916-958`), all before the next sibling is even
+    /// looked at.  A composite such as `[LockAi(a), Turn(b), Turn(a)]` relies
+    /// on that: `LockAi` -> `ScriptLockAI` -> `RHElementActor::Stop` ->
+    /// `StopNotYetLaunchedSequenceElements` only walks
+    /// `mlistSequenceElementsToGo`, which does not yet contain `Turn(a)`.
+    ///
+    /// Rust dispatches those commands from the engine, so registration stops
+    /// as soon as one element owes synchronous work and the remaining loop
+    /// iterations are parked directly behind that work as
+    /// [`PendingSyncEntry::Register`] entries.  Elements whose registration
+    /// only appends to `elements_to_go` have no observable effect on their
+    /// siblings, so those iterations still run straight through.
+    fn register_level_elements_to_go(&mut self, seq_id: SequenceId, to_go: Vec<usize>) {
+        let mut remaining = to_go.into_iter();
+        while let Some(elem_idx) = remaining.next() {
+            let before = self.pending_synchronous_actions.len();
+            self.register_one_element_to_go(seq_id, elem_idx);
+            if self.pending_synchronous_actions.len() > before {
+                for deferred in remaining {
+                    self.pending_synchronous_actions
+                        .push_back(PendingSyncEntry::Register {
+                            sequence_id: seq_id,
+                            element_index: deferred,
+                        });
+                }
+                return;
+            }
+        }
+    }
+
+    /// One iteration of that loop: the `RHSEQ_INTERRUPTED` guard plus the
+    /// `GetPriority() == RHPRIORITY_WAIT` split of
+    /// `original-code/RHsequence.cpp:277-286`, both read at iteration time.
+    fn register_one_element_to_go(&mut self, seq_id: SequenceId, elem_idx: usize) {
+        let Some(element) = self.get_element(seq_id, elem_idx) else {
+            tracing::trace!(
+                ?seq_id,
+                elem_idx,
+                "next_elements_go: element disappeared before its registration ran"
+            );
+            return;
+        };
+        if element.state == SequenceState::Interrupted {
+            return;
+        }
+        if element.priority == SequencePriority::Wait {
+            self.register_wait_element_to_go(seq_id, elem_idx);
+        } else {
+            self.register_element_to_go(seq_id, elem_idx);
+        }
+    }
+
+    /// Resume the parked `NextSequenceElementsGo` iterations that sit at the
+    /// front of the synchronous buffer, stopping again as soon as one of them
+    /// owes inline work.
+    fn settle_leading_registrations(&mut self) {
+        while self
+            .pending_synchronous_actions
+            .front()
+            .is_some_and(PendingSyncEntry::is_register)
+        {
+            self.perform_registration_at(0);
+        }
+    }
+
+    /// Run the parked loop iteration at `index`, splicing whatever it
+    /// registers into exactly that position so ordering is preserved.
+    fn perform_registration_at(&mut self, index: usize) {
+        let entry = self
+            .pending_synchronous_actions
+            .remove(index)
+            .expect("perform_registration_at index out of range");
+        let PendingSyncEntry::Register {
+            sequence_id,
+            element_index,
+        } = entry
+        else {
+            panic!("perform_registration_at called on a dispatchable action: {entry:?}");
+        };
+        let tail = self.pending_synchronous_actions.split_off(index);
+        self.register_one_element_to_go(sequence_id, element_index);
+        self.pending_synchronous_actions.extend(tail);
+    }
+
     /// Register an element for deferred dispatch.
     ///
     /// If the element's command is in the `executed_immediately()`
@@ -3408,7 +3573,8 @@ impl SequenceManager {
             // `SequenceAction` is queued here for the engine-side
             // dispatcher to drain inline.
             if let Some(action) = Self::immediate_action_for(seq_id, elem_idx, elem) {
-                self.pending_synchronous_actions.push_back(action);
+                self.pending_synchronous_actions
+                    .push_back(PendingSyncEntry::Action(action));
             } else {
                 tracing::error!(
                     ?seq_id,
@@ -3474,7 +3640,8 @@ impl SequenceManager {
                 element_index: elem_idx,
             }
         };
-        self.pending_synchronous_actions.push_back(action);
+        self.pending_synchronous_actions
+            .push_back(PendingSyncEntry::Action(action));
     }
 
     /// Build the `SequenceAction` for an immediate-dispatch element.
@@ -3551,15 +3718,17 @@ impl SequenceManager {
     pub fn take_pending_immediate_actions(&mut self) -> Vec<SequenceAction> {
         let mut immediate = Vec::new();
         let mut retained = VecDeque::new();
-        while let Some(action) = self.pending_synchronous_actions.pop_front() {
-            if matches!(
-                action,
-                SequenceAction::ExecuteImmediateOwner { .. }
-                    | SequenceAction::ExecuteImmediateEngine { .. }
-            ) {
-                immediate.push(action);
-            } else {
-                retained.push_back(action);
+        loop {
+            self.settle_leading_registrations();
+            let Some(entry) = self.pending_synchronous_actions.pop_front() else {
+                break;
+            };
+            match entry {
+                PendingSyncEntry::Action(
+                    action @ (SequenceAction::ExecuteImmediateOwner { .. }
+                    | SequenceAction::ExecuteImmediateEngine { .. }),
+                ) => immediate.push(action),
+                other => retained.push_back(other),
             }
         }
         self.pending_synchronous_actions = retained;
@@ -3570,7 +3739,13 @@ impl SequenceManager {
     /// Script-native sequence launch uses this to stop exactly at a re-entrant
     /// SendMessage callback, then continue in order before the outer VM resumes.
     pub fn pop_pending_immediate_action(&mut self) -> Option<SequenceAction> {
-        self.pending_synchronous_actions.pop_front()
+        self.settle_leading_registrations();
+        match self.pending_synchronous_actions.pop_front()? {
+            PendingSyncEntry::Action(action) => Some(action),
+            entry @ PendingSyncEntry::Register { .. } => {
+                panic!("settle_leading_registrations left a parked registration: {entry:?}")
+            }
+        }
     }
 
     /// Remove the first action that Original registration executes inline,
@@ -3580,30 +3755,62 @@ impl SequenceManager {
     /// (notably director completion during Draw and anonymous-timer expiry
     /// after the manager phase). `ExecutedImmediately()` commands and
     /// RHPRIORITY_WAIT successors run inline; other priorities stay queued.
+    ///
+    /// Parked `NextSequenceElementsGo` iterations are never left behind: the
+    /// original executes the whole loop on this same stack, so a registration
+    /// still queued after the inline scan is run here and the scan repeats.
     pub fn pop_pending_registration_inline_action(&mut self) -> Option<SequenceAction> {
-        let index = self
-            .pending_synchronous_actions
-            .iter()
-            .position(|action| match action {
-                SequenceAction::ExecuteImmediateOwner { .. }
-                | SequenceAction::ExecuteImmediateEngine { .. } => true,
-                SequenceAction::InstructOwner {
-                    sequence_id,
-                    element_index,
-                    ..
-                }
-                | SequenceAction::EngineCommand {
-                    sequence_id,
-                    element_index,
-                } => self
-                    .get_element(*sequence_id, *element_index)
-                    .is_some_and(|element| element.priority == SequencePriority::Wait),
-            })?;
-        self.pending_synchronous_actions.remove(index)
+        loop {
+            self.settle_leading_registrations();
+            let parked = self
+                .pending_synchronous_actions
+                .iter()
+                .position(PendingSyncEntry::is_register);
+            let scan_limit = parked.unwrap_or(self.pending_synchronous_actions.len());
+            let inline = self
+                .pending_synchronous_actions
+                .iter()
+                .take(scan_limit)
+                .position(|entry| match entry.as_action() {
+                    Some(
+                        SequenceAction::ExecuteImmediateOwner { .. }
+                        | SequenceAction::ExecuteImmediateEngine { .. },
+                    ) => true,
+                    Some(
+                        SequenceAction::InstructOwner {
+                            sequence_id,
+                            element_index,
+                            ..
+                        }
+                        | SequenceAction::EngineCommand {
+                            sequence_id,
+                            element_index,
+                        },
+                    ) => self
+                        .get_element(*sequence_id, *element_index)
+                        .is_some_and(|element| element.priority == SequencePriority::Wait),
+                    None => false,
+                });
+            if let Some(index) = inline {
+                return match self.pending_synchronous_actions.remove(index)? {
+                    PendingSyncEntry::Action(action) => Some(action),
+                    entry @ PendingSyncEntry::Register { .. } => {
+                        panic!("inline scan selected a parked registration: {entry:?}")
+                    }
+                };
+            }
+            let Some(index) = parked else {
+                return None;
+            };
+            self.perform_registration_at(index);
+        }
     }
 
-    pub fn next_pending_immediate_action(&self) -> Option<&SequenceAction> {
-        self.pending_synchronous_actions.front()
+    pub fn next_pending_immediate_action(&mut self) -> Option<&SequenceAction> {
+        self.settle_leading_registrations();
+        self.pending_synchronous_actions
+            .front()
+            .and_then(PendingSyncEntry::as_action)
     }
 
     /// Drain the complete ordered stream emitted synchronously by sequence
@@ -3615,14 +3822,37 @@ impl SequenceManager {
     /// successor, the successor is inserted at the front of the remaining
     /// work before an older sibling action runs, matching the original
     /// re-entrant call stack.
-    pub fn take_pending_synchronous_actions(&mut self) -> Vec<SequenceAction> {
+    /// Parked [`PendingSyncEntry::Register`] iterations travel with the
+    /// continuation: the original's `NextSequenceElementsGo` loop is a stack
+    /// frame below the callback, so it resumes only once the callback returns.
+    pub fn take_pending_synchronous_actions(&mut self) -> Vec<PendingSyncEntry> {
         self.pending_synchronous_actions.drain(..).collect()
+    }
+
+    /// Drain only the settled head of the synchronous buffer, leaving any
+    /// parked `NextSequenceElementsGo` iteration queued.
+    ///
+    /// The manager-hourglass action loop uses this: it must dispatch the
+    /// action that a registration produced before the loop's next iteration
+    /// registers the following sibling.
+    pub fn take_settled_synchronous_actions(&mut self) -> Vec<SequenceAction> {
+        let mut actions = Vec::new();
+        self.settle_leading_registrations();
+        while let Some(PendingSyncEntry::Action(_)) = self.pending_synchronous_actions.front() {
+            let Some(PendingSyncEntry::Action(action)) =
+                self.pending_synchronous_actions.pop_front()
+            else {
+                unreachable!("front was just observed to be an action");
+            };
+            actions.push(action);
+        }
+        actions
     }
 
     /// Restore a parent callback's detached synchronous continuation after a
     /// nested callback has fully returned. Any actions still produced by the
     /// child stay in front, matching the Original's recursive call stack.
-    pub fn restore_pending_synchronous_actions(&mut self, continuation: Vec<SequenceAction>) {
+    pub fn restore_pending_synchronous_actions(&mut self, continuation: Vec<PendingSyncEntry>) {
         self.pending_synchronous_actions.extend(continuation);
     }
 
@@ -3657,11 +3887,13 @@ impl SequenceManager {
     /// `true` iff there is at least one immediate-dispatch action awaiting
     /// drain, ignoring direct WAIT `Go()` actions in the same stream.
     pub fn has_pending_immediate_actions(&self) -> bool {
-        self.pending_synchronous_actions.iter().any(|action| {
+        self.pending_synchronous_actions.iter().any(|entry| {
             matches!(
-                action,
-                SequenceAction::ExecuteImmediateOwner { .. }
-                    | SequenceAction::ExecuteImmediateEngine { .. }
+                entry.as_action(),
+                Some(
+                    SequenceAction::ExecuteImmediateOwner { .. }
+                        | SequenceAction::ExecuteImmediateEngine { .. }
+                )
             )
         })
     }
@@ -3693,9 +3925,14 @@ impl SequenceManager {
     pub(crate) fn pop_next_hourglass_action(&mut self) -> Option<SequenceAction> {
         // WAIT Go() and ExecutedImmediately() run at registration, before
         // deferred non-WAIT work reaches the manager hourglass.
-        self.pending_synchronous_actions
-            .pop_front()
-            .or_else(|| self.pop_deferred_hourglass_action())
+        self.settle_leading_registrations();
+        match self.pending_synchronous_actions.pop_front() {
+            Some(PendingSyncEntry::Action(action)) => Some(action),
+            Some(entry @ PendingSyncEntry::Register { .. }) => {
+                panic!("settle_leading_registrations left a parked registration: {entry:?}")
+            }
+            None => self.pop_deferred_hourglass_action(),
+        }
     }
 
     fn pop_deferred_hourglass_action(&mut self) -> Option<SequenceAction> {
@@ -4155,14 +4392,14 @@ impl SequenceManager {
         // can attach it behind itself, creating a recursive self-cycle.
         let target = (seq_id, elem_idx);
         self.elements_to_go.retain(|entry| *entry != target);
-        self.pending_synchronous_actions.retain(|action| {
+        self.pending_synchronous_actions.retain(|entry| {
             !matches!(
-                action,
-                SequenceAction::InstructOwner {
+                entry.as_action(),
+                Some(SequenceAction::InstructOwner {
                     sequence_id,
                     element_index,
                     ..
-                } if (*sequence_id, *element_index) == target
+                }) if (*sequence_id, *element_index) == target
             )
         });
     }
@@ -4449,13 +4686,7 @@ impl SequenceManager {
                     Vec::new()
                 }
             };
-            for (elem_idx, is_wait) in to_go {
-                if is_wait {
-                    self.register_wait_element_to_go(seq_id, elem_idx);
-                } else {
-                    self.register_element_to_go(seq_id, elem_idx);
-                }
-            }
+            self.register_level_elements_to_go(seq_id, to_go);
         }
 
         // Start postponed element if requested.  We always re-pathfind
@@ -5501,6 +5732,9 @@ impl SequenceManager {
         elem_idx: usize,
     ) -> Option<(SequenceId, usize)> {
         let this = self.get_element(seq_id, elem_idx)?;
+        if this.next_link_severed {
+            return None;
+        }
         let (next_seq, next_idx) = if let Some(legacy) = &this.legacy_v48 {
             let next = legacy.next?;
             (next.sequence_id, next.element_index)
@@ -5785,8 +6019,8 @@ mod tests {
         // First call should return both level-1 elements
         let to_go = seq.next_elements_go();
         assert_eq!(to_go.len(), 2);
-        assert_eq!(to_go[0].0, 0); // element index 0
-        assert_eq!(to_go[1].0, 1); // element index 1
+        assert_eq!(to_go[0], 0); // element index 0
+        assert_eq!(to_go[1], 1); // element index 1
         assert_eq!(seq.running_elements, 2);
 
         // Simulate first element finishing
@@ -5800,7 +6034,7 @@ mod tests {
         // Next level starts
         let to_go = seq.next_elements_go();
         assert_eq!(to_go.len(), 1);
-        assert_eq!(to_go[0].0, 2); // element index 2
+        assert_eq!(to_go[0], 2); // element index 2
     }
 
     /// The `RecordPlayAnim*` natives at natives/mod.rs:2680-2729 write
@@ -6044,8 +6278,12 @@ mod tests {
             "only NORMAL non-immediate work belongs on the hourglass FIFO"
         );
 
-        let synchronous = mgr.take_pending_synchronous_actions();
-        assert_eq!(synchronous.len(), 2);
+        // The loop stops at the WAIT `Go()`: element 2's registration — and
+        // therefore its `ExecutedImmediately()` execution — is a later
+        // iteration of the same C++ loop and only runs once that `Go()` has
+        // returned.
+        let synchronous = mgr.take_settled_synchronous_actions();
+        assert_eq!(synchronous.len(), 1);
         assert!(matches!(
             synchronous[0],
             SequenceAction::InstructOwner {
@@ -6054,8 +6292,10 @@ mod tests {
                 element_index: 1,
             } if owner == wait_owner && action_sequence_id == sequence_id
         ));
+        let after_wait_go = mgr.take_settled_synchronous_actions();
+        assert_eq!(after_wait_go.len(), 1);
         assert!(matches!(
-            synchronous[1],
+            after_wait_go[0],
             SequenceAction::ExecuteImmediateEngine {
                 sequence_id: action_sequence_id,
                 element_index: 2,
@@ -6085,7 +6325,7 @@ mod tests {
         sequence.append_element(successor);
 
         let sequence_id = mgr.launch_sequence(sequence);
-        let first_action = mgr.take_pending_synchronous_actions();
+        let first_action = mgr.take_settled_synchronous_actions();
         assert!(matches!(
             first_action.as_slice(),
             [SequenceAction::EngineCommand {
@@ -6097,7 +6337,7 @@ mod tests {
         mgr.element_in_progress(sequence_id, 0);
         mgr.element_terminated(sequence_id, 0);
 
-        let successor_action = mgr.take_pending_synchronous_actions();
+        let successor_action = mgr.take_settled_synchronous_actions();
         assert!(matches!(
             successor_action.as_slice(),
             [SequenceAction::EngineCommand {
@@ -6130,7 +6370,7 @@ mod tests {
 
         let seq_id = mgr.launch_element(wait);
 
-        let actions = mgr.take_pending_synchronous_actions();
+        let actions = mgr.take_settled_synchronous_actions();
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             actions[0],
@@ -6159,7 +6399,7 @@ mod tests {
         seq.append_element(second);
 
         let seq_id = mgr.launch_sequence(seq);
-        let first_actions = mgr.take_pending_synchronous_actions();
+        let first_actions = mgr.take_settled_synchronous_actions();
         assert!(matches!(
             first_actions.as_slice(),
             [SequenceAction::InstructOwner {
@@ -6177,7 +6417,7 @@ mod tests {
         mgr.element_terminated(seq_id, 0);
         finish_test_condolations(&mut mgr);
 
-        let reentrant_actions = mgr.take_pending_synchronous_actions();
+        let reentrant_actions = mgr.take_settled_synchronous_actions();
         assert!(matches!(
             reentrant_actions.as_slice(),
             [SequenceAction::InstructOwner {

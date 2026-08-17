@@ -935,12 +935,39 @@ impl EnemyAi {
             // elevation), not raw map coordinates.
             let dist =
                 ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "SHIELD_BEARER_CANDIDATE frame={} me={} candidate={} substate={} archer_behind={} dist={dist} min={min_distance}",
+                    ctx.frame, self.base.me, f.handle, f.current_substate, f.archer_behind_me,
+                );
+            }
             if f32::from(dist) < best_distance {
                 best_distance = f32::from(dist);
                 best = f.handle;
             }
         }
 
+        if crate::ai_enemy::battle_decision_debug_enabled() {
+            let shield_bearers = tick
+                .fighter_registry
+                .iter()
+                .filter(|f| f.is_shield_bearer)
+                .map(|f| {
+                    (
+                        f.handle,
+                        f.is_friendly,
+                        f.current_substate,
+                        f.archer_behind_me,
+                    )
+                })
+                .collect::<Vec<_>>();
+            eprintln!(
+                "SHIELD_BEARER_RESULT frame={} me={} best={best} registry={} bearers={shield_bearers:?}",
+                ctx.frame,
+                self.base.me,
+                tick.fighter_registry.len(),
+            );
+        }
         if best == 0 { None } else { Some(best) }
     }
 
@@ -974,10 +1001,15 @@ impl EnemyAi {
         };
         let primary_pos = primary.position;
 
-        // (1) Search for an archery sector containing the enemy
+        // (1) Search for an archery sector containing the enemy.
+        // `RHSectorArchery::IsInside( posEnemy )` (RHsector.cpp:2330-2340)
+        // rejects the sector when its own layer differs from
+        // `posEnemy.uwLevel` — the layer travels with the enemy position the
+        // caller passed in (`ChooseGoodShootingPoint( Position( mpPrimaryTarget ) )`,
+        // RHartificialmalignity.cpp:7627), not with the archer.
         let mut found_sector: Option<usize> = None;
         for (i, sector) in global.archery_sectors.iter().enumerate() {
-            if !sector.is_full() && sector.is_inside(&primary_pos, ctx.position.level) {
+            if !sector.is_full() && sector.is_inside(&primary_pos, primary_pos.level) {
                 found_sector = Some(i);
                 break;
             }
@@ -1394,8 +1426,22 @@ impl EnemyAi {
         if let Some(g) = grid {
             let bearer_pt = crate::coordinates::MapPoint::new(bearer_pos.x, bearer_pos.y);
             let cover_pt = crate::coordinates::MapPoint::new(behind.x, behind.y);
-            if !g.is_straight_movement_authorized(bearer_pt, cover_pt, behind.level, &ctx.move_box)
-            {
+            let ok =
+                g.is_straight_movement_authorized(bearer_pt, cover_pt, behind.level, &ctx.move_box);
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "COVER_POS frame={} me={} bearer={} sub={} bearer_pos={:?} bearer_dir={} bearer_raw={:?} behind={:?} straight_ok={ok}",
+                    ctx.frame,
+                    self.base.me,
+                    shield_bearer,
+                    snap.current_substate,
+                    bearer_pos,
+                    snap.shield_bearer_direction,
+                    snap.position,
+                    behind,
+                );
+            }
+            if !ok {
                 return None;
             }
         }
@@ -1424,6 +1470,24 @@ impl EnemyAi {
         let shield_advancing = Substate::AttackingAdvancingWithShield as u32;
 
         let mut count: i32 = 0;
+        let debug = arrow_protection_debug_matches(|| ctx.frame, || self.base.me);
+        // `SquareDistance` compares `pSoldier->GetPosition()` against
+        // `mpMe->GetPosition()` (`RHartificialintelligence.cpp:6919-6922`),
+        // i.e. both raw element positions. `AiContext::position` and
+        // `FighterSnapshot::position` carry the AI `Position()` result
+        // instead, which snaps an actor in door transit onto the gate
+        // endpoint; measuring from there moved a door-passing orphan archer
+        // out of the 500-unit radius and silenced the shield-bearer
+        // reaction.
+        let me_raw = self
+            .find_fighter(self.base.me, tick)
+            .unwrap_or_else(|| {
+                panic!(
+                    "NumberOfNearbyArchersWhoNeedProtection owner {} is absent from its own fighter snapshots",
+                    self.base.me
+                )
+            });
+        let (me_position, me_elevation) = (me_raw.raw_position, me_raw.elevation as f32);
         // Original walks the complete camp soldier registry. In particular it
         // does not apply IsAbleToFight/Active before counting an orphan
         // archer: an inactive Seeking soldier still owns its AI state and
@@ -1434,15 +1498,40 @@ impl EnemyAi {
         // admission work.
         for f in &tick.fighter_registry {
             if !f.is_friendly {
+                if debug {
+                    eprintln!(
+                        "ARCHER_PROTECTION_SCAN frame={} owner={} cand={} skip=not_friendly",
+                        ctx.frame, self.base.me, f.handle
+                    );
+                }
                 continue;
             }
-            if ai_square_distance(
-                &f.position,
+            let sq = ai_square_distance(
+                &f.raw_position,
                 f.elevation as f32,
-                &ctx.position,
-                ctx.elevation,
-            ) >= consider_sq
-            {
+                &me_position,
+                me_elevation,
+            );
+            if debug {
+                eprintln!(
+                    "ARCHER_PROTECTION_SCAN frame={} owner={} cand={} sq={} state={:?} sub={} archer={} tower={} sbb={} own_abm={} abm={} shield={} pos={:?} elev={}",
+                    ctx.frame,
+                    self.base.me,
+                    f.handle,
+                    sq,
+                    f.ai_state,
+                    f.current_substate,
+                    f.is_archer_unit,
+                    f.is_tower_guard,
+                    f.shield_bearer_before_me,
+                    self.archer_behind_me,
+                    f.archer_behind_me,
+                    f.is_shield_bearer,
+                    f.position,
+                    f.elevation
+                );
+            }
+            if sq >= consider_sq {
                 continue;
             }
             // Filter on AI state ∈ {Seeking, Wondering, Attacking}.
@@ -1813,6 +1902,18 @@ impl EnemyAi {
                 threshold = atk_dist * atk_dist,
                 "reconsider_phalanx: attack-distance gate"
             );
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "RECONSIDER_PHALANX frame={} me={} nearest={} sq={} thr={} left={} right={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest,
+                    sq,
+                    atk_dist * atk_dist,
+                    self.left_combat_neighbour,
+                    self.right_combat_neighbour
+                );
+            }
             if sq < atk_dist * atk_dist {
                 self.break_phalanx(sim, global, ctx, tick, grid, None);
                 return true;
@@ -2266,6 +2367,12 @@ impl EnemyAi {
         // exists to answer even though such a posture reads as
         // "unable to fight".
         let mut dangerous_enemy: HumanHandle = 0;
+        if debug {
+            eprintln!(
+                "ARROW_PROTECTION_SEEN frame={} owner={} seen={:?}",
+                ctx.frame, self.base.me, tick.seen_last_frame_enemies
+            );
+        }
         for &handle in &tick.seen_last_frame_enemies {
             let Some(view) = ctx.entity_view(handle) else {
                 tracing::warn!(
@@ -2278,6 +2385,17 @@ impl EnemyAi {
                 continue;
             };
             let min_dist = archer::MIN_PROTECT_ARROW_DISTANCE as f32;
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION_ENEMY frame={} owner={} cand={} sq={} action={:?} bow={}",
+                    ctx.frame,
+                    self.base.me,
+                    handle,
+                    square_distance_to(&view.position, view.elevation),
+                    view.action_state,
+                    view.action_state.is_bow()
+                );
+            }
             if square_distance_to(&view.position, view.elevation) < min_dist * min_dist {
                 continue;
             }
@@ -4026,18 +4144,34 @@ impl EnemyAi {
         // caller's cached `my_line_jump` stays None when the best
         // candidate is the initial "stay put" entry, and the
         // table-approach path is skipped even when needed.
+        //
+        // The reference asks about the WINNING CANDIDATE'S target, not
+        // about the primary target:
+        // `pBestCombatPosition->pLineJump = mpMe->IsTableSwordfightNeeded(
+        //  pBestCombatPosition->pTarget )`
+        // (`original-code/RHartificialmalignity.cpp:15326`). The two differ
+        // whenever the winner is a `bChangeAdversary` candidate, which is
+        // exactly the case that installs a cross-sector line jump: asking
+        // about the (same-sector) primary target answers `NULL` and leaves
+        // `mpMyLineJump` unset for every later frame, so
+        // `ProposeCombatPositionsAround` then generates the 16-direction
+        // surround ring the Original replaces with its jump-line branches.
+        // `target_position` is the candidate's `posTargetPosition`, i.e.
+        // `Position(pTarget)` captured in this same call.
         if best.line_jump.is_none()
+            && best.target != 0
             && let Some(grid) = grid
         {
             let my_max_range = self
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.sword_range_maximal)
                 .unwrap_or(self.sword_range);
+            let victim = best.target_position;
             best.line_jump = crate::engine::melee::table_swordfight_jump_line(
                 grid,
                 ctx.position.sector.map(i16::from).unwrap_or(-1),
-                primary.position.sector.map(i16::from).unwrap_or(-1),
-                crate::coordinates::MapPoint::new(primary.position.x, primary.position.y),
+                victim.sector.map(i16::from).unwrap_or(-1),
+                crate::coordinates::MapPoint::new(victim.x, victim.y),
                 my_max_range as f32,
             );
         }
@@ -4211,6 +4345,7 @@ mod tests {
         let orphan = FighterSnapshot {
             handle: 250,
             position: position(1_328.0, 1_033.0),
+            raw_position: position(1_328.0, 1_033.0),
             elevation: 0.0,
             is_friendly: true,
             is_able_to_fight: false,
@@ -4221,6 +4356,17 @@ mod tests {
             ..FighterSnapshot::default()
         };
         let mut tick = AiPerTickData::stub();
+        // The registry always leads with the scanning soldier's own entry;
+        // `SquareDistance` measures from its raw element position.
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 219,
+            position: position(1_520.0, 900.0),
+            raw_position: position(1_520.0, 900.0),
+            elevation: 0.0,
+            is_friendly: true,
+            ai_state: AiState::Attacking,
+            ..FighterSnapshot::default()
+        });
         tick.fighter_registry.push(orphan.clone());
         assert_eq!(
             ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
@@ -4228,15 +4374,16 @@ mod tests {
             "inactive is not an Original admission gate"
         );
 
-        tick.fighter_registry[0].ai_state = AiState::Default;
+        tick.fighter_registry[1].ai_state = AiState::Default;
         assert_eq!(
             ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
             0,
             "the explicit AI-state gate still rejects an inactive Default archer"
         );
 
-        tick.fighter_registry[0] = FighterSnapshot {
+        tick.fighter_registry[1] = FighterSnapshot {
             position: position(2_100.0, 900.0),
+            raw_position: position(2_100.0, 900.0),
             ..orphan
         };
         assert_eq!(

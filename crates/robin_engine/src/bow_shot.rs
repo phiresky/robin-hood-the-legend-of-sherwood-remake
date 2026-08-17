@@ -3449,11 +3449,19 @@ pub(crate) fn make_arrow_falling_down(
     // of its fall rather than only once it settles.
     proj.element.clear_layer();
     proj.element.set_sector(None);
+    // A water or hole classification returns from `ComputeTrajectory`
+    // (`RHelementprojectile.cpp:742-756`) *before* the membership block, so the
+    // `SetLayer( (UWORD)-1 ); SetSector( 0 ); SetObstacle( 0 )` of lines
+    // 379-381 is all the projectile ever gets: no layer, no sector, and no
+    // terminal obstacle.
+    let terminal_membership =
+        terminal_impact && !terminal_lands_in_hole && !terminal_lands_in_water;
     if let Some(check) = obstacle_check {
-        let plane = terminal_obstacle_plane(terminal_obstacle, check.sight_obstacles);
-        bind_trajectory_obstacle(&mut proj.element, terminal_obstacle, plane);
+        let bound = terminal_membership.then_some(terminal_obstacle).flatten();
+        let plane = terminal_obstacle_plane(bound, check.sight_obstacles);
+        bind_trajectory_obstacle(&mut proj.element, bound, plane);
     }
-    if terminal_impact
+    if terminal_membership
         && let Some(check) = obstacle_check
         && let Some(end) = proj.projectile.trajectory.last().map(|tp| tp.position)
     {

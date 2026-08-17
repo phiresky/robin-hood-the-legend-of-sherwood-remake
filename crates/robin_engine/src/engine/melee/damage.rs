@@ -371,6 +371,18 @@ impl EngineInner {
             self.force_drop_carried_corpse_instant(victim_id);
         }
 
+        if super::strikes::sword_damage_debug_enabled() {
+            eprintln!(
+                "[SWORDDMG f={} victim={:?} (co {}) attacker={:?} (co {:?}) strike={:?}]",
+                self.control.frame_counter,
+                victim_id,
+                self.world.original_creation_order(victim_id),
+                attacker_id,
+                attacker_id.map(|id| self.world.original_creation_order(id)),
+                strike,
+            );
+        }
+
         // Look up the attacker's weapon profile
         let attacker_profile = attacker_profile_idx
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -439,6 +451,14 @@ impl EngineInner {
             None,
         );
         let life_points_before = get_life_points(victim);
+        // `SetConcussionOfTheBrain` (RHelementactorhuman.cpp:456-505) only runs
+        // the knock-out cascade from its `else` arm, i.e. when the victim was
+        // still conscious before this hit. A victim that was already
+        // unconscious never re-enters it.
+        let unconscious_before = victim
+            .human_data()
+            .map(|human| human.unconscious)
+            .unwrap_or(false);
 
         // Look up defender's weapon profile
         let defender_profile_idx = get_hth_weapon_id_full(victim, &assets.profile_manager);
@@ -1181,6 +1201,7 @@ impl EngineInner {
                         assets,
                         victim_id,
                         life_points_before,
+                        unconscious_before,
                         attacker_id,
                         false,
                         damage_element,
@@ -1384,6 +1405,14 @@ impl EngineInner {
         );
         let max_lp = get_max_life_points(victim);
         let life_points_before = get_life_points(victim);
+        // `SetConcussionOfTheBrain` (RHelementactorhuman.cpp:456-505) only runs
+        // the knock-out cascade from its `else` arm, i.e. when the victim was
+        // still conscious before this hit. A victim that was already
+        // unconscious never re-enters it.
+        let unconscious_before = victim
+            .human_data()
+            .map(|human| human.unconscious)
+            .unwrap_or(false);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -1422,6 +1451,7 @@ impl EngineInner {
                 assets,
                 victim_id,
                 life_points_before,
+                unconscious_before,
                 None,
                 false,
                 damage_element,
@@ -1480,6 +1510,7 @@ impl EngineInner {
             assets,
             victim_id,
             life_points_before,
+            unconscious_before,
             None,
             false,
             damage_element,
@@ -1532,6 +1563,14 @@ impl EngineInner {
         );
         let max_lp = get_max_life_points(victim);
         let life_points_before = get_life_points(victim);
+        // `SetConcussionOfTheBrain` (RHelementactorhuman.cpp:456-505) only runs
+        // the knock-out cascade from its `else` arm, i.e. when the victim was
+        // still conscious before this hit. A victim that was already
+        // unconscious never re-enters it.
+        let unconscious_before = victim
+            .human_data()
+            .map(|human| human.unconscious)
+            .unwrap_or(false);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -1641,6 +1680,7 @@ impl EngineInner {
                     assets,
                     victim_id,
                     life_points_before,
+                    unconscious_before,
                     None,
                     false,
                     damage_element,
@@ -1750,7 +1790,12 @@ impl EngineInner {
         if still_on_ground {
             let translated_anim = if life_points_before <= 0 && life_points_after <= 0 {
                 animations.map(|a| a.dying_forward)
-            } else if life_points_after > 0 && still_conscious {
+            } else if life_points_after > 0 && (is_arrow_damage || still_conscious) {
+                // `TranslateArrowDamage` (RHelementactorhuman.cpp:2399-2410)
+                // tests only `IsDead()`: a surviving victim always extracts
+                // the arrow, even while unconscious. Only the generic
+                // `TranslateDamage` (RHelementactorhuman.cpp:2559-2576) has
+                // the consciousness test.
                 animations.map(|a| {
                     if is_arrow_damage {
                         a.arrow_extract
@@ -1759,6 +1804,10 @@ impl EngineInner {
                     }
                 })
             } else {
+                // TODO: the unconscious non-arrow survivor should get
+                // `TranslateDamage`'s `animFallingBack` plus `QuitSwordFight`
+                // (RHelementactorhuman.cpp:2566-2575); today it gets no order
+                // at all. Out of scope for the arrow fix above.
                 None
             };
             if let Some(anim) = translated_anim {
@@ -1781,6 +1830,7 @@ impl EngineInner {
                 assets,
                 victim_id,
                 life_points_before,
+                unconscious_before,
                 None,
                 false,
                 damage_element,
@@ -2345,6 +2395,7 @@ impl EngineInner {
         assets: &LevelAssets,
         victim_id: EntityId,
         life_points_before: i16,
+        unconscious_before: bool,
         attacker_id: Option<EntityId>,
         no_damage: bool,
         damage_element: (crate::sequence::SequenceId, usize),
@@ -2402,7 +2453,7 @@ impl EngineInner {
                     dying_anim_override,
                 );
             }
-        } else if is_unconscious {
+        } else if is_unconscious && !unconscious_before {
             // `inform_my_friends` only fires when the attacker is a
             // PC.  Resolve the attacker identity here so
             // `handle_knockout` can gate the broadcast.  Attacker-less
@@ -2645,7 +2696,15 @@ impl EngineInner {
     /// leave a PC, combat neighbour, or archery reservation pointing at the
     /// dead soldier.
     fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
-        let (guarded_pcs, shooting_points, archery_sector, left_neighbours, right_neighbours) = {
+        let (
+            guarded_pcs,
+            shooting_points,
+            archery_sector,
+            left_neighbours,
+            right_neighbours,
+            shield_bearers,
+            archers,
+        ) = {
             let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(victim_id) else {
                 return;
             };
@@ -2722,6 +2781,44 @@ impl EngineInner {
                     _ => {}
                 }
             }
+            // SUBSTATE_SLEEPING_FOREVER is neither a bow substate nor a
+            // shield-protect/phalanx substate, so the same
+            // `RHArtificialMalignity::SetState` constraint block also runs
+            // `UpdateArcherBehindMe( NULL )` and
+            // `UpdateShieldBearerBeforeMe( NULL )`
+            // (RHartificialmalignity.cpp:9459-9494), each of which clears the
+            // partner's reciprocal pointer
+            // (RHartificialmalignity.cpp:17635-17662, 17675-17702). Tear the
+            // archer/shield-bearer pairing down here for the same reason the
+            // combat neighbours are handled above.
+            let mut shield_bearers = Vec::new();
+            let mut archers = Vec::new();
+            let shield_bearer = std::mem::take(&mut enemy.shield_bearer_before_me);
+            if shield_bearer != 0 {
+                shield_bearers.push(shield_bearer);
+            }
+            let archer = std::mem::take(&mut enemy.archer_behind_me);
+            if archer != 0 {
+                archers.push(archer);
+            }
+            for action in &enemy.base.outbox.reentrant.cross_npc_actions {
+                match *action {
+                    crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer: 0 } => {
+                        if target != 0 && !shield_bearers.contains(&target) {
+                            shield_bearers.push(target);
+                        }
+                    }
+                    crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
+                        target,
+                        shield_bearer: 0,
+                    } => {
+                        if target != 0 && !archers.contains(&target) {
+                            archers.push(target);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             debug_assert!(
                 !release.release_sector || archery_sector.is_some(),
                 "queued archery-sector release has no owned sector on death"
@@ -2733,8 +2830,42 @@ impl EngineInner {
                 archery_sector,
                 left_neighbours,
                 right_neighbours,
+                shield_bearers,
+                archers,
             )
         };
+
+        for shield_bearer in shield_bearers {
+            let Some(Entity::Soldier(soldier)) =
+                self.world
+                    .entities
+                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
+                        shield_bearer,
+                    )))
+            else {
+                panic!(
+                    "dead soldier {victim_id:?} has missing/non-soldier shield bearer \
+                     {shield_bearer}"
+                );
+            };
+            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!("dead soldier {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi")
+            });
+            enemy.archer_behind_me = 0;
+        }
+        for archer in archers {
+            let Some(Entity::Soldier(soldier)) = self
+                .world
+                .entities
+                .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(archer)))
+            else {
+                panic!("dead soldier {victim_id:?} has missing/non-soldier archer {archer}");
+            };
+            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!("dead soldier {victim_id:?}'s archer {archer} has no EnemyAi")
+            });
+            enemy.shield_bearer_before_me = 0;
+        }
 
         for left_neighbour in left_neighbours {
             let Some(Entity::Soldier(soldier)) =

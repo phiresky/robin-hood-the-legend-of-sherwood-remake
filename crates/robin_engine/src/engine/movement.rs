@@ -2240,6 +2240,20 @@ pub(crate) fn adapt_source_to_current_door(
 /// `GetDoor()` at that callback even though the translated movement element
 /// can keep executing its far-side walk, so later commands must use the live
 /// position/sector instead of adapting through the completed gate.
+///
+/// The direction reported here is the pass's live traversal direction, not the
+/// movement element's retained `mswDirection`. `RHSequence::AppendMoveToSequence`
+/// reads `pTarget->GetDoorDirection()` (`original-code/RHsequence.cpp:369`),
+/// which is `RHPositionInterface::mbDoorDirection`
+/// (`original-code/RHpositioninterface.h:297-298`). That field is written by
+/// `SetDoor( pDoor, <live direction> )` inside `RHElementActor::Translate`
+/// (`original-code/RHelementactor.cpp:4035`, `:4053`, `:4080`, `:4110`,
+/// `:4165`, `:4199`, `:4242`, `:4295`), where the direction comes from the
+/// `GetSector() == pSectorIn` test performed at launch — the same test
+/// `PassDoor::dispatch` reproduces into `ActiveDoorPass::direct`.
+/// `ActiveDoorPass::position_direct` mirrors the *element's* serialized
+/// `mswDirection` (`original-code/RHSequenceElementMovement.cpp:394-407`),
+/// which only `RHArtificialIntelligence::Position` consumes.
 pub(crate) fn current_door_for_route_source(
     entity: &crate::element::Entity,
 ) -> (crate::position_interface::DoorHandle, bool) {
@@ -2250,7 +2264,7 @@ pub(crate) fn current_door_for_route_source(
         .map(|pass| {
             (
                 crate::position_interface::DoorHandle(pass.door_index.0),
-                pass.position_direct,
+                pass.direct,
             )
         })
         .unwrap_or_else(|| {
@@ -2270,13 +2284,21 @@ mod route_source_tests {
     use crate::position_interface::DoorHandle;
 
     fn pc_with_door_pass(triggers_fired: u8) -> Entity {
+        pc_with_door_pass_directions(triggers_fired, true, true)
+    }
+
+    fn pc_with_door_pass_directions(
+        triggers_fired: u8,
+        direct: bool,
+        position_direct: bool,
+    ) -> Entity {
         Entity::Pc(ActorPc {
             element: ElementData::default(),
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {
                     door_index: DoorIndex(53),
-                    direct: true,
-                    position_direct: true,
+                    direct,
+                    position_direct,
                     steps: Default::default(),
                     triggers_fired,
                     current_action: OrderType::WalkingUpright,
@@ -2305,6 +2327,19 @@ mod route_source_tests {
             current_door_for_route_source(&pc),
             (DoorHandle::NULL, false)
         );
+    }
+
+    #[test]
+    fn route_source_reports_live_traversal_direction_not_element_direction() {
+        // `RHSequence::AppendMoveToSequence` reads `GetDoorDirection()`
+        // (`original-code/RHsequence.cpp:369`), the position interface field
+        // `SetDoor` writes from the live `GetSector() == pSectorIn` test at
+        // launch. A v48-restored movement element can carry a different
+        // serialized `mswDirection`; that value belongs to
+        // `RHArtificialIntelligence::Position`, not to route sourcing.
+        let pc = pc_with_door_pass_directions(0, true, false);
+
+        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(53), true));
     }
 
     #[test]
@@ -6185,6 +6220,12 @@ impl EngineInner {
                     Some(entity_id),
                 ));
             }
+            if intent.enter_swordfight_before_move {
+                prefix.push(Self::goto_enter_swordfight_element(
+                    prefix.len() as u16 + 1,
+                    entity_id,
+                ));
+            }
             if intent.stop_menace_before_move {
                 prefix.push(crate::sequence::SequenceElement::new(
                     prefix.len() as u16 + 1,
@@ -6257,6 +6298,7 @@ impl EngineInner {
 
         let move_level = 1
             + u16::from(intent.quit_swordfight_before_move)
+            + u16::from(intent.enter_swordfight_before_move)
             + u16::from(intent.stop_menace_before_move)
             + u16::from(intent.lower_shield_before_move);
         let mut elem = crate::sequence::SequenceElement::new_movement(
@@ -6299,6 +6341,12 @@ impl EngineInner {
                 Some(entity_id),
             ));
         }
+        if intent.enter_swordfight_before_move {
+            let level = sequence
+                .last()
+                .map_or(1, |element| element.command_level.saturating_add(1));
+            sequence.append_element(Self::goto_enter_swordfight_element(level, entity_id));
+        }
         if intent.stop_menace_before_move {
             sequence.append_element(crate::sequence::SequenceElement::new(
                 sequence
@@ -6335,6 +6383,36 @@ impl EngineInner {
             "AI movement launched via sequence element"
         );
         Some(sequence_id)
+    }
+
+    /// The raise-sword element `RHArtificialIntelligence::GoTo` inserts into
+    /// the movement's own sequence for `GOTO_SWORD` when the actor is not
+    /// already in a sword action state
+    /// (`original-code/RHartificialintelligence.cpp:2486-2495`): a generic
+    /// `ENTER_SWORDFIGHT` with a null opponent, no jump-line destination and
+    /// `SWORDFIGHT_PREPARED` cleared.
+    fn goto_enter_swordfight_element(
+        command_level: u16,
+        entity_id: EntityId,
+    ) -> crate::sequence::SequenceElement {
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            command_level,
+            crate::element::Command::EnterSwordfight,
+            Some(entity_id),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::SwordfightPrepared,
+            crate::sequence::FieldValue::Bool(false),
+        );
+        element
     }
 
     /// Build the exact tail authored by
@@ -7057,8 +7135,10 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         owner: EntityId,
         selected: Option<MovementOwnerSelection>,
-    ) {
-        let Some(selected) = selected else { return };
+    ) -> Option<crate::sprite::MotionState> {
+        let Some(selected) = selected else {
+            return None;
+        };
         let selected_is_live = self
             .orders
             .sequence_manager
@@ -7067,7 +7147,7 @@ impl EngineInner {
             .and_then(|element| element.current_order())
             .is_some_and(|order| order.order_id == selected.order_id);
         if !selected_is_live {
-            return;
+            return None;
         }
         if let Some(entity) = self.world.entities.get(owner) {
             super::animation::direction_provenance_snapshot(
@@ -7084,7 +7164,7 @@ impl EngineInner {
             .and_then(|entity| entity.actor_data())
             .is_some_and(|actor| actor.execution_frozen)
         {
-            return;
+            return None;
         }
         let selected_command = self
             .orders
@@ -7100,16 +7180,36 @@ impl EngineInner {
             selected_command,
             Some(crate::element::Command::WaitTimer | crate::element::Command::WaitFreeLift)
         ) {
-            return;
+            return None;
         }
         if self.abort_orphaned_sword_movement(sim, assets, owner, selected) {
             // LaunchSequenceElement registers the replacement for the later
             // sequence-manager phase. It must not execute at this actor
             // boundary: Original exposes QuitSwordfight as the current
             // command for one frame before its lowering order starts.
-            return;
+            return None;
         }
-        if self.actors_frozen() {
+        // `IsFrozenAll()` is read ONLY inside `RHSprite`
+        // (`original-code/RHsprite.cpp:739`, `:985`, `:1042`, `:1084`, `:1124`,
+        // `:1430`) and in the NPC AI gates; `RHElementActor::Execute` itself is
+        // never gated on it. Its `RHNONANIMATION_PASSING_DOOR` arm
+        // (`original-code/RHelementactor.cpp:2786-2807`) reaches no Sprite
+        // method at all: it calls `PassDoor()` / restores anti-collision,
+        // forwards `MSG_STATURE`, and returns `RHMOTION_TERMINATED` whatever
+        // the global freeze is. A `FreezeAll(true)` landing on the frame that
+        // owns the door action point must therefore not defer it — doing so
+        // held the pass open one extra frame and delayed every successor
+        // (AI unlock, the route's own WaitTimer, the next path request).
+        let selected_is_door_pass_action_point = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .and_then(|element| element.current_order())
+            .is_some_and(|order| {
+                order.order_id == selected.order_id
+                    && order.order_type == OrderType::PassingDoor
+            });
+        if self.actors_frozen() && !selected_is_door_pass_action_point {
             // A globally frozen Sprite::PerformMotion returns IN_PROGRESS
             // before touching any row/frame state, and that is what the
             // movement Execute arm hands back to the actor. Latch it here:
@@ -7167,7 +7267,7 @@ impl EngineInner {
             if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
-            return;
+            return None;
         }
 
         // Sample mutable mobile geometry only now, at this actor's Original
@@ -7725,6 +7825,13 @@ impl EngineInner {
         // Keep this before crossing resolution/dispatch; delaying it until
         // afterwards lets LINE_SOUND/LINE_SCRIPT callbacks inspect the stale
         // seek and can enter the seeking AI state an extra time.
+        // `PerformSeek` answers both of these branches with an explicit
+        // `return RHMOTION_IN_PROGRESS` immediately after `RefreshSeek`
+        // (`original-code/RHelementactor.cpp:7963-7970` for the stale final
+        // waypoint, `:8002-8007` for the out-of-reach stop transition), so the
+        // Execute result Actor::Hourglass latches is IN_PROGRESS regardless of
+        // the state `RefreshSeek` left on the replaced element.
+        let mut refreshed_seek_in_progress = false;
         for (owner, seq_id, elem_idx) in transition_seek_refreshes {
             // Re-read the seek element's flags / target / tolerance / action
             // because another staged Execute effect may have changed adjacent
@@ -7775,6 +7882,7 @@ impl EngineInner {
                     tolerance,
                     new_target_pos,
                 );
+                refreshed_seek_in_progress = true;
             }
         }
 
@@ -7851,6 +7959,30 @@ impl EngineInner {
             if matches!(owner, EntityId::Pc(_)) {
                 let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
                     entity.actor_data()?;
+                    // `RHElementActorPC::Execute` gates the override on the
+                    // live `mpSequenceElement`: it must exist AND must not
+                    // carry `RHPRIORITY_NON_INTERRUPTABLE`
+                    // (`RHelementactorpc.cpp:3667-3673`). A door pass is
+                    // exactly that priority
+                    // (`RHElementActor::DeterminePriority`,
+                    // `RHelementactor.cpp:5506-5507`), so a sword walk that
+                    // belongs to a PassDoor element never aborts — Hourglass'
+                    // ABORTED arm asserts the same invariant
+                    // (`RHelementactor.cpp:1206`). Without this gate the
+                    // aborted pop cancelled the door pass's own order advance
+                    // and the actor replayed the walk instead of reaching its
+                    // PASSING_DOOR action point.
+                    let selected_priority = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(owner)
+                        .and_then(|(seq_id, elem_idx)| {
+                            self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                        })
+                        .map(|element| element.priority)?;
+                    if selected_priority == crate::sequence::SequencePriority::NonInterruptable {
+                        return None;
+                    }
                     if !entity.position_iface().is_moving_map()
                         || !crate::engine::melee::enemies_are_blocking_my_movement(
                             &self.world.entities,
@@ -8014,6 +8146,8 @@ impl EngineInner {
                     "movement owner {owner:?} failed to drain synchronous callback work: {error:?}"
                 )
             });
+
+        refreshed_seek_in_progress.then_some(crate::sprite::MotionState::InProgress)
     }
 
     /// Movement Execute body for the single movement owner. The caller's
@@ -9129,6 +9263,27 @@ impl EngineInner {
                 "turn:combat_face:after",
             );
         }
+        // Human's sword-movement Execute arm
+        // (`RHelementactorhuman.cpp:3631`) is the one movement arm that has no
+        // `Turn()` of its own: its non-SEEK branch goes straight to
+        // `mpSprite->PerformMotion` (`RHelementactorhuman.cpp:3660`), and its
+        // only pre-motion rotation is the one inside `FaceOpponent`
+        // (`RHelementactorhuman.cpp:7513`). `FaceOpponent` returns at
+        // `RHelementactorhuman.cpp:7505` — before `SetDirection` and before
+        // `Turn` — when a non-soldier is no longer swordfighting, which is
+        // exactly the `combat_target.is_none()` case resolved above. A
+        // non-interruptible order such as PASS_DOOR keeps that arm selected
+        // after `QuitSwordfightWithFarOpponents` has emptied the opponent
+        // list, so the Original then rotates the actor not at all while its
+        // direction goal stays where the door route last left it. Every other
+        // arm reaching the block below does turn: `Actor::Execute`'s ordinary
+        // movement arms call `Turn()` explicitly in their non-SEEK branch
+        // (`RHelementactor.cpp:2687`), `PerformSeek` calls it in both of its
+        // own branches (`RHelementactor.cpp:7805`, `:7925`), and
+        // `FaceDangerPoint` always turns (`RHelementactorpc.cpp:8914`).
+        let sword_arm_without_face_turn = executes_sword_movement
+            && combat_target.is_none()
+            && !active_move_flags.contains(crate::sequence::MoveFlags::SEEK);
         // Entity-target PerformSeek returns from its successful
         // pre-motion tolerance branch without calling PerformMotion.
         // Besides avoiding displacement, this preserves the prior sprite
@@ -9152,19 +9307,21 @@ impl EngineInner {
             // branch before the ordinary Turn/PerformMotion block. Do
             // not advance anti-vibration turning on a terminal tolerance
             // sample whose post-seek sequence is taking over.
-            super::animation::direction_provenance_snapshot(
-                &sprite.position_iface,
-                entity_id,
-                provenance_frame,
-                "turn:perform_seek:before",
-            );
-            let _ = sprite.position_iface.turn();
-            super::animation::direction_provenance_snapshot(
-                &sprite.position_iface,
-                entity_id,
-                provenance_frame,
-                "turn:perform_seek:after",
-            );
+            if !sword_arm_without_face_turn {
+                super::animation::direction_provenance_snapshot(
+                    &sprite.position_iface,
+                    entity_id,
+                    provenance_frame,
+                    "turn:perform_seek:before",
+                );
+                let _ = sprite.position_iface.turn();
+                super::animation::direction_provenance_snapshot(
+                    &sprite.position_iface,
+                    entity_id,
+                    provenance_frame,
+                    "turn:perform_seek:after",
+                );
+            }
             let diagnostic_pre = sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
             let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
             let result = sprite.perform_motion(
@@ -11380,7 +11537,7 @@ impl EngineInner {
                             order_id: order.order_id,
                         })
                 });
-            self.tick_entity_movement_owner(sim, assets, owner, selected);
+            let _ = self.tick_entity_movement_owner(sim, assets, owner, selected);
         }
     }
 
@@ -13161,6 +13318,20 @@ impl EngineInner {
                 // through `stop_owner` (which clears active sequences
                 // and pending path requests for this owner) and
                 // launch a `Wait` sequence element at `Wait` priority.
+                //
+                // `RHPathFinder::AddPathRequest` (`RHpathfinder.cpp:464-465`)
+                // calls `pRequest->pActor->Stop()` with no argument, so the
+                // stop priority is the declared default
+                // `RHPRIORITY_NORMAL` (`RHelementactor.h:273`) — NOT
+                // `RHPRIORITY_WAIT`.  The distinction decides whether the
+                // incoming Normal-priority Move element is stopped at all:
+                // `RHSequenceElement::Stop` only acts when
+                // `mPriority >= priorityOfStop`
+                // (`RHsequenceelement.cpp:528`), and `RHPRIORITY_NORMAL`(8)
+                // is stronger than `RHPRIORITY_WAIT`(9)
+                // (`RHsequenceelement.h:38-51`).  With `Wait` the Move
+                // survived, kept the actor's selection, and left the sprite's
+                // PositionGoalMap installed for one extra frame.
                 tracing::warn!(
                     actor = ?owner,
                     src_x = source.x,
@@ -13168,7 +13339,7 @@ impl EngineInner {
                     layer = entity_layer,
                     "try_dispatch_move_path: actor cannot be extracted from obstacle (Stop + Wait)",
                 );
-                self.stop_owner(owner, crate::sequence::SequencePriority::Wait);
+                self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
                 let mut wait_elem = crate::sequence::SequenceElement::new(
                     1,
                     crate::element::Command::Wait,
@@ -15186,7 +15357,7 @@ mod movement_transition_state_tests {
             .unwrap()
             .active_movement = ActiveMovement::new(sequence, 0);
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,

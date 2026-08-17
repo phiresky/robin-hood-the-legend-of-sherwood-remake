@@ -181,7 +181,7 @@ pub enum NativeOperation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SynchronousSequenceOperation {
     pub action: crate::sequence::SequenceAction,
-    pub continuation: Vec<crate::sequence::SequenceAction>,
+    pub continuation: Vec<crate::sequence::PendingSyncEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

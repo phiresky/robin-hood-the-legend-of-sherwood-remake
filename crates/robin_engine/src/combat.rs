@@ -892,6 +892,47 @@ pub fn add_strike_tiredness(current_tiredness: u16, strike_energy: u16) -> u16 {
     current_tiredness.wrapping_add(strike_energy)
 }
 
+/// Rust-side mirror of the Original's `PARITY_DEBUG_ORIGINAL_TIREDNESS` probe
+/// (`original-code/RHelementactorhuman.cpp:205-217`).
+///
+/// `PARITY_DEBUG_TIREDNESS` enables it; the optional
+/// `PARITY_DEBUG_TIREDNESS_CREATION_ORDER` narrows it to one actor, matched on
+/// the Original `GetCreationOrder()` value so the two trails line up
+/// frame-for-frame. Every `HumanData::tiredness` write and the
+/// `EvaluateSwordfight` threshold read prints one `RUST_TIREDNESS` line.
+pub fn tiredness_debug_enabled() -> bool {
+    tiredness_debug_filter().is_some()
+}
+
+pub fn tiredness_debug_matches(creation_order: u32) -> bool {
+    match tiredness_debug_filter() {
+        None => false,
+        Some(None) => true,
+        Some(Some(wanted)) => *wanted == creation_order,
+    }
+}
+
+/// `None` when the probe is off, `Some(None)` for every actor, `Some(Some(co))`
+/// for a single creation order. Resolved once so the per-entity, per-frame
+/// write sites do not pay for an environment scan.
+fn tiredness_debug_filter() -> &'static Option<Option<u32>> {
+    static FILTER: std::sync::OnceLock<Option<Option<u32>>> = std::sync::OnceLock::new();
+    FILTER.get_or_init(|| {
+        if std::env::var_os("PARITY_DEBUG_TIREDNESS").is_none() {
+            return None;
+        }
+        Some(
+            std::env::var("PARITY_DEBUG_TIREDNESS_CREATION_ORDER")
+                .ok()
+                .map(|raw| {
+                    raw.parse::<u32>().unwrap_or_else(|error| {
+                        panic!("invalid PARITY_DEBUG_TIREDNESS_CREATION_ORDER: {error}")
+                    })
+                }),
+        )
+    })
+}
+
 /// Tiredness recovery per frame when not fighting or moving.
 /// Based on endurance stat.
 pub fn tiredness_recovery(current_tiredness: u16, endurance: u16) -> u16 {
@@ -1425,7 +1466,37 @@ pub fn propose_good_sword_strike(
     sword_strike_boredom: &mut Vec<u16>,
     also_parade: bool,
 ) -> Option<ProposedCombatAction> {
-    propose_good_sword_strike_with_debug(sim, ctx, nearby, sword_strike_boredom, also_parade, None)
+    propose_good_sword_strike_with_debug(
+        sim,
+        ctx,
+        nearby,
+        sword_strike_boredom,
+        also_parade,
+        None,
+        &mut None,
+    )
+}
+
+/// Out-parameter for the sweep-geometry side effect of strike estimation.
+///
+/// `RHElementActorHuman::EstimateDamageOfSwordStrike`
+/// (`original-code/RHelementactorhuman.cpp:12875`) builds its candidate
+/// victim list through `GetPossibleVictimsOfSwordStrike`, and the lateral
+/// and half-circle collectors
+/// (`original-code/RHelementactorhuman.cpp:10854` and `:10941`) are not
+/// side-effect free: both overwrite the human-owned
+/// `mfInitialStrikeAngle` / `mfFinalStrikeAngle` / `mfCurrentStrikeAngle`
+/// before they scan. Proposing a strike therefore rebases whatever sweep
+/// geometry an earlier, interrupted lateral/circle strike left behind, and
+/// the retained victim list is later tested against the *proposal's*
+/// geometry. `GetPossibleVictimsOfCircleSwordStrike`
+/// (`:10781`), the straight collector and the push collector write nothing,
+/// so only the last lateral/half-circle candidate that actually reached
+/// estimation is reported here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrikeSelectionSweepRebase {
+    /// Strike whose collector performed the final angle write.
+    pub strike: SwordStrike,
 }
 
 pub(crate) fn propose_good_sword_strike_with_debug(
@@ -1435,6 +1506,7 @@ pub(crate) fn propose_good_sword_strike_with_debug(
     sword_strike_boredom: &mut Vec<u16>,
     also_parade: bool,
     debug: Option<SwordStrikeProposalDebug>,
+    sweep_rebase: &mut Option<StrikeSelectionSweepRebase>,
 ) -> Option<ProposedCombatAction> {
     // Ensure boredom array is properly sized.
     if sword_strike_boredom.len() < NUM_NORMAL_SWORD_STRIKES {
@@ -1589,6 +1661,17 @@ pub(crate) fn propose_good_sword_strike_with_debug(
             }
 
             // Estimate damage against all nearby victims for this strike.
+            // EstimateDamageOfSwordStrike always builds its victim list
+            // first, so the lateral / half-circle collectors' angle writes
+            // land here even when the estimate is later discarded.
+            if matches!(
+                ctx.attacker_profile.thrusts[strike as usize].kind,
+                WeaponThrustKind::Lateral
+                    | WeaponThrustKind::TrueHalfCircle
+                    | WeaponThrustKind::FalseHalfCircle
+            ) {
+                *sweep_rebase = Some(StrikeSelectionSweepRebase { strike });
+            }
             let (raw_damage, num_victims) =
                 estimate_damage_of_sword_strike(ctx, strike, is_drunken, nearby);
 

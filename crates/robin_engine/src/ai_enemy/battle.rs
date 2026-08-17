@@ -1175,6 +1175,27 @@ impl EnemyAi {
                 ////////// offensive decisions //////////////
 
                 if self.is_archer() && self.base.blood_alcohol == 0 {
+                    if crate::ai_enemy::battle_decision_debug_enabled() {
+                        eprintln!(
+                            "ARCHER_DECISION frame={} me={} tower={} sbb={} shooting_point={:?} too_near={} pos={:?} primary={} primary_pos={:?}",
+                            ctx.frame,
+                            self.base.me,
+                            self.tower_guard,
+                            self.shield_bearer_before_me,
+                            self.my_shooting_point,
+                            self.base.primary_target != 0
+                                && self.archer_is_too_near_to_enemy(
+                                    &ctx.position,
+                                    self.base.primary_target,
+                                    ctx,
+                                    tick,
+                                ),
+                            ctx.position,
+                            self.base.primary_target,
+                            self.find_fighter(self.base.primary_target, tick)
+                                .map(|f| f.position),
+                        );
+                    }
                     // Archer offensive.
                     if self.tower_guard {
                         if !self.base.friends_are_alerted {
@@ -1342,6 +1363,18 @@ impl EnemyAi {
             friends_lower_company = tick.friends_lower_company,
             "battle_decisions: chose decision"
         );
+        if crate::ai_enemy::battle_decision_debug_enabled() {
+            eprintln!(
+                "BATTLE_DECISION frame={} me={} decision={:?} old_substate={:?} primary={} seen={} friends_nearer={}",
+                ctx.frame,
+                self.base.me,
+                decision,
+                old_substate,
+                self.base.primary_target,
+                num_enemies_i_can_see,
+                friends_nearer_to_enemy
+            );
+        }
         // Carry out decision (with possible fallback loop). The Observe
         // arm's avenger-on-roof fallback returns from the whole routine
         // before the log line is registered; every other path logs.
@@ -2157,6 +2190,20 @@ impl EnemyAi {
                                 )
                             });
                         let d = pos_diff(&target_pos, &cover_pos);
+                        if crate::ai_enemy::battle_decision_debug_enabled() {
+                            eprintln!(
+                                "COVER_ARM frame={} me={} bearer={} cover={:?} target={} target_pos={:?} sq={} sq_view={} grid={}",
+                                ctx.frame,
+                                self.base.me,
+                                cover_shield_bearer,
+                                cover_pos,
+                                self.base.primary_target,
+                                target_pos,
+                                square_norm(d),
+                                ctx.sq_standard_view_radius,
+                                grid.is_some(),
+                            );
+                        }
                         if square_norm(d) >= ctx.sq_standard_view_radius {
                             // Cover point too far from target — fall back to shoot
                             self.update_shield_bearer_before_me(0);
@@ -2198,6 +2245,15 @@ impl EnemyAi {
                                 remark: Remark::ArchersBehindShieldBearers,
                             });
                     } else {
+                        if crate::ai_enemy::battle_decision_debug_enabled() {
+                            eprintln!(
+                                "COVER_ARM frame={} me={} bearer={} cover=None grid={}",
+                                ctx.frame,
+                                self.base.me,
+                                cover_shield_bearer,
+                                grid.is_some(),
+                            );
+                        }
                         // Can't compute position — give up cover attempt.
                         self.update_shield_bearer_before_me(0);
                         decision = Decision::Shoot;
@@ -2547,6 +2603,20 @@ impl EnemyAi {
                 )
             })
         };
+        // `mpMyLineJump = mpMe->IsTableSwordfightNeeded( mpPrimaryTarget )`
+        // (`original-code/RHartificialmalignity.cpp:6836`) writes the AI
+        // MEMBER, not a local: the answer persists after this decision
+        // returns and is read again by `BeginSwordfight`
+        // (`:7184`), by the "too far to adversary" gate in
+        // `ReconsiderSwordfight` (`:13931`) and — the case that matters
+        // here — by `ProposeCombatPositionsAround`'s
+        // `bProposePositionsAround = ( mpMyLineJump == NULL )` and its
+        // SCOTCHED `mpMyLineJump != NULL` guard (`:14110`, `:14143`).
+        // Rust only computed a local, so a fighter standing on a jump
+        // line still looked line-less once the fight started and fell
+        // through to the 16-direction surround ring the Original never
+        // generates.
+        self.my_line_jump = my_line_jump;
         let target_animation = if target_snapshot_is_current {
             tick.primary_target_animation
         } else {
@@ -2746,6 +2816,22 @@ impl EnemyAi {
             return;
         }
 
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=reconsider_close_enough working_distance_bits={:08x} working_distance={} sword_range={} run_distance={} b_charge={} b_first={} my_line_jump={:?} target_in_lift={} working_target={}",
+                ctx.frame,
+                self.base.me,
+                working_distance.to_bits(),
+                working_distance,
+                sword_range,
+                run_distance,
+                b_charge,
+                b_first_consideration,
+                my_line_jump,
+                target_in_lift,
+                working_target,
+            );
+        }
         // Close enough to fight? Charging units defer until the
         // reachpoint has been hit; everyone else engages immediately.
         if working_distance <= sword_range && (!b_charge || reachpoint) {

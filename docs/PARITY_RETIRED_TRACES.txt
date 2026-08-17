@@ -265,3 +265,13 @@ parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_072/replay-003-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_073/replay-003-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-003-session-0001.jsonl.zst
+# B5-detection: the three 30s Savegame_023 recordings carry one extra
+# IsReachable per frame that today's Original does not emit. Fresh captures
+# from the same save (sha256 295bab92...) and the same -PARITYSEED 1 /
+# -PARITYRANDOMINPUT {1,2,3} reproduce every other query bit-exactly over the
+# full compared range, but never emit soldier 148's eye -> (1035.3, 1433.4, 0)
+# ray that the recordings repeat for exactly 21 frames. Rust matches the fresh
+# captures; only the archived query count is extra.
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_023/replay-001-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_023/replay-002-session-0001.jsonl.zst
+parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_023/replay-003-session-0001.jsonl.zst

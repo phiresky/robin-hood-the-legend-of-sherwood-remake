@@ -1896,6 +1896,37 @@ impl FriendlyAi {
     ///    SEEKING_CIVILIAN_RUNNING_TO_SOLDIER.
     pub const ALERTFLAG_CHECK_DOOR_PATH: u16 = 0x0001;
 
+    /// `mpMe->DeleteAllDetectables( DETECTABLE_FRIEND )` as issued from
+    /// inside `RHArtificialBonhomie::AlertSoldier`
+    /// (`RHartificialbonhomie.cpp:1688`, `:1700`, `:1721`).
+    ///
+    /// Every one of those deletes runs *after* the loop's inline
+    /// `mpMe->AddDetectable( pSoldier, DETECTABLE_FRIEND )`
+    /// (`RHartificialbonhomie.cpp:1648`), so a failed alert always leaves the
+    /// FRIEND bucket empty. Rust defers both halves onto the effect outbox,
+    /// and the drain applies `delete_detectables` (`engine/ai/mod.rs:9045`)
+    /// *before* `append_detectables` (`engine/ai/mod.rs:9221`) — which would
+    /// let this call's own adds outlive the delete that is supposed to wipe
+    /// them. Dropping the still-pending FRIEND appends as the delete is
+    /// recorded reproduces the C++ order exactly: the bucket ends empty
+    /// whether an entry had already been applied or was still queued.
+    ///
+    /// TODO: the general fix is one order-preserving detectable-mutation log
+    /// instead of the four independent add/append/delete vectors; until then
+    /// each add-then-delete call site has to sequence itself like this.
+    fn delete_all_friend_detectables(&mut self) {
+        self.base
+            .outbox
+            .actor
+            .append_detectables
+            .retain(|(_, det_type)| *det_type != crate::element::DetectableType::Friend);
+        self.base
+            .outbox
+            .actor
+            .delete_detectables
+            .push(crate::element::DetectableType::Friend);
+    }
+
     pub(crate) fn alert_soldier(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2090,11 +2121,7 @@ impl FriendlyAi {
                         // Clear the friend list and return false.
                         // We queue the clear — the engine drains it
                         // post-think.
-                        self.base
-                            .outbox
-                            .actor
-                            .delete_detectables
-                            .push(crate::element::DetectableType::Friend);
+                        self.delete_all_friend_detectables();
                         return false;
                     }
                 }
@@ -2116,11 +2143,7 @@ impl FriendlyAi {
 
         let Some((target_handle, _, target_pos)) = best else {
             // No candidate found — clear friend list and give up.
-            self.base
-                .outbox
-                .actor
-                .delete_detectables
-                .push(crate::element::DetectableType::Friend);
+            self.delete_all_friend_detectables();
             return false;
         };
 
@@ -2154,11 +2177,7 @@ impl FriendlyAi {
                     doors,
                 );
             }
-            self.base
-                .outbox
-                .actor
-                .delete_detectables
-                .push(crate::element::DetectableType::Friend);
+            self.delete_all_friend_detectables();
             return false;
         }
 
@@ -2214,11 +2233,7 @@ impl FriendlyAi {
             return;
         }
         if check_door_path {
-            self.base
-                .outbox
-                .actor
-                .delete_detectables
-                .push(crate::element::DetectableType::Friend);
+            self.delete_all_friend_detectables();
         }
         match failure {
             AlertSoldierFailureContinuation::PanicWithRemark => {

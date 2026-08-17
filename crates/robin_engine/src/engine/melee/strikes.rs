@@ -4,6 +4,15 @@
 
 use super::*;
 
+/// `PARITY_DEBUG_SWORD_DAMAGE=1` traces every sword-damage application and
+/// every sweep-strike lifecycle step (seed, per-frame phase, per-frame arc
+/// test) so a divergent hit frame can be attributed to a concrete attacker,
+/// victim list and sweep angle.
+pub(crate) fn sword_damage_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_SWORD_DAMAGE").is_some())
+}
+
 fn strike_effect_debug_matches(
     frame: u32,
     attacker_creation_order: u32,
@@ -804,10 +813,20 @@ impl EngineInner {
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
             Some(profile) => {
                 let energy = combat::strike_energy_cost(profile, strike);
+                let frame = self.control.frame_counter;
+                let creation_order = self.world.original_creation_order(actor_id);
                 if let Some(entity) = self.get_entity_mut(actor_id)
                     && let Some(human) = entity.human_data_mut()
                 {
+                    let before = human.tiredness;
                     human.tiredness = combat::add_strike_tiredness(human.tiredness, energy);
+                    if combat::tiredness_debug_matches(creation_order) {
+                        eprintln!(
+                            "RUST_TIREDNESS frame={frame} co={creation_order} site=strike_energy \
+                             before={before} after={} strike={} energy={energy}",
+                            human.tiredness, strike as u32
+                        );
+                    }
                 }
             }
             None => tracing::warn!(
@@ -1203,6 +1222,22 @@ impl EngineInner {
         attacker_id: EntityId,
         phase: SweepTickPhase,
     ) {
+        if sword_damage_debug_enabled() {
+            eprintln!(
+                "[SWEEPPHASE f={} attacker={:?} (co {}) phase={:?} sweep_state={:?} human_victims={:?}]",
+                self.control.frame_counter,
+                attacker_id,
+                self.world.original_creation_order(attacker_id),
+                phase,
+                self.get_entity(attacker_id)
+                    .and_then(Entity::actor_data)
+                    .and_then(|a| a.sweep_state.as_ref())
+                    .map(|s| s.pending_victims.len()),
+                self.get_entity(attacker_id)
+                    .and_then(Entity::human_data)
+                    .map(|h| h.sword_sweep.victims.len()),
+            );
+        }
         match phase {
             SweepTickPhase::Dormant | SweepTickPhase::Start => {}
             SweepTickPhase::Initialized => {
@@ -1379,6 +1414,88 @@ impl EngineInner {
         }
     }
 
+    /// Replay the angle side effect of `EstimateDamageOfSwordStrike`.
+    ///
+    /// `ProposeGoodSwordStrike` estimates each candidate strike through
+    /// `EstimateDamageOfSwordStrike`
+    /// (`original-code/RHelementactorhuman.cpp:12875`), which builds its
+    /// victim list with `GetPossibleVictimsOfSwordStrike`
+    /// (`original-code/RHelementactorhuman.cpp:11147`). The lateral collector
+    /// (`:10958-10976`) and the half-circle collector (`:10873-10890`) both
+    /// overwrite the human-owned `mfInitialStrikeAngle`,
+    /// `mfFinalStrikeAngle` and `mfCurrentStrikeAngle` before scanning, so an
+    /// interrupted sweep's retained victim list is later tested against the
+    /// *last estimated* lateral/half-circle candidate's geometry rather than
+    /// against the geometry its own strike installed. The circle, straight
+    /// and push collectors write nothing.
+    pub(super) fn apply_strike_selection_sweep_rebase(
+        &mut self,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        rebase: Option<crate::combat::StrikeSelectionSweepRebase>,
+    ) {
+        let Some(rebase) = rebase else {
+            return;
+        };
+        let Some(entity) = self.get_entity(attacker_id) else {
+            return;
+        };
+        let Some(profile_idx) = get_hth_weapon_id_full(entity, &assets.profile_manager) else {
+            return;
+        };
+        let profile = assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "strike-selection sweep rebase for {attacker_id:?} references missing weapon profile {profile_idx}"
+                )
+            });
+        let thrust = &profile.thrusts[rebase.strike as usize];
+        let dir_angle = sector_to_angle(entity.element_data().direction());
+        let initial_angle = strike_profile_angle(thrust.initial_angle);
+        let final_angle = strike_profile_angle(thrust.final_angle);
+        use crate::profiles::WeaponThrustDirection;
+        let (initial, final_a) = match thrust.kind {
+            WeaponThrustKind::Lateral => match thrust.direction {
+                WeaponThrustDirection::RightToLeft => {
+                    (dir_angle + initial_angle, dir_angle - final_angle)
+                }
+                _ => (dir_angle - initial_angle, dir_angle + final_angle),
+            },
+            WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
+                match thrust.direction {
+                    WeaponThrustDirection::RightToLeft => {
+                        let init = dir_angle + initial_angle;
+                        (init, init - std::f32::consts::PI)
+                    }
+                    _ => {
+                        let init = dir_angle - initial_angle;
+                        (init, init + std::f32::consts::PI)
+                    }
+                }
+            }
+            _ => return,
+        };
+        let Some(entity) = self.get_entity_mut(attacker_id) else {
+            return;
+        };
+        if let Some(human) = entity.human_data_mut() {
+            human.sword_sweep.initial_angle = initial;
+            human.sword_sweep.current_angle = dir_angle;
+            human.sword_sweep.final_angle = final_a;
+        }
+        // The executable mirror shares the same storage in the Original, so
+        // a live sweep must follow the rebase too.
+        if let Some(actor) = entity.actor_data_mut()
+            && let Some(sweep) = actor.sweep_state.as_mut()
+        {
+            sweep.initial_angle = initial;
+            sweep.current_angle = dir_angle;
+            sweep.final_angle = final_a;
+        }
+    }
+
     /// Initialize a per-frame sweep for a lateral/circle sword strike.
     ///
     /// Collects potential victims and computes the sweep angles so that
@@ -1456,6 +1573,24 @@ impl EngineInner {
         };
 
         let num_victims = victims.len();
+        if sword_damage_debug_enabled() {
+            eprintln!(
+                "[SWEEPINIT f={} attacker={:?} (co {}) strike={:?} kind={:?} victims={:?} init={} cur={} fin={} rot={}]",
+                self.control.frame_counter,
+                attacker_id,
+                self.world.original_creation_order(attacker_id),
+                strike,
+                strike_kind,
+                victims
+                    .iter()
+                    .map(|&v| self.world.original_creation_order(v))
+                    .collect::<Vec<_>>(),
+                initial,
+                dir_angle,
+                final_a,
+                signed_rotation,
+            );
+        }
         let sweep = crate::movement::SweepState {
             pending_victims: victims,
             initial_angle: initial,
@@ -1597,6 +1732,18 @@ impl EngineInner {
 
             let initial_sector = angle_to_sector(active.sweep.initial_angle);
             let current_sector = angle_to_sector(active.sweep.current_angle);
+            if sword_damage_debug_enabled() {
+                eprintln!(
+                    "[SWEEPTICK f={} attacker={:?} kind={:?} init_sec={} cur_sec={} cur_angle={} pending={}]",
+                    self.control.frame_counter,
+                    active.attacker_id,
+                    active.sweep.strike_kind,
+                    initial_sector,
+                    current_sector,
+                    active.sweep.current_angle,
+                    active.sweep.pending_victims.len(),
+                );
+            }
 
             let mut hit_indices = Vec::new();
 
@@ -2911,6 +3058,7 @@ impl EngineInner {
                 );
             }
             let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
+            let mut sweep_rebase = None;
             let proposed = crate::combat::propose_good_sword_strike_with_debug(
                 sim,
                 &ctx,
@@ -2918,7 +3066,9 @@ impl EngineInner {
                 &mut attack.boredom,
                 false,
                 debug,
+                &mut sweep_rebase,
             );
+            self.apply_strike_selection_sweep_rebase(assets, attack.soldier_id, sweep_rebase);
             if special_debug {
                 eprintln!(
                     "SPECIAL_STRIKE frame={} owner={} phase=after_proposal result={:?} selected={}",

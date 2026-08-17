@@ -57,8 +57,11 @@ impl SequencePhase {
     /// queue is non-empty. Therefore normal-priority elements registered by
     /// an immediate predecessor belong to this same drain just like
     /// immediate and Wait work; they must not wait for the next frame.
+    /// Parked `NextSequenceElementsGo` iterations stay with the manager: the
+    /// action a registration produced must be dispatched before the loop
+    /// registers the following sibling, so the next splice picks them up.
     fn splice_registered_actions(&mut self, orders: &mut OrderRuntime) {
-        let synchronous = orders.sequence_manager.take_pending_synchronous_actions();
+        let synchronous = orders.sequence_manager.take_settled_synchronous_actions();
         for action in synchronous.into_iter().rev() {
             self.actions.push_front(action);
         }
@@ -863,11 +866,38 @@ struct TargetInteractionContext<'a> {
 impl TargetInteractionContext<'_> {
     fn dispatch(
         &mut self,
+        owner: EntityId,
         owner_command: Command,
         target: Option<EntityId>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
+        // SEARCH is the one command in this group that does not belong to
+        // RHElementTarget. `RHElementActorHuman::Translate(RHCOMMAND_SEARCH)`
+        // inserts a single SEARCHING / SEARCHING_CROUCHED order carrying
+        // whatever antagonist the element holds
+        // (RHelementactorhuman.cpp:2063-2069), and callers legitimately pass a
+        // corpse (RHartificialmalignity.cpp:1355, and every PC click on a
+        // lying body) or no antagonist at all (the SEARCH x4 net-pickup
+        // sequence, RHartificialmalignity.cpp:2212-2215). Applying the
+        // fx-target gate to it terminated all of those before they animated.
+        if owner_command == Command::SearchCmd {
+            let crouched = self.entities.get(owner).is_some_and(|entity| {
+                entity.element_data().posture == crate::element::Posture::Crouched
+            });
+            let order_type = if crouched {
+                crate::order::OrderType::SearchingCrouched
+            } else {
+                crate::order::OrderType::Searching
+            };
+            let id = crate::order::alloc_order_id(self.next_order_id);
+            let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
+            order.compute_direction = false;
+            order.antagonist = target;
+            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
+        }
         let Some(target) = target else {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
@@ -894,7 +924,6 @@ impl TargetInteractionContext<'_> {
             Command::HandleTarget => &[crate::order::OrderType::HandlingTarget],
             Command::UseLever => &[crate::order::OrderType::UsingLever],
             Command::TakeTarget => &[crate::order::OrderType::TakingTarget],
-            Command::SearchCmd => &[crate::order::OrderType::Searching],
             _ => unreachable!("non-target command passed to target interaction context"),
         };
         for &order_type in order_types {
@@ -2534,7 +2563,9 @@ impl TimerImmediateContext<'_> {
             .get_element(seq_id, elem_idx)
             .and_then(|element| element.get_property(crate::sequence::Field::Timer))
             .and_then(|value| match value {
-                crate::sequence::FieldValue::Integer(value) => Some(*value),
+                // `RHFIELD_TIMER` is a signed `int` in the Original; the
+                // sequence-element property table stores it as a `u32` word.
+                crate::sequence::FieldValue::Integer(value) => Some(*value as i32),
                 _ => None,
             })
             .unwrap_or(0);

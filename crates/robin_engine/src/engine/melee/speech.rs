@@ -646,7 +646,8 @@ impl EngineInner {
 
     /// Per-frame tiredness recovery.
     ///
-    /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
+    /// `if !IsSwordfighting() && !IsMoving() { muwTiredness -= GetEndurance()/10 }`
+    /// (`original-code/RHelementactorhuman.cpp:496-513`).
     /// Apply the human tiredness tail for one live owner.
     pub(crate) fn tick_tiredness_for(&mut self, id: EntityId, assets: &LevelAssets) {
         let frame = self.control.frame_counter;
@@ -671,10 +672,24 @@ impl EngineInner {
         let is_swordfighting = entity
             .human_data()
             .is_some_and(|human| !human.opponents.is_empty());
-        let is_moving = entity
-            .actor_data()
-            .is_some_and(|actor| actor.action_state.is_moving());
+        // `RHElement::IsMoving()` (`original-code/RHElement.h:355`) forwards to
+        // `RHPositionInterface::IsMoving()`
+        // (`original-code/RHpositioninterface.h:189`), which is the 3D
+        // position-versus-old-position test, NOT an action-state test. A
+        // swordfighter that walks a step every other frame is "not moving" on
+        // the frames where the two agree, and the Original recuperates on
+        // exactly those frames.
+        let is_moving = entity.position_iface().is_moving();
+        let probe = crate::combat::tiredness_debug_matches(creation_order);
         if is_swordfighting || is_moving {
+            if probe {
+                let tiredness = entity.human_data().map_or(0, |human| human.tiredness);
+                eprintln!(
+                    "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation_skipped \
+                     tiredness={tiredness} swordfighting={} moving={}",
+                    is_swordfighting as u8, is_moving as u8
+                );
+            }
             return;
         }
         let endurance = endurance_from_profile(entity, &assets.profile_manager);
@@ -682,7 +697,15 @@ impl EngineInner {
         let human = entity
             .human_data_mut()
             .expect("validated human tiredness owner lost HumanData");
+        let before = human.tiredness;
         human.tiredness = human.tiredness.saturating_sub(recuperation);
+        if probe {
+            eprintln!(
+                "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation \
+                 before={before} after={} endurance={endurance} recuperation={recuperation}",
+                human.tiredness
+            );
+        }
     }
 
     // ─── Tie-up (public, called from natives/UI) ────────────────────

@@ -87,6 +87,43 @@ impl EngineInner {
             .map(|raw| crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default))
             .collect();
 
+        // Per-layer SECTOR_SOUND grid registry.
+        //
+        // `RHFastFindGrid::InitializeFromProtoStream` registers the default
+        // sight obstacle's material list at layer 0
+        // (`RHfastfindgrid.cpp:5378-5387`) and then loads every obstacle,
+        // each of which registers its own material list at that obstacle's
+        // `muwLayer` (`RHsightobstacle.cpp:461-471`) — `0xFFFF` when the
+        // obstacle is not a projection area (`RHsightobstacle.cpp:412-415`).
+        // `SetObstacleAndMaterial`'s no-obstacle arm queries the grid at the
+        // actor's own layer, so the registrations must keep their layer.
+        assets.material_sectors.registrations.clear();
+        for raw in &filtered_material_sectors {
+            if let Some(sector) =
+                crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default)
+            {
+                assets.material_sectors.register(0, sector);
+            }
+        }
+        for obstacle in &loaded.proto.sight_obstacles {
+            let layer = obstacle.projection_area.map_or(u16::MAX, |(_, layer)| layer);
+            for &index in &obstacle.material_indices {
+                let Some(raw) = loaded.proto.material_sectors.get(usize::from(index)) else {
+                    tracing::error!(
+                        "SightObstacle references material sector {index} but only {} exist — \
+                         dropping SECTOR_SOUND registration",
+                        loaded.proto.material_sectors.len()
+                    );
+                    continue;
+                };
+                if let Some(sector) =
+                    crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default)
+                {
+                    assets.material_sectors.register(layer, sector);
+                }
+            }
+        }
+
         // Warn when the mission header's control CRC differs from the
         // proto-level misc chunk's CRC — a cheap sanity check that the
         // mission file matches the proto-level it was authored against.

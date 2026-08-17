@@ -989,6 +989,21 @@ impl EngineInner {
                 }
             }
         }
+        if detaches_selected_order {
+            // Same C++ statement pair as the `installed_order` detach above:
+            // `mpSequenceElement = NULL` alongside `mpOrder = NULL`
+            // (`RHelementactor.cpp:6698-6700`). Rust's in-progress registry
+            // drops the element on its own terminal transition, but a card
+            // raised from inside the element's own `Translate` still holds the
+            // translation selection, and everything that runs later in that
+            // same `Translate` — notably the `Wait()` that
+            // `RHPathFinder::AddPathRequest` launches right after `Stop()`
+            // (`RHpathfinder.cpp:464-465`) — must arbitrate against a cleared
+            // selection instead of the element that just died.
+            self.orders
+                .sequence_manager
+                .clear_translating_element_if_selected(owner, seq_id, usize::from(elem_idx));
+        }
         if cleared_selected_goal {
             // A queued replacement may carry the outgoing movement's goal
             // across Rust's eager halt. Once a later selected element has
@@ -1329,6 +1344,17 @@ impl EngineInner {
                 self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                     sim, victim_id, assets, stim,
                 );
+                // `RHArtificialMalignity::ThinkUnexpectedEvent`'s EVENT_GOTHIT
+                // arm ends in `mpMe->SetViewStatus(EYES_DIE_OR_GET_UNCONSCIOUS)`
+                // (`original-code/RHartificialmalignity.cpp:6654`), which the
+                // Original applies inside `Think` — i.e. before the next
+                // statement here. The port routes that write through the AI
+                // recovery outbox, so it has to be drained now; otherwise the
+                // gaze reset below compares against a stale eye status and
+                // `SetViewStatus` computes the wrong `bTransition`
+                // (`original-code/RHelementactornpc.cpp:1375-1379`), freezing
+                // a half-finished head-turn angle in the view cone.
+                self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
                 #[cfg(test)]
                 observe_strangle_condolation_step("EventGotHit");
 

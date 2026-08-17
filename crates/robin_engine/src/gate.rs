@@ -1382,50 +1382,32 @@ pub fn find_path_into_door(
 ) -> Option<Vec<GatePathStep>> {
     let source = MapPoint::new(source.0, source.1);
     let goal_door = doors.get(usize::from(goal_door_index))?;
-    let goal_mid = MapPoint::new(
-        0.5 * (goal_door.point_in.x + goal_door.point_out.x),
-        0.5 * (goal_door.point_in.y + goal_door.point_out.y),
-    );
+    // `RHDoor::GetPointMid()` (`original-code/RHGate.h:198`) returns the
+    // level-authored `mptMid`, which `RHDoor::InitializeFromProtoStream`
+    // deserializes as a point of its own between `point_out` and `point_in`
+    // (`original-code/RHGate.cpp:542-578`).  It is NOT the average of
+    // `point_in` and `point_out`: on the shipped Leicester door table the two
+    // differ on essentially every gate (door 49 is `in=(378,1565)`
+    // `out=(362,1535)` `mid=(373,1546)`, not `(370,1550)`).  The A* heuristic
+    // in `FindPathIntoDoor` / `FindPathToDoorNodes` measures against the
+    // authored mid (`original-code/RHfastfindgrid.cpp:9896`, `:9905`,
+    // `:10022`, `:10032`, `:10045`, `:10055`).
+    let goal_mid = goal_door.point_mid;
 
-    // Source sector is the goal door's own sector — the gate is
-    // reachable directly; return a single-step path.
-    if source_sector == goal_door.sector_out && goal_door.active {
-        if let Some(a) = auth
-            && !is_actor_authorized_for_gate(
-                goal_door,
-                true,
-                a,
-                building_has_capacity(goal_door, true, building_is_authorized),
-                allow_leave_map,
-                sector_lift_type,
-            )
-        {
-            return None;
-        }
-        return Some(vec![GatePathStep {
-            door_index: goal_door_index,
-            direct: true,
-        }]);
-    }
-    if source_sector == goal_door.sector_in && goal_door.active {
-        if let Some(a) = auth
-            && !is_actor_authorized_for_gate(
-                goal_door,
-                false,
-                a,
-                true,
-                allow_leave_map,
-                sector_lift_type,
-            )
-        {
-            return None;
-        }
-        return Some(vec![GatePathStep {
-            door_index: goal_door_index,
-            direct: false,
-        }]);
-    }
-
+    // No "the goal door already borders the source sector" shortcut:
+    // `RHFastFindGrid::FindPathIntoDoor` (`original-code/RHfastfindgrid.cpp:9860`)
+    // always seeds every gate of the source sector and runs the A*, and the
+    // goal test only fires when the goal door is *popped*
+    // (`FindPathToDoorNodes`, `original-code/RHfastfindgrid.cpp:9968`).  A
+    // cheaper multi-gate route can therefore relax the goal door first —
+    // overwriting its `mbDirect`, `mfDistanceFromSource` and
+    // `mpPreviousLink` (`original-code/RHfastfindgrid.cpp:10008-10058`) — so
+    // the Original can walk around through neighbouring sectors and arrive at
+    // the goal door from its far side even when that door borders the source
+    // sector.  Returning a one-step path here skipped those intermediate
+    // gates, and with them the building-exit WAIT_TIMER/CHANGE_POSITION
+    // sub-sequences (`original-code/RHsequence.cpp:484`, `:519`) and their two
+    // `rand() & 15` draws.
     if doors.is_empty() {
         return None;
     }
@@ -1752,6 +1734,45 @@ pub fn compute_avenger_wait_position(
         });
     }
     None
+}
+
+/// Select the doors which define a lift's low/high endpoints, returned as
+/// `(lowest, highest)` indices into `doors`.
+///
+/// Original `RHSectorLift::InitializeFromProtoStream`
+/// (`original-code/RHsector.cpp:1493-1521`) owns only the doors whose inside
+/// sector is this lift and picks `mpLowestDoor` / `mpHighestDoor` purely by
+/// `GetPointOut().mY` — the largest screen Y is the lowest door, the smallest
+/// screen Y the highest. Door *type* plays no part: the reference even keeps
+/// the `mpHighestDoor->GetType() == DOOR_LIFT_HIGH` assertion commented out
+/// (`RHsector.cpp:1524`) because a lift's high endpoint is frequently not a
+/// `DOOR_LIFT_HIGH`. Comparisons are strict, so the first door wins a tie.
+///
+/// Every `RHSectorLift` accessor pair is derived from these two doors:
+/// `GetLow/HighExitPoint` → `GetPointIn`, `GetLow/HighEntryPoint` →
+/// `GetPointOut`, `GetLow/HighSector`, `GetLow/HighLayer`,
+/// `GetLow/HighExitDirection` (`original-code/RHSector.h:315-327`).
+pub fn lift_endpoint_door_indices(doors: &[Door], lift_sector: SectorNumber) -> Option<(u32, u32)> {
+    let mut candidates = doors
+        .iter()
+        .enumerate()
+        .filter(|(_, door)| door.sector_in == lift_sector);
+    let (first_idx, first) = candidates.next()?;
+    let mut low = (first_idx as u32, first.point_out.y);
+    let mut high = low;
+    for (index, door) in candidates {
+        if door.point_out.y > low.1 {
+            low = (index as u32, door.point_out.y);
+        }
+        if door.point_out.y < high.1 {
+            high = (index as u32, door.point_out.y);
+        }
+    }
+    assert_ne!(
+        low.0, high.0,
+        "lift sector {lift_sector} has fewer than two distinct high/low endpoint doors"
+    );
+    Some((low.0, high.0))
 }
 
 // ---------------------------------------------------------------------------

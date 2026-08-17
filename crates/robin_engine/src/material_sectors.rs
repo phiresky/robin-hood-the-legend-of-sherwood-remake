@@ -206,9 +206,30 @@ impl MaterialSector {
     }
 }
 
+/// One `RHFastFindGrid::AddSector( pMaterialSector, layer, true )` call.
+///
+/// The Original registers every SECTOR_SOUND polygon into the fast-find grid
+/// **on a specific layer**: the default sight obstacle's list goes in at layer
+/// 0 (`RHfastfindgrid.cpp:5385`) and every other obstacle registers its own
+/// list at that obstacle's `muwLayer`
+/// (`RHsightobstacle.cpp:469-470`, `muwLayer == 0xFFFF` for non
+/// projection areas, `RHsightobstacle.cpp:412-415`).  A grid query therefore
+/// only ever sees the sectors registered on the querying actor's own layer.
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct MaterialSectorRegistration {
+    pub layer: u16,
+    pub sector: MaterialSector,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct MaterialSectors {
     pub sectors: Vec<MaterialSector>,
+    /// Every `AddSector( sector, layer, true )` registration, in the order the
+    /// Original performs them: the default obstacle's SIGHT list first, then
+    /// each sight obstacle's own list.  Consumed by
+    /// [`Self::material_at_layer`].
+    #[serde(default)]
+    pub registrations: Vec<MaterialSectorRegistration>,
     pub default_material: GameMaterial,
 }
 
@@ -228,13 +249,39 @@ impl MaterialSectors {
             .collect();
         Self {
             sectors,
+            registrations: Vec::new(),
             default_material,
         }
     }
 
     pub fn clear(&mut self) {
         self.sectors.clear();
+        self.registrations.clear();
         self.default_material = GameMaterial::default();
+    }
+
+    /// Append one `AddSector( sector, layer, true )` registration.
+    pub fn register(&mut self, layer: u16, sector: MaterialSector) {
+        self.registrations
+            .push(MaterialSectorRegistration { layer, sector });
+    }
+
+    /// Material at `point` as seen from `layer`.
+    ///
+    /// Mirrors `RHPositionInterface::SetObstacleAndMaterial`'s no-obstacle arm
+    /// (`RHpositioninterface.cpp:610-625`): it seeds the material with
+    /// `GetDefaultMaterial()`, asks the grid for the SECTOR_SOUND sectors in
+    /// the block at `( mpointMap, GetLayer() )`, and takes the first one whose
+    /// bounding box *and* polygon contain the point.  Sectors registered on
+    /// any other layer are invisible to that query, so an actor standing on a
+    /// roof or inside a building never picks up the ground-level material.
+    pub fn material_at_layer(&self, point: MapPoint, layer: u16) -> GameMaterial {
+        for registration in &self.registrations {
+            if registration.layer == layer && registration.sector.contains(point) {
+                return registration.sector.material;
+            }
+        }
+        self.default_material
     }
 
     /// Material at the given map point — first SECTOR_SOUND polygon that

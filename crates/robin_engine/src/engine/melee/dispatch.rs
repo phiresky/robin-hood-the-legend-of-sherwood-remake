@@ -72,6 +72,15 @@ impl EngineInner {
     /// is the complete runtime identity of the strike, as in Original.
     ///
     /// Handles the `SwordstrikeThrustA..I` strike commands.
+    ///
+    /// Returns [`OwnerActionBarrier::Skip`] whenever translation marked the
+    /// element `RHSEQ_IMPOSSIBLE`. Original's `Translate` reaches that
+    /// `SetState` inside `RHElementActor::Instruct`
+    /// (`original-code/RHelementactorhuman.cpp:1896-1898`); the resulting
+    /// `SendCondolationCard` detaches `mpSequenceElement`, so the immediately
+    /// following pointer-change test returns before the acceptance epilogue
+    /// writes `mmotionState = RHMOTION_IN_PROGRESS`
+    /// (`original-code/RHelementactor.cpp:1468-1476`).
     pub(crate) fn dispatch_sword_strike(
         &mut self,
         _sim: &crate::sim_rng::SimulationContext,
@@ -81,7 +90,7 @@ impl EngineInner {
         strike: SwordStrike,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         let admission_debug = thrust_admission_debug_config().is_some_and(|config| {
             strike == SwordStrike::A
                 && config.frame == self.control.frame_counter
@@ -96,7 +105,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         // Translate B..I literally stores the interaction antagonist, even
@@ -111,7 +120,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         if strike == SwordStrike::A {
@@ -188,7 +197,7 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .element_impossible(seq_id, elem_idx);
-                return;
+                return OwnerActionBarrier::Skip;
             }
         }
 
@@ -235,6 +244,7 @@ impl EngineInner {
             ?strike,
             "Sword strike dispatched"
         );
+        OwnerActionBarrier::Reach
     }
 
     // ─── Enter / quit swordfight ────────────────────────────────────

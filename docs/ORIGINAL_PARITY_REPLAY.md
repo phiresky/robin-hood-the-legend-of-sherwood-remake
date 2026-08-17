@@ -4740,3 +4740,56 @@ objects.
   `classification.json` — **52 groups, largest only 6**, 28 of them singletons.
 - No regression guard in this run by design: it re-measures the known-failing set only. The guard result
   stands from batch-21 (781/781 clean); a full-universe sweep is still outstanding.
+
+## Batch-22 failing-only sweep — 2026-08-16, production runner 26f395142
+- Failures-only by request: the 97 traces left after batch-21 (100 minus 3 retired with fresh-capture
+  proof by the detection agent). Runner sha256 `a624082243bb7c2b13887ee1…`, release profile, clean tree.
+- **Result: 37 cleared (38%), 60 remain** — 49 state divergences, 11 RNG, 0 timeouts.
+- Wave that produced it: 9 parallel bundle agents, ~20 behaviour fixes. Notable root causes —
+  the sword-walk Execute arm has no `Turn()` of its own; three invented invariants removed (jump-line
+  normal flip, pass-door `sector_out` test, door-callback sector assert); AI-resolved position used where
+  the Original uses the raw element position (a whole bug CLASS, two sites fixed, more owed);
+  `MaxNormDistance` is a 3D stretched-Y Chebyshev norm; lift endpoint doors are chosen by extreme
+  `GetPointOut().mY`, not by door type; `SEEK_IN_BUILDINGS` missing on take-corpse clicks.
+- Remaining set: `remaining-60.snapshot`; per-group listing `groups.txt`; **37 groups, largest only 5**,
+  24 of them singletons. The long tail is now the whole story.
+- **No regression guard in this run** (failures-only by request). Guard evidence stands from batch-20 and
+  batch-21 (781/781 clean, twice) plus 162 clean guard traces measured in the aborted 878-trace batch-22
+  run. A FULL-UNIVERSE resweep — everything except the new schema14-seed1000000 corpus — is the agreed
+  next step and is the only thing that can verify the whole passing set after this wave's shared-code
+  changes.
+
+## Batch-23 failing-only sweep — 2026-08-17, production runner 7cdfa0799
+- Failures-only: the 60 traces left after batch-22. Runner sha256 `a25bd45910d7470efc9919d5…`, release
+  profile, clean tree, smoke-tested before launch.
+- **Result: 24 cleared (40%), 36 remain** — 28 state divergences, 8 RNG, 0 timeouts.
+- Produced by wave D: 6 parallel agents, 18 behaviour fixes. Notable root causes —
+  `AddPathRequest` calls `Stop()` with NO argument so the priority is the declared default `NORMAL`, not
+  `Wait`; `GoTo`'s `GOTO_SWORD` raise-sword element belongs INSIDE the movement's sequence (two sequences
+  double the postpone arbitration and destroy a postponed move); an INVENTED shortcut in
+  `find_path_into_door` suppressed the Original's multi-gate detours and with them the building-exit waits;
+  the route source must read the actor's live traversal direction, not the sequence element's; panic-door
+  sector/layer maluses must use the live element side, not the door-snapped AI position;
+  `RecordTimer(0)` parks a sequence forever (signed countdown, terminates only at ==1);
+  `WAITING_ALERTED` also quits any swordfight; `TranslateArrowDamage` has no consciousness test and the
+  knockout cascade must key on "was conscious before the hit".
+- Remaining set: `remaining-36.snapshot`; per-group listing `groups.txt`.
+  **30 groups, largest 3, and 25 are singletons** — effectively one bug per trace from here.
+- Two recurring bug CLASSES account for a large share of this wave: the AI-resolved position being used
+  where the Original uses the raw element position (5th and 6th sites found), and Rust enforcing an
+  invented invariant/shortcut the Original does not have (4th site found).
+
+## Batch-24 failing-only sweep — 2026-08-17, production runner 0c69baf45
+- The 36 traces left after batch-23. **Result: 4 cleared (11%), 32 remain** — 24 state divergences, 8 RNG.
+- Produced by wave E: 4 agents, 5 fixes (transition-seek-refresh IN_PROGRESS latch; projectile hole/water
+  terminal return; AlertSoldier detectable drain order; `PointTo` origin; `RHCOMMAND_HIT` instruct on an
+  out-of-order antagonist).
+- **The clearance rate has collapsed from ~40% to 11%, and that is the real signal.** Three of the four
+  agents returned mostly attribution rather than fixes, and for sound reasons: the remaining work is
+  singletons whose fixes are either (a) broad refactors nobody should land without a wide control set
+  (the composite sequence-launch interleave; giving unfrozen seek owners the Original's pre-motion
+  tolerance arm), (b) hourglass phase-ordering changes (tower-guard Think vs PC movement), or
+  (c) blocked on Original-side instrumentation for schema-12 traces that no binary can reproduce.
+- Wave E's most valuable output was arguably negative: it DISPROVED the "script-VM 41 frames late" theory
+  for the civilian-62 pair and replaced it with a measured cause, and one agent tried the cheap version of
+  its own fix, measured it as a no-op, and reverted rather than commit it.

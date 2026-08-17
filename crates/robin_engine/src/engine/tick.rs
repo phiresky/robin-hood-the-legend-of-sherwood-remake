@@ -5103,7 +5103,16 @@ impl EngineInner {
                         return Some(crate::sprite::MotionState::InProgress);
                     }
                 }
-                engine.tick_entity_movement_owner(sim, assets, owner, movement);
+                // PerformSeek's completion-time RefreshSeek branches return
+                // RHMOTION_IN_PROGRESS explicitly
+                // (`original-code/RHelementactor.cpp:7963-7970`, `:8002-8007`),
+                // so Actor::Hourglass runs none of its DONE / TERMINATED /
+                // ABORTED tail for that slot.
+                if let Some(motion) =
+                    engine.tick_entity_movement_owner(sim, assets, owner, movement)
+                {
+                    return Some(motion);
+                }
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
                     if engine
@@ -5822,12 +5831,17 @@ impl EngineInner {
         }
 
         // ── Anonymous timers ─────────────────────────────────────
-        // Decrement each timer; remove entries that reach 0 and
-        // mark the backing sequence element `Terminated` so the
-        // sequence advances.
+        // `RHEngine::Hourglass` (RHengine.cpp:3794-3810) terminates a timer
+        // element only when its `RHFIELD_TIMER` property is *exactly* 1, and
+        // otherwise decrements the `int` property. A timer recorded with 0
+        // frames — e.g. `RecordTimer( Rand( 25 ) )` rolling a zero — therefore
+        // counts down through negative values and NEVER terminates, stalling
+        // its sequence level for the rest of the mission. Match that exactly:
+        // an `expired if remaining <= 1` test would let the zero case fire a
+        // frame later and advance a sequence the Original leaves parked.
         let mut expired: Vec<crate::sequence::SequenceElementRef> = Vec::new();
         self.orders.timer_elements.retain_mut(|timer| {
-            if timer.remaining <= 1 {
+            if timer.remaining == 1 {
                 expired.push(timer.element_ref);
                 false
             } else {
@@ -6478,7 +6492,7 @@ impl EngineInner {
             execute_sides,
         } = outcomes;
         let super::animation::ExecuteSideOutcomes {
-            waiting_alerted_leave,
+            waiting_alerted,
             drop_ale_done,
             deactivate_entities,
             pickups,
@@ -6515,7 +6529,7 @@ impl EngineInner {
         self.drain_next_jump_step(assets, next_jump_step);
         self.drain_select_hulk(select_hulk);
         self.drain_resume_door_pass(sim, assets, resume_door_pass);
-        self.drain_waiting_alerted_leave(waiting_alerted_leave);
+        self.drain_waiting_alerted(sim, assets, waiting_alerted);
         // Soldier `Execute` cross-entity side effects, collected by the
         // animation tick as it walks each `active_ai_anim` booking. Each
         // drain fires a cross-entity effect (bottle hide, coin pickup,
@@ -6542,7 +6556,12 @@ impl EngineInner {
         self.drain_cry_for_help_under_net(sim, assets, cry_for_help_under_net);
     }
 
-    pub(super) fn drain_waiting_alerted_leave(&mut self, owners: Vec<EntityId>) {
+    pub(super) fn drain_waiting_alerted(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owners: Vec<EntityId>,
+    ) {
         for owner in owners {
             let soldier = self
                 .world
@@ -6553,26 +6572,42 @@ impl EngineInner {
                 Entity::Soldier(soldier) => soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
                     panic!("WaitingAlerted soldier {owner:?} has no enemy AI state")
                 }),
-                _ => panic!("WaitingAlerted leave candidate {owner:?} is not a soldier"),
+                _ => panic!("WaitingAlerted candidate {owner:?} is not a soldier"),
             };
-            if enemy.will_be_attentive
-                || self
+            let needs_leave = !enemy.will_be_attentive
+                && !self
                     .orders
                     .sequence_manager
-                    .element_is_about_to_be_launched(owner, Command::LeaveAttentiveMode)
-            {
-                continue;
+                    .element_is_about_to_be_launched(owner, Command::LeaveAttentiveMode);
+
+            if needs_leave {
+                // RHelementactorsoldier.cpp:736-740. This is deliberately not
+                // SetAttentiveMode(false): that helper suppresses a request when
+                // mbWillBeAttentive is already false, while this corrective
+                // Execute arm exists specifically for that inconsistent state.
+                self.launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    Command::LeaveAttentiveMode,
+                    Some(owner),
+                ));
             }
 
-            // RHelementactorsoldier.cpp:736-740. This is deliberately not
-            // SetAttentiveMode(false): that helper suppresses a request when
-            // mbWillBeAttentive is already false, while this corrective
-            // Execute arm exists specifically for that inconsistent state.
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                Command::LeaveAttentiveMode,
-                Some(owner),
-            ));
+            // RHelementactorsoldier.cpp:742-747: a soldier playing the
+            // non-sword WAITING_ALERTED animation must not still be linked
+            // into a swordfight. The Original asserts in debug builds and
+            // unconditionally tears the relationship down in release.
+            let still_swordfighting = !self
+                .world
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| panic!("WaitingAlerted owner {owner:?} disappeared"))
+                .human_data()
+                .unwrap_or_else(|| panic!("WaitingAlerted soldier {owner:?} is not human"))
+                .opponents
+                .is_empty();
+            if still_swordfighting {
+                self.quit_swordfight(sim, assets, owner);
+            }
         }
     }
 

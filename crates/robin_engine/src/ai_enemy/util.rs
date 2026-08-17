@@ -476,6 +476,18 @@ pub(crate) fn detects_position_180_raw(
 pub struct FighterSnapshot {
     pub handle: HumanHandle,
     pub position: Position,
+    /// The fighter's own `RHElement::GetPosition()` — the raw element
+    /// position, before `RHArtificialIntelligence::Position()`
+    /// (`original-code/RHartificialintelligence.cpp:4307-4343`) snaps an
+    /// actor in door transit onto the gate endpoint or substitutes the
+    /// carrier of an `ON_SHOULDERS` PC.
+    ///
+    /// The AI reads fighters through both accessors and they are not
+    /// interchangeable: `SquareDistance`/`Distance`/`MaxNormDistance`
+    /// (`RHartificialintelligence.cpp:6919-6938`) all take
+    /// `pSomething->GetPosition()` directly, so any range gate written in
+    /// terms of them must use this field, not [`Self::position`].
+    pub raw_position: Position,
     pub direction: u16,
     /// True if this fighter is on the same side as the evaluating AI.
     pub is_friendly: bool,
@@ -686,6 +698,25 @@ pub(super) fn ai_max_norm_distance(
     let dy = (((target.y + target_elevation) - (me.y + me_elevation))
         * crate::position_interface::INVERSE_ASPECT_RATIO)
         .abs();
+    dx.max(dy).max(dz)
+}
+
+/// `MaxNormDistance` over two already-resolved **world** points.
+///
+/// `RHArtificialIntelligence::MaxNormDistance`
+/// (`original-code/RHartificialintelligence.cpp:6950-6953`) subtracts the two
+/// raw `RHElement::GetPosition()` world points, stretches Y by
+/// `INVERSE_ASPECT_RATIO` and takes the 3D Chebyshev norm. Use this variant
+/// wherever the raw body points are available (`AiContext::self_body_position_world`
+/// / `AiEntityView::detection_position_world`): AI `Position()` snaps a
+/// door-passing actor to the gate endpoint and is not interchangeable.
+pub(super) fn ai_max_norm_distance_world(
+    target: &crate::coordinates::WorldPoint3D,
+    me: &crate::coordinates::WorldPoint3D,
+) -> f32 {
+    let dx = (target.x - me.x).abs();
+    let dy = ((target.y - me.y) * crate::position_interface::INVERSE_ASPECT_RATIO).abs();
+    let dz = (target.z - me.z).abs();
     dx.max(dy).max(dz)
 }
 

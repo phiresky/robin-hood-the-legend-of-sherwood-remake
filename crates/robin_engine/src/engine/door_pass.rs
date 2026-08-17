@@ -669,16 +669,14 @@ impl<'a> PassDoorLaunchContext<'a> {
                 "PassDoor owner {entity_id:?} has no sector for door {door_index} direction resolution at {seq_id:?}/{elem_idx}"
             )
         });
-        let direct = if u16::from(actor_sector) == u16::from(door.sector_out) {
-            true
-        } else if u16::from(actor_sector) == u16::from(door.sector_in) {
-            false
-        } else {
-            panic!(
-                "PassDoor owner {entity_id:?} sector {actor_sector} is on neither side of door {door_index} (out {}, in {}) at {seq_id:?}/{elem_idx}",
-                door.sector_out, door.sector_in
-            )
-        };
+        // `RHElementActor::Translate` resolves the pass direction with a
+        // single `if( GetSector() == pSectorIn ) ... else ...` in every door
+        // arm (`RHelementactor.cpp:4021`, `:4062`, `:4148`, `:4233`); the
+        // `assert( GetSector() == pSectorOut )` in the else branch is a
+        // debug-only check. An actor standing in a third sector — e.g. a
+        // building-instance or roof sector that is neither side of the gate —
+        // therefore passes the door *directly* in the shipped build.
+        let direct = u16::from(actor_sector) != u16::from(door.sector_in);
         let allow_leave_map = flags.contains(crate::sequence::MoveFlags::MAP);
         // Building capacity is always effectively unlimited in the loaded
         // game data; this preserves the previous dispatcher contract.
@@ -1215,15 +1213,19 @@ impl EngineInner {
                 panic!("PassDoor callback for door {door_index} lost owner {entity_id:?}")
             });
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
-        let expected_source = if direct {
-            self.script_domains.interactables.doors[usize::from(door_index)].sector_out
-        } else {
-            self.script_domains.interactables.doors[usize::from(door_index)].sector_in
-        };
-        assert_eq!(
-            u16::from(current_sector),
-            u16::from(expected_source),
-            "PassDoor callback for {entity_id:?}, door {door_index} ran from sector {current_sector}, expected {expected_source}"
+        // `RHElementActor::PassDoor` (`RHelementactor.cpp:7485-7573`) reads
+        // `GetSector()` purely to run the leave callbacks and then assigns the
+        // gate's other side unconditionally. It never requires the departure
+        // sector to be the door's nominal source, so an actor that entered the
+        // pass from a third sector is legal here too.
+        tracing::trace!(
+            target: "parity_door_pass",
+            entity = ?entity_id,
+            door = %door_index,
+            direct,
+            from = u16::from(current_sector),
+            to = u16::from(target_sector_num),
+            "PassDoor callback sector change"
         );
 
         // ── Leave callbacks ──
@@ -1466,9 +1468,13 @@ impl EngineInner {
         // re-seat the actor onto the appropriate projection-area
         // obstacle at the door's outside point so the next 1-2 footstep
         // sounds use the correct material (grass / stone / wood / ...).
-        // Building exit is always `!_direct`, so the target sector is
-        // `sector_out`.
-        if left_building {
+        // `RHElementActor::PassDoor` only runs this refresh inside the
+        // `bDirect == false` arm (`RHelementactor.cpp:7559-7572`): the
+        // `bFindPlane` re-seat and the following `ComputePositionAll()` live
+        // in the branch that switches to `GetSectorOut()`. A direct pass out
+        // of a building sector — which the debug build merely asserts against
+        // — keeps its existing obstacle, plane and 3D position.
+        if left_building && !direct {
             let new_obstacle = self.find_projection_area_at(
                 assets,
                 target_layer,
@@ -1774,12 +1780,13 @@ impl EngineInner {
     /// With `Some(obstacle_idx)`: the actor's sprite takes the
     /// obstacle's material and its top-plane coefficients.  With
     /// `None`: clears the obstacle and falls back to the sound-sector
-    /// material at the actor's current position — iterate sound
-    /// sectors and pick the material of the first one that contains
-    /// the point, or the map's default material when none match.  The
-    /// Rust port uses
-    /// [`crate::material_sectors::MaterialSectors::material_at`] which
-    /// encapsulates both steps.
+    /// material at the actor's current position — iterate the sound
+    /// sectors the fast-find grid holds **for the actor's own layer**
+    /// and pick the material of the first one that contains the point,
+    /// or the map's default material when none match
+    /// (`RHpositioninterface.cpp:610-625`).  The Rust port uses
+    /// [`crate::material_sectors::MaterialSectors::material_at_layer`]
+    /// which encapsulates both steps.
     ///
     /// Updates both `ElementData` (obstacle_index, material) and the
     /// actor's `PositionInterface` (obstacle, plane, material).
@@ -1801,14 +1808,17 @@ impl EngineInner {
             }
             None => {
                 // No obstacle: clear plane, then resolve footstep
-                // material from the sound-sector list at the actor's
-                // current map position, with the default material as
-                // the fallback.
-                let point = self
-                    .get_entity(entity_id)
-                    .map(|e| e.position_iface())
-                    .map(|pi| pi.map_position());
-                let material = point.map(|p| assets.material_sectors.material_at(p));
+                // material from the sound sectors registered on the
+                // actor's own layer at its current map position, with
+                // the default material as the fallback.
+                let probe = self.get_entity(entity_id).map(|e| {
+                    (
+                        e.position_iface().map_position(),
+                        e.element_data().layer(),
+                    )
+                });
+                let material = probe
+                    .map(|(point, layer)| assets.material_sectors.material_at_layer(point, layer));
                 (material, None)
             }
         };
@@ -2760,7 +2770,7 @@ mod tests {
 
         // The terminal transition slot applies its OnWall state and installs
         // PassingDoor, but does not execute the topology callback.
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -2798,7 +2808,7 @@ mod tests {
             .element_data()
             .position_map();
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -3266,7 +3276,7 @@ mod tests {
             actor.active_door_pass.as_mut().unwrap().current_reverse = true;
         }
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -3339,7 +3349,7 @@ mod tests {
             actor.active_door_pass.as_mut().unwrap().current_reverse = true;
         }
 
-        engine.tick_entity_movement_owner(
+        let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             owner,
@@ -3376,13 +3386,28 @@ mod tests {
         let _ = dispatch_pass(&mut engine, &[default_door()], owner);
     }
 
+    /// `RHElementActor::Translate` tests only `GetSector() == pSectorIn`
+    /// (`RHelementactor.cpp:4021`, `:4062`, `:4148`, `:4233`); the
+    /// `assert( GetSector() == pSectorOut )` guarding the else branch is
+    /// compiled out of the shipped build. An actor standing in a third
+    /// sector therefore passes the door directly.
     #[test]
-    #[should_panic(expected = "is on neither side of door 0")]
-    fn actor_sector_must_match_one_side_of_the_door() {
+    fn actor_sector_outside_both_door_sides_passes_directly() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_soldier(Some(99)));
 
-        let _ = dispatch_pass(&mut engine, &[default_door()], owner);
+        let (barrier, _seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
+
+        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert!(entity.position_iface().get_door_direction());
+        let pass = entity
+            .actor_data()
+            .unwrap()
+            .active_door_pass
+            .as_ref()
+            .expect("door pass is active before the splice");
+        assert!(pass.direct);
     }
 
     #[test]
@@ -3492,7 +3517,7 @@ mod tests {
                     "the PassingDoor action point changes sector but must not snap lift facing"
                 );
 
-                engine.tick_entity_movement_owner(
+                let _ = engine.tick_entity_movement_owner(
                     &crate::sim_rng::test_context(),
                     &LevelAssets::new(),
                     owner,
@@ -3702,7 +3727,7 @@ mod tests {
                 .element_data_mut()
                 .set_direction_goal(5);
 
-            engine.tick_entity_movement_owner(
+            let _ = engine.tick_entity_movement_owner(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
                 owner,

@@ -2715,7 +2715,7 @@ impl EngineInner {
                         let square_distance_3d = square_distance + dz * dz;
                         let view_dot = dx * q.view_forward.0 + stretched_y * q.view_forward.1;
                         eprintln!(
-                            "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
+                            "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"real_half_aperture_bits\":{},\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
                             npc_id.index(),
                             target_id.index(),
                             q.viewer_world.x.to_bits(),
@@ -2727,6 +2727,7 @@ impl EngineInner {
                             q.viewer_direction,
                             q.view_forward.0.to_bits(),
                             q.view_forward.1.to_bits(),
+                            q.real_half_aperture.to_bits(),
                             q.viewer_eye_status as u8,
                             q.viewer_in_building,
                             q.target_in_same_building,
@@ -3376,6 +3377,15 @@ impl EngineInner {
                                 sector: None,
                                 level: my_layer,
                             },
+                            // `SoldierSnapshot::position` is already the
+                            // raw `RHElement::GetPosition()` (no door
+                            // transit / carrier substitution).
+                            raw_position: crate::ai::Position {
+                                x: me_snap.position.x,
+                                y: me_snap.position.y,
+                                sector: None,
+                                level: my_layer,
+                            },
                             direction: me_snap.direction,
                             is_friendly: true,
                             is_swordfighting: me_snap.is_swordfighting,
@@ -3414,12 +3424,11 @@ impl EngineInner {
                             right_combat_neighbour: me_snap.right_combat_neighbour,
                             is_in_recovery_animation: me_snap.in_recovery,
                             in_sword_action_state: me_snap.action_state.is_sword(),
-                            seek_position: crate::ai::Position {
-                                x: me_snap.seek_position.x,
-                                y: me_snap.seek_position.y,
-                                sector: None,
-                                level: my_layer,
-                            },
+                            // `mposSeekPosition` is a full `RHposition`: it
+                            // keeps the sector and level it was written with
+                            // and is never re-levelled from the soldier's
+                            // current element layer.
+                            seek_position: me_snap.ai_seek_position,
                             archer_behind_me: me_snap.archer_behind_me,
                             ai_state: me_snap.ai_state,
                             shield_bearer_before_me: me_snap.shield_bearer_before_me,
@@ -3427,12 +3436,7 @@ impl EngineInner {
                             hth_weapon_id: me_snap.hth_weapon_id,
                             action_state: me_snap.action_state,
                             shield_bearer_direction: me_snap.shield_bearer_direction,
-                            shield_bearer_seek_position: crate::ai::Position {
-                                x: me_snap.seek_position.x,
-                                y: me_snap.seek_position.y,
-                                sector: None,
-                                level: my_layer,
-                            },
+                            shield_bearer_seek_position: me_snap.ai_seek_position,
                             bow_max_range: me_snap.bow_max_range,
                             elevation: f32::from(me_snap.elevation),
                         });
@@ -3470,6 +3474,13 @@ impl EngineInner {
                                 sector: None,
                                 level: ss.layer,
                             },
+                            // Already the raw `RHElement::GetPosition()`.
+                            raw_position: crate::ai::Position {
+                                x: ss.position.x,
+                                y: ss.position.y,
+                                sector: None,
+                                level: ss.layer,
+                            },
                             direction: ss.direction,
                             is_friendly: true,
                             is_swordfighting: ss.is_swordfighting,
@@ -3501,12 +3512,9 @@ impl EngineInner {
                             right_combat_neighbour: ss.right_combat_neighbour,
                             is_in_recovery_animation: ss.in_recovery,
                             in_sword_action_state: ss.action_state.is_sword(),
-                            seek_position: crate::ai::Position {
-                                x: ss.seek_position.x,
-                                y: ss.seek_position.y,
-                                sector: None,
-                                level: ss.layer,
-                            },
+                            // Same as the self entry: keep the level and
+                            // sector `mposSeekPosition` was written with.
+                            seek_position: ss.ai_seek_position,
                             archer_behind_me: ss.archer_behind_me,
                             ai_state: ss.ai_state,
                             shield_bearer_before_me: ss.shield_bearer_before_me,
@@ -3514,12 +3522,7 @@ impl EngineInner {
                             hth_weapon_id: ss.hth_weapon_id,
                             action_state: ss.action_state,
                             shield_bearer_direction: ss.shield_bearer_direction,
-                            shield_bearer_seek_position: crate::ai::Position {
-                                x: ss.seek_position.x,
-                                y: ss.seek_position.y,
-                                sector: None,
-                                level: ss.layer,
-                            },
+                            shield_bearer_seek_position: ss.ai_seek_position,
                             bow_max_range: ss.bow_max_range,
                             elevation: f32::from(ss.elevation),
                         });
@@ -3545,6 +3548,13 @@ impl EngineInner {
                         tick_data.nearby_fighters.push(FighterSnapshot {
                             handle: enemy_handle,
                             position: crate::ai::Position {
+                                x: pc.position.x,
+                                y: pc.position.y,
+                                sector: None,
+                                level: pc.layer,
+                            },
+                            // Already the raw `RHElement::GetPosition()`.
+                            raw_position: crate::ai::Position {
                                 x: pc.position.x,
                                 y: pc.position.y,
                                 sector: None,

@@ -32,6 +32,16 @@ pub(crate) fn decision_path_debug_enabled() -> bool {
     std::env::var_os("PARITY_DEBUG_AI_DECISION_PATH").is_some()
 }
 
+/// Master switch for the `BattleDecisions` / phalanx / shield-timer
+/// diagnostic. Prints which branch of the decision tree an NPC took and the
+/// inputs that selected it, which is what a `actor.command` or `ai.substate`
+/// divergence in the shield-bearer and archer families reduces to. Cached in
+/// a `OnceLock` because the call sites sit on the per-stimulus AI path.
+pub(crate) fn battle_decision_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BATTLE_DECISION").is_some())
+}
+
 /// Exact frame/owner gate for the AI decision/path diagnostic. Enabling the
 /// master switch without both filters is an operator error: broad traces make
 /// same-frame re-entrant state ownership impossible to attribute reliably.
@@ -2696,9 +2706,19 @@ impl EnemyAi {
     /// way" and the OUTOFVIEW is ignored.
     ///
     fn enemy_is_behind_me(&self, ctx: &AiContext) -> bool {
-        let actor_ground = crate::coordinates::GroundPoint::from_map_and_z(
-            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
-            ctx.elevation,
+        // Original: `vStareVector = mpMe->GetViewParameters()->starePoint
+        // - mpMe->GetPositionGround();`
+        // (`original-code/RHartificialmalignity.cpp:5381`).
+        // `RHElement::GetPositionGround()` is the raw sprite point
+        // (`original-code/RHElement.h:328` -> `GetPosition().mX/.mY`), *not*
+        // `RHArtificialIntelligence::Position(mpMe)`. The two differ only
+        // while the actor is passing a door/gate, where `ctx.position` is
+        // snapped to the committed gate endpoint; using the snapped point
+        // there moved the stare vector far enough to flip the sign of the
+        // dot product and swallow a legitimate EVENT_OUTOFVIEW.
+        let actor_ground = crate::coordinates::GroundPoint::new(
+            ctx.self_body_position_world.x,
+            ctx.self_body_position_world.y,
         );
         let stare_dx = (ctx.self_stare_point.x - actor_ground.x) * ASPECT_RATIO;
         let stare_dy = ctx.self_stare_point.y - actor_ground.y;
@@ -7216,6 +7236,14 @@ mod tests {
         AiContext {
             frame: 920,
             position: test_position(1546.658_2, 318.299_56),
+            // `enemy_is_behind_me` reads the raw `GetPositionGround()` body
+            // point, which for this ground-level fixture coincides with the
+            // AI position.
+            self_body_position_world: crate::coordinates::WorldPoint3D {
+                x: 1546.658_2,
+                y: 318.299_56,
+                z: 0.0,
+            },
             direction: 14,
             self_stare_point: crate::coordinates::GroundPoint::new(1500.696_3, stare_y),
             ..AiContext::default()
