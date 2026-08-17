@@ -1110,13 +1110,23 @@ pub fn begin_hit(
 
     // The completion path asserts the antagonist is human; gate on the
     // same condition up-front instead of panicking later.
-    let (target_pos, target_alive) = match entities.get(target_id) {
-        Some(e) if e.is_human() => (e.element_data().position_map(), !e.is_dead()),
+    //
+    // Liveness is deliberately NOT gated here. `RHElementActorHuman::Instruct`
+    // (`original-code/RHelementactorhuman.cpp:2098-2117`) inserts the HITTING
+    // order for `RHCOMMAND_HIT` unconditionally — its only branch is the
+    // `Think(EVENT_STOP)` poke for a moving NPC antagonist. A dead, tied,
+    // netted or carried victim is rejected later, by the HITTING
+    // initialisation gate `CheckSequenceElementValidity( ..., true )`
+    // (`RHelementactorhuman.cpp:4583-4590`, whose HIT arm tests
+    // `IsOutOfOrder()` at `RHelementactorhuman.cpp:6771-6816`). Rust runs that
+    // same gate in `EngineInner::tick_pending_hit_init`
+    // (`engine/combat.rs`), and the Original's actor is visibly committed to
+    // `RHCOMMAND_HIT` — including the walk→wait transition Instruct splices in
+    // ahead of HITTING — for the frames before that abort.
+    let target_pos = match entities.get(target_id) {
+        Some(e) if e.is_human() => e.element_data().position_map(),
         _ => return BeginResult::Impossible,
     };
-    if !target_alive {
-        return BeginResult::Impossible;
-    }
 
     let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
