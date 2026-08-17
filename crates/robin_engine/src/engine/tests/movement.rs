@@ -518,10 +518,30 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
                 MoveFlags::empty(),
                 Vec::new(),
                 Vec::new(),
-                false,
+                true,
                 false,
             )
             .expect("door route");
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .get_sequence(sequence_id)
+            .expect("gate sequence");
+        let speech_index = sequence
+            .elements
+            .iter()
+            .position(|element| element.command == Command::SpeakHeroReachDestination)
+            .expect("arrival speech element");
+        let speech = &sequence.elements[speech_index];
+        let preceding = speech_index
+            .checked_sub(1)
+            .and_then(|index| sequence.elements.get(index))
+            .expect("arrival speech follows a movement element");
+        assert_eq!(
+            speech.command_level,
+            preceding.command_level.saturating_add(1),
+            "Original PerformMove appends arrival speech at uwCount after AppendMoveToSequence increments it for the final movement"
+        );
         let pass_index = engine
             .orders
             .sequence_manager
@@ -2622,6 +2642,41 @@ fn rider_charge_last_frame_damage_lands_after_the_rewrite_and_clear() {
             .active_rider_charge
             .is_none()
     );
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .sword_sweep
+            .victims
+            .is_empty(),
+        "a landed charge victim is removed from the shared human sword list"
+    );
+}
+
+#[test]
+fn rider_charge_retains_unhit_candidates_in_shared_human_sword_list() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let origin = MapPoint::new(100.0, 100.0);
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![0],
+    );
+    // The initial charge rectangle reaches 180 units forward, whereas its
+    // last-frame hit rectangle reaches only 15. Original therefore retains
+    // this candidate in RHElementActorHuman::mlistSwordStrikeVictims after
+    // the active charge order has rewritten itself to RunningUpright.
+    let unhit = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 100.0, 30.0));
+
+    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
+
+    let rider = engine.get_entity(rider).unwrap();
+    assert!(rider.actor_data().unwrap().active_rider_charge.is_none());
+    assert_eq!(rider.human_data().unwrap().sword_sweep.victims, vec![unhit]);
 }
 
 #[test]

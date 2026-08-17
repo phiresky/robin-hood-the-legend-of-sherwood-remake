@@ -5471,6 +5471,20 @@ impl EngineInner {
                                 false,
                             );
                         }
+                        let authoritative_motion = if still_turning {
+                            MotionState::InProgress
+                        } else {
+                            MotionState::Terminated
+                        };
+                        // PerformAction records its raw visual edge on the
+                        // sprite for the end-of-frame Done propagation pass.
+                        // TURNING is the exceptional Original arm whose
+                        // return value ignores that edge and is controlled
+                        // entirely by Turn(): leaving a visual Done here
+                        // marks the order complete even though the body just
+                        // rotated and must execute Turn once more next frame.
+                        entity.element_data_mut().sprite.last_motion_state =
+                            Some(authoritative_motion);
                         // PI is the single source of truth for direction —
                         // no sync needed now that `ElementData.direction`
                         // is gone.
@@ -5478,11 +5492,7 @@ impl EngineInner {
                         // is driven by `action_done_frame` in sprite
                         // data, but the control flow here ties
                         // completion to `turn_fast()` instead.
-                        if still_turning {
-                            Some(MotionState::InProgress)
-                        } else {
-                            Some(MotionState::Terminated)
-                        }
+                        Some(authoritative_motion)
                     } else if anim_type == OrderType::Select {
                         // SELECT is a real non-animation order in the
                         // translated door chain. It starts the Human/PC hulk

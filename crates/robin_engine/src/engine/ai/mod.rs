@@ -13067,6 +13067,47 @@ impl EngineInner {
                             });
                         enemy_ai.right_combat_neighbour = neighbour;
                     }
+                    crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer } => {
+                        let target_id = EntityId::Soldier(SoldierId(target));
+                        let enemy_ai = self
+                            .world
+                            .entities
+                            .get_mut(target_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous archer-behind setter target {target} is missing"
+                                )
+                            })
+                            .enemy_ai_mut()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous archer-behind setter target {target} has no EnemyAi"
+                                )
+                            });
+                        enemy_ai.archer_behind_me = archer;
+                    }
+                    crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
+                        target,
+                        shield_bearer,
+                    } => {
+                        let target_id = EntityId::Soldier(SoldierId(target));
+                        let enemy_ai = self
+                            .world
+                            .entities
+                            .get_mut(target_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous shield-bearer setter target {target} is missing"
+                                )
+                            })
+                            .enemy_ai_mut()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous shield-bearer setter target {target} has no EnemyAi"
+                                )
+                            });
+                        enemy_ai.shield_bearer_before_me = shield_bearer;
+                    }
                     crate::ai::CrossNpcAction::SetPrimaryTarget {
                         target,
                         primary_target,
@@ -15321,11 +15362,11 @@ impl EngineInner {
 
     /// Run Original's `InitializePatrol` at a captured owner boundary.
     ///
-    /// Non-position fields are intentionally resolved from the live world
-    /// after `FilterAIEvent`: that callback is authoritative and may change
-    /// actor state. Positions instead come from the owner-boundary views
-    /// because Rust's globally batched movement has already advanced later
-    /// legacy slots.
+    /// All fields are resolved from the live world after `FilterAIEvent`.
+    /// Original's inline call observes earlier legacy slots after their actor
+    /// tick and later slots before theirs; Rust's entity table is at that same
+    /// owner boundary. The views captured when the stimulus was queued can be
+    /// older than that boundary and must not drive patrol ordering.
     pub(super) fn initialize_patrol_for_npc_from_owner_views(
         &mut self,
         assets: &LevelAssets,
@@ -15356,15 +15397,15 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         chief_id: EntityId,
-        views: &crate::ai_entity_view::AiEntityViewMap,
+        _views: &crate::ai_entity_view::AiEntityViewMap,
         theoretical: &[EntityId],
     ) {
         #[derive(Clone, Copy)]
         struct PatrolSnap {
             position: crate::ai::Position,
+            raw_position_world: crate::coordinates::WorldPoint3D,
             detection_position_world: crate::coordinates::WorldPoint3D,
             direction: u16,
-            ground_z: f32,
             posture: crate::element::Posture,
             is_rider: bool,
             in_building: bool,
@@ -15394,10 +15435,11 @@ impl EngineInner {
             })
             .view_radius;
 
+        let live_views = build_entity_views_without_forecast(self);
         let snapshot = |id: EntityId| {
-            let view = views.get(&id.index()).unwrap_or_else(|| {
+            let view = live_views.get(&id.index()).unwrap_or_else(|| {
                 panic!(
-                    "synchronous patrol initialization owner {} lacks boundary view for member {}",
+                    "synchronous patrol initialization owner {} lacks live view for member {}",
                     chief_id.index(),
                     id.index()
                 )
@@ -15411,9 +15453,9 @@ impl EngineInner {
             });
             PatrolSnap {
                 position: view.position,
+                raw_position_world: entity.element_data().position(),
                 detection_position_world: view.detection_position_world,
                 direction: entity.element_data().direction() as u16,
-                ground_z: entity.element_data().position().z,
                 posture: entity.element_data().posture,
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                 in_building: self.entity_data_in_building_sector(entity.element_data()),
@@ -15489,11 +15531,13 @@ impl EngineInner {
         }
 
         let square_distance = |snap: PatrolSnap| {
-            let dx = snap.position.x - chief_snap.position.x;
-            let dy_world =
-                (snap.position.y + snap.ground_z) - (chief_snap.position.y + chief_snap.ground_z);
-            let dy = dy_world * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = snap.ground_z - chief_snap.ground_z;
+            // `SquareDistance` subtracts the actors' raw 3-D GetPosition
+            // values. In particular, it does not use AI `Position(actor)`,
+            // which teleports a door-passing actor to its gate endpoint.
+            let dx = snap.raw_position_world.x - chief_snap.raw_position_world.x;
+            let dy = (snap.raw_position_world.y - chief_snap.raw_position_world.y)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = snap.raw_position_world.z - chief_snap.raw_position_world.z;
             dx * dx + dy * dy + dz * dz
         };
         let mut sorted: Vec<(EntityId, PatrolSnap)> = Vec::with_capacity(patrol.len());

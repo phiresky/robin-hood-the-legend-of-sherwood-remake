@@ -838,6 +838,9 @@ enum TraceCommand {
         target: Option<TraceEntityId>,
         reason: String,
     },
+    BeggarDontTalkStamp {
+        entity: TraceEntityId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
@@ -1226,6 +1229,9 @@ impl TraceCommand {
                     expression: robin_engine::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 }
             }
+            Self::BeggarDontTalkStamp { entity } => PlayerCommand::BeggarDontTalkStamp {
+                beggar_id: entity_map.translate(entity),
+            },
         })
     }
 }
@@ -6737,15 +6743,9 @@ fn compare_frame(
             }
             if let Some(expected_pass) = &expected_actor.active_pass_door {
                 let expected_pass_key = expected_pass.as_ref().map(trace_pass_door_key);
-                let actual_pass = actual_actor.active_door_pass.as_ref().map(|pass| {
-                    (
-                        u32::from(pass.door_index.0),
-                        // Original's movement-element direction is retained
-                        // across resumed door traversal, matching this field
-                        // rather than Rust's reconstructed physical direction.
-                        pass.position_direct,
-                    )
-                });
+                let actual_pass = engine
+                    .actor_selected_pass_door(id)
+                    .map(|(gate_id, direction)| (u32::from(gate_id.0), direction != 0));
                 if !active_pass_door_keys_match(expected_pass.as_ref(), actual_pass) {
                     differences.push(format!(
                         "{id:?}.actor.active_pass_door.(gate_id,direct): original={expected_pass_key:?} rust={actual_pass:?}"
@@ -8940,6 +8940,7 @@ mod tests {
             serde_json::json!({"type": "key_control"}),
             serde_json::json!({"type": "key_release_control"}),
             serde_json::json!({"type": "make_pc_fast", "entity": pc}),
+            serde_json::json!({"type": "beggar_dont_talk_stamp", "entity": pc}),
             serde_json::json!({"type": "orient_action_at", "action": "bow", "original_action": 1,
                 "actor": pc, "mouse_map": point2, "target": point3}),
         ];

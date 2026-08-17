@@ -7246,7 +7246,11 @@ impl EnemyAi {
                 // Reestablish shield state
                 let (target_pos, target_elevation) = self
                     .find_fighter(self.base.primary_target, tick)
-                    .map(|f| (f.position, f.elevation as f32))
+                    // Original stores `mpPrimaryTarget->GetPosition()` in
+                    // RHFIELD_SHIELD_DANGER_POINT. This is the raw element
+                    // position, not the AI `Position()` helper that projects
+                    // actors passing a door onto the gate endpoint.
+                    .map(|f| (f.raw_position, f.elevation as f32))
                     .unwrap_or((ctx.position, ctx.elevation));
                 self.base.raise_shield(target_pos, target_elevation);
                 self.base.launch_timer(20, ctx.frame);
@@ -9275,6 +9279,72 @@ mod tests {
         };
         assert_eq!(turn.order_type, crate::order::OrderType::Turning);
         assert_eq!(turn.explicit_direction, Some(14));
+    }
+
+    #[test]
+    fn shield_reestablish_uses_raw_door_passing_target_position() {
+        // Schema-15 SuN1Sh1nE Savegame_013 replay-006 frame 2027. PC 174's
+        // AI position is projected onto its active door endpoint, while
+        // RHElement::GetPosition still reports its raw actor position.
+        // RHFIELD_SHIELD_DANGER_POINT uses the latter.
+        use crate::sequence::{Field, FieldValue};
+
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(82);
+        ai.base.owner_entity_id = Some(crate::element::EntityId::Soldier(
+            crate::element::SoldierId(82),
+        ));
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingProtectingWithShield;
+        ai.base.primary_target = 174;
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 82,
+                action_state: crate::element::ActionState::Waiting,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 174,
+                position: Position {
+                    x: 598.0,
+                    y: 2490.781_3,
+                    ..Position::default()
+                },
+                raw_position: Position {
+                    x: 591.982_4,
+                    y: 2475.868_2,
+                    ..Position::default()
+                },
+                elevation: 0.0,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+        let ctx = AiContext {
+            frame: 2027,
+            position: Position {
+                x: 725.584_17,
+                y: 2499.990_2,
+                ..Position::default()
+            },
+            ..AiContext::default()
+        };
+
+        ai.attacking_protecting_with_shield(&sim, StimulusType::EventTimer, &ctx, &tick);
+
+        let element = ai.base.outbox.actor.launch_sequences[0]
+            .elements
+            .first()
+            .expect("RaiseShield sequence contains its command");
+        assert!(matches!(
+            element.get_property(Field::ShieldDangerPoint),
+            Some(FieldValue::Point3D {
+                x: 591.982_4,
+                y: 2475.868_2,
+                z: 0.0,
+            })
+        ));
     }
 
     #[test]

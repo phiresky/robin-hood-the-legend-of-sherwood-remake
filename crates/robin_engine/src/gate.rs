@@ -1105,6 +1105,40 @@ impl Default for GateSearchState {
     }
 }
 
+/// Port of `RHFastFindGrid::AddToListOpenGates`.
+///
+/// Gate scores live in the shared state table and may decrease while that
+/// gate is already present in `open`, so the list can become temporarily
+/// unsorted. Original deliberately performs a linear scan over those live
+/// scores. A binary search is invalid here and can leave an improved gate
+/// behind a more expensive goal node.
+fn add_to_open_gates_original(
+    open: &mut Vec<DoorIndex>,
+    state: &[GateSearchState],
+    gate: DoorIndex,
+) {
+    let score = state[usize::from(gate)].score;
+    if open.is_empty() {
+        open.push(gate);
+        return;
+    }
+
+    let mut index = 0;
+    let mut open_gate = open[0];
+    while score > state[usize::from(open_gate)].score {
+        index += 1;
+        if index < open.len() {
+            open_gate = open[index];
+            if open_gate == gate {
+                return;
+            }
+        } else {
+            break;
+        }
+    }
+    open.insert(index, gate);
+}
+
 #[inline]
 fn dist(a: MapPoint, b: MapPoint) -> f32 {
     let dx = a.x - b.x;
@@ -1151,7 +1185,9 @@ pub fn find_path_gates(
 
     let n = doors.len();
     let mut state: Vec<GateSearchState> = vec![GateSearchState::default(); n];
-    // Open list: indices of gates to expand, kept sorted by score (lowest first).
+    // Open list: indices of gates to expand. Original inserts by a linear scan
+    // over live scores; decreasing an already-queued gate can temporarily make
+    // older entries unsorted.
     let mut open: Vec<DoorIndex> = Vec::new();
 
     // ── Seed: gates touching the source sector ──
@@ -1197,20 +1233,12 @@ pub fn find_path_gates(
             score,
             prev_gate: None,
         };
-        open.push(DoorIndex(idx as u32));
+        add_to_open_gates_original(&mut open, &state, DoorIndex(idx as u32));
     }
 
     if open.is_empty() {
         return None;
     }
-    // Sort initial open list by score
-    open.sort_by(|&a, &b| {
-        state[usize::from(a)]
-            .score
-            .partial_cmp(&state[usize::from(b)].score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
     // ── A* main loop ──
     let mut goal_gate: Option<DoorIndex> = None;
     let mut best_goal_score = f32::INFINITY;
@@ -1321,16 +1349,7 @@ pub fn find_path_gates(
                 prev_gate: Some(current_idx),
             };
 
-            // Insert into sorted open list
-            let pos = open
-                .binary_search_by(|&i| {
-                    state[usize::from(i)]
-                        .score
-                        .partial_cmp(&new_score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .unwrap_or_else(|p| p);
-            open.insert(pos, next_idx);
+            add_to_open_gates_original(&mut open, &state, next_idx);
         }
     }
 
@@ -1456,19 +1475,12 @@ pub fn find_path_into_door(
             score,
             prev_gate: None,
         };
-        open.push(DoorIndex(idx as u32));
+        add_to_open_gates_original(&mut open, &state, DoorIndex(idx as u32));
     }
 
     if open.is_empty() {
         return None;
     }
-    open.sort_by(|&a, &b| {
-        state[usize::from(a)]
-            .score
-            .partial_cmp(&state[usize::from(b)].score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
     // A* main loop.  Goal-test is identity against goal door; heuristic
     // uses distance-to-mid.
     let mut found: Option<DoorIndex> = None;
@@ -1493,7 +1505,6 @@ pub fn find_path_into_door(
         } else {
             current.sector_in
         };
-
         for link in &current.gate_links {
             // RHFastFindGrid selects GetLinkedGates(mbDirect): after
             // traversing the current gate, only links in the sector on the
@@ -1561,16 +1572,7 @@ pub fn find_path_into_door(
                 score: new_score,
                 prev_gate: Some(current_idx),
             };
-
-            let pos = open
-                .binary_search_by(|&i| {
-                    state[usize::from(i)]
-                        .score
-                        .partial_cmp(&new_score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .unwrap_or_else(|p| p);
-            open.insert(pos, next_idx);
+            add_to_open_gates_original(&mut open, &state, next_idx);
         }
     }
 
@@ -1785,6 +1787,21 @@ mod tests {
 
     fn no_lift(_: SectorNumber) -> Option<LiftType> {
         None
+    }
+
+    #[test]
+    fn open_gate_decrease_key_uses_original_live_score_linear_scan() {
+        let mut state = vec![GateSearchState::default(); 3];
+        state[0].score = 654.0; // Goal gate currently at the front.
+        state[1].score = 672.0; // Gate already queued behind it.
+        let mut open = vec![DoorIndex(0), DoorIndex(1)];
+
+        // Relaxing gate 1 mutates the shared score in place, making `open`
+        // temporarily unsorted: [654, 570]. Original linearly scans that live
+        // list and inserts the improved gate before the goal.
+        state[1].score = 570.0;
+        add_to_open_gates_original(&mut open, &state, DoorIndex(1));
+        assert_eq!(open, vec![DoorIndex(1), DoorIndex(0), DoorIndex(1)]);
     }
 
     #[test]

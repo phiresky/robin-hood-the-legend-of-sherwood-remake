@@ -1326,6 +1326,44 @@ impl EngineInner {
         }
     }
 
+    /// Gate and direction stored on the actor's currently selected PassDoor
+    /// movement element.
+    ///
+    /// This mirrors `RHElementActor::GetSequenceElement()` followed by the
+    /// `RHSequenceElementMovement` gate/direction reads used by the schema-15
+    /// Original recorder. It deliberately does not inspect
+    /// [`crate::element::ActorData::active_door_pass`]: that field is Rust's
+    /// physical traversal choreography and can be absent, or reconstructed in
+    /// the opposite physical direction, while the selected sequence element
+    /// still retains the authored PassDoor direction.
+    pub fn actor_selected_pass_door(
+        &self,
+        actor: EntityId,
+    ) -> Option<(crate::gate::DoorIndex, i16)> {
+        let element = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(actor)
+            .and_then(|(sequence_id, element_index)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+            })?;
+        if element.command != crate::element::Command::PassDoor {
+            return None;
+        }
+        let crate::sequence::SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &element.data
+        else {
+            panic!("selected PassDoor for {actor:?} is not a movement element")
+        };
+        Some((
+            gate_id.unwrap_or_else(|| panic!("selected PassDoor for {actor:?} has no gate")),
+            *direction,
+        ))
+    }
+
     /// Value corresponding to Original `RHElementActor::mulWaitTime`.
     ///
     /// Rust keeps the seek-refresh countdown separate from ordinary command
@@ -3313,7 +3351,11 @@ impl EngineInner {
             // human-owned members, not sequence-owned state. They survive an
             // interrupted strike and are cleared only when a sweep genuinely
             // terminates or a later action-done point reinitializes them.
-            actor.pending_push_swordfight.clear();
+            // ExecutePushSwordStrike stores its victims in the same
+            // human-owned mlistSwordStrikeVictims used by lateral/circle
+            // strikes. Interrupting the push does not clear that list; a
+            // later sweep can consume the retained victims before its own
+            // action-done point.
             // Order-chain cleanup happens implicitly: interrupted
             // elements drop their `orders` in `Sequence::set_element_state`,
             // which invalidates `current_order_for_actor`.  Non-

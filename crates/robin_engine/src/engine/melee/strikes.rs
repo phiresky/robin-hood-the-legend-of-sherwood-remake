@@ -240,12 +240,25 @@ impl EngineInner {
         // angles, so full circles deliberately retain the old geometry here.
         // Do not create a sweep for an ordinary fresh strike here; its real
         // victim list is still initialized only at MotionState::Done.
-        let retained_victims = self
-            .get_entity(attacker_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| actor.sweep_state.as_ref())
-            .map(|sweep| sweep.pending_victims.clone())
-            .filter(|victims| !victims.is_empty());
+        let retained_victims = self.get_entity(attacker_id).and_then(|entity| {
+            entity
+                .actor_data()
+                .and_then(|actor| actor.sweep_state.as_ref())
+                .map(|sweep| sweep.pending_victims.clone())
+                .filter(|victims| !victims.is_empty())
+                .or_else(|| {
+                    entity
+                        .human_data()
+                        .map(|human| human.sword_sweep.victims.clone())
+                        .filter(|victims| !victims.is_empty())
+                })
+                .or_else(|| {
+                    entity
+                        .actor_data()
+                        .map(|actor| actor.pending_push_swordfight.clone())
+                        .filter(|victims| !victims.is_empty())
+                })
+        });
         let strike_kind = profile_idx
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
             .map(|profile| profile.thrusts[strike as usize].kind);
@@ -266,6 +279,15 @@ impl EngineInner {
                 strike_kind.expect("rebased warning strike kind disappeared"),
                 retained_victims,
             );
+            if let Some(actor) = self
+                .get_entity_mut(attacker_id)
+                .and_then(Entity::actor_data_mut)
+            {
+                // These are two Rust mirrors of Original's single shared
+                // victim list. Once the replacement sweep takes ownership,
+                // the push-completion mirror must not retain a duplicate.
+                actor.pending_push_swordfight.clear();
+            }
         }
 
         let mut victims =

@@ -1,5 +1,18 @@
 use super::*;
 
+fn panic_debug_matches(frame: u32) -> bool {
+    if std::env::var_os("PARITY_DEBUG_AI_PANIC").is_none() {
+        return false;
+    }
+    std::env::var("PARITY_DEBUG_AI_PANIC_FRAME")
+        .ok()
+        .is_none_or(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid PARITY_DEBUG_AI_PANIC_FRAME={value:?}: {error}")
+            }) == frame
+        })
+}
+
 #[inline]
 fn panic_retry_side(original_creation_order: u32) -> u8 {
     if original_creation_order & 1 != 0 {
@@ -1368,6 +1381,8 @@ impl AiController {
                     | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                     | CrossNpcAction::SetLeftCombatNeighbour { .. }
                     | CrossNpcAction::SetRightCombatNeighbour { .. }
+                    | CrossNpcAction::SetArcherBehindMe { .. }
+                    | CrossNpcAction::SetShieldBearerBeforeMe { .. }
                     | CrossNpcAction::SetPrimaryTarget { .. }
                     | CrossNpcAction::Say { .. }
             ) {
@@ -1404,6 +1419,8 @@ impl AiController {
                         | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                         | CrossNpcAction::SetLeftCombatNeighbour { .. }
                         | CrossNpcAction::SetRightCombatNeighbour { .. }
+                        | CrossNpcAction::SetArcherBehindMe { .. }
+                        | CrossNpcAction::SetShieldBearerBeforeMe { .. }
                         | CrossNpcAction::SetPrimaryTarget { .. }
                         | CrossNpcAction::Say { .. }
                 )
@@ -5179,7 +5196,7 @@ impl AiController {
             // ─── Fleeing ────────────────────────────────────────────
             Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    if std::env::var_os("PARITY_DEBUG_AI_PANIC").is_some() {
+                    if panic_debug_matches(ctx.frame) {
                         eprintln!(
                             "[AIHIDE f={} co={:?} substate={:?}]",
                             ctx.frame, ctx.original_creation_order, self.current_substate,
@@ -5224,10 +5241,11 @@ impl AiController {
                 {
                     return false;
                 }
-                if std::env::var_os("PARITY_DEBUG_AI_PANIC").is_some() {
+                if panic_debug_matches(ctx.frame) {
                     eprintln!(
-                        "[AIPANIC f={} co={:?} stim={:?} runs={} directed={} first_try={}]",
+                        "[AIPANIC f={} me={} co={:?} stim={:?} runs={} directed={} first_try={}]",
                         ctx.frame,
+                        self.me,
                         ctx.original_creation_order,
                         stimulus_type,
                         self.lasting_panic_runs,
@@ -5330,6 +5348,44 @@ impl AiController {
                         sector: ctx.position.sector,
                         level: ctx.position.level,
                     };
+
+                    if panic_debug_matches(ctx.frame) {
+                        let origin =
+                            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
+                        let destination = crate::coordinates::MapPoint::new(dest.x, dest.y);
+                        let destination_box = ctx.move_box.translated(destination);
+                        let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(
+                            ctx.move_box.x_max(),
+                            ctx.move_box.y_max(),
+                        );
+                        eprintln!(
+                            "[AIPANIC-GEOMETRY f={} me={} sector={} distance_bits={:08x} origin_bits={:08x},{:08x} destination_bits={:08x},{:08x} layer={} move_box={:?} position_authorized={} reachable_thick={} straight_authorized={}]",
+                            ctx.frame,
+                            self.me,
+                            sector_index,
+                            segment.to_bits(),
+                            origin.x.to_bits(),
+                            origin.y.to_bits(),
+                            destination.x.to_bits(),
+                            destination.y.to_bits(),
+                            ctx.position.level,
+                            ctx.move_box,
+                            ctx.fast_grid
+                                .is_position_authorized(&destination_box, ctx.position.level,),
+                            ctx.fast_grid.is_reachable_thick(
+                                origin,
+                                destination,
+                                ctx.position.level,
+                                half_diagonal,
+                            ),
+                            ctx.fast_grid.is_straight_movement_authorized(
+                                origin,
+                                destination,
+                                ctx.position.level,
+                                &ctx.move_box,
+                            ),
+                        );
+                    }
 
                     // Next time around we're no longer on the first try.
                     self.first_try = true;
@@ -5822,6 +5878,42 @@ mod tests {
                 CrossNpcAction::SetRightCombatNeighbour {
                     target: 29,
                     neighbour: 0,
+                }
+            ]
+        ));
+        assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
+    }
+
+    #[test]
+    fn reciprocal_archer_shield_setters_are_drained_synchronously() {
+        // Original UpdateArcherBehindMe / UpdateShieldBearerBeforeMe mutate
+        // the reciprocal AI object inline. A later owner in the same element
+        // refresh pass must therefore see the updated relationship.
+        let mut ai = AiController::new(81);
+        ai.outbox.reentrant.cross_npc_actions.extend([
+            CrossNpcAction::SetShieldBearerBeforeMe {
+                target: 86,
+                shield_bearer: 0,
+            },
+            CrossNpcAction::SetArcherBehindMe {
+                target: 81,
+                archer: 0,
+            },
+        ]);
+
+        assert!(ai.has_pending_synchronous_cross_npc_actions());
+        let actions = ai.take_pending_synchronous_cross_npc_actions();
+
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                CrossNpcAction::SetShieldBearerBeforeMe {
+                    target: 86,
+                    shield_bearer: 0,
+                },
+                CrossNpcAction::SetArcherBehindMe {
+                    target: 81,
+                    archer: 0,
                 }
             ]
         ));

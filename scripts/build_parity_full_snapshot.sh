@@ -15,6 +15,11 @@ corpora=(
     parity-save-replays/30s-random-input
     parity-save-replays/15-no-input
 )
+replacement_corpora=(
+    parity-save-replays/60s-random-input/schema15-replacements-20260817
+    parity-save-replays/30s-random-input/schema15-replacements-20260817
+    parity-save-replays-legacy/10s-no-input-schema15-replacements-20260817
+)
 
 if [[ ! -f "$retired_file" ]]; then
     printf 'error: retired-save manifest does not exist: %s\n' "$retired_file" >&2
@@ -24,7 +29,7 @@ if [[ ! -f "$retired_trace_file" ]]; then
     printf 'error: retired-trace manifest does not exist: %s\n' "$retired_trace_file" >&2
     exit 2
 fi
-for corpus in "$old_corpus" "${corpora[@]}"; do
+for corpus in "$old_corpus" "${corpora[@]}" "${replacement_corpora[@]}"; do
     if [[ ! -d "$corpus/traces" ]]; then
         printf 'error: trace corpus does not exist: %s/traces\n' "$corpus" >&2
         exit 2
@@ -49,7 +54,9 @@ trap 'rm -f "$snapshot_tmp"' EXIT
 trace_is_complete() {
     local trace=$1
     local marker=${trace%-session-*}.complete
-    if [[ ! -f "$marker" ]]; then
+    # The schema-15 replacement publisher uses a checksum-bearing marker next
+    # to the complete compressed filename. Older corpora use the replay stem.
+    if [[ ! -f "$marker" && ! -f "$trace.complete" ]]; then
         printf 'warning: excluding trace without completion marker: %s\n' "$trace" >&2
         return 1
     fi
@@ -75,6 +82,18 @@ for corpus in "${corpora[@]}"; do
     done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
 done | sort >> "$snapshot_tmp"
 
+# Current schema-15 recaptures supersede retired traces and therefore belong in
+# the authoritative sweep even though their historical paths are deny-listed.
+# The separate schema14-seed1000000-20260814 campaign is intentionally absent;
+# it is validated in its own later pass.
+for corpus in "${replacement_corpora[@]}"; do
+    while IFS= read -r -d '' trace; do
+        trace_is_complete "$trace" || continue
+        printf '%s\n' "$trace"
+    done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
+done | sort >> "$snapshot_tmp"
+
+sort -u "$snapshot_tmp" -o "$snapshot_tmp"
 mv "$snapshot_tmp" "$output"
 trap - EXIT
 printf 'wrote %s traces to %s\n' "$(wc -l < "$output")" "$output"

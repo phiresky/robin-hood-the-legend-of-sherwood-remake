@@ -106,7 +106,9 @@ impl EngineInner {
             }
         }
         for obstacle in &loaded.proto.sight_obstacles {
-            let layer = obstacle.projection_area.map_or(u16::MAX, |(_, layer)| layer);
+            let layer = obstacle
+                .projection_area
+                .map_or(u16::MAX, |(_, layer)| layer);
             for &index in &obstacle.material_indices {
                 let Some(raw) = loaded.proto.material_sectors.get(usize::from(index)) else {
                     tracing::error!(

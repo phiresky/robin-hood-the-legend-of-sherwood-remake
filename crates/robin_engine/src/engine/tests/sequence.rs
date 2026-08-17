@@ -3655,6 +3655,47 @@ fn started_pass_door_rejects_new_move() {
 }
 
 #[test]
+fn parity_pass_door_snapshot_reads_selected_movement_without_runtime_latch() {
+    use crate::element::{Command, Posture};
+    use crate::gate::DoorIndex;
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut pass =
+        SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
+    let SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    else {
+        unreachable!("new_movement must create movement data")
+    };
+    *gate_id = Some(DoorIndex(51));
+    *direction = -1;
+    let sequence = engine.orders.sequence_manager.launch_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    assert!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_door_pass
+            .is_none(),
+        "loaded selected PassDoor fixtures need not reconstruct physical choreography"
+    );
+    assert_eq!(
+        engine.actor_selected_pass_door(owner),
+        Some((DoorIndex(51), -1))
+    );
+}
+
+#[test]
 fn executing_pass_door_postpones_new_move() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;

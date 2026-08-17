@@ -4538,6 +4538,15 @@ impl EnemyAi {
 
         let mut nearest: HumanHandle = 0;
         let mut min_distance: u16 = 65432; // Original `oo` sentinel
+        let owner_world = ctx
+            .entity_view(self.base.me)
+            .unwrap_or_else(|| {
+                panic!(
+                    "GetNewPrimaryTarget owner {} is absent from the live entity view",
+                    self.base.me
+                )
+            })
+            .detection_position_world;
 
         for &enemy in &self.list_them {
             if enemy == 0 {
@@ -4563,16 +4572,22 @@ impl EnemyAi {
                     self.base.me, enemy
                 )
             });
-            let dx = target.position.x - ctx.position.x;
-            let dz = target.elevation - ctx.elevation;
+            // `GetNewPrimaryTarget` calls the raw 3D `Distance` /
+            // `MaxNormDistance` helpers, not AI `Position()`.  `position` is
+            // deliberately door-aware and can point at the committed far
+            // side of a selected PassDoor; use each element's stored world
+            // position for this scoring path.
+            let target_world = target.detection_position_world;
+            let dx = target_world.x - owner_world.x;
+            let dy =
+                (target_world.y - owner_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = target_world.z - owner_world.z;
             // Original Distance/MaxNormDistance subtract the actors'
             // GetPosition() values. GetPosition().y is map Y plus elevation,
             // so the vertical screen-plane component includes dz before the
             // isometric stretch; elevation is also retained as the 3D Z
             // component. Using map Y alone can make a target on another level
             // appear much farther away and select the wrong primary target.
-            let dy = (target.position.y - ctx.position.y + dz)
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
             let max_norm = dx.abs().max(dy.abs()).max(dz.abs());
             if max_norm > f32::from(min_distance) {
                 continue;
@@ -7102,6 +7117,9 @@ mod tests {
         let mut ai = EnemyAi::new(1);
         ai.list_them = vec![198, 199];
         let mut views = AiEntityViewMap::new();
+        let mut owner = soldier_view(test_position(0.0, 0.0));
+        owner.camp = Camp::Lacklandists;
+        views.insert(1, owner);
         views.insert(198, soldier_view(test_position(100.0, 0.0)));
         views.insert(199, soldier_view(test_position(110.0, 0.0)));
         let ctx = AiContext {
@@ -7124,6 +7142,43 @@ mod tests {
         );
 
         assert_eq!(target, 199);
+    }
+
+    #[test]
+    fn get_new_primary_target_scores_raw_world_position_not_ai_door_endpoint() {
+        let mut ai = EnemyAi::new(1);
+        ai.list_them = vec![170, 169];
+
+        let mut owner = soldier_view(test_position(0.0, 0.0));
+        owner.camp = Camp::Lacklandists;
+        let occupied = soldier_view(test_position(60.0, 0.0));
+        let mut passing_door = soldier_view(test_position(177.0, 0.0));
+        passing_door.detection_position = MapPoint::new(159.0, 0.0);
+        passing_door.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(159.0, 0.0, 0.0);
+        passing_door.passing_door = true;
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, owner);
+        views.insert(170, occupied);
+        views.insert(169, passing_door);
+        let ctx = AiContext {
+            position: test_position(0.0, 0.0),
+            camp: Camp::Lacklandists,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_multiplicity = vec![(170, 1), (169, 0)];
+
+        assert_eq!(
+            ai.get_new_primary_target(
+                PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+                &ctx,
+                &tick,
+            ),
+            169
+        );
     }
 
     #[test]

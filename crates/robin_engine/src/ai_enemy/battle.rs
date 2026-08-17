@@ -1749,10 +1749,9 @@ impl EnemyAi {
                     self.base.friends_are_alerted = true;
                     // DECISION_ALERT_SOLDIERS calls CommandSoldiersToAttack,
                     // NOT AlertSoldiers, with the live target position.
-                    let center = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.position)
-                        .unwrap_or(self.base.seek_position);
+                    let center = ctx
+                        .expect_entity_view(target, "alert-soldiers primary target")
+                        .position;
                     match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
                         super::alert::CommandSoldiersStart::Pending => return true,
                         super::alert::CommandSoldiersStart::Rejected => {
@@ -1767,13 +1766,9 @@ impl EnemyAi {
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
                     self.base.friends_are_alerted = true;
-                    // Use the primary target's last known position.
-                    // Fall back to our own seek point if the target
-                    // snapshot is missing.
-                    let center = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.position)
-                        .unwrap_or(self.base.seek_position);
+                    let center = ctx
+                        .expect_entity_view(target, "run-and-alert-soldiers primary target")
+                        .position;
                     if !self.run_and_alert_soldiers(center, ctx, tick, global) {
                         decision = Decision::Cassos;
                         continue;
@@ -1793,15 +1788,9 @@ impl EnemyAi {
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
                     self.base.friends_are_alerted = true;
-                    // Track the target we just locked in. Fall back to our
-                    // own position when the fighter snapshot is missing
-                    // so the soldier points somewhere sensible instead of
-                    // the origin.
-                    self.base.seek_position = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.position)
-                        .or_else(|| ctx.entity_view(target).map(|view| view.position))
-                        .unwrap_or(ctx.position);
+                    self.base.seek_position = ctx
+                        .expect_entity_view(target, "tower-guard alert primary target")
+                        .position;
                     self.set_state(AiState::Attacking, Substate::AttackingTowerGuardAlert);
                     self.base.point_to(self.base.seek_position, ctx);
                 }
@@ -1811,11 +1800,9 @@ impl EnemyAi {
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
                     self.base.friends_are_alerted = true;
-                    self.base.seek_position = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.position)
-                        .or_else(|| ctx.entity_view(target).map(|view| view.position))
-                        .unwrap_or(ctx.position);
+                    self.base.seek_position = ctx
+                        .expect_entity_view(target, "tower-guard observe primary target")
+                        .position;
                     self.set_state(AiState::Attacking, Substate::AttackingTowerGuardObserve);
                     self.base.face_entity(target, ctx);
                     self.base.launch_timer(100, ctx.frame);
@@ -5183,6 +5170,61 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn tower_guard_uses_live_ai_position_instead_of_stale_nearby_snapshot() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.owner_entity_id = Some(crate::element::EntityId::Soldier(
+            crate::element::SoldierId(91),
+        ));
+        ai.tower_guard = true;
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.list_them = vec![198];
+        ai.forced_next_battle_decision = Decision::TowerGuardAlert;
+
+        let live_position = Position {
+            x: 1386.0,
+            y: 1356.0,
+            sector: crate::position_interface::SectorHandle::new(19),
+            level: 1,
+        };
+        let stale_position = Position {
+            x: 1389.106,
+            y: 1361.8235,
+            ..live_position
+        };
+        let mut owner_view = pc_view();
+        owner_view.is_pc = false;
+        owner_view.kind = crate::ai_entity_view::EntityKind::Soldier;
+        owner_view.camp = crate::element::Camp::Lacklandists;
+        let mut target_view = pc_view();
+        target_view.position = live_position;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(91, owner_view);
+        views.insert(198, target_view);
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_sq_distances = vec![(198, 100)];
+        tick.nearby_fighters = vec![FighterSnapshot {
+            handle: 198,
+            position: stale_position,
+            is_able_to_fight: true,
+            is_pc: true,
+            ..Default::default()
+        }];
+
+        ai.battle_decisions(&sim, &mut AiGlobalState::default(), &ctx, &tick, None);
+
+        assert_eq!(ai.base.primary_target, 198);
+        assert_eq!(ai.base.seek_position, live_position);
+        assert_eq!(ai.base.current_substate, Substate::AttackingTowerGuardAlert);
     }
 
     fn battle_cleanup_context(

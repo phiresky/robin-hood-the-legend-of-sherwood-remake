@@ -845,7 +845,7 @@ impl SightObstacle {
         false
     }
 
-    /// Find the earliest impact along a 3D ray where this obstacle blocks it.
+    /// Find the Original-selected impact where this obstacle blocks a 3D ray.
     fn blocking_ray_3d_impact(
         &self,
         origin: [f32; 3],
@@ -882,7 +882,14 @@ impl SightObstacle {
         let dy = destination[1] - origin[1];
         let ray_len_sq = dx * dx + dy * dy;
 
-        let mut earliest: Option<ObstacleRayImpact> = None;
+        // Original appends every wall/cap hit for this obstacle to the
+        // shared impact list and selects the smallest 3D squared distance
+        // only after collection.  That is observably different from the
+        // smallest ray parameter for the shipped elevated-bottom formula:
+        // its mixed top/bottom denominator can put the returned Z off the
+        // carrier ray.  Reducing one obstacle here is safe only with the
+        // same 3D metric (strict `<` also preserves first-hit ties).
+        let mut closest: Option<ObstacleRayImpact> = None;
 
         let pts = &self.obstacle_points;
         if pts.is_empty() {
@@ -930,8 +937,9 @@ impl SightObstacle {
                             z: ray_z,
                         },
                     };
-                    if earliest.is_none_or(|previous| t < previous.t) {
-                        earliest = Some(impact);
+                    if closest.is_none_or(|previous| impact_is_closer_3d(origin, impact, previous))
+                    {
+                        closest = Some(impact);
                     }
                 }
             }
@@ -967,8 +975,9 @@ impl SightObstacle {
                             z: self.compute_top_z(ix, iy),
                         },
                     };
-                    if earliest.is_none_or(|previous| t < previous.t) {
-                        earliest = Some(impact);
+                    if closest.is_none_or(|previous| impact_is_closer_3d(origin, impact, previous))
+                    {
+                        closest = Some(impact);
                     }
                 }
             }
@@ -1006,19 +1015,22 @@ impl SightObstacle {
                                 z: self.compute_bottom_z(ix, iy),
                             },
                         };
-                        if earliest.is_none_or(|previous| t < previous.t) {
-                            earliest = Some(impact);
+                        if closest
+                            .is_none_or(|previous| impact_is_closer_3d(origin, impact, previous))
+                        {
+                            closest = Some(impact);
                         }
                     }
                 }
             }
         }
 
-        earliest
+        closest
     }
 
-    /// Find the earliest parametric `t` along a 3D ray where this obstacle
-    /// blocks it.  Returns `None` if the obstacle doesn't block the ray.
+    /// Find the parametric `t` of the impact selected by Original's 3D
+    /// distance comparison. Returns `None` if the obstacle doesn't block the
+    /// ray.
     ///
     /// `t` is in `0.0..=1.0` where 0 = origin and 1 = destination.
     pub fn blocking_ray_3d_ratio(&self, origin: [f32; 3], destination: [f32; 3]) -> Option<f32> {
@@ -1031,6 +1043,20 @@ impl SightObstacle {
 struct ObstacleRayImpact {
     t: f32,
     point: crate::coordinates::WorldPoint3D,
+}
+
+fn impact_is_closer_3d(
+    origin: [f32; 3],
+    candidate: ObstacleRayImpact,
+    previous: ObstacleRayImpact,
+) -> bool {
+    let distance_sq = |impact: ObstacleRayImpact| {
+        let dx = impact.point.x - origin[0];
+        let dy = impact.point.y - origin[1];
+        let dz = impact.point.z - origin[2];
+        dx * dx + dy * dy + dz * dz
+    };
+    distance_sq(candidate) < distance_sq(previous)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2449,6 +2475,28 @@ mod tests {
             + ((result.impact.x - origin.x) / (destination.x - origin.x))
                 * (destination.z - origin.z);
         assert_ne!(parametric_z.to_bits(), result.impact.z.to_bits());
+    }
+
+    #[test]
+    fn projectile_multi_surface_impact_uses_3d_distance_not_ray_parameter() {
+        // Croisement02 obstacle 103 and its long-arrow segment from
+        // linux3 Profile_003 Savegame_029. The elevated-bottom denominator
+        // quirk returns an underside point with a later XY ray parameter,
+        // but its plane-evaluated Z makes it closer in 3D. Original keeps
+        // that underside point after collecting both cap intersections.
+        let origin = [1549.0, 151.0, 50.0];
+        let roof = ObstacleRayImpact {
+            t: 0.721_f32,
+            point: WorldPoint3D::new(1527.4478, 198.23608, 87.989555),
+        };
+        let underside = ObstacleRayImpact {
+            t: 0.729_f32,
+            point: WorldPoint3D::new(1527.212, 198.75261, 66.359375),
+        };
+
+        assert!(underside.t > roof.t);
+        assert!(impact_is_closer_3d(origin, underside, roof));
+        assert!(!impact_is_closer_3d(origin, roof, underside));
     }
 
     #[test]

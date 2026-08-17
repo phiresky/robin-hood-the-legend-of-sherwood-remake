@@ -3448,6 +3448,97 @@ fn turning_selects_sprite_row_after_the_direction_step() {
 }
 
 #[test]
+fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::Direction;
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_civilian(""));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(&mut engine, actor, &[OrderType::Turning]);
+
+    let order = Order::new(
+        OrderType::Turning,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let order_id = order.order_id;
+    let mut element = SequenceElement::new(1, Command::Turn, Some(actor));
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let _ = engine
+        .orders
+        .sequence_manager
+        .take_pending_synchronous_actions();
+
+    {
+        let entity = engine
+            .get_entity_mut(actor)
+            .expect("turning civilian remains installed");
+        entity
+            .position_iface_mut()
+            .set_direction_instantly(Direction::from_raw(0));
+        entity
+            .position_iface_mut()
+            .set_direction(Direction::from_raw(14));
+        entity.sprite_mut().last_motion_state = Some(MotionState::Done);
+        entity.sprite_mut().last_processed_order_id = order_id.get();
+    }
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("an in-progress Turn must remain live after one rotation step");
+    assert_eq!(element.state, SequenceState::InProgress);
+    assert!(
+        !element
+            .current_order()
+            .expect("Turn retains its current order")
+            .done,
+        "the visual sprite's stale Done edge must not complete authoritative Turn motion"
+    );
+    assert_eq!(
+        u8::from(
+            engine
+                .get_entity(actor)
+                .unwrap()
+                .position_iface()
+                .get_direction()
+        ),
+        15
+    );
+    assert_eq!(
+        engine.get_entity(actor).unwrap().sprite().last_motion_state,
+        Some(MotionState::InProgress),
+        "Turn()'s authoritative result must replace the visual sprite edge"
+    );
+
+    engine.propagate_done_to_current_orders();
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .done,
+        "end-of-frame sprite propagation must preserve the rotating Turn order"
+    );
+}
+
+#[test]
 fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
     use crate::order::OrderType;
 

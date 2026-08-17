@@ -374,6 +374,26 @@ fn append_phalanx_member_enemies(
 }
 
 impl EnemyAi {
+    /// Original `ReconsiderSwordfightObservation` uses `Panic` when its
+    /// defensive step-back has no goal. This is intentionally not `Flee`,
+    /// whose first statement is `Say(REMARK_PANIC)`.
+    fn panic_after_failed_observation_step_back(
+        &mut self,
+        enemy_pos: Position,
+    ) -> crate::ai::PanicRequest {
+        self.panic_from_position(enemy_pos, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
+        // `Panic` is synchronous in Original, but Rust drains this actor work
+        // after the AI borrow is released. Hold it until the rest of
+        // ReconsiderSwordfightObservation has had a chance to override the
+        // panic with AttackEnemy/observe work from later statements.
+        self.base
+            .outbox
+            .actor
+            .begin_panic
+            .take()
+            .expect("panic_from_position must stage BeginPanic")
+    }
+
     // -----------------------------------------------------------------------
     // Combat-position helpers (used by ProposeGoodCombatPosition)
     // -----------------------------------------------------------------------
@@ -1534,15 +1554,52 @@ impl EnemyAi {
             if sq >= consider_sq {
                 continue;
             }
+            // Cross-NPC relationship writes are drained after the current
+            // Think call, but Original's UpdateArcherBehindMe /
+            // UpdateShieldBearerBeforeMe update both objects synchronously.
+            // Overlay the ordered writes already emitted by this Think so a
+            // later tactical scan observes the same reciprocal relationship.
+            let effective_shield_bearer_before_me = self
+                .base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .iter()
+                .rev()
+                .find_map(|action| match action {
+                    CrossNpcAction::SetShieldBearerBeforeMe {
+                        target,
+                        shield_bearer,
+                    } if *target == f.handle => Some(*shield_bearer),
+                    _ => None,
+                })
+                .unwrap_or(f.shield_bearer_before_me);
+            let effective_archer_behind_me = self
+                .base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .iter()
+                .rev()
+                .find_map(|action| match action {
+                    CrossNpcAction::SetArcherBehindMe { target, archer } if *target == f.handle => {
+                        Some(*archer)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(f.archer_behind_me);
             // Filter on AI state ∈ {Seeking, Wondering, Attacking}.
             match f.ai_state {
                 AiState::Seeking | AiState::Wondering | AiState::Attacking => {
-                    if f.is_archer_unit && f.shield_bearer_before_me == 0 && !f.is_tower_guard {
+                    if f.is_archer_unit
+                        && effective_shield_bearer_before_me == 0
+                        && !f.is_tower_guard
+                    {
                         // Orphan archer. No `soldier != me` guard here —
                         // an orphan-archer self counts itself.
                         count += 1;
                     } else if f.is_shield_bearer
-                        && f.archer_behind_me == 0
+                        && effective_archer_behind_me == 0
                         && f.handle != self.base.me
                     {
                         // Explicitly exclude self in the shield-bearer
@@ -3474,7 +3531,7 @@ impl EnemyAi {
     ///   5. Focus(primary)
     ///   6. null primary → `GetBattleOverview` and bail
     ///   7. combat_trainer → SetDirection + Observe + LaunchTimer(20) and bail
-    ///   8. defensive predecision → step-back goal or panic flee and bail
+    ///   8. defensive predecision → step-back goal or directed panic
     ///   9. attack-opportunity block (back-to-me / not-swordfighting /
     ///      principal opponent dogpiled / very close) gated on no friend
     ///      already approaching the same target
@@ -3487,6 +3544,8 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        let mut deferred_defensive_panic = None;
+
         // (1) Arrow protection guard.
         if self.refresh_arrow_protection(false, ctx, tick, grid) {
             return;
@@ -3717,7 +3776,8 @@ impl EnemyAi {
                     ctx,
                 );
             } else {
-                self.flee(&enemy_pos, ctx, tick, global);
+                deferred_defensive_panic =
+                    Some(self.panic_after_failed_observation_step_back(enemy_pos));
             }
         }
 
@@ -3782,6 +3842,9 @@ impl EnemyAi {
                     }
                 }
                 if nobody_else_does {
+                    // Original already ran Panic synchronously, then
+                    // AttackEnemy's later StopAll/state change superseded it.
+                    // Do not replay the deferred panic after AttackEnemy.
                     self.attack_enemy(new_primary, Some(&mut *global), ctx, tick, grid);
                     return;
                 }
@@ -3790,6 +3853,13 @@ impl EnemyAi {
 
         // (10) Repositioning + fallback stay-in-place.
         self.observe_and_step(sim, ctx, tick, grid);
+        if self.base.current_state == AiState::Fleeing
+            && self.base.current_substate == Substate::FleeingPanic
+            && let Some(request) = deferred_defensive_panic
+        {
+            debug_assert!(self.base.outbox.actor.begin_panic.is_none());
+            self.base.outbox.actor.begin_panic = Some(request);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -4394,6 +4464,70 @@ mod tests {
     }
 
     #[test]
+    fn arrow_protection_sees_reciprocal_unlink_emitted_by_same_think() {
+        // Schema-12 SuN1Sh1nE Savegame_013 replay-005 frame 2165. Breaking
+        // the phalanx makes Soldier 81 choose Observe. Original SetState
+        // synchronously unlinks archer 86 before ReconsiderEnemyApproach
+        // scans for archers needing protection, so 86 is already orphaned.
+        // Rust's reciprocal write is queued until the owner-boundary drain;
+        // this tactical scan must overlay that ordered write.
+        let mut ai = EnemyAi::new(81);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingPhalanx;
+        ai.archer_behind_me = 86;
+        ai.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
+
+        assert_eq!(ai.archer_behind_me, 0);
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .iter()
+                .any(|action| matches!(
+                    action,
+                    CrossNpcAction::SetShieldBearerBeforeMe {
+                        target: 86,
+                        shield_bearer: 0
+                    }
+                ))
+        );
+
+        let owner_position = position(900.0, 2500.0);
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 81,
+            position: owner_position,
+            raw_position: owner_position,
+            is_friendly: true,
+            is_shield_bearer: true,
+            ai_state: AiState::Attacking,
+            current_substate: Substate::AttackingPhalanx as u32,
+            archer_behind_me: 86,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 86,
+            position: position(920.0, 2510.0),
+            raw_position: position(920.0, 2510.0),
+            is_friendly: true,
+            is_archer_unit: true,
+            ai_state: AiState::Attacking,
+            shield_bearer_before_me: 81,
+            ..FighterSnapshot::default()
+        });
+        let ctx = AiContext {
+            position: owner_position,
+            ..AiContext::default()
+        };
+
+        assert_eq!(
+            ai.number_of_nearby_archers_who_need_protection(&ctx, &tick),
+            1
+        );
+    }
+
+    #[test]
     fn phalanx_advance_uses_original_aspect_aware_normalization() {
         // Schema-14 Savegame_034/replay-009, frame 34182. Soldier 52 is
         // the center of the three-man phalanx and PC 167 is its target.
@@ -4920,5 +5054,28 @@ mod tests {
             Some(2)
         );
         assert!(ai.find_fighter(3, &tick).is_none());
+    }
+
+    #[test]
+    fn failed_observation_step_back_panics_without_speaking() {
+        let mut ai = EnemyAi::new(91);
+        let enemy_pos = position(663.922_5, 2096.012);
+
+        let request = ai.panic_after_failed_observation_step_back(enemy_pos);
+
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+        assert!(ai.base.outbox.actor.begin_panic.is_none());
+        assert_eq!(request.center, Some(enemy_pos));
+        assert_eq!(request.runs, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .all(|work| !matches!(work, AiOwnerWork::Speech(_))),
+            "Original's Panic fallback does not call Flee's Say(REMARK_PANIC)"
+        );
     }
 }

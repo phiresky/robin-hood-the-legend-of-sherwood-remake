@@ -4723,7 +4723,7 @@ mod tests {
     }
 
     #[test]
-    fn reactive_step_back_launches_replacement_move_before_returning() {
+    fn reactive_zero_distance_step_back_completes_before_returning() {
         for rider in [false, true] {
             let mut engine = make_engine();
             let (victim, attacker) = make_enemy_strike_pair(&mut engine, false);
@@ -4861,8 +4861,11 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 ai.base.current_substate,
-                crate::ai::Substate::AttackingSwordfightStepBack
+                crate::ai::Substate::AttackingSwordfight,
+                "an already-at-goal step-back synchronously handles EVENT_REACHPOINT"
             );
+            assert!(ai.base.timer_is_running);
+            assert_eq!(ai.base.when_does_timer_ring, 20);
             assert!(
                 ai.base
                     .last_goto_flags
@@ -5716,6 +5719,93 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_push_victims_are_rebound_by_replacement_lateral_start() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .unconscious = true;
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .pending_push_swordfight = vec![victim];
+
+        engine.stop_owner_active_mechanics(attacker);
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .pending_push_swordfight,
+            vec![victim],
+            "interrupting PushAside preserves Original's human-owned victim list"
+        );
+
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        let selected =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, false);
+        engine.publish_selected_order_as_installed(attacker);
+        {
+            let sprite = &mut engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            sprite.last_processed_order_id = u32::MAX;
+            sprite.last_action = crate::order::OrderType::WaitingSword;
+            sprite.current_frame = 0;
+            sprite.frame_count = 0;
+        }
+
+        engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
+
+        let actor = engine.get_entity(attacker).unwrap().actor_data().unwrap();
+        assert_eq!(
+            actor
+                .sweep_state
+                .as_ref()
+                .expect("replacement lateral owns the retained push list")
+                .pending_victims,
+            vec![victim],
+        );
+        assert!(
+            actor.pending_push_swordfight.is_empty(),
+            "Original has one shared victim list, not duplicate push/sweep ownership"
+        );
+    }
+
+    #[test]
     fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
@@ -6512,6 +6602,79 @@ mod tests {
                 .sweep_state
                 .is_none(),
             "the consumed save victim must not be rehydrated and hit again next frame"
+        );
+    }
+
+    #[test]
+    fn lateral_start_rebases_retained_serialized_human_victims() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 1_000.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        let selected =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, false);
+        engine.publish_selected_order_as_installed(attacker);
+        {
+            let entity = engine.get_entity_mut(attacker).unwrap();
+            entity.human_data_mut().unwrap().sword_sweep = crate::element::HumanSwordSweepState {
+                victims: vec![victim],
+                initial_angle: 0.1,
+                current_angle: 0.1,
+                final_angle: 0.1 - std::f32::consts::PI,
+            };
+            assert!(entity.actor_data().unwrap().sweep_state.is_none());
+            let sprite = &mut entity.element_data_mut().sprite;
+            sprite.last_processed_order_id = u32::MAX;
+            sprite.last_action = crate::order::OrderType::WaitingSword;
+            sprite.current_frame = 0;
+            sprite.frame_count = 0;
+        }
+
+        engine.tick_selected_melee_owner(
+            &crate::sim_rng::test_context(),
+            &assets,
+            attacker,
+            selected,
+        );
+
+        let attacker = engine.get_entity(attacker).unwrap();
+        assert_eq!(
+            attacker.element_data().sprite.last_motion_state,
+            Some(crate::sprite::MotionState::Start)
+        );
+        let direction_angle = sector_to_angle(attacker.element_data().direction());
+        let sweep = attacker
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("the START warning must make the retained rider-charge list executable");
+        assert_eq!(sweep.pending_victims, vec![victim]);
+        assert_eq!(sweep.strike, SwordStrike::D);
+        assert_eq!(sweep.initial_angle, direction_angle);
+        assert_eq!(sweep.current_angle, direction_angle);
+        assert_eq!(sweep.final_angle, direction_angle + std::f32::consts::PI);
+        assert_eq!(
+            attacker.human_data().unwrap().sword_sweep.victims,
+            vec![victim],
+            "rebasing geometry must preserve Original's shared victim FIFO"
         );
     }
 

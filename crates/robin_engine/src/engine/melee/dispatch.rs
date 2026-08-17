@@ -1062,33 +1062,26 @@ impl<'a> ShieldCommandContext<'a> {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let mut started = false;
-        if let Some(entity) = self.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            // Requires the actor to currently be holding the shield.  The
-            // entry transition does not itself move the actor into
-            // `ParryingShield`: the actor keeps holding the shield for the
-            // whole parry animation and only reports parrying once that
-            // animation completes.
-            if actor.action_state == ActionState::HoldingShield
-                || actor.action_state == ActionState::ParryingShield
-            {
-                started = true;
-            }
-        }
-        if started {
-            // Order action is `PARRYING_SHIELD`; the sprite-anim
-            // fallback to `PARRYING_SWORD` happens at perform_action
-            // time only.  The shield-arm `dispatch_arm_completion`
-            // entry gates advance on TERMINATED only so the parry
-            // sprite plays all the way through before the side-effect
-            // handler returns to HoldingShield.
-            self.push_order(seq_id, elem_idx, crate::order::OrderType::ParryingShield);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
-        } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
-        }
+        // Original `RHElementActorHuman::Translate(PARRY_SHIELD)` appends the
+        // parry order unconditionally. Whether a transition into
+        // `HOLDING_SHIELD` is needed was decided earlier by
+        // `GetTransitionFlags`; translation must not re-check the actor's
+        // current action state. This matters when an injury postponed a
+        // shield parry: the actor can have returned to WAITING by the time the
+        // postponed element is selected, but its stored entry transition
+        // still makes the parry valid.
+        //
+        // Order action is `PARRYING_SHIELD`; the sprite-anim fallback to
+        // `PARRYING_SWORD` happens at perform_action time only. The shield-arm
+        // `dispatch_arm_completion` entry gates advance on TERMINATED only so
+        // the parry sprite plays all the way through before the side-effect
+        // handler returns to HoldingShield.
+        self.entities
+            .get(owner)
+            .and_then(crate::element::Entity::actor_data)
+            .unwrap_or_else(|| panic!("ParryShield owner {owner:?} is not a live actor"));
+        self.push_order(seq_id, elem_idx, crate::order::OrderType::ParryingShield);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 
     fn push_order(
@@ -1605,6 +1598,48 @@ mod shield_order_tests {
                 .map(|order| order.order_type)
                 .collect::<Vec<_>>(),
             [OrderType::WaitingShield]
+        );
+    }
+
+    #[test]
+    fn parry_shield_translation_does_not_recheck_current_action_state() {
+        let owner = EntityId::Soldier(SoldierId(0));
+        let mut soldier = lying_soldier();
+        soldier.element_data_mut().posture = Posture::Upright;
+        soldier.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+        let mut entities = Entities::from_legacy_slots(vec![Some(soldier)]);
+        let mut sequence_manager = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_generic(
+            1,
+            Command::ParryShield,
+            Some(owner),
+        ));
+        let sequence_id = sequence_manager.launch_sequence(sequence);
+        let mut next_order_id = 1;
+
+        ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id)
+            .dispatch(owner, Command::ParryShield, sequence_id, 0);
+
+        let element = sequence_manager.get_element(sequence_id, 0).unwrap();
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            [OrderType::ParryingShield]
+        );
+        assert_eq!(
+            entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::Waiting,
+            "the transition layer, not Translate, owns the HOLDING_SHIELD entry state"
         );
     }
 }
