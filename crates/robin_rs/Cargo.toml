@@ -110,6 +110,7 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 # Desktop installer/update lifecycle hooks. Keep this target-scoped so the
 # Android cdylib and browser build do not pull in desktop packaging support.
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
+semver = "1"
 velopack = "1.2.0"
 
 [target.'cfg(target_os = "android")'.dependencies]

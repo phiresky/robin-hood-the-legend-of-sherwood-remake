@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Optional SemVer package version (defaults to a CI prerelease)
+        description: Optional SemVer package version (defaults to a nightly prerelease)
         required: false
         type: string
 
@@ -54,11 +54,12 @@ jobs:
           previous_sha="$(
             gh api \
               -H 'Accept: application/vnd.github+json' \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows/native-release.yml/runs?branch=main&event=schedule&status=success&per_page=1" \
-              --jq '.workflow_runs[0].head_sha // ""'
+              "/repos/${GITHUB_REPOSITORY}/git/ref/tags/nightly" \
+              --jq '.object.sha // ""' \
+              2>/dev/null || true
           )"
           if [[ -n "${previous_sha}" && "${previous_sha}" == "${GITHUB_SHA}" ]]; then
-            echo "No repository changes since the last successful nightly (${GITHUB_SHA})."
+            echo "No repository changes since the published nightly (${GITHUB_SHA})."
             echo "should_build=false" >> "${GITHUB_OUTPUT}"
           else
             echo "Nightly build required: ${previous_sha:-<none>} -> ${GITHUB_SHA}."
@@ -114,7 +115,7 @@ jobs:
             version="${REQUESTED_VERSION}"
           elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
-          elif [[ "${GITHUB_EVENT_NAME}" == schedule ]]; then
+          elif [[ "${GITHUB_EVENT_NAME}" == schedule || "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
             base_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "robin_rs") | .version')"
             version="${base_version}-nightly.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
           else
@@ -195,7 +196,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: package
     runs-on: ubuntu-latest
     permissions:
@@ -210,50 +211,42 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Velopack's feed files and nupkgs are retained in the per-platform
-          # Actions artifacts. Publish only end-user downloads here, avoiding
-          # collisions between same-named Windows and Linux feed files.
-          mapfile -d '' assets < <(
-            find release-assets -type f \( \
-              -name 'robin-*.zip' -o \
-              -name 'robin-*.tar.gz' -o \
-              -iname '*portable.zip' -o \
-              -iname '*setup.exe' -o \
-              -iname '*.msi' -o \
-              -iname '*.AppImage' \
-            \) -print0
-          )
+          # Velopack's GithubSource requires the per-platform releases JSON
+          # and every nupkg referenced by it, alongside the user-facing files.
+          mapfile -d '' assets < <(find release-assets -type f -print0)
           if (( ${#assets[@]} == 0 )); then
-            echo "No end-user release assets were downloaded." >&2
+            echo "No release assets were downloaded." >&2
             exit 1
           fi
 
-          if [[ "${GITHUB_EVENT_NAME}" == schedule ]]; then
+          declare -A asset_names=()
+          for asset in "${assets[@]}"; do
+            name="$(basename "${asset}")"
+            if [[ -n "${asset_names["${name}"]+present}" ]]; then
+              echo "Duplicate GitHub release asset name: ${name}" >&2
+              exit 1
+            fi
+            asset_names["${name}"]="${asset}"
+          done
+
+          if [[ "${GITHUB_EVENT_NAME}" == schedule || "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
             release_tag=nightly
             release_title="Nightly $(date -u +%Y-%m-%d)"
             if gh release view "${release_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-              gh api \
-                --method PATCH \
-                -H 'Accept: application/vnd.github+json' \
-                "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${release_tag}" \
-                -f sha="${GITHUB_SHA}" \
-                -F force=true >/dev/null
-              gh release upload "${release_tag}" "${assets[@]}" \
+              # Recreate the rolling release so its publication timestamp stays
+              # within GithubSource's recent-release window and stale versioned
+              # nupkgs do not accumulate forever.
+              gh release delete "${release_tag}" \
                 --repo "${GITHUB_REPOSITORY}" \
-                --clobber
-              gh release edit "${release_tag}" \
-                --repo "${GITHUB_REPOSITORY}" \
-                --title "${release_title}" \
-                --notes "Automated nightly build of ${GITHUB_SHA}." \
-                --prerelease
-            else
-              gh release create "${release_tag}" "${assets[@]}" \
-                --repo "${GITHUB_REPOSITORY}" \
-                --target "${GITHUB_SHA}" \
-                --title "${release_title}" \
-                --notes "Automated nightly build of ${GITHUB_SHA}." \
-                --prerelease
+                --cleanup-tag \
+                --yes
             fi
+            gh release create "${release_tag}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "${release_title}" \
+              --notes "Automated nightly build of ${GITHUB_SHA}." \
+              --prerelease
           elif gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \

@@ -14,6 +14,9 @@
 
 use std::sync::{Mutex, Once, OnceLock};
 
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+pub mod auto_update;
+
 static TRACING_INIT: Once = Once::new();
 #[cfg(not(target_arch = "wasm32"))]
 static REPLAY_LOG_FILE: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();

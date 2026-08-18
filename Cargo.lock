@@ -3809,6 +3809,7 @@ dependencies = [
  "robin_engine",
  "robin_lua",
  "robin_util",
+ "semver",
  "serde",
  "serde-value",
  "serde-wasm-bindgen",

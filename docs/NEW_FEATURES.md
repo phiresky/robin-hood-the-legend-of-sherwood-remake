@@ -4,6 +4,15 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Self-updating native packages.** Installed Windows and Linux Velopack
+  builds check the public GitHub Releases feed in the background. Stable
+  installs consider stable releases only, while prerelease installs also
+  follow the rolling `nightly` prerelease. Downloads do not interrupt play:
+  completed updates are applied silently after a normal game exit, and a
+  previously downloaded pending update is applied before the next startup.
+  Headless games, lobby servers, standalone archives, and developer builds do
+  not attempt to update themselves.
+
 - **Direct custom-mission launch.** `--custom-mission <zip>` mounts a vanilla
   mod archive for the lifetime of a direct `--mission <name>` launch. Pair it
   with `--proto <map>` when the mission and proto-level basenames differ.

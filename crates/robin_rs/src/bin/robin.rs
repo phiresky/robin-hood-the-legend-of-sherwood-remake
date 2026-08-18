@@ -9,17 +9,25 @@ fn main() {
     velopack::VelopackApp::build().run();
 
     install_crash_diagnostics();
-    let exit = run_native();
+    robin_rs::init_tracing();
+    let args = robin_rs::main_entry::parse_cli();
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    let updater = if args.headless || args.lobby_server.is_some() {
+        None
+    } else {
+        robin_rs::auto_update::start_github_auto_update()
+    };
+    let exit = run_native(args);
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    robin_rs::auto_update::apply_downloaded_update(updater);
     std::process::exit(exit);
 }
 
 /// Native entry: parse CLI, init data, then bring up winit + wgpu and
 /// run the async game on a dedicated thread (driven by `pollster`).
 #[cfg(not(target_arch = "wasm32"))]
-fn run_native() -> i32 {
-    let args = robin_rs::main_entry::parse_cli();
+fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
     if let Some(addr) = args.lobby_server.as_deref() {
-        robin_rs::init_tracing();
         return match robin_rs::multiplayer::lobby::run_lobby_server(addr) {
             Ok(()) => 0,
             Err(e) => {
