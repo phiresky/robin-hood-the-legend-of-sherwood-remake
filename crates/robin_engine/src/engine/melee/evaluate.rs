@@ -317,8 +317,13 @@ impl EngineInner {
             let last_step_back = human.last_motion_was_step_back_in_combat;
             let opp_jump_line = human.opponent_jump_lines.first().copied().flatten();
 
-            // Selected PC short-circuits.
-            if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
+            // Selected PCs never reposition themselves during swordfighting.
+            // Controlled soldiers use stance policy instead: Hold and
+            // Defensive remain at their assigned position, while Aggressive
+            // retains the original soldier AI's pursuit/repositioning.
+            if entity.is_pc() && self.selected_pc_ids().contains(&entity_id)
+                || entity.is_soldier() && !self.allied_allows_combat_movement(entity_id)
+            {
                 return false;
             }
             // Combat trainer stays put.

@@ -652,6 +652,7 @@ impl EngineInner {
                     with_seek,
                     "PlayerCommand::SwordStrikeCmd"
                 );
+                self.prepare_allied_player_combat_command(*actor);
                 if *with_seek {
                     self.apply_sword_strike_with_seek(
                         assets,

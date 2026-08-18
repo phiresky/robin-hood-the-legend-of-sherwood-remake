@@ -12144,6 +12144,22 @@ impl EngineInner {
             );
         }
         for intent in intents {
+            let is_movement = matches!(
+                intent.order_type,
+                OrderType::WalkingUpright
+                    | OrderType::RunningUpright
+                    | OrderType::WalkingCrouched
+                    | OrderType::WalkingAlerted
+                    | OrderType::RiderCharging
+            );
+            if is_movement && !self.allied_allows_combat_movement(entity_id) {
+                tracing::trace!(
+                    ?entity_id,
+                    order = ?intent.order_type,
+                    "allied stance suppressed AI-authored combat movement"
+                );
+                continue;
+            }
             match intent.order_type {
                 OrderType::WalkingUpright
                 | OrderType::RunningUpright

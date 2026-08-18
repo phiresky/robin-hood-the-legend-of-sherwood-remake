@@ -2693,6 +2693,41 @@ impl EngineInner {
         // that authorization up front so every downstream rejection
         // (substate, tiredness, honour, range, or selection failure) remains
         // one-shot instead of being retried by this per-frame engine pass.
+        // Hold forbids ordinary damaging strikes. Also discard an AI proposal
+        // for a selected ally while any player/smalltalk strike is already
+        // live: the explicit action owns this combat turn and must not leave a
+        // delayed AI strike queued behind it. The flag is still consumed below
+        // so the rejected proposal cannot leak out after a stance change or
+        // after the player action completes.
+        let mut suppressed_considerations: std::collections::HashSet<EntityId> = self
+            .players
+            .allied
+            .orders
+            .keys()
+            .copied()
+            .filter(|&id| !self.allied_allows_normal_strikes(id))
+            .collect();
+        for seat in &self.players.allied.seats {
+            for &id in &seat.selection {
+                if self
+                    .orders
+                    .sequence_manager
+                    .has_live_element_for_actor_matching(id, |command| {
+                        command.is_swordstrike()
+                            || matches!(
+                                command,
+                                Command::SwordstrikeSmalltalkLeft
+                                    | Command::SwordstrikeSmalltalkRight
+                                    | Command::ParrySmalltalkLeft
+                                    | Command::ParrySmalltalkRight
+                            )
+                    })
+                {
+                    suppressed_considerations.insert(id);
+                }
+            }
+        }
+
         let pending_considerations: std::collections::HashSet<EntityId> = self
             .world
             .entities
@@ -2704,7 +2739,8 @@ impl EngineInner {
                 let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
                     return None;
                 };
-                std::mem::take(&mut ai.pending_sword_strike_consideration)
+                let pending = std::mem::take(&mut ai.pending_sword_strike_consideration);
+                (pending && !suppressed_considerations.contains(&EntityId::from(npc_id)))
                     .then_some(EntityId::from(npc_id))
             })
             .collect();

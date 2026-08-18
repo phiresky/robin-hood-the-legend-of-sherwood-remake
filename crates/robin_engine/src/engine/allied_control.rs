@@ -43,6 +43,14 @@ fn allied_order_locks_ai(order: &AlliedSoldierOrder, threatened: bool) -> bool {
     }
 }
 
+fn allied_stance_allows_normal_strikes(stance: AlliedStance) -> bool {
+    !matches!(stance, AlliedStance::Hold)
+}
+
+fn allied_stance_allows_combat_movement(stance: AlliedStance) -> bool {
+    matches!(stance, AlliedStance::Aggressive)
+}
+
 fn slot_preference(role: FormationRole, formation: AlliedFormation, point: MapPoint) -> [f32; 3] {
     let radius_squared = point.x * point.x + point.y * point.y;
     match (role, formation) {
@@ -279,6 +287,24 @@ mod tests {
     }
 
     #[test]
+    fn stances_separate_striking_from_pursuit() {
+        assert!(!allied_stance_allows_normal_strikes(AlliedStance::Hold));
+        assert!(!allied_stance_allows_combat_movement(AlliedStance::Hold));
+
+        assert!(allied_stance_allows_normal_strikes(AlliedStance::Defensive));
+        assert!(!allied_stance_allows_combat_movement(
+            AlliedStance::Defensive
+        ));
+
+        assert!(allied_stance_allows_normal_strikes(
+            AlliedStance::Aggressive
+        ));
+        assert!(allied_stance_allows_combat_movement(
+            AlliedStance::Aggressive
+        ));
+    }
+
+    #[test]
     fn direct_control_lock_discards_a_pending_bored_order() {
         let mut engine = EngineInner::new();
         let mut npc = crate::element::NpcData {
@@ -326,6 +352,51 @@ mod tests {
             !ai.outbox.actor.halt,
             "direct-control lock must not queue a halt behind the new movement"
         );
+    }
+    #[test]
+    fn selected_player_strike_discards_preexisting_ai_combat_work() {
+        let mut npc = crate::element::NpcData {
+            life_points: 100,
+            ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+            ..Default::default()
+        };
+        let ai = npc.ai_brain.enemy_mut().expect("test soldier has enemy AI");
+        ai.pending_sword_strike_consideration = true;
+        ai.base
+            .outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                crate::order::OrderType::RunningUpright,
+                100.0,
+                100.0,
+            ));
+
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc,
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+        engine.players.allied.seats[0].selection.push(soldier);
+
+        engine.prepare_allied_player_combat_command(soldier);
+
+        let ai = engine
+            .get_entity(soldier)
+            .and_then(Entity::enemy_ai)
+            .expect("test soldier retains enemy AI");
+        assert!(!ai.pending_sword_strike_consideration);
+        assert!(ai.base.outbox.actor.orders.is_empty());
     }
 }
 
@@ -540,6 +611,46 @@ impl EngineInner {
 
     pub fn allied_order(&self, soldier: EntityId) -> Option<&AlliedSoldierOrder> {
         self.players.allied.orders.get(&soldier)
+    }
+
+    /// Whether stance policy permits a soldier's AI to launch an ordinary
+    /// damaging sword strike. Smalltalk and reactive parries do not use this
+    /// path and deliberately remain available in every stance.
+    pub(super) fn allied_allows_normal_strikes(&self, soldier: EntityId) -> bool {
+        self.allied_order(soldier)
+            .is_none_or(|order| allied_stance_allows_normal_strikes(order.stance))
+    }
+
+    /// Whether stance policy permits AI-authored combat movement. Direct
+    /// player movement and patrol/follow maintenance bypass the AI intent
+    /// queue, so Defensive can reject pursuit without freezing its duty.
+    pub(super) fn allied_allows_combat_movement(&self, soldier: EntityId) -> bool {
+        self.allied_order(soldier)
+            .is_none_or(|order| allied_stance_allows_combat_movement(order.stance))
+    }
+
+    /// True while a controllable soldier is selected by any player seat.
+    pub(super) fn allied_soldier_is_selected(&self, soldier: EntityId) -> bool {
+        self.players
+            .allied
+            .seats
+            .iter()
+            .any(|seat| seat.selection.contains(&soldier))
+    }
+
+    /// Give an explicit player combat command precedence over work the
+    /// soldier AI planned before the gesture was received.
+    pub(super) fn prepare_allied_player_combat_command(&mut self, soldier: EntityId) {
+        if !self.allied_soldier_is_selected(soldier) {
+            return;
+        }
+        self.stop_owner(soldier, crate::sequence::SequencePriority::Preference);
+        let ai = self
+            .get_entity_mut(soldier)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("selected allied soldier {soldier:?} has no enemy AI"));
+        ai.pending_sword_strike_consideration = false;
+        ai.base.outbox.actor.orders.clear();
     }
 
     pub fn find_controllable_allied_soldier(
@@ -1051,7 +1162,13 @@ impl EngineInner {
             if stance == AlliedStance::Hold {
                 order.duty = AlliedDuty::Hold { anchor: position };
                 order.deploy_destination = None;
-                self.stop_owner(id, crate::sequence::SequencePriority::Normal);
+                // Preference is the priority used by ordinary sword strikes.
+                // Stopping only at Normal left an already-planned AI strike
+                // alive after switching to Hold.
+                self.stop_owner(id, crate::sequence::SequencePriority::Preference);
+                if let Some(ai) = self.get_entity_mut(id).and_then(Entity::enemy_ai_mut) {
+                    ai.pending_sword_strike_consideration = false;
+                }
             }
             self.set_allied_ai_locked(id, stance != AlliedStance::Aggressive);
         }

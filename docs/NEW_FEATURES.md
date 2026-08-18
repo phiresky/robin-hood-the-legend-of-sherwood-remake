@@ -20,7 +20,10 @@ A list of which additional features we have added, which ones we might still wan
   behind them instead of overlapping their formation. Long moves automatically
   narrow to a two-wide marching column before deploying at the destination.
   Controlled soldiers can enter swordfights, execute the normal drawn strike
-  gestures, and parry with right-click. Hover
+  gestures, and parry with right-click. Combat autonomy follows stance: Hold
+  permits only explicit gestures, smalltalk, and reactive parries; Defensive
+  returns attacks without AI pursuit; Aggressive retains full combat AI.
+  Explicit gestures supersede combat work the soldier AI had already queued. Hover
   tooltips name every action and its current state and appear quickly across
   each button's full cell. Soldiers receive deterministic names from the
   localized peasant-name pool. Selection uses the heroes' persistent ground
