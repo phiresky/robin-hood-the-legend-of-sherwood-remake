@@ -258,8 +258,8 @@ enum TraceStartState {
 
 fn validate_trace_schema(schema: u32) {
     assert!(
-        matches!(schema, 12 | 13 | 14 | 15),
-        "unsupported parity trace schema {schema}; schemas 12 through 15 are supported"
+        matches!(schema, 12 | 13 | 14 | 15 | 16),
+        "unsupported parity trace schema {schema}; schemas 12 through 16 are supported"
     );
 }
 
@@ -284,7 +284,7 @@ fn validate_trace_header(header: &TraceHeader) {
     match header.schema {
         // Schema 14 revises 12's recorder contract without adopting 13's
         // per-frame payload, which no writer ever produced.
-        12 | 14 | 15 => assert!(
+        12 | 14 | 15 | 16 => assert!(
             header.authoritative_state.is_none(),
             "schema-{} trace unexpectedly declares per-frame authoritative state",
             header.schema
@@ -304,14 +304,14 @@ fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
         header.start_state,
         header.initial_save.as_ref(),
     ) {
-        (12 | 13 | 14 | 15, TraceStartState::MissionStart, None) => None,
-        (12 | 13 | 14 | 15, TraceStartState::MissionStart, Some(_)) => {
+        (12 | 13 | 14 | 15 | 16, TraceStartState::MissionStart, None) => None,
+        (12 | 13 | 14 | 15 | 16, TraceStartState::MissionStart, Some(_)) => {
             panic!("mission_start traces must not contain initial_save")
         }
-        (12 | 13 | 14 | 15, TraceStartState::LoadedSave, None) => {
+        (12 | 13 | 14 | 15 | 16, TraceStartState::LoadedSave, None) => {
             panic!("loaded_save traces require initial_save")
         }
-        (12 | 13 | 14 | 15, TraceStartState::LoadedSave, Some(initial_save)) => {
+        (12 | 13 | 14 | 15 | 16, TraceStartState::LoadedSave, Some(initial_save)) => {
             let mission_index = header
                 .campaign
                 .current_mission_index
@@ -1345,6 +1345,11 @@ struct TraceActor {
         deserialize_with = "deserialize_present_nullable_sequence_element"
     )]
     sequence_element: Option<Option<TraceSequenceElement>>,
+    /// Schema-16 PositionInterface diagnostics. Kept as a cache-safe JSON
+    /// tree because it is observational evidence rather than comparable
+    /// engine state yet.
+    #[serde(default)]
+    position_interface: Option<TraceJsonValue>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1369,6 +1374,17 @@ struct TraceSequenceElement {
     action_state_after_transition: u32,
     #[serde(default)]
     movement: Option<TraceSequenceMovement>,
+    /// Schema-16 sequence topology and active-order diagnostics. These are
+    /// nullable or command-shaped in the Original recorder, so retaining the
+    /// draft payload verbatim is safer than inventing a false common shape.
+    #[serde(default)]
+    following: Option<TraceJsonValue>,
+    #[serde(default)]
+    postponed: Option<TraceJsonValue>,
+    #[serde(default)]
+    current_order: Option<TraceJsonValue>,
+    #[serde(default)]
+    movement_payload: Option<TraceJsonValue>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1629,6 +1645,11 @@ struct TraceRouteConstructionEvent {
     goal_sector: u16,
     goal_level: u16,
     gates: Vec<TraceRouteGate>,
+    /// Schema-16 may extend route events while its diagnostic contract is
+    /// being exercised against real recordings. Retain every additive field
+    /// in the native cache instead of silently discarding useful evidence.
+    #[serde(flatten)]
+    draft_diagnostics: BTreeMap<String, TraceJsonValue>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1639,6 +1660,8 @@ struct TraceRouteGate {
     level_out: u16,
     sector_in: u16,
     level_in: u16,
+    #[serde(flatten)]
+    draft_diagnostics: BTreeMap<String, TraceJsonValue>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1668,6 +1691,16 @@ struct TraceFrame {
     /// same source/goal and ordered gate list.
     #[serde(default)]
     route_construction_events: Option<Vec<TraceRouteConstructionEvent>>,
+    /// Schema-16 diagnostic streams are deliberately typed at the stable
+    /// outer boundary while their event payloads remain extensible.
+    #[serde(default)]
+    popup_events: Option<Vec<TraceJsonValue>>,
+    #[serde(default)]
+    ai_forecast_events: Option<Vec<TraceJsonValue>>,
+    #[serde(default)]
+    alert_formation_events: Option<Vec<TraceJsonValue>>,
+    #[serde(default)]
+    goto_authorization_events: Option<Vec<TraceJsonValue>>,
     resolved_exclamations: Vec<TraceResolvedExclamation>,
     #[serde(default)]
     movement_steps: Vec<TraceMovementStep>,
@@ -1728,6 +1761,7 @@ enum TraceJsonValue {
     Bool(bool),
     Unsigned(u64),
     Signed(i64),
+    Float(f64),
     String(String),
     Array(Vec<TraceJsonValue>),
     Object(BTreeMap<String, TraceJsonValue>),
@@ -1740,6 +1774,7 @@ impl TraceJsonValue {
             Self::Bool(value) => (*value).into(),
             Self::Unsigned(value) => (*value).into(),
             Self::Signed(value) => (*value).into(),
+            Self::Float(value) => (*value).into(),
             Self::String(value) => value.clone().into(),
             Self::Array(values) => values.iter().map(Self::to_json).collect(),
             Self::Object(values) => values
@@ -1747,6 +1782,52 @@ impl TraceJsonValue {
                 .map(|(key, value)| (key.clone(), value.to_json()))
                 .collect(),
         }
+    }
+}
+
+fn print_schema_sixteen_events(label: &str, events: Option<&Vec<TraceJsonValue>>) {
+    if let Some(events) = events
+        && !events.is_empty()
+    {
+        eprintln!(
+            "  Original schema-16 {label} this frame: {}",
+            serde_json::to_string(events).expect("serialize schema-16 event diagnostics")
+        );
+    }
+}
+
+fn print_schema_sixteen_actor_diagnostics(elements: &[TraceElement]) {
+    let diagnostics = elements
+        .iter()
+        .filter_map(|element| {
+            let actor = element.actor.as_ref()?;
+            let sequence = actor.sequence_element.as_ref().and_then(Option::as_ref);
+            (actor.position_interface.is_some()
+                || sequence.is_some_and(|sequence| {
+                    sequence.following.is_some()
+                        || sequence.postponed.is_some()
+                        || sequence.current_order.is_some()
+                        || sequence.movement_payload.is_some()
+                }))
+            .then(|| {
+                serde_json::json!({
+                    "entity": element.entity_id,
+                    "creation_order": element.creation_order,
+                    "position_interface": actor.position_interface,
+                    "following": sequence.and_then(|value| value.following.as_ref()),
+                    "postponed": sequence.and_then(|value| value.postponed.as_ref()),
+                    "current_order": sequence.and_then(|value| value.current_order.as_ref()),
+                    "movement_payload": sequence.and_then(|value| value.movement_payload.as_ref()),
+                })
+            })
+        })
+        .take(40)
+        .collect::<Vec<_>>();
+    if !diagnostics.is_empty() {
+        eprintln!(
+            "  Original schema-16 actor diagnostics (up to 40): {}",
+            serde_json::to_string(&diagnostics).expect("serialize schema-16 actor diagnostics")
+        );
     }
 }
 
@@ -1776,20 +1857,45 @@ fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
             frame.campaign.is_none()
                 && frame.engine_state.is_none()
                 && frame.route_construction_events.is_none()
+                && frame.popup_events.is_none()
+                && frame.ai_forecast_events.is_none()
+                && frame.alert_formation_events.is_none()
+                && frame.goto_authorization_events.is_none()
         }
         15 => {
             frame.campaign.is_none()
                 && frame.engine_state.is_none()
                 && frame.route_construction_events.is_some()
+                && frame.popup_events.is_none()
+                && frame.ai_forecast_events.is_none()
+                && frame.alert_formation_events.is_none()
+                && frame.goto_authorization_events.is_none()
         }
-        13 => frame.campaign.is_some() && frame.engine_state.is_some(),
+        16 => {
+            frame.campaign.is_none()
+                && frame.engine_state.is_none()
+                && frame.route_construction_events.is_some()
+                && frame.popup_events.is_some()
+                && frame.ai_forecast_events.is_some()
+                && frame.alert_formation_events.is_some()
+                && frame.goto_authorization_events.is_some()
+        }
+        13 => {
+            frame.campaign.is_some()
+                && frame.engine_state.is_some()
+                && frame.route_construction_events.is_none()
+                && frame.popup_events.is_none()
+                && frame.ai_forecast_events.is_none()
+                && frame.alert_formation_events.is_none()
+                && frame.goto_authorization_events.is_none()
+        }
         _ => unreachable!("trace schema was validated before frame parsing"),
     }
 }
 
 fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     match schema {
-        12 | 14 | 15 => assert!(
+        12 | 14 | 15 | 16 => assert!(
             trace_frame_envelope_matches(schema, frame),
             "schema-{schema} frame unexpectedly contains schema-13 authoritative state"
         ),
@@ -1801,8 +1907,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 59;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v59.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 60;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v60.native-bincode.zst";
 const TRACE_CACHE_FOOTER_MAGIC: [u8; 16] = *b"RHPRCACHEFOOTER!";
 const TRACE_CACHE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
@@ -3039,6 +3145,17 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         .expect("serialize Original route-construction diagnostics")
                 );
             }
+            print_schema_sixteen_events("popup events", frame.popup_events.as_ref());
+            print_schema_sixteen_events("AI forecast events", frame.ai_forecast_events.as_ref());
+            print_schema_sixteen_events(
+                "alert-formation events",
+                frame.alert_formation_events.as_ref(),
+            );
+            print_schema_sixteen_events(
+                "GoTo-authorization events",
+                frame.goto_authorization_events.as_ref(),
+            );
+            print_schema_sixteen_actor_diagnostics(&frame.elements);
             if automatic_dump_enabled {
                 write_automatic_rolling_dump(
                     &rolling_dump,
@@ -7906,6 +8023,134 @@ mod tests {
     }
 
     #[test]
+    fn extensible_diagnostics_schema_sixteen_are_cached_and_required() {
+        validate_trace_schema(16);
+
+        let actor: TraceActor = serde_json::from_value(serde_json::json!({
+            "action_state": 1,
+            "animation": 12,
+            "command": 19,
+            "command_name": "pass_door",
+            "motion_state": 2,
+            "wait_time": 0,
+            "passing_door_directly": true,
+            "active_pass_door": null,
+            "position_interface": {
+                "move_box": {
+                    "top_left": {"x": {"bits": 0}, "y": {"bits": 0}},
+                    "bottom_right": {"x": {"bits": 0}, "y": {"bits": 0}}
+                },
+                "anti_collision_on": true,
+                "deviated": false,
+                "blocked_count": 0,
+                "box_blocked": {
+                    "top_left": {"x": {"bits": 0}, "y": {"bits": 0}},
+                    "bottom_right": {"x": {"bits": 0}, "y": {"bits": 0}}
+                },
+                "radius": {"bits": 1065353216, "value": 1.0}
+            },
+            "sequence_element": {
+                "id": 5,
+                "type": 4,
+                "state": 2,
+                "command_level": 7,
+                "command": 19,
+                "command_name": "pass_door",
+                "order_count": 1,
+                "priority": 8,
+                "posture_after_transition": 1,
+                "action_state_after_transition": 1,
+                "movement": {"action": 12},
+                "following": null,
+                "postponed": {"id": 6, "command": 2},
+                "current_order": {"id": 77, "action": 12},
+                "movement_payload": {"flags": 3, "speed_factor": {"bits": 1065353216, "value": 1.0}}
+            }
+        }))
+        .expect("parse schema-16 actor and sequence diagnostics");
+        assert!(actor.position_interface.is_some());
+        let sequence = actor.sequence_element.as_ref().unwrap().as_ref().unwrap();
+        assert!(sequence.current_order.is_some());
+        assert!(sequence.movement_payload.is_some());
+
+        let mut frame_json = minimal_frame_json();
+        frame_json["route_construction_events"] = serde_json::json!([{
+            "kind": "move",
+            "actor": { "kind": "soldier", "index": 7 },
+            "source": { "x": { "bits": 0 }, "y": { "bits": 0 } },
+            "source_sector": 1,
+            "source_level": 2,
+            "goal": { "x": { "bits": 0 }, "y": { "bits": 0 } },
+            "goal_sector": 3,
+            "goal_level": 2,
+            "gates": [{
+                "gate_id": 9,
+                "direct": true,
+                "sector_out": 1,
+                "level_out": 2,
+                "sector_in": 3,
+                "level_in": 2,
+                "kind": "door",
+                "score": { "bits": 1065353216, "value": 1.0 }
+            }],
+            "ordinal": 4,
+            "phase": "constructed",
+            "result": "success"
+        }]);
+        frame_json["popup_events"] = serde_json::json!([{
+            "kind": "nested_refresh",
+            "depth": 2
+        }]);
+        frame_json["ai_forecast_events"] = serde_json::json!([{
+            "ordinal": 0,
+            "resolution": "building_exit"
+        }]);
+        frame_json["alert_formation_events"] = serde_json::json!([{
+            "kind": "candidate",
+            "accepted": false
+        }]);
+        frame_json["goto_authorization_events"] = serde_json::json!([{
+            "ordinal": 1,
+            "phase": "straight",
+            "outcome": "blocked",
+            "straight_authorized": false,
+            "path_authorized": null
+        }]);
+
+        let frame: TraceFrame = serde_json::from_value(frame_json)
+            .expect("parse extensible schema-16 diagnostic streams");
+        validate_trace_frame_envelope(16, &frame);
+        assert_eq!(frame.popup_events.as_ref().unwrap().len(), 1);
+        assert!(
+            frame.route_construction_events.as_ref().unwrap()[0]
+                .draft_diagnostics
+                .contains_key("ordinal")
+        );
+        assert!(
+            frame.route_construction_events.as_ref().unwrap()[0].gates[0]
+                .draft_diagnostics
+                .contains_key("score")
+        );
+        let encoded = bincode::encode_to_vec(&frame, bincode::config::standard())
+            .expect("encode schema-16 frame into native cache representation");
+        let (cached, consumed): (TraceFrame, usize) =
+            bincode::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("decode schema-16 frame from native cache representation");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(cached.alert_formation_events.as_ref().unwrap().len(), 1);
+        assert!(
+            cached.route_construction_events.as_ref().unwrap()[0]
+                .draft_diagnostics
+                .contains_key("result")
+        );
+
+        let mut incomplete_json = minimal_frame_json();
+        incomplete_json["route_construction_events"] = serde_json::json!([]);
+        let incomplete: TraceFrame = serde_json::from_value(incomplete_json).unwrap();
+        assert!(!trace_frame_envelope_matches(16, &incomplete));
+    }
+
+    #[test]
     fn schema_fourteen_frames_carry_no_authoritative_state() {
         let frame: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
         validate_trace_frame_envelope(14, &frame);
@@ -8053,7 +8298,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "schemas 12 through 15 are supported")]
+    #[should_panic(expected = "schemas 12 through 16 are supported")]
     fn schema_eleven_is_rejected() {
         validate_trace_schema(11);
     }

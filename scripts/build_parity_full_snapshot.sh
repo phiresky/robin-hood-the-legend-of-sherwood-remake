@@ -19,6 +19,7 @@ replacement_corpora=(
     parity-save-replays/60s-random-input/schema15-replacements-20260817
     parity-save-replays/30s-random-input/schema15-replacements-20260817
     parity-save-replays-legacy/10s-no-input-schema15-replacements-20260817
+    parity-save-replays/60s-random-input/schema16-replacements-20260818
 )
 
 if [[ ! -f "$retired_file" ]]; then
@@ -54,8 +55,8 @@ trap 'rm -f "$snapshot_tmp"' EXIT
 trace_is_complete() {
     local trace=$1
     local marker=${trace%-session-*}.complete
-    # The schema-15 replacement publisher uses a checksum-bearing marker next
-    # to the complete compressed filename. Older corpora use the replay stem.
+    # Replacement publishers use a checksum-bearing marker next to the
+    # complete compressed filename. Older corpora use the replay stem.
     if [[ ! -f "$marker" && ! -f "$trace.complete" ]]; then
         printf 'warning: excluding trace without completion marker: %s\n' "$trace" >&2
         return 1
@@ -82,7 +83,7 @@ for corpus in "${corpora[@]}"; do
     done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
 done | sort >> "$snapshot_tmp"
 
-# Current schema-15 recaptures supersede retired traces and therefore belong in
+# Current schema-15/schema-16 recaptures supersede retired traces and belong in
 # the authoritative sweep even though their historical paths are deny-listed.
 # The separate schema14-seed1000000-20260814 campaign is intentionally absent;
 # it is validated in its own later pass.

@@ -311,3 +311,22 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_
 parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003-session-0001.jsonl.zst
 # Schema-15 replacement (same save/RNG/input seed, 1,500 frames):
 # parity-save-replays/60s-random-input/schema15-replacements-20260817/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003-session-0001.jsonl.zst
+# Stale schema-12 anti-collision oracle. At frame 1395 this archive retains a
+# cached deviated increment even though the recovery corridor has no candidate
+# line. Current RHPositionInterface source clears deviation and recomputes the
+# increment when IsReachableThick succeeds. The same-relative schema-14 trace
+# exercises the same save/RNG/input seed and matches Rust through exact EOF.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_032/replay-002-session-0001.jsonl.zst
+# Existing current-Original replacement (same save/RNG/input seed, 1,500 frames):
+# parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_032/replay-002-session-0001.jsonl.zst
+# Stale schema-12 anti-collision oracle. At frame 6743 the archive retains
+# increment_map.x 0xbefcbc1d after the actor's deviated recovery. Both the
+# current Original binary (sha256 72d435beaafb0475447ce6910d7a944391df8e9e6e6ae016b016d4f42816b444)
+# and the pinned schema-14 capture binary (sha256 0c5353187819fe894880d0fd11cd9c2b57835d685b499e83f581d62c26669d24),
+# replaying the exact save with RNG seed 1 and input seed 9012, produce
+# 0xbefcba91 at the same committed position, exactly matching Rust and the
+# current RHPositionInterface recovery source. Recapture as schema 16 so the
+# deviation, blocked count, move box, and anti-collision state are explicit.
+parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_042/replay-012-session-0001.jsonl.zst
+# Schema-16 replacement (same save/RNG/input seed, 1,500 frames):
+# parity-save-replays/60s-random-input/schema16-replacements-20260818/traces/Savegame_linux3/Profile_003/Savegame_042/replay-012-session-0001.jsonl.zst

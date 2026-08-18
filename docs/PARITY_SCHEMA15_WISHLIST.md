@@ -1,37 +1,71 @@
-# Parity schema 15 follow-up wishlist
+# Parity schema 16 draft wishlist
 
-Schema 15 adds actor door-pass/sequence-element state and successful route-construction events. Keep these candidates for later additions when a parity investigation demonstrates their value:
+Schema 15 added actor door-pass/sequence-element state and successful
+route-construction events. Schema 16 is an opt-in draft: its recorder and Rust
+consumer have landed together and passed a smoke capture, but no large schema
+16 corpus has been recorded yet. The draft adds:
 
 Implemented follow-up: successful beggar clicks now emit a
 `beggar_dont_talk_stamp` resolved command naming the civilian. This preserves
 the post-click cooldown mutation even when `AddInteractionWithSeek` reduces a
 non-macro double-click to the otherwise target-free `make_pc_fast` event.
 
-- Failed route-construction attempts, including the exact rejection stage/reason.
-- The full current order (ID, action, motion method, goal, completion flags), not only the sequence element's remaining order count.
-- Postponed and following sequence-element identities, to expose hand-off timing without dumping entire sequence graphs.
-- The AI forecast input and resolved destination before route construction, including target identity and building-exit selection.
-- Door-pass phase and authored in/out positions in addition to gate identity and traversal direction.
-- Command-specific movement payloads (destination, sector/layer, flags, tolerance, speed) only after documenting which fields are initialized for every constructor of that command; dormant C++ fields must not be read by instrumentation.
-- Per-event simulation phase/ordinal when several routes or state transitions occur in one frame.
-- `DisplayPopupText` modal phase and nested-refresh diagnostics. `RHMenuPopupScroll::NeededBkgndColorization` can conditionally trigger a nested `Refresh`, while its static same-frame suppression changes later behavior; record the popup decision, colorization result, refresh nesting/phase, and suppression frame for presentation/RNG investigations.
-- Alert-formation selection and `CanPut` diagnostics. Record the officer ID; every scanned candidate ID in scan order; inactive and script-locked status; the exact eligibility rejection stage (`rank`, `able_to_help`, `stay_on_post`, `can_call`, `radius`, or `Think`); accepted IDs in order; exact normalized-contribution and running-average float bits; and the final selected sector. Then record each `CanPut` candidate direction and slot destination box, position-authorization result, thick-corridor result, and stable IDs for blocking motion/mobile lines. `CanPut` alone misses omitted candidates, while schema 12's direction goal alone cannot explain either selection or live slot rejection.
-- Actor PositionInterface collision state: exact move box, anti-collision enabled state, deviated flag, blocked count, box-blocked state, and radius. Also capture the last `GoTo` destination/flags and its straight/path authorization result when available; a rejected straight move can otherwise surface only as later panic-RNG drift.
+- Failed route attempts with stable failure phase/reason; successful routes also
+  expose safe gate kind/activity/geometry, traversal direction, penalties, and
+  A* scores.
+- Current-order state, following/postponed sequence identities, and
+  command-whitelisted movement payloads. Door movement includes the active
+  order identity and authored gate in/out geometry.
+- AI-forecast input and resolution, including target and selected building
+  exit when one is safely available.
+- Per-frame event ordinals and explicit phases for route, forecast, GoTo,
+  popup, and alert-formation diagnostics.
+- `DisplayPopupText` modal entry/exit, background-colorization decision,
+  same-frame suppression state, and popup-scoped nested-refresh entry/exit.
+- Full alert-formation candidate scan and short-circuit eligibility results,
+  accepted and selected ordering, exact contribution/running-average float
+  bits, final sector, and the decomposed position/thick-corridor `CanPut`
+  sweep for every slot.
+- Actor `PositionInterface` collision snapshots (move/blocked boxes,
+  anti-collision, deviation, blocked count, and radius) plus `GoTo` input,
+  effective flags, phase/outcome, and straight/path authorization results when
+  those checks ran.
+
+Known safe omissions and future work:
+
+- `RHOrder::bDone` is not recorded: the Original copy constructor can leave it
+  uninitialized. The motion method is an ephemeral `PerformMotion` argument,
+  not stored in the current order. Recording either would require an authored
+  lifecycle hook rather than reading dormant memory.
+- The building forecast branch with at most one gate does not assign its output
+  direction. Schema 16 omits `resolved.direction` for that branch.
+- Existing `RHFastFindGrid` authorization APIs return only booleans, so alert
+  `CanPut` events set `blocker_ids_available:false` and leave motion/mobile
+  blocker IDs null. A future collision-witness API could expose stable blocker
+  IDs without repeating or mutating the query.
+- Route failure hooks cover the three `RHSequence` route builders. Other raw
+  `FindPathGates` callers are not yet event producers.
+- Short smoke fixtures positively exercised `GoTo` events, but did not trigger
+  popup, route/forecast, or alert events. Record targeted fixtures for those
+  paths before treating their event shapes as stable.
 
 Prefer fields with stable engine identities and exact integer/float-bit representations. Do not add pointer values or observational code that advances RNG, queries mutable caches, or changes sequence/pathfinding behavior.
 
-For future capture campaigns, keep schema 14 as the default and opt into the
-new recorder explicitly:
+For future capture campaigns, keep schema 14 as the default. Schema 15 remains
+available for compatibility, and the schema 16 draft must be selected
+explicitly:
 
 ```sh
-PARITY_TRACE_SCHEMA=15 \
+PARITY_TRACE_SCHEMA=16 \
 PARITY_RANDOM_REPLAYS=10 \
 PARITY_FRAMES=1500 \
 original-code/scripts/capture_parity_save_replays.sh
 ```
 
-This selects `original-code/build/native-full/robin` and the separate
-`parity-save-replays/60s-random-input/schema15` output directory. The producer
-rejects a trace whose header does not declare schema 15. Use `DRY_RUN=1` to
+This selects `original-code/build/native-full/robin`, passes the requested
+schema explicitly, and uses the separate
+`parity-save-replays/60s-random-input/schema16` output directory. The producer
+rejects a trace whose header does not declare schema 16. Use `DRY_RUN=1` to
 inspect resolved paths and settings without creating capture directories or
-starting the game.
+starting the game. The recorder and consumer have passed a one-frame schema 16
+smoke; use a small targeted pilot before beginning a large capture campaign.

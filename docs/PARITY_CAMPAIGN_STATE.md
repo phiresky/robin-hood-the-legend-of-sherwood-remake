@@ -1762,6 +1762,24 @@ remaining set). **E3 is entirely schema-12**, so gdb against the Original is una
 construction and it must attribute from the Rust side plus the trace — that limitation was stated in its
 task rather than left for it to discover.
 
+## Schema-12 anti-collision oracle retirement (2026-08-18)
+
+- linux2 Profile_002 Savegame_032 replay-002 and linux3 Profile_003
+  Savegame_042 replay-012 retained old cached increments across a deviated
+  recovery even though current `RHPositionInterface.cpp` clears deviation and
+  recomputes the increment after a reachable corridor. Candidate-level Rust
+  probes found no blocking line for either corridor.
+- Savegame_042 was replayed from the exact save with RNG seed 1 and input seed
+  9012 using both the current Original and pinned schema-14 capture binaries.
+  Both produce `increment_map.x = 0xbefcba91` at frame 6743 and the same
+  committed position as Rust; only the archived schema-12 trace records
+  `0xbefcbc1d`. No Rust gameplay change is warranted.
+- Both schema-12 paths are now retired. Savegame_032 already has a
+  same-relative schema-14 replacement that matches exact EOF. Recapture
+  Savegame_042 for 1,500 frames under schema 16, whose position-interface
+  telemetry records the anti-collision/deviation state needed to audit future
+  recovery differences.
+
 ### Probe readings already routed to the agents holding those traces
 Findings 1, 3 and 4 of the instrumentation agent land inside D2 and D3 and have been forwarded, including
 the warning that probe `co=` is `GetCreationOrder()` and not the trace entity index. **Findings 3 and 4

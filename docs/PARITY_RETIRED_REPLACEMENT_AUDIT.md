@@ -2,7 +2,7 @@
 
 Audit date: 2026-08-17.
 
-`docs/PARITY_RETIRED_TRACES.txt` currently names 190 retired recordings. The
+`docs/PARITY_RETIRED_TRACES.txt` currently names 192 retired recordings. The
 retirement list is a deny-list for historical or incomplete oracles; retirement
 does not mean that a save fixture is unusable. A replacement is a new recording
 from the current Original source with the old save, RNG seed, input seed, and
@@ -120,3 +120,34 @@ explain.
    new parity frontier.
 6. Record old-to-new path mapping, seeds, final frame, checksum, and validation
    result beside the replacement corpus.
+
+## 2026-08-18 anti-collision oracle addendum
+
+Two additional schema-12 recordings were proven inconsistent with the current
+Original source rather than evidence of a Rust gameplay defect:
+
+- linux2 Profile_002 Savegame_032 replay-002 retains its cached deviated
+  increment after a recovery corridor with no candidate line. Its existing
+  same-relative schema-14 replacement matches Rust through exact EOF.
+- linux3 Profile_003 Savegame_042 replay-012 records `increment_map.x` as
+  `0xbefcbc1d` at frame 6743. Replaying its exact save, RNG seed 1, and random
+  input seed 9012 with both the current Original binary and the pinned
+  schema-14 capture binary produces `0xbefcba91` at the same committed
+  position, exactly matching Rust. `RHPositionInterface.cpp` also requires
+  deviation clearing and increment recomputation after the reachable recovery.
+
+Do not add a Rust compatibility branch for either stale value. Savegame_042
+needs a 1,500-frame schema-16 replacement with RNG seed 1 and random-input seed
+9012; Savegame_032's schema-14 replacement is already sufficient. Schema 16 is
+preferred for future anti-collision investigations because `RHParity.cpp`
+records the move box, anti-collision latch, deviation flag, blocked count,
+blocked box, and radius. Those fields distinguish a genuine recovery decision
+from an old recorder trajectory without intrusive gameplay instrumentation.
+
+For the targeted Savegame_042 recapture, stage only
+`reference-saves/Savegame_linux3/Profile_003/Savegame_042` in the capture input
+tree, then run `original-code/scripts/capture_parity_save_replays.sh` with
+`PARITY_TRACE_SCHEMA=16`, `PARITY_SEED=1`, `PARITY_INPUT_SEED_BASE=9012`,
+`PARITY_RANDOM_REPLAYS=1`, and `PARITY_FRAMES=1500`, publishing to a dated
+schema-16 replacement corpus. Apply the normal header/frame/suffix, zstd, and
+parity-profile exact-EOF gates before accepting it.
