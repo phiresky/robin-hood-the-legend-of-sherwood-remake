@@ -1131,6 +1131,17 @@ fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destinat
     assert!(!nearby_ai.already_on_point);
     assert_eq!(nearby_ai.take_pending_orders().len(), 1);
 
+    // A transition on its first live motion frame is not a stale outgoing
+    // transition. Original still exposes that transition to GoTo.
+    let mut starting_ctx =
+        goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingUprightWaitingUpright);
+    starting_ctx.self_animation_motion_state = crate::sprite::MotionState::Start;
+    let mut starting_ai = AiController::new(93);
+    starting_ai.think_recursion_depth = 1;
+    starting_ai.go_to(starting_ctx.position, GotoFlags::RUN, &starting_ctx);
+    assert!(!starting_ai.already_on_point);
+    assert_eq!(starting_ai.take_pending_orders().len(), 1);
+
     let mut speed_ai = AiController::new(93);
     speed_ai.think_recursion_depth = 1;
     speed_ai.go_to_speed(ctx.position, GotoFlags::RUN, 1.5, &ctx);
@@ -1146,6 +1157,20 @@ fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destinat
     crouched_ai.go_to(crouched_ctx.position, GotoFlags::RUN, &crouched_ctx);
     assert!(!crouched_ai.already_on_point);
     assert_eq!(crouched_ai.take_pending_orders().len(), 1);
+}
+
+#[test]
+fn goto_with_live_animation_does_not_project_unfinished_transition_to_idle() {
+    let mut ctx =
+        goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
+    ctx.self_animation_reached_action_done = false;
+    let mut ai = AiController::new(39);
+
+    ai.go_to_with_live_animation(ctx.position, GotoFlags::RUN, &ctx);
+
+    assert!(!ai.already_on_point);
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    assert_eq!(ai.take_pending_orders().len(), 1);
 }
 
 #[test]

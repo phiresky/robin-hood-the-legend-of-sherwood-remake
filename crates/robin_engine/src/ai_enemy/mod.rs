@@ -4426,6 +4426,41 @@ impl EnemyAi {
             self.set_guarded_pc(None);
         }
 
+        // `ReturnToDutyCommonStuff` reaches the new state through virtual
+        // Enemy `SetState` in Original.  The shared Rust base assigns the
+        // fields directly, so restore the override's combat-neighbour
+        // teardown as well.  Original's two line-mode switches both inspect
+        // the incoming substate (an authored quirk), which reduces the clear
+        // condition to "the destination is not a phalanx or real swordfight
+        // substate".  Queue the reciprocal clears before dropping our local
+        // links, matching UpdateLeft/RightCombatNeighbour(NULL).
+        let incoming_keeps_combat_neighbours = matches!(
+            incoming_substate,
+            Substate::AttackingPhalanx
+                | Substate::AttackingRunningToPhalanx
+                | Substate::AttackingProtectingWithShield
+        ) || incoming_substate.is_real_swordfight();
+        if !incoming_keeps_combat_neighbours {
+            if self.left_combat_neighbour != 0 {
+                self.base.outbox.reentrant.cross_npc_actions.push(
+                    CrossNpcAction::SetRightCombatNeighbour {
+                        target: self.left_combat_neighbour,
+                        neighbour: 0,
+                    },
+                );
+            }
+            if self.right_combat_neighbour != 0 {
+                self.base.outbox.reentrant.cross_npc_actions.push(
+                    CrossNpcAction::SetLeftCombatNeighbour {
+                        target: self.right_combat_neighbour,
+                        neighbour: 0,
+                    },
+                );
+            }
+            self.left_combat_neighbour = 0;
+            self.right_combat_neighbour = 0;
+        }
+
         // `ReturnToDutyCommonStuff` calls the virtual Enemy `SetState` in
         // C++. The shared Rust base performs the state assignment directly.
         // Restore the Enemy override's attentive-mode tail: every Default
@@ -5947,10 +5982,19 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "mismatched state/substate")]
     fn set_state_rejects_mismatched_numeric_substate_family() {
-        let mut ai = EnemyAi::new(1);
-        ai.set_state(AiState::Default, Substate::SleepingForever);
+        // Original guards this only under `_DEBUG`; parity/release builds do
+        // not execute that assert. Verify the family predicate that feeds our
+        // matching `debug_assert_eq!` without requiring release to invent a
+        // runtime rejection absent from Original.
+        assert_eq!(
+            Substate::SleepingForever.ai_state_family(),
+            Some(AiState::Sleeping)
+        );
+        assert_ne!(
+            Substate::SleepingForever.ai_state_family(),
+            Some(AiState::Default)
+        );
     }
 
     #[test]
@@ -6393,6 +6437,38 @@ mod tests {
                 new: None,
             }),
             "the owner-boundary drain must clear the PC's reciprocal guard before later NPCs scan"
+        );
+    }
+
+    #[test]
+    fn return_to_duty_virtual_state_tail_clears_combat_neighbours() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(223);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingWatching;
+        ai.left_combat_neighbour = 225;
+        ai.right_combat_neighbour = 227;
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &AiContext::default());
+
+        assert_eq!(ai.base.current_state, AiState::Default);
+        assert_eq!(ai.left_combat_neighbour, 0);
+        assert_eq!(ai.right_combat_neighbour, 0);
+        assert!(
+            matches!(
+                ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+                [
+                    CrossNpcAction::SetRightCombatNeighbour {
+                        target: 225,
+                        neighbour: 0,
+                    },
+                    CrossNpcAction::SetLeftCombatNeighbour {
+                        target: 227,
+                        neighbour: 0,
+                    },
+                ]
+            ),
+            "virtual Enemy SetState must publish both reciprocal unlinks at the owner boundary"
         );
     }
 
@@ -7198,6 +7274,9 @@ mod tests {
         target_view.is_pc = true;
         target_view.kind = EntityKind::Pc;
         let mut views = AiEntityViewMap::new();
+        let mut owner_view = soldier_view(me_position);
+        owner_view.camp = Camp::Lacklandists;
+        views.insert(72, owner_view);
         views.insert(107, target_view);
         let ctx = AiContext {
             position: me_position,
@@ -7249,6 +7328,9 @@ mod tests {
         unoccupied_view.is_pc = true;
         unoccupied_view.kind = EntityKind::Pc;
         let mut views = AiEntityViewMap::new();
+        let mut owner_view = soldier_view(me_position);
+        owner_view.camp = Camp::Lacklandists;
+        views.insert(114, owner_view);
         views.insert(171, nearer_view);
         views.insert(174, unoccupied_view);
         let ctx = AiContext {

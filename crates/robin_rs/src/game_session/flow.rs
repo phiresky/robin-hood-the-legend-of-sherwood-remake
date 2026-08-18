@@ -250,9 +250,15 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             timeline: runtime,
             ..
         } = runtime;
+        let profiling = super::frame_perf::enabled();
+        let phase_start = super::frame_perf::start(profiling);
         finalize_interactive_recording(runtime, &mut frame);
+        super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
+        let phase_start = super::frame_perf::start(profiling);
         finish_interactive_audio(runtime, world, frontend, callbacks);
+        super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
 
+        let phase_start = super::frame_perf::start(profiling);
         let MissionWorld {
             host,
             game,
@@ -388,6 +394,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 game.message_text.clear();
             }
         }
+        super::frame_perf::record(super::frame_perf::Phase::Render, phase_start);
 
         // Original RHgame.cpp ordering is Refresh (including Draw/Flip),
         // then RHSound::Hourglass, then the one-shot engine
@@ -395,9 +402,13 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // the opposite host order above, so dispatch only after both have
         // completed.  Script mutations and emitted sound/UI effects first
         // become observable on the next frame, matching the original.
+        let phase_start = super::frame_perf::start(profiling);
         run_interactive_post_initialize(runtime, host, manager, assets, dev);
+        super::frame_perf::record(super::frame_perf::Phase::PostInitialize, phase_start);
 
+        let phase_start = super::frame_perf::start(profiling);
         pace_interactive_frame(runtime, host, manager, &frame, args).await;
+        super::frame_perf::record(super::frame_perf::Phase::Pacing, phase_start);
     }
 }
 
@@ -408,13 +419,21 @@ impl InteractiveMission {
         &mut self,
         services: &mut MissionServices<'_>,
     ) -> Result<FrameControl, String> {
+        let profiling = super::frame_perf::enabled();
+        let total_start = super::frame_perf::start(profiling);
+        let phase_start = super::frame_perf::start(profiling);
         let prepared = match InteractiveFramePreparation::new(self, services)
             .run()
             .await?
         {
             FramePreparation::Ready(prepared) => prepared,
-            FramePreparation::Control(control) => return Ok(control),
+            FramePreparation::Control(control) => {
+                super::frame_perf::record(super::frame_perf::Phase::Prepare, phase_start);
+                super::frame_perf::record(super::frame_perf::Phase::Total, total_start);
+                return Ok(control);
+            }
         };
+        super::frame_perf::record(super::frame_perf::Phase::Prepare, phase_start);
         let PreparedFrame {
             frame,
             rewind_active,
@@ -425,7 +444,8 @@ impl InteractiveMission {
             step_forward_pressed,
             step_back_pressed,
         } = prepared;
-        match InteractiveFrameSimulation::new(
+        let phase_start = super::frame_perf::start(profiling);
+        let outcome = InteractiveFrameSimulation::new(
             frame,
             FrameSimulationFlags {
                 rewind_active,
@@ -438,9 +458,10 @@ impl InteractiveMission {
             },
         )
         .run(self, services)
-        .await?
-        {
-            FrameSimulationOutcome::Control(control) => Ok(control),
+        .await?;
+        super::frame_perf::record(super::frame_perf::Phase::Simulation, phase_start);
+        let control = match outcome {
+            FrameSimulationOutcome::Control(control) => control,
             FrameSimulationOutcome::Present(handoff) => {
                 self.finish_interactive_frame(
                     services,
@@ -453,9 +474,11 @@ impl InteractiveMission {
                     },
                 )
                 .await;
-                Ok(FrameControl::Continue)
+                FrameControl::Continue
             }
-        }
+        };
+        super::frame_perf::record(super::frame_perf::Phase::Total, total_start);
+        Ok(control)
     }
 }
 

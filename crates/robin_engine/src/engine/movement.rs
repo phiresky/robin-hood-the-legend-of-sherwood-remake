@@ -1179,6 +1179,22 @@ fn should_defer_pc_movement_state_start(is_pc: bool, entity_target_seek: bool) -
     is_pc && !entity_target_seek
 }
 
+/// The shipped game clears a soldier's anti-vibration deviation latch when an
+/// in-place movement transition starts, but PCs preserve it across the same
+/// walking-to-waiting handoff. The latter is observable when the following
+/// `Turn` consumes the retained direction counter before rotating.
+#[inline]
+fn should_clear_deviated_for_aligned_transition_start(
+    is_pc: bool,
+    execute_order_initialising: bool,
+    is_transition_anim: bool,
+    deviated: bool,
+    position: MapPoint,
+    goal: MapPoint,
+) -> bool {
+    !is_pc && execute_order_initialising && is_transition_anim && deviated && position == goal
+}
+
 fn actor_line_crossing_eligible(
     posture: crate::element::Posture,
     human_is_carried: bool,
@@ -9639,11 +9655,14 @@ impl EngineInner {
             // save-observable detail; see
             // `clear_deviated_for_aligned_transition_start` for the trace
             // evidence bounding it to exactly this initialization.
-            if execute_order_initialising
-                && is_transition_anim
-                && sprite.position_iface.is_deviated()
-                && sprite.position_iface.map_position() == goal
-            {
+            if should_clear_deviated_for_aligned_transition_start(
+                is_pc,
+                execute_order_initialising,
+                is_transition_anim,
+                sprite.position_iface.is_deviated(),
+                sprite.position_iface.map_position(),
+                goal,
+            ) {
                 sprite
                     .position_iface
                     .clear_deviated_for_aligned_transition_start();
@@ -17397,6 +17416,36 @@ mod arrival_snap_tests {
         assert!(!should_snap_arrival(true, true, 0.0, false));
         assert!(!should_snap_arrival(true, false, 1.0, false));
         assert!(!should_snap_arrival(true, false, 0.0, true));
+    }
+}
+
+#[cfg(test)]
+mod aligned_transition_deviation_tests {
+    use super::should_clear_deviated_for_aligned_transition_start;
+    use crate::coordinates::MapPoint;
+
+    #[test]
+    fn pc_preserves_deviation_across_aligned_movement_exit_transition() {
+        let aligned = MapPoint::new(407.967_35, 786.937_9);
+
+        assert!(!should_clear_deviated_for_aligned_transition_start(
+            true, true, true, true, aligned, aligned,
+        ));
+    }
+
+    #[test]
+    fn non_pc_still_clears_deviation_on_aligned_transition_start() {
+        let aligned = MapPoint::new(100.0, 200.0);
+
+        assert!(should_clear_deviated_for_aligned_transition_start(
+            false, true, true, true, aligned, aligned,
+        ));
+        assert!(!should_clear_deviated_for_aligned_transition_start(
+            false, false, true, true, aligned, aligned,
+        ));
+        assert!(!should_clear_deviated_for_aligned_transition_start(
+            false, true, false, true, aligned, aligned,
+        ));
     }
 }
 

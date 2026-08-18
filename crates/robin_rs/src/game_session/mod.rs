@@ -5,6 +5,7 @@ mod debriefing;
 mod dispatch;
 mod event_hud;
 mod flow;
+mod frame_perf;
 mod frame_prepare;
 mod frame_simulate;
 mod headless;

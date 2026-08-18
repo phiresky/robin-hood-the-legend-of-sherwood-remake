@@ -398,6 +398,31 @@ mod tests {
         assert!(!ai.pending_sword_strike_consideration);
         assert!(ai.base.outbox.actor.orders.is_empty());
     }
+
+    #[test]
+    fn eligible_uncontrolled_ally_uses_the_original_path_failure_flow() {
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 100,
+                ..Default::default()
+            },
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+
+        assert!(engine.is_controllable_allied_soldier(soldier));
+        assert_eq!(engine.allied_path_failure_fallback(soldier), None);
+    }
 }
 
 fn march_column_offsets(count: usize) -> Vec<MapPoint> {
@@ -1317,20 +1342,19 @@ impl EngineInner {
         self.players.allied = Default::default();
     }
 
-    /// Consume the one-shot center fallback for a controlled soldier whose
-    /// formation slot has no path. Returning `Some(None)` identifies a
-    /// controlled ally with no fallback, which must still fail immediately
-    /// instead of retaining the generic PC-style 100-frame waiting pose.
+    /// Consume the one-shot center fallback for a soldier with an active
+    /// direct-control order whose formation slot has no path. Returning
+    /// `Some(None)` identifies an ordered ally with no fallback, which must
+    /// still fail immediately instead of retaining the original 100-frame
+    /// failed-path wait (`original-code/RHengine.cpp:8481-8503`).
     pub(super) fn allied_path_failure_fallback(
         &mut self,
         id: EntityId,
     ) -> Option<Option<MapPoint>> {
-        if !self.is_controllable_allied_soldier(id) {
-            return None;
-        }
-        let order = self.players.allied.orders.get_mut(&id).unwrap_or_else(|| {
-            panic!("controllable allied soldier {id:?} has no control order after path failure")
-        });
+        // Eligibility for allied selection is deliberately broader than being
+        // under direct control. Ordinary Royalist AI must keep the original
+        // failed-request behavior unless the player actually issued an order.
+        let order = self.players.allied.orders.get_mut(&id)?;
         let fallback = order.path_fallback.take();
         if let Some(point) = fallback {
             match &mut order.duty {

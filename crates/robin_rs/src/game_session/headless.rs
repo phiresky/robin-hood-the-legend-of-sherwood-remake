@@ -97,6 +97,8 @@ impl HeadlessMission {
     /// policy here; consuming campaign return and async host pacing remain in
     /// the outer driver.
     pub(super) fn run_frame(&mut self, args: &crate::main_entry::CliArgs) -> HeadlessFrameResult {
+        let profiling = super::frame_perf::enabled();
+        let total_start = super::frame_perf::start(profiling);
         let frame_started_at_ms = crate::window::process_uptime_ms();
         let net_drain = {
             let MissionRuntime {
@@ -149,10 +151,12 @@ impl HeadlessMission {
             &self.runtime.world.host,
             &self.runtime.world.manager,
         );
+        let simulation_start = super::frame_perf::start(profiling);
         let tick_exit_code = self.runtime.run_tick(TickPolicy {
             skip_tick: tick_paused,
             paused: false,
         });
+        super::frame_perf::record(super::frame_perf::Phase::Simulation, simulation_start);
         self.runtime.drain_host_rpc();
         self.drain_headless_modals_and_steps(&mut frame, !network_paused);
         self.runtime.timeline.trace(FrameContractStage::ModalDrain);
@@ -229,11 +233,13 @@ impl HeadlessMission {
             );
         }
 
-        HeadlessFrameResult {
+        let result = HeadlessFrameResult {
             outcome,
             exit,
             paused,
-        }
+        };
+        super::frame_perf::record(super::frame_perf::Phase::Total, total_start);
+        result
     }
 
     fn drain_headless_modals_and_steps(

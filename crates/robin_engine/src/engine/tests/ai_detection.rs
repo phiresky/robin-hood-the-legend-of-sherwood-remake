@@ -661,6 +661,96 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
 }
 
 #[test]
+fn pc_noise_refresh_invalidates_an_earlier_npc_tactical_snapshot() {
+    use crate::element::{Camp, Detectable, DetectableType};
+
+    let mut engine = EngineInner::new();
+    let earlier_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let later_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+    // The earlier NPC builds the lazy tactical snapshot before the PC's live
+    // Human::Hourglass slot. The later NPC's cadence is open at frame zero:
+    // (0 + 31 hidden creations + slot 2) % 3 == 0.
+    engine.control.frame_counter = 0;
+    for npc_id in [earlier_npc, later_npc] {
+        let Entity::Soldier(npc) = engine.get_entity_mut(npc_id).expect("listener exists") else {
+            panic!("listener changed kind")
+        };
+        npc.element.active = true;
+        npc.element.set_position_map(MapPoint::new(0.0, 0.0));
+        npc.npc.life_points = 100;
+        npc.npc
+            .ai_brain
+            .enemy_mut()
+            .expect("listener has enemy AI")
+            .base
+            .me = npc_id.index();
+    }
+    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).expect("noise PC exists") else {
+        panic!("noise PC changed kind")
+    };
+    pc_entity.element.active = true;
+    pc_entity.element.set_position_map(MapPoint::new(55.0, 0.0));
+    pc_entity.pc.life_points = 100;
+    pc_entity.actor.last_noise_volume = 200;
+    pc_entity.actor.produced_noise = Some(crate::ai::Noise {
+        origin: crate::ai::Position {
+            x: 55.0,
+            y: 0.0,
+            sector: None,
+            level: 0,
+        },
+        noise_type: crate::ai::NoiseType::TapTapTap,
+        volume: 200,
+        elevation: 0,
+        element_id: u16::try_from(pc.index()).expect("test PC id fits noise record"),
+    });
+    pc_entity.actor.hear_noise_box =
+        crate::coordinates::MapBBox::from_coords(-245.0, -220.0, 355.0, 220.0);
+
+    let Entity::Soldier(later) = engine.get_entity_mut(later_npc).unwrap() else {
+        unreachable!()
+    };
+    later.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+        element: Some(pc),
+        detectable_type: DetectableType::Enemy,
+        heard_last_frame: true,
+        ..Detectable::default()
+    });
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
+    }
+    crate::sim_rng::with_seed(0xA013_0016, |sim| {
+        engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+    });
+
+    let actor = engine
+        .get_entity(pc)
+        .and_then(Entity::actor_data)
+        .expect("noise PC remains an actor");
+    assert_eq!(
+        actor
+            .produced_noise
+            .expect("noise remains initialized")
+            .volume,
+        15
+    );
+    let later = engine
+        .get_entity(later_npc)
+        .and_then(Entity::npc_data)
+        .expect("later listener remains an NPC");
+    assert!(
+        !later.detectable_lists[DetectableType::Enemy as usize][0].heard_last_frame,
+        "later NPC must observe the PC's creation-ordered quiet refresh"
+    );
+}
+
+#[test]
 fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
     use crate::order::OrderType;
 

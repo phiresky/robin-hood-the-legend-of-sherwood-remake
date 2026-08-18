@@ -3315,7 +3315,7 @@ impl EnemyAi {
                     tpos,
                     ctx,
                     grid,
-                    &tick.nearby_fighters,
+                    &tick.fighter_registry,
                 )
             {
                 dest = d;
@@ -3347,7 +3347,7 @@ impl EnemyAi {
                     epos,
                     ctx,
                     grid,
-                    &tick.nearby_fighters,
+                    &tick.fighter_registry,
                 ) {
                     target = *enemy;
                     self.base.primary_target = target;
@@ -3457,7 +3457,7 @@ impl EnemyAi {
         enemy_pos: Position,
         ctx: &AiContext,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        nearby_fighters: &[FighterSnapshot],
+        fighter_registry: &[FighterSnapshot],
     ) -> Option<(Position, bool)> {
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
@@ -3614,7 +3614,11 @@ impl EnemyAi {
                 // collapses onto `pt_me` when `me_to_hit_norm <=
                 // RIDER_CHARGE_LOOP_DISTANCE`, so without the self
                 // exclusion `geo::Contains` can trip on the rider itself.
-                for f in nearby_fighters {
+                // Original IsAnyFriendInThisPolygon scans the engine's
+                // complete same-camp fighter registry. A friend can block the
+                // far end of this charge corridor while being outside the
+                // rider-centered nearby-fighter window.
+                for f in fighter_registry {
                     if !f.is_friendly || f.handle == 0 {
                         continue;
                     }
@@ -4012,6 +4016,57 @@ mod tests {
         assert_eq!(geometry.hit_norm_len.to_bits(), 0x43d0_d28f);
     }
 
+    #[test]
+    fn rider_charge_friend_corridor_uses_full_fighter_registry() {
+        // nicouzouf Profile_001 Savegame_047 replay-005, frame 1433:
+        // Soldier62 is outside Soldier51's nearby-fighter window but stands
+        // inside the strike corridor toward PC76. Original's global
+        // GetNumberOfFighters/GetFighter scan rejects this charge.
+        let mut ai = EnemyAi::new(51);
+        ai.base.primary_target = 76;
+        ai.list_them = vec![76];
+        let rider = Position {
+            x: f32::from_bits(0x44c7_1d8e),
+            y: f32::from_bits(0x4421_e39e),
+            ..Position::default()
+        };
+        let target = FighterSnapshot {
+            handle: 76,
+            position: Position {
+                x: f32::from_bits(0x4474_03e3),
+                y: f32::from_bits(0x43bb_a89f),
+                ..Position::default()
+            },
+            is_able_to_fight: true,
+            is_pc: true,
+            ..FighterSnapshot::default()
+        };
+        let blocking_friend = FighterSnapshot {
+            handle: 62,
+            position: Position {
+                x: f32::from_bits(0x447b_182c),
+                y: f32::from_bits(0x43b8_eb5e),
+                ..Position::default()
+            },
+            is_friendly: true,
+            is_soldier: true,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters = vec![target.clone()];
+        tick.fighter_registry = vec![target, blocking_friend];
+        let ctx = AiContext {
+            self_is_rider: true,
+            position: rider,
+            direction: 11,
+            ..AiContext::default()
+        };
+
+        assert!(!ai.maybe_make_rider_attack(&ctx, &tick, None));
+        assert_eq!(ai.base.primary_target, 76);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+    }
+
     fn pc_view() -> crate::ai_entity_view::AiEntityView {
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {
             element: crate::element::ElementData {
@@ -4034,6 +4089,15 @@ mod tests {
             None,
             crate::order::OrderType::NonanimationEnd,
         )
+    }
+
+    fn pc_view_at(position: Position) -> crate::ai_entity_view::AiEntityView {
+        let mut view = pc_view();
+        view.position = position;
+        view.detection_position = crate::coordinates::MapPoint::new(position.x, position.y);
+        view.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(position.x, position.y, 0.0);
+        view
     }
 
     fn reconsider_approach_lift_grid() -> crate::fast_find_grid::FastFindGrid {
@@ -4116,9 +4180,9 @@ mod tests {
             ..FighterSnapshot::default()
         }];
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-        let mut target_view = pc_view();
-        target_view.position = threat;
+        let target_view = pc_view_at(threat);
         views.insert(252, target_view);
+        views.insert(105, pc_view_at(Position::default()));
         let ctx = AiContext {
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
@@ -4356,24 +4420,24 @@ mod tests {
         second: Position,
         expected: HumanHandle,
     ) -> (EnemyAi, AiContext) {
-        let mut first_view = pc_view();
-        first_view.position = first;
+        let mut first_view = pc_view_at(first);
         first_view.elevation = 0.0;
         first_view.is_unconscious = true;
-        let mut second_view = pc_view();
-        second_view.position = second;
+        let mut second_view = pc_view_at(second);
         second_view.elevation = 0.0;
         second_view.is_unconscious = true;
+        let owner_position = Position {
+            x: 1377.2015,
+            y: 252.88869,
+            sector: crate::position_interface::SectorHandle::new(14),
+            ..Position::default()
+        };
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(346, first_view);
         views.insert(345, second_view);
+        views.insert(139, pc_view_at(owner_position));
         let ctx = AiContext {
-            position: Position {
-                x: 1377.2015,
-                y: 252.88869,
-                sector: crate::position_interface::SectorHandle::new(14),
-                ..Position::default()
-            },
+            position: owner_position,
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
@@ -5046,10 +5110,10 @@ mod tests {
             x: 500.0,
             ..Position::default()
         };
-        let mut target_view = pc_view();
-        target_view.position = target_position;
+        let target_view = pc_view_at(target_position);
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(198, target_view);
+        views.insert(91, pc_view_at(Position::default()));
         let ctx = AiContext {
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()

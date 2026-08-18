@@ -309,6 +309,22 @@ impl ObstaclePoint {
     }
 }
 
+/// Test an obstacle's ground-plane vertices against a domain-typed box while
+/// keeping the legacy computational-geometry adapter private to this module.
+pub(crate) fn obstacle_vertices_intersect_ground_bbox(
+    points: &[ObstaclePoint],
+    bbox: &GroundBBox,
+) -> bool {
+    let vertices: Vec<geo2d::GeoPoint2D> = points
+        .iter()
+        .map(|point| geo2d::GeoPoint2D {
+            x: point.x,
+            y: point.y,
+        })
+        .collect();
+    geo2d::polygon_vertices_intersect_bbox(&vertices, &geo2d::BBox2D(bbox.0))
+}
+
 /// Ground-plane obstacle polygon, matching C++ `RHSightObstacle::mPolygon`.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GroundPolygon(Polygon2D<f32>);

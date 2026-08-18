@@ -498,7 +498,7 @@ impl GridLine {
             return false;
         };
 
-        // SBGeoBoundingBox2D::IsIntersecting(SBGeoSegment2D) first performs
+        // Original bounding-box/segment intersection first performs
         // this strict endpoint rejection, then tests the corresponding
         // infinite line against all four corners. `geo::Rect::intersects`
         // uses a different robust predicate and can reject a segment that
@@ -1750,7 +1750,6 @@ impl FastFindGrid {
                 }
                 cell_obstacles.sort_unstable();
                 cell_obstacles.dedup();
-                let block_box_2d = crate::geo2d::BBox2D(block_box.0);
                 for &idx in &cell_obstacles {
                     if result.contains(&idx) {
                         continue;
@@ -1761,15 +1760,10 @@ impl FastFindGrid {
                     if !obstacles.is_active(idx) || !obstacle.is_of_type(type_filter) {
                         continue;
                     }
-                    let vertices: Vec<crate::geo2d::GeoPoint2D> = obstacle
-                        .obstacle_points
-                        .iter()
-                        .map(|point| crate::geo2d::GeoPoint2D {
-                            x: point.x,
-                            y: point.y,
-                        })
-                        .collect();
-                    if !crate::geo2d::polygon_vertices_intersect_bbox(&vertices, &block_box_2d) {
+                    if !crate::sight_obstacle::obstacle_vertices_intersect_ground_bbox(
+                        &obstacle.obstacle_points,
+                        &block_box,
+                    ) {
                         continue;
                     }
                     result.push(idx);
@@ -4196,7 +4190,7 @@ mod tests {
     fn motion_line_intersects_move_box_at_near_corner_like_original() {
         // Schema-14 Linux parity, Savegame_022 replay-005 frame 804. The
         // segment misses the bottom-right corner by only a few millionths.
-        // SBGeoBoundingBox2D's f32 corner determinants report an intersection;
+        // Original f32 corner determinants report an intersection;
         // geo::Rect::intersects previously did not, suppressing the
         // RHCOMMAND_MOVE extraction performed immediately afterward.
         let line = GridLine::new(

@@ -1704,6 +1704,106 @@ struct HourglassPhaseStats {
     total_us: [u128; 10],
 }
 
+/// Opt-in detail inside the otherwise broad `EntitySystems` phase.
+#[derive(Clone, Copy)]
+pub(super) enum EntitySystemDetail {
+    BoundarySnapshot = 0,
+    PrepareNpc = 1,
+    StaticOwners = 2,
+    OwnerPrelude = 3,
+    OwnerExecute = 4,
+    NpcTail = 5,
+    FinishNpc = 6,
+    CorpseUpdates = 7,
+    FrameSounds = 8,
+    BuildEntityViews = 9,
+    BuildWorldView = 10,
+    RefreshDetection = 11,
+}
+
+const ENTITY_SYSTEM_DETAIL_COUNT: usize = 12;
+
+#[derive(Default)]
+struct EntitySystemDetailStats {
+    frames: u32,
+    calls: [u64; ENTITY_SYSTEM_DETAIL_COUNT],
+    total_us: [u128; ENTITY_SYSTEM_DETAIL_COUNT],
+}
+
+thread_local! {
+    static ENTITY_SYSTEM_DETAIL_STATS: std::cell::RefCell<EntitySystemDetailStats> =
+        std::cell::RefCell::new(EntitySystemDetailStats::default());
+}
+
+pub(super) struct EntitySystemDetailGuard {
+    phase: EntitySystemDetail,
+    start: Option<web_time::Instant>,
+}
+
+impl Drop for EntitySystemDetailGuard {
+    fn drop(&mut self) {
+        let Some(start) = self.start else { return };
+        let elapsed_us = start.elapsed().as_micros();
+        ENTITY_SYSTEM_DETAIL_STATS.with(|cell| {
+            let mut stats = cell.borrow_mut();
+            let index = self.phase as usize;
+            stats.calls[index] += 1;
+            stats.total_us[index] += elapsed_us;
+        });
+    }
+}
+
+pub(super) fn entity_system_detail_guard(phase: EntitySystemDetail) -> EntitySystemDetailGuard {
+    EntitySystemDetailGuard {
+        phase,
+        start: tracing::enabled!(
+            target: "robin_engine::engine::tick::entity_system_perf",
+            tracing::Level::INFO
+        )
+        .then(web_time::Instant::now),
+    }
+}
+
+fn finish_entity_system_detail_frame() {
+    if !tracing::enabled!(
+        target: "robin_engine::engine::tick::entity_system_perf",
+        tracing::Level::INFO
+    ) {
+        return;
+    }
+    ENTITY_SYSTEM_DETAIL_STATS.with(|cell| {
+        let mut stats = cell.borrow_mut();
+        stats.frames += 1;
+        if stats.frames < HOURGLASS_LOG_INTERVAL {
+            return;
+        }
+        let frames = u128::from(stats.frames);
+        let per_frame = |phase: EntitySystemDetail| stats.total_us[phase as usize] / frames;
+        let calls = |phase: EntitySystemDetail| stats.calls[phase as usize];
+        tracing::info!(
+            target: "robin_engine::engine::tick::entity_system_perf",
+            frames = stats.frames,
+            boundary_us = per_frame(EntitySystemDetail::BoundarySnapshot),
+            prepare_npc_us = per_frame(EntitySystemDetail::PrepareNpc),
+            static_owners_us = per_frame(EntitySystemDetail::StaticOwners),
+            owner_prelude_us = per_frame(EntitySystemDetail::OwnerPrelude),
+            owner_execute_us = per_frame(EntitySystemDetail::OwnerExecute),
+            npc_tail_us = per_frame(EntitySystemDetail::NpcTail),
+            finish_npc_us = per_frame(EntitySystemDetail::FinishNpc),
+            corpse_us = per_frame(EntitySystemDetail::CorpseUpdates),
+            frame_sounds_us = per_frame(EntitySystemDetail::FrameSounds),
+            build_views_us = per_frame(EntitySystemDetail::BuildEntityViews),
+            build_views_calls = calls(EntitySystemDetail::BuildEntityViews),
+            world_view_us = per_frame(EntitySystemDetail::BuildWorldView),
+            world_view_calls = calls(EntitySystemDetail::BuildWorldView),
+            detection_us = per_frame(EntitySystemDetail::RefreshDetection),
+            detection_calls = calls(EntitySystemDetail::RefreshDetection),
+            "entity systems detail timing"
+        );
+        *stats = EntitySystemDetailStats::default();
+    });
+}
+
 fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
     trace_hourglass_phase(phase);
     let timer = tracing::enabled!(
@@ -3588,11 +3688,15 @@ impl EngineInner {
         // RHElementActorNPC::Hourglass calls RHElementActorHuman::Hourglass
         // (and therefore the observer's own movement) before RefreshView,
         // while actors with a later creation order have not run yet.
-        let mut positions_before_movement = EntitySlots::filled(self.world.entities.len(), None);
-        for (entity_id, entity) in self.world.entities.occupied() {
-            positions_before_movement[entity_id] =
-                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-        }
+        let positions_before_movement = {
+            let _detail = entity_system_detail_guard(EntitySystemDetail::BoundarySnapshot);
+            let mut positions = EntitySlots::filled(self.world.entities.len(), None);
+            for (entity_id, entity) in self.world.entities.occupied() {
+                positions[entity_id] =
+                    Some(crate::entities::BoundaryPosition::of(entity.element_data()));
+            }
+            positions
+        };
 
         // ── Per-frame movement tick ─────────────────────────────
         // Actor movement runs later, inside the live legacy-slot owner walk.
@@ -3646,7 +3750,10 @@ impl EngineInner {
         // chance to change postures this frame and before the next
         // frame's movement (which reads `small_repulsive_radius`
         // via `compute_repulsive_force`).
-        self.process_corpse_intersection_updates();
+        {
+            let _detail = entity_system_detail_guard(EntitySystemDetail::CorpseUpdates);
+            self.process_corpse_intersection_updates();
+        }
 
         // ── Per-frame animation sound dispatch ──────────────────
         // Now that every sprite has advanced (both movement-driven
@@ -3654,7 +3761,10 @@ impl EngineInner {
         // sprite frame for an attached sound ID and queue it as an
         // FX (the `current_sound_id()` block every element type
         // runs during refresh / execute).
-        self.dispatch_frame_sounds();
+        {
+            let _detail = entity_system_detail_guard(EntitySystemDetail::FrameSounds);
+            self.dispatch_frame_sounds();
+        }
 
         // TODO(original-parity): the followed-target position oracle below
         // proves one movement/NPC-refresh interleaving, but the rest of this
@@ -3662,6 +3772,7 @@ impl EngineInner {
         // Keep those responsibilities batched until each consumer has the
         // mixed pre/post inputs required at an individual creation slot.
 
+        finish_entity_system_detail_frame();
         positions_before_movement
     }
 
@@ -5099,11 +5210,15 @@ impl EngineInner {
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
-        let mut prepared = self.prepare_npc_owner_pass(sim, assets);
+        let mut prepared = {
+            let _detail = entity_system_detail_guard(EntitySystemDetail::PrepareNpc);
+            self.prepare_npc_owner_pass(sim, assets)
+        };
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
             |engine, owner| {
+                let _detail = entity_system_detail_guard(EntitySystemDetail::StaticOwners);
                 use crate::element::OriginalHourglassClass as Class;
 
                 // Original-derived nonactor nesting: the mobile master/child
@@ -5144,6 +5259,7 @@ impl EngineInner {
                 }
             },
             |engine, owner| {
+                let _detail = entity_system_detail_guard(EntitySystemDetail::OwnerPrelude);
                 // The jump step lifecycle is the jump order's own work: the
                 // step that starts here is the order this actor executes a few
                 // lines later, and the landing posture it publishes is visible
@@ -5178,6 +5294,7 @@ impl EngineInner {
                 }
             },
             |engine, owner, movement, melee, bow, ability, selected_beggar| {
+                let _detail = entity_system_detail_guard(EntitySystemDetail::OwnerExecute);
                 let execution_frozen = engine
                     .get_entity(owner)
                     .and_then(Entity::actor_data)
@@ -5275,6 +5392,7 @@ impl EngineInner {
                 None
             },
             |engine, owner, derived_tail_order_type| {
+                let _detail = entity_system_detail_guard(EntitySystemDetail::NpcTail);
                 let is_human = engine
                     .world
                     .entities
@@ -5296,6 +5414,7 @@ impl EngineInner {
                             owner,
                             derived_tail_order_type,
                         );
+                        prepared.invalidate_after_pc_noise_refresh();
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
                         engine.tick_tiredness_for(owner, assets);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
@@ -5328,7 +5447,10 @@ impl EngineInner {
                 owner_hook(engine, owner);
             },
         );
-        self.finish_npc_owner_pass();
+        {
+            let _detail = entity_system_detail_guard(EntitySystemDetail::FinishNpc);
+            self.finish_npc_owner_pass();
+        }
     }
 
     #[cfg(test)]
@@ -6607,6 +6729,7 @@ impl EngineInner {
             execute_sides,
         } = outcomes;
         let super::animation::ExecuteSideOutcomes {
+            waiting_upright,
             waiting_alerted,
             drop_ale_done,
             deactivate_entities,
@@ -6644,6 +6767,7 @@ impl EngineInner {
         self.drain_next_jump_step(assets, next_jump_step);
         self.drain_select_hulk(select_hulk);
         self.drain_resume_door_pass(sim, assets, resume_door_pass);
+        self.drain_waiting_upright(waiting_upright);
         self.drain_waiting_alerted(sim, assets, waiting_alerted);
         // Soldier `Execute` cross-entity side effects, collected by the
         // animation tick as it walks each `active_ai_anim` booking. Each
@@ -6669,6 +6793,39 @@ impl EngineInner {
         self.drain_wasp_sting_remark(sim, assets, wasp_sting_remark);
         self.drain_special_remark(sim, assets, special_remark);
         self.drain_cry_for_help_under_net(sim, assets, cry_for_help_under_net);
+    }
+
+    pub(super) fn drain_waiting_upright(&mut self, owners: Vec<EntityId>) {
+        for owner in owners {
+            let soldier = self
+                .world
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| panic!("WaitingUpright owner {owner:?} disappeared"));
+            let enemy = match soldier {
+                Entity::Soldier(soldier) => soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                    panic!("WaitingUpright soldier {owner:?} has no enemy AI state")
+                }),
+                _ => panic!("WaitingUpright candidate {owner:?} is not a soldier"),
+            };
+            let needs_enter = enemy.will_be_attentive
+                && !self
+                    .orders
+                    .sequence_manager
+                    .element_is_about_to_be_launched(owner, Command::EnterAttentiveMode);
+
+            if needs_enter {
+                // RHelementactorsoldier.cpp:753-758. As in the symmetric
+                // WaitingAlerted repair below, call LaunchSequenceElement
+                // directly: SetAttentiveMode(true) would suppress the repair
+                // precisely because mbWillBeAttentive is already true.
+                self.launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    Command::EnterAttentiveMode,
+                    Some(owner),
+                ));
+            }
+        }
     }
 
     pub(super) fn drain_waiting_alerted(

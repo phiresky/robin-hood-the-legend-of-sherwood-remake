@@ -306,6 +306,12 @@ pub struct AiContext {
     /// already playing.
     pub self_animation: crate::order::OrderType,
 
+    /// Live actor motion lifecycle for `self_animation`. A newly installed
+    /// move-to-wait transition (`Start`) is still a real Original GoTo input;
+    /// only a transition that has already advanced can represent Rust's
+    /// one-owner-boundary lag behind Original's idle successor.
+    pub self_animation_motion_state: crate::sprite::MotionState,
+
     /// The sequence-manager element currently selected by the actor is its
     /// default Wait element (`mpWaitSequenceElement` in the Original).
     /// `RHElementActor::Stop` deliberately skips that exact element, so a

@@ -4561,7 +4561,13 @@ mod tests {
                 .get_entity_mut(attacker)
                 .unwrap()
                 .element_data_mut()
-                .set_position(WorldPoint3D::new(180.0, 100.0, 0.0));
+                // Keep the attacker inside the H thrust's 50-unit desired
+                // push-back distance.  At 80 units Original returns the
+                // victim's current point as a successful step-back goal;
+                // synchronous GoTo completion then restores ordinary
+                // swordfight state before WarnForStrike returns, so that
+                // fixture cannot distinguish H's PushAside geometry.
+                .set_position(WorldPoint3D::new(130.0, 100.0, 0.0));
             for actor in [victim, attacker] {
                 let sprite = &mut engine
                     .get_entity_mut(actor)

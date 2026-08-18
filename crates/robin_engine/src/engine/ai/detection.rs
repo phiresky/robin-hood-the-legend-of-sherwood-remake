@@ -1360,6 +1360,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         world: &AiWorldView,
+        entity_view_cache: &mut super::PreparedAiEntityViewCache,
     ) {
         use crate::ai::AiState;
 
@@ -1716,10 +1717,10 @@ impl EngineInner {
                 continue;
             };
 
-            // `UpdateHearing` calls Think inline. Rebuild both views for each
-            // edge because an earlier PC's hearing handler may mutate state
-            // consumed by the next handler or by optical detection below.
-            let scratch = self.build_sim_scratch(sim, assets);
+            // `UpdateHearing` calls Think inline. Refresh the derived views at
+            // every edge because an earlier PC's hearing handler may mutate
+            // state consumed by the next handler or by optical detection.
+            let scratch = self.build_cached_detection_scratch(assets, entity_view_cache);
             let source_position = scratch
                 .ai_entity_views
                 .get(&pc_id.index())
@@ -1789,7 +1790,11 @@ impl EngineInner {
         positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
         owner: Option<EntityId>,
         dispatch_legacy_test_wakes: bool,
+        prepared_entity_views: Option<&mut super::PreparedAiEntityViewCache>,
     ) {
+        let _detail = super::super::tick::entity_system_detail_guard(
+            super::super::tick::EntitySystemDetail::RefreshDetection,
+        );
         let universal_frame = self.control.frame_counter;
         let golden_eye = self.ai.global.golden_eye_mode;
         // Forest-level flag — selects between forest and city
@@ -1800,6 +1805,8 @@ impl EngineInner {
             Some(npc_id) => vec![npc_id],
             None => self.world.entities.npc_ids().collect(),
         };
+        let mut local_entity_views = super::PreparedAiEntityViewCache::default();
+        let entity_view_cache = prepared_entity_views.unwrap_or(&mut local_entity_views);
 
         for npc_id in npc_ids {
             // Original `RHElementActorNPC::Hourglass` performs these owner
@@ -1839,7 +1846,13 @@ impl EngineInner {
                     && entity.human_data().is_none_or(|human| !human.unconscious)
                     && elem.posture != Posture::Tied
             });
-            self.tick_enemy_ai_acoustic_detection_for_npc(sim, npc_id, assets, world);
+            self.tick_enemy_ai_acoustic_detection_for_npc(
+                sim,
+                npc_id,
+                assets,
+                world,
+                entity_view_cache,
+            );
 
             // RefreshDetection clears both maxima after acoustics but
             // before its narrower optical eligibility gate. In particular,
@@ -2215,7 +2228,7 @@ impl EngineInner {
     ) {
         let world = self.tick_enemy_ai_build_world_view(assets, None);
         mutate_live_state(self);
-        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None, None, false);
+        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None, None, false, None);
     }
 
     #[cfg(test)]

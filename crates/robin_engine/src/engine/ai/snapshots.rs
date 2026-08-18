@@ -465,6 +465,9 @@ impl EngineInner {
             &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         )>,
     ) -> AiWorldView {
+        let _detail = super::super::tick::entity_system_detail_guard(
+            super::super::tick::EntitySystemDetail::BuildWorldView,
+        );
         let human_ids: Vec<EntityId> = self
             .world
             .entities

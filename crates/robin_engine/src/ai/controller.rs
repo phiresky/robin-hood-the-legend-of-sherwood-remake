@@ -3415,6 +3415,7 @@ impl AiController {
         ctx: &AiContext,
     ) -> bool {
         ctx.position == *destination
+            && ctx.self_animation_motion_state != crate::sprite::MotionState::Start
             && matches!(
                 ctx.self_animation,
                 crate::order::OrderType::TransitionWalkingUprightWaitingUpright
@@ -3550,6 +3551,33 @@ impl AiController {
     /// in a "waiting" substate). Calling this directly via
     /// `ai.base.go_to(...)` bypasses that contract and risks wedge bugs.
     pub fn go_to(&mut self, destination: Position, flags: GotoFlags, ctx: &AiContext) {
+        self.go_to_with_transition_projection(destination, flags, ctx, true);
+    }
+
+    /// Execute `GoTo` when the caller has reconstructed Original's live
+    /// animation at the exact synchronous call boundary.
+    ///
+    /// Most Rust callers need the outgoing-transition projection because their
+    /// context can lag Original's already-selected idle successor. Deferred
+    /// continuations that explicitly refresh the live sequence order must not
+    /// use that projection: a still-running move-to-wait transition is not one
+    /// of Original `GoTo`'s accepted idle animations.
+    pub(crate) fn go_to_with_live_animation(
+        &mut self,
+        destination: Position,
+        flags: GotoFlags,
+        ctx: &AiContext,
+    ) {
+        self.go_to_with_transition_projection(destination, flags, ctx, false);
+    }
+
+    fn go_to_with_transition_projection(
+        &mut self,
+        destination: Position,
+        flags: GotoFlags,
+        ctx: &AiContext,
+        project_outgoing_wait: bool,
+    ) {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
             && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
         if debug_decision_path {
@@ -3608,7 +3636,8 @@ impl AiController {
         // into a `Think(EVENT_REACHPOINT)` re-entry. Deferred Halt effects are
         // projected through Original StopMovement by the helper above.
         let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
-            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
+            || (project_outgoing_wait
+                && Self::outgoing_wait_transition_at_exact_destination(&destination, ctx))
             || (ctx.self_animation_reached_action_done
                 && matches!(
                     ctx.self_animation,

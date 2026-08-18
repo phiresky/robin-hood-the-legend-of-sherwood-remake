@@ -6631,9 +6631,20 @@ mod tests {
             crate::coordinates::SpriteLocalPoint::new(8.0, 6.0),
             crate::coordinates::SpriteAnchor::ZERO,
         );
-        let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
+        // Original RHCOMMAND_PAY is created only by
+        // RHElementActorCivilian::MouseClicked after `IsBeggar()` succeeds;
+        // its unconditional post-click cooldown stamp therefore targets that
+        // same civilian. Keep this direct helper test within that contract.
+        let target_id = spawn_friendly_civilian(&mut engine);
+        engine
+            .get_entity_mut(target_id)
+            .expect("beggar exists")
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint { x: 90.0, y: 10.0 });
 
         engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::Pay, false);
+
+        assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 3);
 
         let sequence = engine
             .orders

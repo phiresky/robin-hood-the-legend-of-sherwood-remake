@@ -2244,6 +2244,11 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
 /// etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct ExecuteSideOutcomes {
+    /// Soldiers executing WAITING_UPRIGHT. Original's
+    /// `RHElementActorSoldier::Execute` arm (`RHelementactorsoldier.cpp:753-759`)
+    /// launches ENTER_ATTENTIVE_MODE when the requested attentive state is
+    /// true unless an equivalent element is already waiting to launch.
+    pub waiting_upright: Vec<EntityId>,
     /// Soldiers executing WAITING_ALERTED. Original's
     /// `RHElementActorSoldier::Execute` arm (`RHelementactorsoldier.cpp:735-751`)
     /// performs two corrections there, in this order: it launches
@@ -5953,19 +5958,39 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
-                        if anim_type == OrderType::WaitingAlerted
-                            && let Entity::Soldier(soldier) = entity
-                        {
-                            soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
-                                panic!("WaitingAlerted soldier {entity_id:?} has no enemy AI state")
-                            });
-                            // Both corrections in the Original's arm are
-                            // decided in the drain so they stay ordered
-                            // per-soldier as `Execute` runs them.
-                            completion_outcomes
-                                .execute_sides
-                                .waiting_alerted
-                                .push(entity_id);
+                        if let Entity::Soldier(soldier) = entity {
+                            match anim_type {
+                                OrderType::WaitingUpright => {
+                                    // Original stores mbWillBeAttentive on
+                                    // RHElementActorSoldier itself. Rust's
+                                    // equivalent exists only on EnemyAi, while
+                                    // generic actor fixtures may deliberately
+                                    // use a skeletal Soldier with AiBrain::None.
+                                    // There is no requested attentive state to
+                                    // reconcile for that representation.
+                                    if soldier.npc.ai_brain.enemy().is_some() {
+                                        completion_outcomes
+                                            .execute_sides
+                                            .waiting_upright
+                                            .push(entity_id);
+                                    }
+                                }
+                                OrderType::WaitingAlerted => {
+                                    soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                                        panic!(
+                                            "WaitingAlerted soldier {entity_id:?} has no enemy AI state"
+                                        )
+                                    });
+                                    // Both corrections in the Original's arm
+                                    // are decided in the drain so they stay
+                                    // ordered per-soldier as `Execute` runs them.
+                                    completion_outcomes
+                                        .execute_sides
+                                        .waiting_alerted
+                                        .push(entity_id);
+                                }
+                                _ => {}
+                            }
                         }
                         if entity.is_pc()
                             && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
