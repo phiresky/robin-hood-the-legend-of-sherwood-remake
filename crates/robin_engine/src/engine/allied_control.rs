@@ -32,14 +32,21 @@ fn distance_squared(a: MapPoint, b: MapPoint) -> f32 {
     dx * dx + dy * dy
 }
 
-fn allied_order_locks_ai(order: &AlliedSoldierOrder, threatened: bool) -> bool {
+fn allied_order_locks_ai(
+    order: &AlliedSoldierOrder,
+    threatened: bool,
+    reached_hold_anchor: bool,
+) -> bool {
     match order.stance {
         AlliedStance::Hold => true,
         AlliedStance::Defensive => !threatened,
         // Aggressive soldiers remain under direct movement control while
-        // carrying out an explicit patrol/follow duty. Their normal AI takes
-        // over when a threat is detected, then the duty resumes afterwards.
-        AlliedStance::Aggressive => !threatened && !matches!(order.duty, AlliedDuty::Hold { .. }),
+        // carrying out an explicit move/patrol/follow duty. Their normal AI
+        // takes over when a threat is detected, then the duty resumes
+        // afterwards. A completed move releases the soldier so the default
+        // aggressive stance can resume autonomous combat without restoring
+        // an authored mission patrol before the player destination is reached.
+        AlliedStance::Aggressive => !threatened && !reached_hold_anchor,
     }
 }
 
@@ -269,12 +276,12 @@ mod tests {
         assert!(
             group
                 .iter()
-                .all(|order| allied_order_locks_ai(order, false))
+                .all(|order| allied_order_locks_ai(order, false, false))
         );
         assert!(
             group
                 .iter()
-                .all(|order| !allied_order_locks_ai(order, true))
+                .all(|order| !allied_order_locks_ai(order, true, false))
         );
 
         let idle_aggressive = AlliedSoldierOrder {
@@ -283,7 +290,11 @@ mod tests {
             },
             ..patrol_order(0.0)
         };
-        assert!(!allied_order_locks_ai(&idle_aggressive, false));
+        assert!(!allied_order_locks_ai(&idle_aggressive, false, true));
+        assert!(
+            allied_order_locks_ai(&idle_aggressive, false, false),
+            "an explicit move must continue suppressing the mission patrol until arrival"
+        );
     }
 
     #[test]
@@ -422,6 +433,55 @@ mod tests {
 
         assert!(engine.is_controllable_allied_soldier(soldier));
         assert_eq!(engine.allied_path_failure_fallback(soldier), None);
+    }
+
+    #[test]
+    fn explicit_allied_order_replaces_authored_patrol() {
+        let paths = vec![crate::level_data::RawHikingPath {
+            waypoints: vec![crate::level_data::RawWaypoint {
+                x: 10,
+                y: 20,
+                sector: 0,
+                level: 0,
+                command: crate::level_data::WaypointCommand::None,
+            }],
+        }];
+        let path_id = crate::ai::PathId::new(0).unwrap();
+        let mut npc = crate::element::NpcData {
+            life_points: 100,
+            ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+            ..Default::default()
+        };
+        let ai = npc.ai_brain.base_mut().expect("test soldier has enemy AI");
+        ai.has_patrol_path = true;
+        ai.patrol_path = crate::ai::PatrolPath::new(path_id, &paths);
+
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc,
+            soldier: crate::element::SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+
+        engine.replace_authored_allied_patrol(soldier);
+
+        let ai = engine
+            .get_entity(soldier)
+            .and_then(Entity::ai_controller)
+            .expect("controlled test soldier retains AI");
+        assert!(!ai.has_patrol_path);
+        assert!(ai.patrol_path.is_none());
+        assert!(ai.detached_patrol_path_status.hiking_path_index.is_none());
     }
 }
 
@@ -910,6 +970,16 @@ impl EngineInner {
         }
     }
 
+    fn replace_authored_allied_patrol(&mut self, id: EntityId) {
+        let ai = self
+            .get_entity_mut(id)
+            .unwrap_or_else(|| panic!("controlled allied soldier {id:?} disappeared"))
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("controlled allied soldier {id:?} has no AI controller"));
+        ai.has_patrol_path = false;
+        ai.detach_patrol_path(None, false);
+    }
+
     fn allied_formation_slots(
         &self,
         assets: &LevelAssets,
@@ -1084,6 +1154,9 @@ impl EngineInner {
         if valid.is_empty() {
             return;
         }
+        for &id in &valid {
+            self.replace_authored_allied_patrol(id);
+        }
         let deployed_slots =
             self.allied_formation_slots(assets, &valid, leaders, destination, formation, false);
         let deployed_by_id: std::collections::BTreeMap<_, _> = deployed_slots.into_iter().collect();
@@ -1238,6 +1311,11 @@ impl EngineInner {
         destination: MapPoint,
         formation: AlliedFormation,
     ) {
+        for &id in soldiers {
+            if self.is_controllable_allied_soldier(id) {
+                self.replace_authored_allied_patrol(id);
+            }
+        }
         let slots =
             self.move_allied_to_slots(sim, assets, soldiers, &[], destination, false, formation);
         for (id, slot) in slots {
@@ -1404,7 +1482,13 @@ impl EngineInner {
                 .and_then(Entity::ai_controller)
                 .expect("controlled allied soldier has no AI controller")
                 .script_locked;
-            let ai_locked = allied_order_locks_ai(&order, threatened);
+            let reached_hold_anchor = match &order.duty {
+                AlliedDuty::Hold { anchor } => {
+                    distance_squared(position, *anchor) <= ARRIVAL_DISTANCE * ARRIVAL_DISTANCE
+                }
+                AlliedDuty::Patrol { .. } | AlliedDuty::Follow { .. } => false,
+            };
+            let ai_locked = allied_order_locks_ai(&order, threatened, reached_hold_anchor);
             self.set_allied_ai_locked(id, ai_locked);
             let deploy_destination = order.deploy_destination.filter(|_| {
                 matches!(
