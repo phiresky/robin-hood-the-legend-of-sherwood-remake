@@ -36,6 +36,26 @@ and will be installed automatically by rustup.
     cargo build --bin robin          # debug
     cargo build --bin robin --release
 
+### Native release packages
+
+The `Native release` GitHub Actions workflow builds x86-64 Windows and Linux
+standalone binaries and packages them with Velopack. It runs for pull requests,
+version tags (`v1.2.3`), manual dispatches, and nightly at 03:17 UTC. A scheduled
+run skips packaging when `main` has not changed since the last successful
+nightly. Changed nightly builds replace the rolling `nightly` GitHub prerelease;
+version tags create normal versioned GitHub releases.
+
+Windows releases contain a standalone ZIP, portable Velopack ZIP, one-click
+`Setup.exe`, and MSI installer. Linux releases contain a standalone tarball and
+Velopack AppImage; Velopack uses the self-updating AppImage as its Linux
+installer/distribution format. These packages do not contain the original
+copyrighted game data. Set `ROBINHOOD_DATA_DIR` to an extracted game data root
+as described in [Game data](#game-data).
+
+CI enables native filesystem support and audio, but currently omits the
+optional FFmpeg-backed intro/outro video feature because the required Windows
+FFmpeg DLLs are not yet bundled in the installer.
+
 Debug builds are tuned for fast iteration: `mold` linker,
 `sccache` rustc wrapper, cranelift backend, dependencies built at
 `opt-level=2`. See [AGENTS.md](AGENTS.md) for the full notes.

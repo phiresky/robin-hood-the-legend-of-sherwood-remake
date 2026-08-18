@@ -3,6 +3,11 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    // Velopack may consume installer/update activation arguments and exit or
+    // restart the process, so its startup hook must run before all game setup.
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    velopack::VelopackApp::build().run();
+
     install_crash_diagnostics();
     let exit = run_native();
     std::process::exit(exit);

@@ -107,6 +107,11 @@ sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 # Read .zip mod packs for the custom-mission selector.
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
+# Desktop installer/update lifecycle hooks. Keep this target-scoped so the
+# Android cdylib and browser build do not pull in desktop packaging support.
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
+velopack = "1.2.0"
+
 [target.'cfg(target_os = "android")'.dependencies]
 # Direct JNI calls let android_main ask the Java Activity to leave the
 # Android task before we hard-exit the process for winit's single-EventLoop
