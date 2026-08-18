@@ -126,7 +126,7 @@ explain.
 Two additional schema-12 recordings were proven inconsistent with the current
 Original source rather than evidence of a Rust gameplay defect:
 
-- linux2 Profile_002 Savegame_032 replay-002 retains its cached deviated
+- nicouzouf Profile_001 Savegame_032 replay-002 retains its cached deviated
   increment after a recovery corridor with no candidate line. Its existing
   same-relative schema-14 replacement matches Rust through exact EOF.
 - linux3 Profile_003 Savegame_042 replay-012 records `increment_map.x` as

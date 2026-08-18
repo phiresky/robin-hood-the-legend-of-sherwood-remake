@@ -1764,7 +1764,7 @@ task rather than left for it to discover.
 
 ## Schema-12 anti-collision oracle retirement (2026-08-18)
 
-- linux2 Profile_002 Savegame_032 replay-002 and linux3 Profile_003
+- nicouzouf Profile_001 Savegame_032 replay-002 and linux3 Profile_003
   Savegame_042 replay-012 retained old cached increments across a deviated
   recovery even though current `RHPositionInterface.cpp` clears deviation and
   recomputes the increment after a reachable corridor. Candidate-level Rust

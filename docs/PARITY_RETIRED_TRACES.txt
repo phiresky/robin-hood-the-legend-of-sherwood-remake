@@ -316,7 +316,7 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_
 # line. Current RHPositionInterface source clears deviation and recomputes the
 # increment when IsReachableThick succeeds. The same-relative schema-14 trace
 # exercises the same save/RNG/input seed and matches Rust through exact EOF.
-parity-save-replays/60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_032/replay-002-session-0001.jsonl.zst
+parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_032/replay-002-session-0001.jsonl.zst
 # Existing current-Original replacement (same save/RNG/input seed, 1,500 frames):
 # parity-save-replays/60s-random-input/schema14/traces/Savegame_linux2/Profile_002/Savegame_032/replay-002-session-0001.jsonl.zst
 # Stale schema-12 anti-collision oracle. At frame 6743 the archive retains
