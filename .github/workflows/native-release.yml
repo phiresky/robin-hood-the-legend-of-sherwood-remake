@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           dotnet tool install --global vpk --version "${VPK_VERSION}"
-          vpk --version
+          vpk --help
 
       - name: Resolve package version
         id: version
