@@ -94,7 +94,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang libasound2-dev libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
@@ -186,7 +186,7 @@ jobs:
         shell: bash
         run: find target/release-assets -maxdepth 1 -type f -print
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: target/release-assets/*
