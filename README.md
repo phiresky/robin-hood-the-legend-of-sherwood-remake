@@ -42,9 +42,9 @@ The `Native release` GitHub Actions workflow builds x86-64 Windows and Linux
 standalone binaries and packages them with Velopack. It runs for pull requests,
 version tags (`v1.2.3`), manual dispatches, and nightly at 03:17 UTC. A scheduled
 run skips packaging when `main` has not changed since the currently published
-nightly. Changed scheduled builds and manual dispatches replace the rolling
-`nightly` GitHub prerelease; version tags create normal versioned GitHub
-releases.
+nightly. Changed scheduled builds and manual dispatches publish a dated
+`nightly-YYYY-MM-DD` GitHub prerelease; same-day reruns replace that day's
+release. Version tags create normal versioned GitHub releases.
 
 Windows releases contain a standalone ZIP, portable Velopack ZIP, one-click
 `Setup.exe`, and MSI installer. Linux releases contain a standalone tarball and
@@ -52,9 +52,9 @@ Velopack AppImage; Velopack uses the self-updating AppImage as its Linux
 installer/distribution format. Installed Velopack builds check GitHub Releases
 in the background and apply downloaded updates after the game exits. Stable
 installs ignore prereleases; nightly installs continue following the rolling
-nightly. These packages do not contain the original copyrighted game data. Set
-`ROBINHOOD_DATA_DIR` to an extracted game data root as described in
-[Game data](#game-data).
+nightly release channel. These packages do not contain the original copyrighted
+game data. Set `ROBINHOOD_DATA_DIR` to an extracted game data root as described
+in [Game data](#game-data).
 
 CI enables native filesystem support and audio, but currently omits the
 optional FFmpeg-backed intro/outro video feature because the required Windows

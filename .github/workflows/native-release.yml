@@ -41,7 +41,7 @@ jobs:
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
     steps:
-      - name: Compare with last successful nightly run
+      - name: Compare with latest published nightly
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -54,9 +54,8 @@ jobs:
           previous_sha="$(
             gh api \
               -H 'Accept: application/vnd.github+json' \
-              "/repos/${GITHUB_REPOSITORY}/git/ref/tags/nightly" \
-              --jq '.object.sha // ""' \
-              2>/dev/null || true
+              "/repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
+              --jq '[.[] | select(.prerelease and (.tag_name | startswith("nightly-"))) | .target_commitish][0] // ""'
           )"
           if [[ -n "${previous_sha}" && "${previous_sha}" == "${GITHUB_SHA}" ]]; then
             echo "No repository changes since the published nightly (${GITHUB_SHA})."
@@ -230,12 +229,12 @@ jobs:
           done
 
           if [[ "${GITHUB_EVENT_NAME}" == schedule || "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
-            release_tag=nightly
-            release_title="Nightly $(date -u +%Y-%m-%d)"
+            release_date="$(date -u +%Y-%m-%d)"
+            release_tag="nightly-${release_date}"
+            release_title="Nightly ${release_date}"
             if gh release view "${release_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-              # Recreate the rolling release so its publication timestamp stays
-              # within GithubSource's recent-release window and stale versioned
-              # nupkgs do not accumulate forever.
+              # A same-day manual rerun replaces that day's assets instead of
+              # creating multiple releases with the same calendar date.
               gh release delete "${release_tag}" \
                 --repo "${GITHUB_REPOSITORY}" \
                 --cleanup-tag \
@@ -247,6 +246,14 @@ jobs:
               --title "${release_title}" \
               --notes "Automated nightly build of ${GITHUB_SHA}." \
               --prerelease
+            # Remove the legacy undated rolling release only after the dated
+            # replacement has published successfully.
+            if gh release view nightly --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              gh release delete nightly \
+                --repo "${GITHUB_REPOSITORY}" \
+                --cleanup-tag \
+                --yes
+            fi
           elif gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \

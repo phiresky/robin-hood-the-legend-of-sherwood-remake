@@ -7,9 +7,9 @@ A list of which additional features we have added, which ones we might still wan
 - **Self-updating native packages.** Installed Windows and Linux Velopack
   builds check the public GitHub Releases feed in the background. Stable
   installs consider stable releases only, while prerelease installs also
-  follow the rolling `nightly` prerelease. Downloads do not interrupt play:
-  completed updates are applied silently after a normal game exit, and a
-  previously downloaded pending update is applied before the next startup.
+  follow dated `nightly-YYYY-MM-DD` prereleases. Downloads do not interrupt
+  play: completed updates are applied silently after a normal game exit, and
+  a previously downloaded pending update is applied before the next startup.
   Headless games, lobby servers, standalone archives, and developer builds do
   not attempt to update themselves.
 
