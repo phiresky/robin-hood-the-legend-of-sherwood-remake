@@ -29,7 +29,9 @@ env:
   # The checked-in native Linux linker settings are optimized for local
   # development and reference Wild. Use the runner's portable defaults in CI.
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
-  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C target-cpu=x86-64-v2"
+  # RUSTFLAGS has higher precedence than target-specific Cargo config, so it
+  # replaces (rather than combines with) the local `--ld-path=wild` flag.
+  RUSTFLAGS: "-C target-cpu=x86-64-v2"
   VPK_VERSION: 1.2.0
 
 jobs:
@@ -161,7 +163,7 @@ jobs:
             --packVersion "${{ steps.version.outputs.version }}" \
             --packDir target/package-input \
             --mainExe robin.exe \
-            --packTitle "Robin Hood: The Legend of Sherwood" \
+            --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime win-x64 \
             --msi \
             --outputDir target/velopack
@@ -175,7 +177,7 @@ jobs:
             --packVersion "${{ steps.version.outputs.version }}" \
             --packDir target/package-input \
             --mainExe robin \
-            --packTitle "Robin Hood: The Legend of Sherwood" \
+            --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime linux-x64 \
             --outputDir target/velopack
           cp target/velopack/* target/release-assets/
