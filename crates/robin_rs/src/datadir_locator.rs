@@ -72,6 +72,8 @@ fn search_roots() -> Vec<PathBuf> {
         for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
             if let Some(dir) = std::env::var_os(var).map(PathBuf::from) {
                 push(dir.join("GOG Galaxy").join("Games"));
+                // Older GOG offline installers defaulted here.
+                push(dir.join("GOG.com"));
                 push(dir.join("Steam").join("steamapps").join("common"));
                 push(dir);
             }
@@ -95,6 +97,7 @@ fn search_roots() -> Vec<PathBuf> {
         push(home.join("Games/Heroic"));
         push(home.join("Games"));
         push(home.join(".wine/drive_c/GOG Games"));
+        push(home.join(".wine/drive_c/Program Files (x86)/GOG.com"));
         push(home.join(".wine/drive_c/Program Files (x86)/GOG Galaxy/Games"));
         // Steam library folders (native client layouts).
         push(home.join(".local/share/Steam/steamapps/common"));
