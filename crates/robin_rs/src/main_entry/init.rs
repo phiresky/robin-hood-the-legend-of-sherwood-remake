@@ -126,7 +126,11 @@ pub fn register_language_data_paths_for_tool() {
 fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
     let data_dir = data_dir_override
         .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| std::env::var("ROBINHOOD_DATA_DIR").ok());
+        .or_else(|| {
+            std::env::var("ROBINHOOD_DATA_DIR")
+                .ok()
+                .filter(|dir| !dir.is_empty())
+        });
     if let Some(data_dir) = data_dir {
         tracing::info!("using primary datadir {}", data_dir);
         let status = SbFile::set_primary_path(&data_dir);
@@ -199,7 +203,11 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
 fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
     let data_dir = data_dir_override
         .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| std::env::var("ROBINHOOD_DATA_DIR").ok());
+        .or_else(|| {
+            std::env::var("ROBINHOOD_DATA_DIR")
+                .ok()
+                .filter(|dir| !dir.is_empty())
+        });
     if let Some(data_dir) = data_dir {
         tracing::info!("changing working directory to datadir {}", data_dir);
         std::env::set_current_dir(&data_dir)

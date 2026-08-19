@@ -251,7 +251,8 @@ impl TrueTypeFont {
     /// so missing variants are logged and fall back to the upright face.
     fn find_and_load_ttf(&mut self, sbf_dir: Option<&Path>) -> u32 {
         let raw = self.truetype_name_str().to_owned();
-        let base = if raw.to_ascii_lowercase().ends_with(".ttf") {
+        let lower = raw.to_ascii_lowercase();
+        let base = if lower.ends_with(".ttf") || lower.ends_with(".ttc") {
             raw[..raw.len() - 4].to_string()
         } else {
             raw
@@ -282,39 +283,43 @@ impl TrueTypeFont {
         }
         candidates.push(("", 0));
 
+        // `.ttc` TrueType collections load through the same parser (face
+        // index 0); the international release ships e.g. `simsun.ttc`.
         for (suffix, resolved) in candidates {
-            let name = format!("{}{}.ttf", base, suffix);
-            for dir in &dirs {
-                if let Some(path) = find_case_insensitive(dir, &name)
-                    && let Ok(data) = std::fs::read(&path)
-                {
-                    match FontArc::try_from_vec(data) {
-                        Ok(f) => {
-                            self.font = Some(f);
-                            if resolved != 0 {
-                                tracing::debug!(
-                                    "robin_rs font: '{}' resolved style \
-                                     variant {:#x} via '{}'",
-                                    self.name_str(),
-                                    resolved,
+            for ext in ["ttf", "ttc"] {
+                let name = format!("{base}{suffix}.{ext}");
+                for dir in &dirs {
+                    if let Some(path) = find_case_insensitive(dir, &name)
+                        && let Ok(data) = std::fs::read(&path)
+                    {
+                        match FontArc::try_from_vec(data) {
+                            Ok(f) => {
+                                self.font = Some(f);
+                                if resolved != 0 {
+                                    tracing::debug!(
+                                        "robin_rs font: '{}' resolved style \
+                                         variant {:#x} via '{}'",
+                                        self.name_str(),
+                                        resolved,
+                                        path.display(),
+                                    );
+                                }
+                                return resolved;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "robin_rs font: failed to parse '{}': {}",
                                     path.display(),
+                                    e
                                 );
                             }
-                            return resolved;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "robin_rs font: failed to parse '{}': {}",
-                                path.display(),
-                                e
-                            );
                         }
                     }
                 }
             }
         }
         tracing::warn!(
-            "robin_rs font: could not find TTF '{}.ttf' for metrics",
+            "robin_rs font: could not find TrueType face '{}.ttf'/'.ttc' for metrics",
             base
         );
         0
