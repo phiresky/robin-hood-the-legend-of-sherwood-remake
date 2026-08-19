@@ -13,6 +13,16 @@ A list of which additional features we have added, which ones we might still wan
   Headless games, lobby servers, standalone archives, and developer builds do
   not attempt to update themselves.
 
+- **Startup datadir selector.** When `ROBINHOOD_DATA_DIR` is unset and
+  neither the working directory nor the executable directory contains the
+  game data (detected via `Data/robinhood.bks`, case-insensitive, or a
+  `Data/datadir.bin` shipping bundle), the game probes the usual CD, GOG,
+  and Steam install locations (Program Files, GOG Games, GOG Galaxy and
+  Steam library folders, plus Wine/Heroic/Lutris prefixes on Linux) and
+  otherwise asks for the installation folder with the native OS picker,
+  recommending a GOG purchase. Headless runs skip the dialog and keep the
+  descriptive terminal error.
+
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable
   `Data/Levels/<mission>.level.json` geometry descriptor (title, spawn point,

@@ -1,7 +1,7 @@
 //! Data-directory, locale, profile, and key-config initialization.
 
 #[cfg(any(not(target_arch = "wasm32"), target_os = "android"))]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::host::ApplicationContext;
 use crate::key_config_store::KeyConfigStore;
@@ -135,26 +135,36 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
                 "Unable to install datadir {data_dir}: SBFile error {status}"
             ));
         }
-    } else if !Path::new("Data").is_dir()
-        && let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
-    {
-        tracing::info!(
-            "Using executable directory as primary datadir: {}",
-            parent.display()
-        );
-        let status = SbFile::set_primary_path(&parent.to_string_lossy());
-        if status != SBFILE_NO_ERROR {
-            return Err(format!(
-                "Unable to install executable directory {}: SBFile error {status}",
-                parent.display()
-            ));
-        }
     } else {
-        let status = SbFile::set_primary_path(".");
+        // No override and no env var: probe the working directory, then the
+        // executable directory (validated via Data/robinhood.bks), then the
+        // well-known CD/GOG/Steam install locations, and finally ask the
+        // player through the native folder picker.
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf));
+        let chosen = if crate::datadir_locator::is_valid_install_dir(Path::new(".")) {
+            Some(PathBuf::from("."))
+        } else if let Some(exe_dir) =
+            exe_dir.filter(|dir| crate::datadir_locator::is_valid_install_dir(dir))
+        {
+            tracing::info!(
+                "Using executable directory as primary datadir: {}",
+                exe_dir.display()
+            );
+            Some(exe_dir)
+        } else {
+            crate::datadir_locator::locate_or_prompt()
+        };
+        // Fall back to the working directory when nothing was found or the
+        // player cancelled the picker; a loose unmarked `Data/` there keeps
+        // working, anything else hits the descriptive error below.
+        let chosen = chosen.unwrap_or_else(|| PathBuf::from("."));
+        let status = SbFile::set_primary_path(&chosen.to_string_lossy());
         if status != SBFILE_NO_ERROR {
             return Err(format!(
-                "Unable to install current directory as datadir: SBFile error {status}"
+                "Unable to install datadir {}: SBFile error {status}",
+                chosen.display()
             ));
         }
     }
@@ -167,8 +177,11 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
         return Err(format!(
             "ERROR: 'Data' directory not found in {}\n\
              Set ROBINHOOD_DATA_DIR=/path/to/game to the directory that\n\
-             contains the game's Data/ folder.",
-            cwd
+             contains the game's Data/ folder (with Data/robinhood.bks).\n\
+             If you do not own the game, I recommend buying it on GOG:\n\
+             {}",
+            cwd,
+            crate::datadir_locator::GOG_STORE_URL
         ));
     }
 

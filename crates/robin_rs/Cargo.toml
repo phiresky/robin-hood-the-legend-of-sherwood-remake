@@ -112,6 +112,8 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 semver = "1"
 velopack = "1.2.0"
+# Native folder-picker / message dialogs for the startup datadir selector.
+rfd = "0.15"
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Direct JNI calls let android_main ask the Java Activity to leave the
