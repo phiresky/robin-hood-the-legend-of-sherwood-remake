@@ -29,6 +29,18 @@ use crate::widget::FrameWnd;
 
 /// What the picker returns when the player chooses to launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CustomMissionChoice {
+    /// A downloaded mod pack: the caller mounts its zip as an overlay
+    /// via [`crate::mod_pack::mount_for_launch`] before the session.
+    Mod(CustomMissionLaunch),
+    /// A hackable JSON level shipped in an always-mounted overlay
+    /// datadir (see `ModDetails::hackable_mission`): launched directly
+    /// by mission filename, no mount step.
+    Hackable { mission: String, title: String },
+}
+
+/// Launch description for a mod-pack (zip) custom mission.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomMissionLaunch {
     pub slug: String,
     pub mod_title: String,
@@ -55,7 +67,7 @@ const ROW_HEIGHT: i32 = 20;
 const ID_PLAY: u32 = 0;
 const ID_CANCEL: u32 = 1;
 
-/// Display the picker.  Returns `Some(CustomMissionLaunch)` when the
+/// Display the picker.  Returns `Some(CustomMissionChoice)` when the
 /// player picked a launchable mission, `None` on cancel or when there's
 /// no launchable content.
 pub(crate) async fn show_custom_missions(
@@ -64,8 +76,16 @@ pub(crate) async fn show_custom_missions(
     resources: &IngameMenuResources,
     cursor: ModalCursor<'_>,
     mods_root: &Path,
-) -> Option<CustomMissionLaunch> {
-    let mods = scan_mods_dir(mods_root);
+) -> Option<CustomMissionChoice> {
+    let mut mods = scan_mods_dir(mods_root);
+    // Overlay-shipped mods (repo `mods/`, e.g. hackable levels) may also
+    // carry a `details.json`; list them alongside the downloaded packs.
+    if let Some(overlay_root) = crate::main_entry::overlay_mods_dir()
+        && overlay_root != mods_root
+    {
+        mods.extend(scan_mods_dir(&overlay_root));
+        mods.sort_by(|a, b| a.details.title.cmp(&b.details.title));
+    }
     let entries = enumerate_missions(&mods);
     if entries.is_empty() {
         tracing::info!(
@@ -234,14 +254,20 @@ pub(crate) async fn show_custom_missions(
                 ID_PLAY => {
                     let e = &entries[selected];
                     if let MissionStatus::Ok { map_filename } = &e.status {
-                        return Some(CustomMissionLaunch {
+                        if e.hackable {
+                            return Some(CustomMissionChoice::Hackable {
+                                mission: e.rhm_basename.clone(),
+                                title: e.mod_title.clone(),
+                            });
+                        }
+                        return Some(CustomMissionChoice::Mod(CustomMissionLaunch {
                             slug: e.mod_slug.clone(),
                             mod_title: e.mod_title.clone(),
                             version_zip: e.version_zip.clone(),
                             rhm_basename: e.rhm_basename.clone(),
                             map_filename: map_filename.clone(),
                             requires_spellforge: e.requires_spellforge,
-                        });
+                        }));
                     }
                 }
                 _ => {}
@@ -420,7 +446,9 @@ fn draw_detail_pane(
     lines.push(entry.mod_title.clone());
     lines.push(format!("by {}", entry.author));
     lines.push(format!("Map: {}", entry.map));
-    if entry.requires_spellforge {
+    if entry.hackable {
+        lines.push("Tag: Hackable level".to_string());
+    } else if entry.requires_spellforge {
         lines.push("Tag: Spellforge".to_string());
     } else {
         lines.push("Tag: Vanilla".to_string());

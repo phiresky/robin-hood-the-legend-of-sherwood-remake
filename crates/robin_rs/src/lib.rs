@@ -182,7 +182,6 @@ pub mod game_render;
 pub mod game_session;
 pub mod gamepad;
 pub mod gpu_upscale;
-pub mod hackable_levels;
 pub mod hardware;
 pub mod host;
 pub mod host_mouse;

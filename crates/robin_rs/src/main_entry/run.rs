@@ -294,42 +294,6 @@ pub async fn run_rust_game(
                 let SessionResult::QuitToMenu = outcome.result?;
                 tracing::info!("Returned to main menu");
             }
-            MainMenuChoice::HackableLevel(mission) => {
-                let profiles_mut = std::sync::Arc::make_mut(&mut profiles);
-                campaign.reset(profiles_mut, application_context.sim_config().difficulty);
-                // Hackable levels are standalone sandboxes with no preceding
-                // campaign mission to inherit a gang from; start with Robin.
-                campaign.create_gang_from_pcs(
-                    "R",
-                    profiles_mut,
-                    application_context.sim_config().difficulty,
-                );
-                let idx = campaign
-                    .force_next_mission_by_name(profiles_mut, &mission, &mission, true)
-                    .ok_or_else(|| format!("failed to create hackable mission `{mission}`"))?;
-                campaign.current_mission_idx = Some(idx);
-                let location = campaign.missions[idx].profile(profiles_mut).location;
-                let mut callbacks = RustCallbacks::new(application_context.clone());
-                let mut sim_config = crate::game_session::initial_sim_config(args);
-                // Hackable descriptors carry no SCB StartUp class, so the
-                // script VM must stay off.
-                sim_config.script_enabled = false;
-                let outcome = run_mission(
-                    window,
-                    &mut callbacks,
-                    campaign,
-                    &profiles,
-                    idx,
-                    location,
-                    args,
-                    0,
-                    sim_config,
-                )
-                .await;
-                campaign = outcome.campaign;
-                outcome.result?;
-                tracing::info!("Returned to main menu from hackable level `{mission}`");
-            }
             MainMenuChoice::Load { slot, mission_id } => {
                 // Route the save into the session's `perform_pending_save_load`
                 // path.  Point `next_mission_idx` at the save's mission so
@@ -423,7 +387,48 @@ pub async fn run_rust_game(
                 let SessionResult::QuitToMenu = outcome.result?;
                 tracing::info!("Returned to main menu from Multiplayer");
             }
-            MainMenuChoice::CustomMission(launch) => {
+            MainMenuChoice::CustomMission(
+                crate::main_menu::custom_missions::CustomMissionChoice::Hackable { mission, title },
+            ) => {
+                tracing::info!("Main menu CustomMission (hackable): {title} ({mission})");
+                let profiles_mut = std::sync::Arc::make_mut(&mut profiles);
+                campaign.reset(profiles_mut, application_context.sim_config().difficulty);
+                // Hackable levels are standalone sandboxes with no preceding
+                // campaign mission to inherit a gang from; start with Robin.
+                campaign.create_gang_from_pcs(
+                    "R",
+                    profiles_mut,
+                    application_context.sim_config().difficulty,
+                );
+                let idx = campaign
+                    .force_next_mission_by_name(profiles_mut, &mission, &mission, true)
+                    .ok_or_else(|| format!("failed to create hackable mission `{mission}`"))?;
+                campaign.current_mission_idx = Some(idx);
+                let location = campaign.missions[idx].profile(profiles_mut).location;
+                let mut callbacks = RustCallbacks::new(application_context.clone());
+                let mut sim_config = crate::game_session::initial_sim_config(args);
+                // Hackable descriptors carry no SCB StartUp class, so the
+                // script VM must stay off.
+                sim_config.script_enabled = false;
+                let outcome = run_mission(
+                    window,
+                    &mut callbacks,
+                    campaign,
+                    &profiles,
+                    idx,
+                    location,
+                    args,
+                    0,
+                    sim_config,
+                )
+                .await;
+                campaign = outcome.campaign;
+                outcome.result?;
+                tracing::info!("Returned to main menu from hackable level `{mission}`");
+            }
+            MainMenuChoice::CustomMission(
+                crate::main_menu::custom_missions::CustomMissionChoice::Mod(launch),
+            ) => {
                 let mods_root = crate::mod_pack::default_mods_root();
                 tracing::info!(
                     "Main menu CustomMission: slug={} rhm={} map={} spellforge={}",

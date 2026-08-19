@@ -64,6 +64,20 @@ fn resolve_install_resource_dir(name: &str) -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|path| path.is_dir())
 }
 
+/// Resolve the repository/install `mods/` directory whose subdirectories
+/// are auto-mounted as overlay datadirs.  `None` when the installation
+/// ships no such directory.  Also scanned by the Custom Missions picker
+/// so overlay-shipped mods (hackable levels) can carry a `details.json`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
+    resolve_install_resource_dir(MODS_DIR)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
+    None
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn add_overlay_data_dirs() {
     match resolve_install_resource_dir(CORE_OVERLAY_DIR) {

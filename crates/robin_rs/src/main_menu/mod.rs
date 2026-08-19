@@ -55,9 +55,6 @@ pub(crate) mod save_load;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MainMenuChoice {
     Start,
-    /// Player picked a discovered hackable JSON level; the value is the
-    /// mission filename (see [`crate::hackable_levels`]).
-    HackableLevel(String),
     Multiplayer(multiplayer_lobby::MultiplayerLaunch),
     /// Player chose a save slot to load — the caller should start a
     /// session seeded with a `SaveLoadRequest::Load` for that slot.
@@ -65,11 +62,12 @@ pub(crate) enum MainMenuChoice {
         slot: usize,
         mission_id: u32,
     },
-    /// Player picked a custom mission to launch.  The caller mounts the
-    /// zip via `mod_pack::mount_for_launch`, then drives a session via
-    /// `Campaign::force_next_mission_by_name`, then returns *here* so
-    /// the picker can be reopened for another launch.
-    CustomMission(custom_missions::CustomMissionLaunch),
+    /// Player picked a custom mission to launch.  For mod packs the
+    /// caller mounts the zip via `mod_pack::mount_for_launch`; hackable
+    /// levels launch directly from their always-mounted overlay.  Either
+    /// way the session runs via `Campaign::force_next_mission_by_name`
+    /// and control returns *here* so the picker can be reopened.
+    CustomMission(custom_missions::CustomMissionChoice),
     Exit,
 }
 
@@ -98,8 +96,7 @@ enum ClickAction {
 }
 
 // Button widget IDs are the button's index in the bottom-right widget
-// list; the list length varies with the number of discovered hackable
-// levels, so there are no fixed per-button constants.
+// list; there are no fixed per-button constants.
 
 /// Left-side profile info block position:
 ///
@@ -247,12 +244,6 @@ pub(crate) async fn show_main_menu(
         ),
         ("Custom Missions".to_string(), ClickAction::CustomMissions),
     ];
-    for level in crate::hackable_levels::discover_hackable_levels() {
-        buttons.push((
-            level.title,
-            ClickAction::Return(MainMenuChoice::HackableLevel(level.mission)),
-        ));
-    }
     buttons.extend([
         (
             menu_resources.menu_text.get(MT_BTN_SELECT_PLAYER),

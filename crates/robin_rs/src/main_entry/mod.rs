@@ -26,7 +26,7 @@ pub use cli::{
 };
 
 pub use init::{
-    FALLBACK_LOCALE_FOLDER, LANGUAGE_FOLDERS, OVERLAY_DATA_DIRS_ENV, RustInit,
+    FALLBACK_LOCALE_FOLDER, LANGUAGE_FOLDERS, OVERLAY_DATA_DIRS_ENV, RustInit, overlay_mods_dir,
     register_language_data_paths_for_tool, rust_init, rust_init_with_data_dir,
     rust_init_with_shipping,
 };
