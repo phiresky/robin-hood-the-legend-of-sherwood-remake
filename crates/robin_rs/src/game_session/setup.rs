@@ -1241,6 +1241,15 @@ fn initial_rng_seed(
 pub(crate) fn initial_sim_config(args: &crate::main_entry::CliArgs) -> engine_api::SimConfig {
     let mut sim_config = args.global_options.sim_config();
     sim_config.golden_eye |= args.goldeneye;
+    if args
+        .mission
+        .as_deref()
+        .is_some_and(robin_engine::level_data::hackable_level_exists)
+    {
+        // Hackable JSON levels are unscripted sandboxes, not legacy scripted
+        // missions, so requiring an SCB StartUp class would reject them.
+        sim_config.script_enabled = false;
+    }
     sim_config
 }
 

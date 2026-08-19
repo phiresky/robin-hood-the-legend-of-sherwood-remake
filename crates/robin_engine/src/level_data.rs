@@ -1474,7 +1474,160 @@ pub struct LoadedLevel {
     pub mission: LoadedMission,
 }
 
+/// Datadir-relative path of the hackable JSON level descriptor for a mission.
+pub fn hackable_level_descriptor_path(mission_filename: &str) -> String {
+    format!("Data/Levels/{mission_filename}.level.json")
+}
+
+/// Whether a hackable JSON level descriptor exists for this mission in the
+/// primary datadir or any registered overlay.
+pub fn hackable_level_exists(mission_filename: &str) -> bool {
+    crate::sbfile::SbFile::exists(&hackable_level_descriptor_path(mission_filename))
+}
+
+/// Editable geometry source for a hackable JSON level.
+///
+/// This deliberately describes gameplay geometry rather than mirroring the
+/// legacy RHP/RHM serialization. It is loaded through the normal datadir
+/// overlay and expanded into the same raw structs as an original level.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HackableLevelDescriptor {
+    /// Display name shown in menus; falls back to the mission filename.
+    #[serde(default)]
+    pub title: Option<String>,
+    pub map_filename: String,
+    pub spawn: (i16, i16),
+    pub walkable_polygon: Vec<(i16, i16)>,
+    #[serde(default)]
+    pub volumes: Vec<HackableLevelVolume>,
+}
+
+/// One simplified, convex architectural volume in a hackable level descriptor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HackableLevelVolume {
+    pub name: String,
+    pub footprint: Vec<(i16, i16)>,
+    pub z_bottom: f32,
+    pub z_top: f32,
+    #[serde(default)]
+    pub motion_blocking: bool,
+    #[serde(default)]
+    pub opaque: bool,
+    /// Deprecated authoring hint retained for descriptor compatibility.
+    /// Sprite occlusion comes exclusively from the continuous depth map.
+    #[serde(default)]
+    pub occludes_sprites: bool,
+}
+
 impl LoadedLevel {
+    /// Expand a hackable JSON level descriptor into normal level structs.
+    ///
+    /// Hackable levels have no legacy `.rhp`/`.rhm` authoring source, so
+    /// their minimum playable topology is expressed directly in the same
+    /// decoded structs those files normally produce. The trailing empty
+    /// layer is the lift layer required by the original motion-layout
+    /// convention.
+    pub fn hackable_from_json(bytes: &[u8]) -> Result<Self, String> {
+        let descriptor: HackableLevelDescriptor = serde_json::from_slice(bytes)
+            .map_err(|error| format!("invalid hackable level descriptor: {error}"))?;
+        if descriptor.walkable_polygon.len() < 3 {
+            return Err("walkable_polygon must contain at least three points".to_owned());
+        }
+        for volume in &descriptor.volumes {
+            if volume.footprint.len() < 3 {
+                return Err(format!(
+                    "volume {:?} must contain at least three footprint points",
+                    volume.name
+                ));
+            }
+            if volume.z_top <= volume.z_bottom {
+                return Err(format!(
+                    "volume {:?} has invalid height range {}..{}",
+                    volume.name, volume.z_bottom, volume.z_top
+                ));
+            }
+        }
+
+        let mut level = Self::empty_for_test();
+        level.proto.grid_chunk_order = vec![ProtoGridChunk::Sight, ProtoGridChunk::Motion];
+        let motion_obstacles = descriptor
+            .volumes
+            .iter()
+            .filter(|volume| volume.motion_blocking)
+            .map(|volume| RawMotionObstacle {
+                // Static authored geometry is active in every state.
+                state_id: 0,
+                polygon: SectorPolygon {
+                    points: volume.footprint.clone(),
+                },
+            })
+            .collect();
+        level.proto.motion_data = Some(RawMotionData {
+            layers: vec![
+                vec![RawMotionArea {
+                    is_lift: false,
+                    state_id: 0,
+                    polygon: SectorPolygon {
+                        points: descriptor.walkable_polygon,
+                    },
+                    skeleton_segments: Vec::new(),
+                    flags: 0,
+                    obstacles: motion_obstacles,
+                }],
+                Vec::new(),
+            ],
+            graph_bytes: Vec::new(),
+        });
+        for volume in descriptor.volumes {
+            if !volume.opaque {
+                continue;
+            }
+            level.proto.sight_obstacles.push(RawSightObstacle {
+                points: volume
+                    .footprint
+                    .iter()
+                    .map(|&(x, y)| RawObstaclePoint {
+                        x: f32::from(x),
+                        y: f32::from(y),
+                        z_bottom: volume.z_bottom,
+                        z_top: volume.z_top,
+                    })
+                    .collect(),
+                projection_area: None,
+                opaque: volume.opaque,
+                solid: volume.motion_blocking,
+                mouse: volume.motion_blocking,
+                show_shadow_polygon: false,
+                default_material: 0,
+                material_indices: Vec::new(),
+            });
+        }
+        level.mission.header = MissionHeader {
+            control_crc: 0,
+            ambiance: 1,
+            map_filename: descriptor.map_filename,
+            mission_profile_id: 0,
+        };
+        level.mission.element_chunk_order = vec![MissionElementChunk::Element];
+        level.mission.element_group_order = vec![MissionElementGroup::BeamMe];
+        level.mission.beam_mes = vec![BeamMe {
+            position: MapPoint::new(f32::from(descriptor.spawn.0), f32::from(descriptor.spawn.1)),
+            direction: 0,
+            action: 0,
+            projection_area: u16::MAX,
+            sector: 0,
+            layer: 0,
+            material: 0,
+            action_required: BeamMeActions::default(),
+            index: 0,
+            script: None,
+            required_pc: 0,
+        }];
+        Ok(level)
+    }
+
     /// Produce an empty `LoadedLevel` suitable for unit tests that
     /// need to drive `Engine::new` without hitting disk.  All
     /// `Vec`/`Option` fields are empty; scalar fields are zero.
@@ -3880,6 +4033,53 @@ fn read_archery_sectors(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn hackable_descriptor_expands_to_playable_level() {
+        let level = LoadedLevel::hackable_from_json(
+            br#"{
+                "title": "Test Castle",
+                "map_filename": "TestMap",
+                "spawn": [50, 60],
+                "walkable_polygon": [[0, 0], [100, 0], [100, 100], [0, 100]],
+                "volumes": [
+                    {
+                        "name": "keep",
+                        "footprint": [[20, 20], [40, 20], [40, 40], [20, 40]],
+                        "z_bottom": 0.0,
+                        "z_top": 300.0,
+                        "motion_blocking": true,
+                        "opaque": true
+                    }
+                ]
+            }"#,
+        )
+        .expect("hackable descriptor");
+        let motion = level.proto.motion_data.expect("hackable motion data");
+        assert_eq!(motion.layers.len(), 2);
+        assert_eq!(motion.layers[0].len(), 1);
+        assert!(motion.layers[0][0].polygon.points.len() >= 3);
+        assert_eq!(level.mission.header.map_filename, "TestMap");
+        assert_eq!(level.mission.beam_mes.len(), 1);
+        assert_eq!(level.mission.beam_mes[0].sector, 0);
+        assert_eq!(level.mission.beam_mes[0].layer, 0);
+        assert!(!motion.layers[0][0].obstacles.is_empty());
+        assert!(!level.proto.sight_obstacles.is_empty());
+        assert!(level.proto.masks.is_empty());
+    }
+
+    #[test]
+    fn hackable_descriptor_rejects_degenerate_geometry() {
+        let error = LoadedLevel::hackable_from_json(
+            br#"{
+                "map_filename": "TestMap",
+                "spawn": [0, 0],
+                "walkable_polygon": [[0, 0], [100, 0]]
+            }"#,
+        )
+        .expect_err("two-point walkable polygon must be rejected");
+        assert!(error.contains("walkable_polygon"));
+    }
 
     /// Build a chunk: tag(4) + size(4) + version(4) + payload.
     /// Size = 4 (version) + payload.len().

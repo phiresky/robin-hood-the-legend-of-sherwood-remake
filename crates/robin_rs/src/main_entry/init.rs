@@ -37,8 +37,30 @@ pub const FALLBACK_LOCALE_FOLDER: &str = "1033";
 /// separator (`:` on Unix, `;` on Windows).
 pub const OVERLAY_DATA_DIRS_ENV: &str = "ROBINHOOD_OVERLAY_DATA_DIRS";
 
+/// Directory whose immediate subdirectories are registered as overlay
+/// datadirs at startup.  Repository-shipped mods (e.g. hackable JSON
+/// levels) live here.
+pub const MODS_DIR: &str = "mods";
+
 #[cfg(not(target_arch = "wasm32"))]
 fn add_overlay_data_dirs() {
+    if let Ok(entries) = std::fs::read_dir(MODS_DIR) {
+        // Sort for a deterministic overlay lookup order.
+        let mut mod_dirs: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        mod_dirs.sort();
+        for dir in mod_dirs {
+            match SbFile::add_overlay_path(&dir) {
+                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay datadir: {dir}"),
+                SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
+                err => tracing::warn!("Failed to register mod overlay datadir {dir}: {err}"),
+            }
+        }
+    }
+
     let Ok(value) = std::env::var(OVERLAY_DATA_DIRS_ENV) else {
         return;
     };

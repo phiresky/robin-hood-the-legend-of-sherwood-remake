@@ -55,6 +55,9 @@ pub(crate) mod save_load;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MainMenuChoice {
     Start,
+    /// Player picked a discovered hackable JSON level; the value is the
+    /// mission filename (see [`crate::hackable_levels`]).
+    HackableLevel(String),
     Multiplayer(multiplayer_lobby::MultiplayerLaunch),
     /// Player chose a save slot to load — the caller should start a
     /// session seeded with a `SaveLoadRequest::Load` for that slot.
@@ -94,16 +97,9 @@ enum ClickAction {
     CustomMissions,
 }
 
-// Button widget IDs — order matches the bottom-right widget list.
-const ID_START: u32 = 0;
-const ID_MULTIPLAYER: u32 = 1;
-const ID_LOAD: u32 = 2;
-const ID_CUSTOM_MISSIONS: u32 = 3;
-const ID_SELECT_PLAYER: u32 = 4;
-const ID_OPTIONS: u32 = 5;
-const ID_SHOW_MOVIES: u32 = 6;
-const ID_SHOW_CREDITS: u32 = 7;
-const ID_EXIT: u32 = 8;
+// Button widget IDs are the button's index in the bottom-right widget
+// list; the list length varies with the number of discovered hackable
+// levels, so there are no fixed per-button constants.
 
 /// Left-side profile info block position:
 ///
@@ -239,57 +235,50 @@ pub(crate) async fn show_main_menu(
     // ── Button layout (align_bottom_right, spacing=2) ────────────────
     let (btn_w, btn_h) = menu_resources.button_dimensions();
 
-    let buttons: [(u32, String, ClickAction); 9] = [
+    let mut buttons: Vec<(String, ClickAction)> = vec![
         (
-            ID_START,
             menu_resources.menu_text.get(MT_BTN_START_GAME),
             ClickAction::Return(MainMenuChoice::Start),
         ),
+        ("Multiplayer".to_string(), ClickAction::Multiplayer),
         (
-            ID_MULTIPLAYER,
-            "Multiplayer".to_string(),
-            ClickAction::Multiplayer,
-        ),
-        (
-            ID_LOAD,
             menu_resources.menu_text.get(MT_BTN_LOAD),
             ClickAction::LoadGame,
         ),
+        ("Custom Missions".to_string(), ClickAction::CustomMissions),
+    ];
+    for level in crate::hackable_levels::discover_hackable_levels() {
+        buttons.push((
+            level.title,
+            ClickAction::Return(MainMenuChoice::HackableLevel(level.mission)),
+        ));
+    }
+    buttons.extend([
         (
-            ID_CUSTOM_MISSIONS,
-            "Custom Missions".to_string(),
-            ClickAction::CustomMissions,
-        ),
-        (
-            ID_SELECT_PLAYER,
             menu_resources.menu_text.get(MT_BTN_SELECT_PLAYER),
             ClickAction::SelectPlayer,
         ),
         (
-            ID_OPTIONS,
             menu_resources.menu_text.get(MT_BTN_OPTIONS),
             ClickAction::Options,
         ),
         (
-            ID_SHOW_MOVIES,
             menu_resources.menu_text.get(MT_BTN_SHOW_MOVIES),
             ClickAction::ShowMovies,
         ),
         (
-            ID_SHOW_CREDITS,
             menu_resources.menu_text.get(MT_BTN_SHOW_CREDITS),
             ClickAction::ShowCredits,
         ),
         (
-            ID_EXIT,
             menu_resources.menu_text.get(MT_BTN_QUIT_GAME),
             ClickAction::Return(MainMenuChoice::Exit),
         ),
-    ];
+    ]);
 
     let labels: Vec<(&str, bool)> = buttons
         .iter()
-        .map(|(_, label, _)| (label.as_str(), true))
+        .map(|(label, _)| (label.as_str(), true))
         .collect();
     let positions = align_bottom_right(&labels, btn_w, btn_h);
 
@@ -298,13 +287,7 @@ pub(crate) async fn show_main_menu(
     frame.input_enabled = true;
     for (i, mb) in positions.iter().enumerate() {
         frame.add_widget_absolute(widget_bridge::make_button_enabled(
-            buttons[i].0,
-            &mb.label,
-            mb.enabled,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
+            i as u32, &mb.label, mb.enabled, mb.x, mb.y, mb.w, mb.h,
         ));
     }
 
@@ -348,7 +331,8 @@ pub(crate) async fn show_main_menu(
 
     // ── Event-loop state ─────────────────────────────────────────────
     let mut input_state = ModalInputState::new();
-    let mut keyboard_selection: u32 = ID_START;
+    // First button (Start Game) has widget id 0.
+    let mut keyboard_selection: u32 = 0;
 
     loop {
         // Recomputed each frame so a resolution change from the Options
@@ -418,7 +402,7 @@ pub(crate) async fn show_main_menu(
 
         // ── Dispatch ────────────────────────────────────────────
         if let Some(id) = activated {
-            let action = buttons[id as usize].2.clone();
+            let action = buttons[id as usize].1.clone();
             // Clicking Exit goes through the same confirmation path as
             // Escape / window-close below: show the
             // `MT_MSG_RETURN_TO_WINDOWS` yes/no before committing to

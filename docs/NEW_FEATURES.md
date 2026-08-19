@@ -13,6 +13,22 @@ A list of which additional features we have added, which ones we might still wan
   Headless games, lobby servers, standalone archives, and developer builds do
   not attempt to update themselves.
 
+- **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
+  overlay datadir at startup, and any overlay may ship an editable
+  `Data/Levels/<mission>.level.json` geometry descriptor (title, spawn point,
+  walkable polygon, architectural volumes) that expands into normal level
+  structs at load time — no legacy RHP/RHM/terrain encoding involved.
+  Backgrounds and minimaps can be plain PNGs, optionally paired with a 16-bit
+  `<map>.occlusion-depth.png` for continuous sprite occlusion. Discovered
+  levels get a main-menu entry (descriptor `title`) and can be launched
+  directly with `--mission <name>`; they run as unscripted sandboxes. The
+  repository bundles one such level in `mods/dover/`: a Dover Castle
+  exploration map made from a Gaussian splat, rendered by the reproducible
+  standalone WGPU renderer under `scripts/dover_splat_renderer/`, which levels
+  the reconstructed ground plane, renders at the original game's 35-degree
+  elevation, and keeps the playable castle orthographic while smoothly
+  applying perspective only behind it.
+
 - **Direct custom-mission launch.** `--custom-mission <zip>` mounts a vanilla
   mod archive for the lifetime of a direct `--mission <name>` launch. Pair it
   with `--proto <map>` when the mission and proto-level basenames differ.

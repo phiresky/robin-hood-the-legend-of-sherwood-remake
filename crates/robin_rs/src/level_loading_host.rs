@@ -25,6 +25,111 @@ use robin_engine::sbfile;
 use robin_engine::sprite::BBox;
 use robin_engine::sprite_variant::SpriteVariant;
 
+fn decode_hackable_terrain_png(bytes: &[u8], path: &str) -> Result<Picture, String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("failed to decode PNG header '{path}': {error}"))?;
+    let mut buffer = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| format!("PNG '{path}' has no known output size"))?
+    ];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("failed to decode PNG pixels '{path}': {error}"))?;
+    let data = &buffer[..info.buffer_size()];
+    let mut rgb565 = Vec::with_capacity(info.width as usize * info.height as usize * 2);
+    let mut push_pixel = |r: u8, g: u8, b: u8| {
+        let pixel = ((r as u16 & 0xf8) << 8) | ((g as u16 & 0xfc) << 3) | ((b as u16) >> 3);
+        rgb565.extend_from_slice(&pixel.to_le_bytes());
+    };
+    match info.color_type {
+        png::ColorType::Rgb => {
+            for pixel in data.chunks_exact(3) {
+                push_pixel(pixel[0], pixel[1], pixel[2]);
+            }
+        }
+        png::ColorType::Rgba => {
+            for pixel in data.chunks_exact(4) {
+                push_pixel(pixel[0], pixel[1], pixel[2]);
+            }
+        }
+        color_type => {
+            return Err(format!(
+                "hackable terrain PNG '{path}' uses unsupported color type {color_type:?}"
+            ));
+        }
+    }
+    let width = u16::try_from(info.width)
+        .map_err(|_| format!("terrain PNG '{path}' is too wide: {}", info.width))?;
+    let height = u16::try_from(info.height)
+        .map_err(|_| format!("terrain PNG '{path}' is too tall: {}", info.height))?;
+    Ok(Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+        data: rgb565,
+        palette: None,
+    })
+}
+
+fn decode_occlusion_depth_png(
+    bytes: &[u8],
+    path: &str,
+    expected_width: u16,
+    expected_height: u16,
+) -> Result<Vec<u16>, String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("failed to decode occlusion-depth PNG '{path}': {error}"))?;
+    let mut buffer = vec![
+        0;
+        reader.output_buffer_size().ok_or_else(|| format!(
+            "occlusion-depth PNG '{path}' has no output size"
+        ))?
+    ];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("failed to decode occlusion-depth PNG '{path}': {error}"))?;
+    if info.width != u32::from(expected_width) || info.height != u32::from(expected_height) {
+        return Err(format!(
+            "occlusion-depth PNG '{path}' is {}x{}, expected {}x{}",
+            info.width, info.height, expected_width, expected_height
+        ));
+    }
+    if info.color_type != png::ColorType::Grayscale || info.bit_depth != png::BitDepth::Sixteen {
+        return Err(format!(
+            "occlusion-depth PNG '{path}' must be 16-bit grayscale, got {:?} {:?}",
+            info.color_type, info.bit_depth
+        ));
+    }
+    let data = &buffer[..info.buffer_size()];
+    Ok(data
+        .chunks_exact(2)
+        .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
+        .collect())
+}
+
+fn load_terrain_candidate(path: &str) -> Result<Option<Picture>, String> {
+    let png_path = format!("{path}.png");
+    if sbfile::SbFile::exists(&png_path) {
+        let bytes = sbfile::SbFile::read_all(&png_path)
+            .map_err(|error| format!("failed to read terrain PNG '{png_path}': {error}"))?;
+        tracing::info!("Loading hackable terrain PNG: {png_path}");
+        return decode_hackable_terrain_png(&bytes, &png_path).map(Some);
+    }
+    match sbfile::SbFile::open(path, sbfile::SB_FILE_READ) {
+        Ok(mut file) => Picture::load_terrain_from_stream(&mut file)
+            .map(Some)
+            .map_err(|error| format!("failed to load terrain image '{path}': {error}")),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Select the appropriate sprite-variant dictionaries for the engine's
 /// current ambiance and adjust global shadow values on the host's
 /// `FrameHolder`.  Lives host-side because the engine crate no longer
@@ -132,20 +237,9 @@ pub fn pre_decode_background_map(
     }
     if picture.is_none() {
         for path in &disk_candidates {
-            match sbfile::SbFile::open(path, sbfile::SB_FILE_READ) {
-                Ok(mut file) => {
-                    tracing::info!("Loading background map: {}", path);
-                    match Picture::load_terrain_from_stream(&mut file) {
-                        Ok(p) => {
-                            picture = Some(p);
-                            break;
-                        }
-                        Err(e) => {
-                            return Err(format!("failed to load map image '{path}': {e}"));
-                        }
-                    }
-                }
-                Err(_) => continue,
+            if let Some(loaded) = load_terrain_candidate(path)? {
+                picture = Some(loaded);
+                break;
             }
         }
     }
@@ -163,10 +257,36 @@ pub fn pre_decode_background_map(
 
     let bg_pixels: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&picture.data).to_vec();
 
+    let depth_candidates = [
+        format!(
+            "{}/{}/{}.occlusion-depth.png",
+            level_directory, ambiance_dir, map_name
+        ),
+        format!("{}/Day/{}.occlusion-depth.png", level_directory, map_name),
+        format!("{}/{}.occlusion-depth.png", level_directory, map_name),
+    ];
+    let mut occlusion_depth = None;
+    for path in &depth_candidates {
+        if !sbfile::SbFile::exists(path) {
+            continue;
+        }
+        let bytes = sbfile::SbFile::read_all(path)
+            .map_err(|error| format!("failed to read occlusion depth '{path}': {error}"))?;
+        occlusion_depth = Some(decode_occlusion_depth_png(
+            &bytes,
+            path,
+            picture.width,
+            picture.height,
+        )?);
+        tracing::info!("Loaded continuous occlusion depth: {path}");
+        break;
+    }
+
     Ok(Some(PreDecodedBackground {
         width: picture.width,
         height: picture.height,
         pixels: bg_pixels,
+        occlusion_depth,
     }))
 }
 
@@ -211,6 +331,15 @@ pub fn apply_background_map(
     }
     if mask_count > 0 {
         tracing::debug!("Uploaded {} mask alpha textures", mask_count);
+    }
+    if let Some(depth) = decoded.occlusion_depth.as_deref() {
+        assert!(
+            renderer.upload_occlusion_depth(depth, decoded.width, decoded.height),
+            "invalid continuous occlusion depth {}x{} with {} values",
+            decoded.width,
+            decoded.height,
+            depth.len()
+        );
     }
 
     host.clear_background_decals();
@@ -266,20 +395,22 @@ pub fn pre_decode_minimap(
         format!("{}/{}.min", level_directory, map_name),
     ];
 
-    let mut file = None;
+    let mut picture = None;
     for path in &candidates {
-        match sbfile::SbFile::open(path, sbfile::SB_FILE_READ) {
-            Ok(f) => {
-                tracing::info!("Loading minimap: {}", path);
-                file = Some(f);
+        match load_terrain_candidate(path) {
+            Ok(Some(loaded)) => {
+                picture = Some(loaded);
                 break;
             }
-            Err(_) => continue,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!("Failed to load minimap image: {error}");
+                return None;
+            }
         }
     }
-
-    let mut file = match file {
-        Some(f) => f,
+    let picture = match picture {
+        Some(picture) => picture,
         None => {
             tracing::warn!(
                 "Unable to find minimap file {}.min in {}",
@@ -290,13 +421,6 @@ pub fn pre_decode_minimap(
         }
     };
 
-    let picture = match Picture::load_terrain_from_stream(&mut file) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!("Failed to load minimap image: {}", e);
-            return None;
-        }
-    };
     progress(1.0);
 
     let pixels: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&picture.data).to_vec();
@@ -397,6 +521,40 @@ impl EngineLevelLoadExt for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hackable_terrain_png_decodes_to_rgb565() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer
+                .write_image_data(&[0xff, 0x00, 0x00, 0x00, 0xff, 0x00])
+                .unwrap();
+        }
+        let picture = decode_hackable_terrain_png(&bytes, "terrain.png").unwrap();
+        assert_eq!((picture.width, picture.height), (2, 1));
+        let pixels: &[u16] = bytemuck::cast_slice(&picture.data);
+        assert_eq!(pixels, [0xf800, 0x07e0]);
+    }
+
+    #[test]
+    fn continuous_occlusion_png_preserves_sixteen_bit_depth() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 2);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Sixteen);
+            let mut writer = encoder.write_header().unwrap();
+            writer
+                .write_image_data(&[0x00, 0x00, 0x12, 0x34, 0xab, 0xcd, 0xff, 0xff])
+                .unwrap();
+        }
+        let depth = decode_occlusion_depth_png(&bytes, "depth.png", 2, 2).unwrap();
+        assert_eq!(depth, [0x0000, 0x1234, 0xabcd, 0xffff]);
+    }
 
     #[test]
     fn pre_decode_background_map_reports_missing_map() {
