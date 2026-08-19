@@ -22,3 +22,13 @@ no-op — the same files already exist in the datadir.
 Caveat: the bitmap fonts cover the Latin glyph set. Localized installs
 that rely on TrueType for their script (e.g. CJK) can delete this
 directory to fall back to their own font configuration.
+
+`arial.ttf` backs the TrueType list-widget fonts (their `.tfn`
+descriptors reference the Arial family, which the original game took
+from Windows; the Linux port shipped this same file in its datadir).
+
+## Engine UI assets
+
+`Data/Interface/UI/` holds the engine's own UI additions (the allied
+portrait/pin/stance/formation icons). They load through the virtual
+filesystem, so mods can restyle them by overlaying the same paths.

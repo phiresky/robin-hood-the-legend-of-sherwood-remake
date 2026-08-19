@@ -47,15 +47,43 @@ pub const MODS_DIR: &str = "mods";
 /// is missing). Registered before the `mods/` overlays.
 pub const CORE_OVERLAY_DIR: &str = "assets/core-datadir";
 
+/// Resolve an engine-shipped resource directory that lives next to the
+/// installation: try the working directory first, then next to the
+/// executable, then the dev layout (executable in `target/<profile>/`,
+/// resources at the workspace root). The game may be launched from any
+/// working directory since the datadir is resolved independently.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_install_resource_dir(name: &str) -> Option<std::path::PathBuf> {
+    let mut candidates = vec![PathBuf::from(name)];
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        candidates.push(exe_dir.join(name));
+        candidates.push(exe_dir.join("..").join("..").join(name));
+    }
+    candidates.into_iter().find(|path| path.is_dir())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn add_overlay_data_dirs() {
-    match SbFile::add_overlay_path(CORE_OVERLAY_DIR) {
-        SBFILE_NO_ERROR => tracing::info!("Registered core overlay datadir: {CORE_OVERLAY_DIR}"),
-        SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
-        err => tracing::warn!("Core overlay datadir {CORE_OVERLAY_DIR} unavailable: {err}"),
+    match resolve_install_resource_dir(CORE_OVERLAY_DIR) {
+        Some(dir) => {
+            let dir = dir.to_string_lossy().into_owned();
+            match SbFile::add_overlay_path(&dir) {
+                SBFILE_NO_ERROR => tracing::info!("Registered core overlay datadir: {dir}"),
+                SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
+                err => tracing::warn!("Core overlay datadir {dir} unavailable: {err}"),
+            }
+        }
+        None => tracing::warn!(
+            "Core overlay datadir {CORE_OVERLAY_DIR} was not found next to the game; \
+             engine-shipped assets (fonts, UI icons) will be missing"
+        ),
     }
 
-    if let Ok(entries) = std::fs::read_dir(MODS_DIR) {
+    if let Some(mods_dir) = resolve_install_resource_dir(MODS_DIR)
+        && let Ok(entries) = std::fs::read_dir(mods_dir)
+    {
         // Sort for a deterministic overlay lookup order.
         let mut mod_dirs: Vec<String> = entries
             .filter_map(Result::ok)
