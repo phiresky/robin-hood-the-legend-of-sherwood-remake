@@ -42,8 +42,19 @@ pub const OVERLAY_DATA_DIRS_ENV: &str = "ROBINHOOD_OVERLAY_DATA_DIRS";
 /// levels) live here.
 pub const MODS_DIR: &str = "mods";
 
+/// Engine-shipped overlay datadir: assets every installation needs on
+/// top of its game data (e.g. the native bitmap fonts the Steam release
+/// is missing). Registered before the `mods/` overlays.
+pub const CORE_OVERLAY_DIR: &str = "assets/core-datadir";
+
 #[cfg(not(target_arch = "wasm32"))]
 fn add_overlay_data_dirs() {
+    match SbFile::add_overlay_path(CORE_OVERLAY_DIR) {
+        SBFILE_NO_ERROR => tracing::info!("Registered core overlay datadir: {CORE_OVERLAY_DIR}"),
+        SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
+        err => tracing::warn!("Core overlay datadir {CORE_OVERLAY_DIR} unavailable: {err}"),
+    }
+
     if let Ok(entries) = std::fs::read_dir(MODS_DIR) {
         // Sort for a deterministic overlay lookup order.
         let mut mod_dirs: Vec<String> = entries

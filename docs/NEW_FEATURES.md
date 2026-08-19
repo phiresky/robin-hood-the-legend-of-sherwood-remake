@@ -29,6 +29,14 @@ A list of which additional features we have added, which ones we might still wan
   Headless runs use the auto-detected folder without a dialog and keep
   the descriptive terminal error otherwise.
 
+- **Core overlay datadir.** `assets/core-datadir/` is registered as an
+  always-on overlay ahead of the `mods/` overlays. It currently restores
+  the game's native bitmap fonts (~280 KB) plus the font `manager.cfg`,
+  fixing the Steam release — whose depot ships only the international
+  TrueType (SimSun) font set and therefore renders every menu in a
+  Windows system font in the original build too. See
+  `assets/core-datadir/README.md`.
+
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable
   `Data/Levels/<mission>.level.json` geometry descriptor (title, spawn point,
