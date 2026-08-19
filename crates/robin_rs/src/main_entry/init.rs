@@ -140,30 +140,20 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
             ));
         }
     } else {
-        // No override and no env var: probe the working directory, then the
-        // executable directory (validated via Data/robinhood.bks), then the
-        // well-known CD/GOG/Steam install locations, and finally ask the
-        // player through the native folder picker.
+        // No override and no env var: reuse the remembered datadir, or
+        // auto-detect (working directory, executable directory, well-known
+        // CD/GOG/Steam install locations — validated via Data/robinhood.bks)
+        // and confirm with the player through the native dialog / folder
+        // picker. See `datadir_locator::resolve_datadir`.
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(Path::to_path_buf));
-        let chosen = if crate::datadir_locator::is_valid_install_dir(Path::new(".")) {
-            Some(PathBuf::from("."))
-        } else if let Some(exe_dir) =
-            exe_dir.filter(|dir| crate::datadir_locator::is_valid_install_dir(dir))
-        {
-            tracing::info!(
-                "Using executable directory as primary datadir: {}",
-                exe_dir.display()
-            );
-            Some(exe_dir)
-        } else {
-            crate::datadir_locator::locate_or_prompt()
-        };
         // Fall back to the working directory when nothing was found or the
         // player cancelled the picker; a loose unmarked `Data/` there keeps
         // working, anything else hits the descriptive error below.
-        let chosen = chosen.unwrap_or_else(|| PathBuf::from("."));
+        let chosen = crate::datadir_locator::resolve_datadir(exe_dir.as_deref())
+            .unwrap_or_else(|| PathBuf::from("."));
+        tracing::info!("using primary datadir {}", chosen.display());
         let status = SbFile::set_primary_path(&chosen.to_string_lossy());
         if status != SBFILE_NO_ERROR {
             return Err(format!(

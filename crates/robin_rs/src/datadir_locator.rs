@@ -1,10 +1,11 @@
 //! Locate a game installation at startup when no datadir was given.
 //!
-//! Used by `setup_data_dir` when `ROBINHOOD_DATA_DIR` is unset and neither
-//! the working directory nor the executable directory contains the game
-//! data: first probe the usual install locations of the CD, GOG, and Steam
-//! releases, then fall back to asking the player through the native OS
-//! folder picker.
+//! Used by `setup_data_dir` when `ROBINHOOD_DATA_DIR` is unset: reuse the
+//! remembered choice if there is one, otherwise auto-detect the usual
+//! install locations of the CD, GOG, and Steam releases and confirm the
+//! result with the player through native OS dialogs (with a folder picker
+//! for manual selection). The confirmed choice is remembered next to the
+//! saves and can be changed later from the Options menu.
 //!
 //! A directory counts as a game installation if and only if it contains
 //! `Data/robinhood.bks` in any capitalization — the sprite-bank index that
@@ -23,11 +24,17 @@ const MARKER_FILE: &str = "robinhood.bks";
 /// joined onto every searched root, so each spelling only needs to be
 /// listed once.
 const INSTALL_FOLDER_NAMES: &[&str] = &[
-    // GOG offline installer / Galaxy, and the localized CD releases.
+    // GOG offline installer / Galaxy, and the English CD (`%APPTITLE%` in
+    // the Wise script, installed under `Wanadoo Edition\`).
     "Robin Hood - The Legend of Sherwood",
     // Steam `installdir`.
     "Robin Hood The Legend of Sherwood",
-    // Original CD installer shorthand.
+    // Localized CD `%APPTITLE%` values from the Wise installer script.
+    "Robin Hood - La Légende de Sherwood",
+    "Robin Hood - Die Legende von Sherwood",
+    "Robin Hood - La Leggenda di Sherwood",
+    "Robin de los Bosques - La Leyenda de Sherwood",
+    // Shorthand some repacks/manual installs use.
     "Robin Hood",
 ];
 
@@ -75,6 +82,8 @@ fn search_roots() -> Vec<PathBuf> {
                 // Older GOG offline installers defaulted here.
                 push(dir.join("GOG.com"));
                 push(dir.join("Steam").join("steamapps").join("common"));
+                // Original CD installer default (Wise `%MAINDIR%`).
+                push(dir.join("Wanadoo Edition"));
                 push(dir);
             }
         }
@@ -99,6 +108,8 @@ fn search_roots() -> Vec<PathBuf> {
         push(home.join(".wine/drive_c/GOG Games"));
         push(home.join(".wine/drive_c/Program Files (x86)/GOG.com"));
         push(home.join(".wine/drive_c/Program Files (x86)/GOG Galaxy/Games"));
+        push(home.join(".wine/drive_c/Program Files/Wanadoo Edition"));
+        push(home.join(".wine/drive_c/Program Files (x86)/Wanadoo Edition"));
         // Steam library folders (native client layouts).
         push(home.join(".local/share/Steam/steamapps/common"));
         push(home.join(".steam/steam/steamapps/common"));
@@ -149,40 +160,118 @@ fn display_available() -> bool {
     }
 }
 
-/// Ask the player for the installation folder with the native OS picker.
-/// Loops until a valid folder is chosen or the player cancels.
-pub fn prompt_for_datadir() -> Option<PathBuf> {
-    if !display_available() {
-        tracing::warn!("No display available; skipping the datadir picker dialog");
+// ─── Persisted choice ────────────────────────────────────────────
+
+/// Location of the remembered-datadir config, next to the saves
+/// (`~/.local/share/robin_hood/datadir.txt` on Linux). `None` when the
+/// build has no OS-data-dir support.
+fn config_path() -> Option<PathBuf> {
+    #[cfg(feature = "native-fs")]
+    return dirs::data_dir().map(|dir| dir.join("robin_hood").join("datadir.txt"));
+    #[cfg(not(feature = "native-fs"))]
+    None
+}
+
+/// Previously confirmed datadir, if it is still a valid installation.
+pub fn load_saved_datadir() -> Option<PathBuf> {
+    let content = std::fs::read_to_string(config_path()?).ok()?;
+    let dir = PathBuf::from(content.trim());
+    if dir.as_os_str().is_empty() {
         return None;
     }
-    loop {
-        let choice = pollster::block_on(
-            rfd::AsyncMessageDialog::new()
-                .set_level(rfd::MessageLevel::Info)
-                .set_title("Robin Hood — game data not found")
-                .set_description(format!(
-                    "This is an open-source engine for Robin Hood: The Legend of Sherwood; \
-                     it needs the original game's data files, and no installation was found.\n\n\
-                     Click OK to select the folder where the game is installed \
-                     (the one containing Data/robinhood.bks).\n\n\
-                     I recommend to buy it on GOG if you do not have it:\n{GOG_STORE_URL}\n\
-                     It is also available on Steam, but the distributers there do not care \
-                     about it — it breaks on modern Windows without tweaks."
-                ))
-                .set_buttons(rfd::MessageButtons::OkCancel)
-                .show(),
+    if is_valid_install_dir(&dir) {
+        Some(dir)
+    } else {
+        tracing::warn!(
+            "Saved game datadir {} no longer holds the game data; ignoring it",
+            dir.display()
         );
-        if choice != rfd::MessageDialogResult::Ok {
-            return None;
-        }
-        let Some(folder) = pollster::block_on(
+        None
+    }
+}
+
+/// Remember a confirmed datadir so the startup dialog only asks once.
+pub fn save_datadir(dir: &Path) {
+    let Some(path) = config_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::write(&path, format!("{}\n", dir.display())) {
+        Ok(()) => tracing::info!(
+            "Remembered game datadir {} in {}",
+            dir.display(),
+            path.display()
+        ),
+        Err(error) => tracing::warn!(
+            "Failed to remember game datadir in {}: {error}",
+            path.display()
+        ),
+    }
+}
+
+// ─── Dialogs ─────────────────────────────────────────────────────
+
+const STORE_RECOMMENDATION: &str = "I recommend to buy it on GOG if you do not have it:";
+
+fn store_recommendation() -> String {
+    format!(
+        "{STORE_RECOMMENDATION}\n{GOG_STORE_URL}\n\
+         It is also available on Steam, but the distributers there do not care \
+         about it - it breaks on modern Windows without tweaks."
+    )
+}
+
+/// Confirmation dialog over an auto-detected installation: OK accepts it,
+/// Cancel opens the folder picker instead.
+fn confirm_candidate(candidate: &Path) -> rfd::MessageDialogResult {
+    pollster::block_on(
+        rfd::AsyncMessageDialog::new()
+            .set_level(rfd::MessageLevel::Info)
+            .set_title("Robin Hood — game data found")
+            .set_description(format!(
+                "This is an open-source engine for Robin Hood: The Legend of Sherwood; \
+                 it uses the original game's data files.\n\n\
+                 A game installation was found at:\n{}\n\n\
+                 Click OK to use it (remembered for future launches), or Cancel to \
+                 choose a different folder yourself.\n\n{}",
+                candidate.display(),
+                store_recommendation(),
+            ))
+            .set_buttons(rfd::MessageButtons::OkCancel)
+            .show(),
+    )
+}
+
+/// Introduction dialog when nothing was auto-detected: OK opens the
+/// folder picker, Cancel aborts.
+fn confirm_search() -> rfd::MessageDialogResult {
+    pollster::block_on(
+        rfd::AsyncMessageDialog::new()
+            .set_level(rfd::MessageLevel::Info)
+            .set_title("Robin Hood — game data not found")
+            .set_description(format!(
+                "This is an open-source engine for Robin Hood: The Legend of Sherwood; \
+                 it needs the original game's data files, and no installation was found.\n\n\
+                 Click OK to select the folder where the game is installed \
+                 (the one containing Data/{MARKER_FILE}).\n\n{}",
+                store_recommendation(),
+            ))
+            .set_buttons(rfd::MessageButtons::OkCancel)
+            .show(),
+    )
+}
+
+/// Folder-picker loop: pick, validate, re-prompt on an invalid choice.
+/// Returns `None` when the player cancels the picker.
+fn pick_folder_loop() -> Option<PathBuf> {
+    loop {
+        let folder = pollster::block_on(
             rfd::AsyncFileDialog::new()
                 .set_title("Select the Robin Hood installation folder")
                 .pick_folder(),
-        ) else {
-            return None;
-        };
+        )?;
         let picked = folder.path().to_path_buf();
         if let Some(install_dir) = normalize_selection(&picked) {
             tracing::info!(
@@ -206,8 +295,76 @@ pub fn prompt_for_datadir() -> Option<PathBuf> {
     }
 }
 
-/// Full fallback chain for a missing datadir: known install locations
-/// first, then the native folder picker.
-pub fn locate_or_prompt() -> Option<PathBuf> {
-    find_installed_datadir().or_else(prompt_for_datadir)
+/// Resolve the datadir when no explicit override or env var was given.
+///
+/// A previously confirmed choice is used silently, so the dialog only
+/// appears once. Otherwise the best auto-detected candidate — working
+/// directory, executable directory, then the well-known install
+/// locations — is always shown in a confirmation dialog: OK accepts it,
+/// Cancel opens the folder picker instead. The confirmed choice is
+/// remembered for future launches. Headless runs use the candidate
+/// without a dialog and without remembering it.
+pub fn resolve_datadir(exe_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(saved) = load_saved_datadir() {
+        tracing::info!("Using remembered game datadir: {}", saved.display());
+        return Some(saved);
+    }
+
+    let candidate = if is_valid_install_dir(Path::new(".")) {
+        std::env::current_dir().ok()
+    } else if let Some(exe_dir) = exe_dir.filter(|dir| is_valid_install_dir(dir)) {
+        Some(exe_dir.to_owned())
+    } else {
+        find_installed_datadir()
+    };
+
+    if !display_available() {
+        if candidate.is_none() {
+            tracing::warn!("No display available; skipping the datadir picker dialog");
+        }
+        return candidate;
+    }
+
+    let chosen = match candidate {
+        Some(candidate) => {
+            if confirm_candidate(&candidate) == rfd::MessageDialogResult::Ok {
+                Some(candidate)
+            } else {
+                pick_folder_loop()
+            }
+        }
+        None => {
+            if confirm_search() == rfd::MessageDialogResult::Ok {
+                pick_folder_loop()
+            } else {
+                None
+            }
+        }
+    }?;
+    save_datadir(&chosen);
+    Some(chosen)
+}
+
+/// Options-menu entry point: pick a new game data folder with the native
+/// picker, remember it, and tell the player it applies on the next
+/// launch. Returns the new folder, or `None` when the player cancelled.
+pub fn change_datadir_interactive() -> Option<PathBuf> {
+    if !display_available() {
+        return None;
+    }
+    let chosen = pick_folder_loop()?;
+    save_datadir(&chosen);
+    pollster::block_on(
+        rfd::AsyncMessageDialog::new()
+            .set_level(rfd::MessageLevel::Info)
+            .set_title("Game data folder saved")
+            .set_description(format!(
+                "The game data folder is now:\n{}\n\n\
+                 The change takes effect the next time the game starts.",
+                chosen.display()
+            ))
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show(),
+    );
+    Some(chosen)
 }

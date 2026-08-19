@@ -49,7 +49,11 @@ const BUTTON_GRAPHICS: u32 = 0;
 const BUTTON_SOUNDS: u32 = 1;
 const BUTTON_SHORTCUTS: u32 = 2;
 const BUTTON_ALLIED_CONTROL: u32 = 3;
-const BUTTON_BACK: u32 = 4;
+/// Desktop only: re-select the game data folder (see
+/// [`crate::datadir_locator`]).
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+const BUTTON_GAME_DATA: u32 = 4;
+const BUTTON_BACK: u32 = 5;
 
 /// Display the in-game options hub.
 ///
@@ -100,21 +104,30 @@ pub async fn show_options(
             }
         );
         let back_label = resources.menu_text.get(MT_BTN_BACK);
-        let labels: &[(&str, bool)] = &[
-            (&graphics_label, true),
-            (&sounds_label, true),
-            (&shortcuts_label, true),
-            (&allied_control_label, true),
-            (&back_label, true),
+        #[allow(unused_mut)]
+        let mut entries: Vec<(u32, &str)> = vec![
+            (BUTTON_GRAPHICS, &graphics_label),
+            (BUTTON_SOUNDS, &sounds_label),
+            (BUTTON_SHORTCUTS, &shortcuts_label),
+            (BUTTON_ALLIED_CONTROL, &allied_control_label),
         ];
-        let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        entries.push((BUTTON_GAME_DATA, "Game Data Folder"));
+        entries.push((BUTTON_BACK, &back_label));
+        let labels: Vec<(&str, bool)> = entries.iter().map(|&(_, label)| (label, true)).collect();
+        let menu_buttons = align_bottom_right(&labels, btn_w, btn_h);
 
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
         for (i, mb) in menu_buttons.iter().enumerate() {
             frame.add_widget_absolute(widget_bridge::make_button(
-                i as u32, &mb.label, mb.x, mb.y, mb.w, mb.h,
+                entries[i].0,
+                &mb.label,
+                mb.x,
+                mb.y,
+                mb.w,
+                mb.h,
             ));
         }
 
@@ -248,6 +261,15 @@ pub async fn show_options(
                         // newly persisted setting immediately.
                         re_display = true;
                         done = true;
+                    }
+                    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+                    BUTTON_GAME_DATA => {
+                        // Opens the native folder picker; the modal loop is
+                        // frozen while the OS dialog is up, which is fine —
+                        // both are modal. The new folder is remembered and
+                        // applies on the next launch (resources from the
+                        // old datadir are already loaded).
+                        crate::datadir_locator::change_datadir_interactive();
                     }
                     BUTTON_BACK => done = true,
                     _ => {}

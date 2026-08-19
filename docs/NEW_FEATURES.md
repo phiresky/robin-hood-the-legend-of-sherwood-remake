@@ -13,15 +13,21 @@ A list of which additional features we have added, which ones we might still wan
   Headless games, lobby servers, standalone archives, and developer builds do
   not attempt to update themselves.
 
-- **Startup datadir selector.** When `ROBINHOOD_DATA_DIR` is unset and
-  neither the working directory nor the executable directory contains the
-  game data (detected via `Data/robinhood.bks`, case-insensitive, or a
-  `Data/datadir.bin` shipping bundle), the game probes the usual CD, GOG,
-  and Steam install locations (Program Files, GOG Games, GOG Galaxy and
-  Steam library folders, plus Wine/Heroic/Lutris prefixes on Linux) and
-  otherwise asks for the installation folder with the native OS picker,
-  recommending a GOG purchase. Headless runs skip the dialog and keep the
-  descriptive terminal error.
+- **Startup datadir selector.** When `ROBINHOOD_DATA_DIR` is unset, the
+  game resolves the data folder itself: a previously confirmed choice
+  (remembered in `datadir.txt` next to the saves) is used silently;
+  otherwise it auto-detects an installation — working directory,
+  executable directory, then the usual install locations of the original
+  CD (`Program Files\Wanadoo Edition\<localized title>`, per the Wise
+  installer script), GOG (GOG Games, GOG.com, Galaxy), and Steam,
+  plus Wine/Heroic/Lutris prefixes on Linux — validated via
+  `Data/robinhood.bks` (case-insensitive; `Data/datadir.bin` shipping
+  bundles also count). A native dialog always confirms the result: OK
+  accepts the found installation, Cancel opens the OS folder picker. The
+  dialog recommends a GOG purchase. The remembered folder can be changed
+  later via Options → "Game Data Folder" (applies on next launch).
+  Headless runs use the auto-detected folder without a dialog and keep
+  the descriptive terminal error otherwise.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable
