@@ -46,7 +46,7 @@ strum = "0.28.0"
 strum_macros = "0.28.0"
 clap = { version = "4", features = ["derive"] }
 dirs = { version = "6", optional = true }
-ffmpeg-next = { version = "8", optional = true }
+ffmpeg-next = { version = "9", optional = true }
 png = "0.18"
 bitcode = { version = "0.6", features = ["serde"] }
 # Engine snapshots for multiplayer mid-mission joins.  Bitcode caps
