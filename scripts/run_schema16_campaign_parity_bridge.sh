@@ -158,10 +158,13 @@ run_remote_sync() {
             fi
         fi
 
+        # Remote workers create the log before cache construction and replay
+        # finish.  Re-sync existing files so a prefix copied mid-run converges
+        # to the completed diagnostic instead of remaining permanently stale.
         rsync -a --ignore-existing -e "ssh -F $ssh_config" \
             "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
             || printf 'warning: could not pull remote statuses\n' >&2
-        rsync -a --ignore-existing -e "ssh -F $ssh_config" \
+        rsync -a -e "ssh -F $ssh_config" \
             "$remote_host:$remote_audit/logs/" "$audit_dir/logs/" \
             || printf 'warning: could not pull remote logs\n' >&2
         sleep "$poll_seconds"
