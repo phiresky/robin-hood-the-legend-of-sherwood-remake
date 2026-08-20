@@ -4490,6 +4490,90 @@ mod tests {
     }
 
     #[test]
+    fn nescafe_phalanx_walks_from_nearest_bearer_to_sector_zero_chain_end() {
+        use crate::position_interface::SectorHandle;
+
+        // Schema-16 seed 1,000,000, Nescafe Restart, frame 1187. Original
+        // Soldier co163 (Rust 132) is a protecting bearer physically in
+        // sector 18, but the observed phalanx chain ends are co161/160
+        // (Rust 130/129), both running toward retained sector-0 seek points.
+        // FindPhalanxPlace must derive its new slot from an end, not co163.
+        let sector_18 = SectorHandle::new(18).unwrap();
+        let sector_0 = SectorHandle::new(0).unwrap();
+        let mut ai = EnemyAi::new(128);
+        ai.base.me = 128;
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 128,
+            is_friendly: true,
+            is_shield_bearer: true,
+            position: Position {
+                x: 1263.1832,
+                y: 2281.7712,
+                sector: Some(sector_18),
+                level: 0,
+            },
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 132,
+            is_friendly: true,
+            is_shield_bearer: true,
+            current_substate: Substate::AttackingProtectingWithShield as u32,
+            left_combat_neighbour: 130,
+            right_combat_neighbour: 129,
+            position: Position {
+                x: 1322.0,
+                y: 2276.0,
+                sector: Some(sector_18),
+                level: 0,
+            },
+            ..FighterSnapshot::default()
+        });
+        for (handle, x, y, body_x, body_y) in [
+            (130, 1359.2433, 2211.426, 1500.0, 2000.0),
+            (129, 1310.3472, 2209.295, 1550.0, 2000.0),
+        ] {
+            tick.fighter_registry.push(FighterSnapshot {
+                handle,
+                is_friendly: true,
+                is_shield_bearer: true,
+                current_substate: Substate::AttackingRunningToPhalanx as u32,
+                shield_bearer_direction: 8,
+                position: Position {
+                    x: body_x,
+                    y: body_y,
+                    sector: Some(sector_18),
+                    level: 0,
+                },
+                shield_bearer_seek_position: Position {
+                    x,
+                    y,
+                    sector: Some(sector_0),
+                    level: 0,
+                },
+                ..FighterSnapshot::default()
+            });
+        }
+        let ctx = AiContext {
+            position: tick.fighter_registry[0].position,
+            ..AiContext::default()
+        };
+
+        assert_eq!(ai.get_nearest_free_shield_bearer(&ctx, &tick), Some(132));
+        let (slot, _, left, right, crosses_sector) = ai
+            .find_phalanx_place(&ctx, &tick, None)
+            .expect("nearby protecting shield bearer provides a slot");
+
+        assert_eq!(slot.sector, Some(sector_0));
+        assert!(crosses_sector);
+        assert!(
+            left == 129 || right == 130,
+            "slot must attach to a chain end"
+        );
+    }
+
+    #[test]
     fn shield_danger_point_uses_raw_target_position_during_door_pass() {
         // Schema-14 seed 1000000, SuN1Sh1nE Profile_004/Savegame_013
         // replay-008 frame 1173. PC 171's AI Position() is the door endpoint,

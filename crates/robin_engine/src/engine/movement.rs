@@ -781,6 +781,16 @@ fn climb_lift_type(action: OrderType) -> Option<crate::sector::LiftType> {
     }
 }
 
+/// Lift-wall and ladder orders are literal `RHElementActor::Execute` dispatch
+/// actions, including their start/landing transitions. A split Rust door
+/// route can retain a stale mirror of the preceding climb action, but that
+/// mirror must not make the selected transition fall back to an action-state
+/// walk animation.
+#[inline]
+fn literal_lift_sprite_action(action: OrderType) -> Option<OrderType> {
+    climb_lift_type(action).map(|_| action)
+}
+
 #[inline]
 fn door_type_uses_lift_climb_direction(door_type: crate::gate::DoorType) -> bool {
     matches!(
@@ -942,6 +952,48 @@ mod door_pass_posture_tests {
             Some(Posture::OnWall),
             "ordinary wall-climb rows continue owning their posture on every Execute"
         );
+    }
+
+    #[test]
+    fn crenel_and_sibling_lift_transitions_keep_their_selected_sprite_action() {
+        use OrderType as OT;
+
+        // Interactive session 002, PC 126, frame 707: the selected crenel
+        // transition is action 255 while the split door mirror still names
+        // the preceding climb. Original dispatches action 255 literally.
+        assert_eq!(
+            literal_lift_sprite_action(OT::TransitionClimbingWallUpWaitingCrouchedCrenel),
+            Some(OT::TransitionClimbingWallUpWaitingCrouchedCrenel)
+        );
+
+        for sibling in [
+            OT::TransitionWaitingUprightClimbingWallUp,
+            OT::TransitionClimbingWallUpWaitingCrouched,
+            OT::TransitionWaitingCrouchedClimbingWallDown,
+            OT::TransitionWaitingCrouchedClimbingWallDownCrenel,
+            OT::TransitionClimbingWallDownWaitingUpright,
+            OT::TransitionWaitingUprightClimbingLadderUp,
+            OT::TransitionWaitingUprightClimbingLadderUpAlerted,
+            OT::TransitionClimbingLadderUpWaitingCrouched,
+            OT::TransitionClimbingLadderUpWaitingUprightAlerted,
+            OT::TransitionWaitingCrouchedClimbingLadderDown,
+            OT::TransitionWaitingUprightClimbingLadderDownAlerted,
+            OT::TransitionClimbingLadderDownWaitingUpright,
+            OT::TransitionClimbingLadderDownWaitingUprightAlerted,
+        ] {
+            assert_eq!(literal_lift_sprite_action(sibling), Some(sibling));
+        }
+
+        assert_eq!(
+            door_pass_sprite_animation_override(
+                OT::TransitionClimbingWallUpWaitingCrouchedCrenel,
+                Some(OT::ClimbingWallUp),
+            ),
+            None,
+            "a stale split-route mirror must not replace the selected transition"
+        );
+        assert_eq!(literal_lift_sprite_action(OT::PassingDoor), None);
+        assert_eq!(literal_lift_sprite_action(OT::WalkingUpright), None);
     }
 
     #[test]
@@ -9712,51 +9764,52 @@ impl EngineInner {
             // only when the order type isn't a movement animation
             // (shouldn't happen for a Move element but is
             // defensive).
-            let base = match order_action {
-                OrderType::WalkingUpright
-                | OrderType::WalkingCrouched
-                | OrderType::WalkingAlerted
-                | OrderType::RunningUpright
-                | OrderType::TransitionWalkingUprightRunningUpright
-                | OrderType::TransitionRunningUprightWalkingUpright
-                | OrderType::TransitionWaitingUprightWalkingUpright
-                | OrderType::TransitionWalkingUprightWaitingUpright
-                | OrderType::TransitionWaitingUprightRunningUpright
-                | OrderType::TransitionRunningUprightWaitingUpright
-                | OrderType::TransitionWalkingCrouchedWalkingUpright
-                | OrderType::TransitionWalkingUprightWalkingCrouched
-                | OrderType::TransitionWalkingCrouchedRunningUpright
-                | OrderType::TransitionRunningUprightWalkingCrouched
-                | OrderType::TransitionWaitingCrouchedWalkingCrouched
-                | OrderType::TransitionWalkingCrouchedWaitingCrouched
-                | OrderType::TransitionWaitingUprightSpecial
-                | OrderType::TransitionSpecialWaitingUpright
-                | OrderType::TransitionWaitingUprightBoredWaitingUpright
-                | OrderType::TransitionWaitingUprightWaitingUprightBored
-                | OrderType::TransitionCrouchingUp
-                | OrderType::TransitionCrouchingDown
-                | OrderType::TransitionSittingWaitingUpright
-                | OrderType::TransitionLeaningOutWaitingAlerted
-                | OrderType::LoweringShield
-                | OrderType::WalkingStairs
-                | OrderType::RunningStairs
-                | OrderType::ClimbingWallUp
-                | OrderType::ClimbingWallDown
-                | OrderType::ClimbingWallUpFast
-                | OrderType::ClimbingWallDownFast
-                | OrderType::ClimbingLadderUp
-                | OrderType::ClimbingLadderDown
-                | OrderType::ClimbingLadderUpAlerted
-                | OrderType::ClimbingLadderDownAlerted
-                | OrderType::ClimbingLadderUpFast
-                | OrderType::ClimbingLadderDownFast
-                | OrderType::WalkingWithCorpse
-                | OrderType::WalkingCarryingOnShoulders => order_action,
-                _ => match action_state {
-                    crate::element::ActionState::MovingFast => OrderType::RunningUpright,
-                    _ => OrderType::WalkingUpright,
-                },
-            };
+            let base =
+                literal_lift_sprite_action(order_action).unwrap_or_else(|| match order_action {
+                    OrderType::WalkingUpright
+                    | OrderType::WalkingCrouched
+                    | OrderType::WalkingAlerted
+                    | OrderType::RunningUpright
+                    | OrderType::TransitionWalkingUprightRunningUpright
+                    | OrderType::TransitionRunningUprightWalkingUpright
+                    | OrderType::TransitionWaitingUprightWalkingUpright
+                    | OrderType::TransitionWalkingUprightWaitingUpright
+                    | OrderType::TransitionWaitingUprightRunningUpright
+                    | OrderType::TransitionRunningUprightWaitingUpright
+                    | OrderType::TransitionWalkingCrouchedWalkingUpright
+                    | OrderType::TransitionWalkingUprightWalkingCrouched
+                    | OrderType::TransitionWalkingCrouchedRunningUpright
+                    | OrderType::TransitionRunningUprightWalkingCrouched
+                    | OrderType::TransitionWaitingCrouchedWalkingCrouched
+                    | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                    | OrderType::TransitionWaitingUprightSpecial
+                    | OrderType::TransitionSpecialWaitingUpright
+                    | OrderType::TransitionWaitingUprightBoredWaitingUpright
+                    | OrderType::TransitionWaitingUprightWaitingUprightBored
+                    | OrderType::TransitionCrouchingUp
+                    | OrderType::TransitionCrouchingDown
+                    | OrderType::TransitionSittingWaitingUpright
+                    | OrderType::TransitionLeaningOutWaitingAlerted
+                    | OrderType::LoweringShield
+                    | OrderType::WalkingStairs
+                    | OrderType::RunningStairs
+                    | OrderType::ClimbingWallUp
+                    | OrderType::ClimbingWallDown
+                    | OrderType::ClimbingWallUpFast
+                    | OrderType::ClimbingWallDownFast
+                    | OrderType::ClimbingLadderUp
+                    | OrderType::ClimbingLadderDown
+                    | OrderType::ClimbingLadderUpAlerted
+                    | OrderType::ClimbingLadderDownAlerted
+                    | OrderType::ClimbingLadderUpFast
+                    | OrderType::ClimbingLadderDownFast
+                    | OrderType::WalkingWithCorpse
+                    | OrderType::WalkingCarryingOnShoulders => order_action,
+                    _ => match action_state {
+                        crate::element::ActionState::MovingFast => OrderType::RunningUpright,
+                        _ => OrderType::WalkingUpright,
+                    },
+                });
             // DetermineMovementAnimation translates the movement
             // element's primary distance-producing action while it is
             // instructed. PostProcessPath runs afterwards and may insert
