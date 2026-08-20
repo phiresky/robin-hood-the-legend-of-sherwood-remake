@@ -127,6 +127,19 @@ fn alert_soldier_stays_on_post(
     active && !in_building && (is_tower_guard || duty_flag || company_number == 100)
 }
 
+/// Preserve `AlertSoldiers`' two positive, strict radius predicates.
+///
+/// Original first requires `MaxNorm(delta) < ALERT_RADIUS`, then requires
+/// `SquareNorm(delta) < ALERT_RADIUS * ALERT_RADIUS`.  Expressing either test
+/// as an inverted `>=` rejection is not equivalent for unordered floats: a
+/// legacy NaN position fails Original's positive comparison and must not be
+/// admitted to the alert broadcast.
+fn alert_soldier_is_inside_radius(candidate: Position, officer: Position, radius: f32) -> bool {
+    let dx = (candidate.x - officer.x).abs();
+    let dy = (candidate.y - officer.y).abs();
+    dx.max(dy) < radius && dx * dx + dy * dy < radius * radius
+}
+
 fn sort_alerted_soldiers(alerted: &mut [(HumanHandle, f32, usize)]) {
     alerted.sort_by(
         |(_, lhs_distance, lhs_index), (_, rhs_distance, rhs_index)| {
@@ -573,7 +586,6 @@ impl EnemyAi {
         debug_assert_eq!(self.get_rank(), ProfileRank::Officer);
 
         let alert_radius = combat::ALERT_RADIUS as f32;
-        let alert_radius_sq = alert_radius * alert_radius;
 
         let my_handle = self.base.me;
         let mut candidates = Vec::new();
@@ -618,14 +630,9 @@ impl EnemyAi {
                 continue;
             }
 
-            // MaxNorm + SquareNorm radius gates.
-            let dx = (cs.position.x - my_pos.x).abs();
-            let dy = (cs.position.y - my_pos.y).abs();
-            if dx.max(dy) >= alert_radius {
-                continue;
-            }
-            let sqr_dist = dx * dx + dy * dy;
-            if sqr_dist >= alert_radius_sq {
+            // MaxNorm + SquareNorm radius gates. Keep Original's positive
+            // strict comparisons so unordered legacy coordinates are rejected.
+            if !alert_soldier_is_inside_radius(cs.position, my_pos, alert_radius) {
                 continue;
             }
 
@@ -1770,6 +1777,38 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alert_soldier_radius_keeps_positive_strict_float_gates() {
+        let officer = Position::default();
+        let at = |x, y| Position {
+            x,
+            y,
+            ..Position::default()
+        };
+
+        assert!(alert_soldier_is_inside_radius(at(3.0, 4.0), officer, 6.0));
+        assert!(
+            !alert_soldier_is_inside_radius(at(5.0, 0.0), officer, 5.0),
+            "Original's strict MaxNorm comparison rejects the boundary"
+        );
+        assert!(
+            !alert_soldier_is_inside_radius(at(3.0, 4.0), officer, 5.0),
+            "Original's strict SquareNorm comparison rejects its boundary"
+        );
+        assert!(
+            !alert_soldier_is_inside_radius(at(4.0, 4.0), officer, 5.0),
+            "the squared-radius gate still rejects points inside the MaxNorm box"
+        );
+        assert!(
+            !alert_soldier_is_inside_radius(at(f32::NAN, 0.0), officer, 5.0),
+            "an unordered X coordinate must fail Original's positive comparisons"
+        );
+        assert!(
+            !alert_soldier_is_inside_radius(at(0.0, f32::NAN), officer, 5.0),
+            "an unordered Y coordinate must fail Original's positive comparisons"
+        );
+    }
 
     #[test]
     fn formation_direction_uses_original_aspect_ratio_classifier() {
