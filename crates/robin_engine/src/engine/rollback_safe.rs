@@ -209,6 +209,13 @@ pub struct EngineArgs<'a> {
 }
 
 impl Engine {
+    /// Restore an Original schema-16 session-boundary transient before the
+    /// first replay frame. The v48 save payload does not carry this field.
+    #[doc(hidden)]
+    pub fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
+        self.inner.restore_parity_npc_maximal_visibility(id, value);
+    }
+
     /// Complete serialized position and sprite frontier for one entity.
     #[doc(hidden)]
     pub fn parity_entity_runtime_state(

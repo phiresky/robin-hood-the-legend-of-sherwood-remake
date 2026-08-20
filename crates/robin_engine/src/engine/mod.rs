@@ -3932,6 +3932,25 @@ impl EngineInner {
         self.world.entities.npc_ids().collect()
     }
 
+    /// Restore an Original parity-session boundary field that the v48 RHSG
+    /// serializer omits. This is intentionally a replay-only seam: normal
+    /// simulation updates the value in `RefreshDetection`.
+    pub fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
+        let entity = self
+            .world
+            .entities
+            .get_mut(id)
+            .unwrap_or_else(|| panic!("parity NPC transient references missing entity {id:?}"));
+        let npc = entity
+            .npc_data_mut()
+            .unwrap_or_else(|| panic!("parity NPC transient references non-NPC entity {id:?}"));
+        let ai = npc
+            .ai_brain
+            .base_mut()
+            .unwrap_or_else(|| panic!("parity NPC transient references AI-less entity {id:?}"));
+        ai.max_visibility = u32::from(value);
+    }
+
     /// Currently selected PC ids for the [`PlayerId::HOST`] seat.
     ///
     /// Single-player host code (HUD, renderer, input translation)

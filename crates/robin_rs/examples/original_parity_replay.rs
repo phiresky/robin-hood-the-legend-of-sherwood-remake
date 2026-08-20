@@ -70,8 +70,22 @@ struct TraceHeader {
     sim_config: TraceSimConfig,
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
+    /// Schema-16 session-boundary state omitted by Original's RHSG payload.
+    /// Older schema-16 recordings do not contain this overlay and use the
+    /// legacy-save reconstruction fallback.
+    #[serde(default)]
+    initial_npc_transients: Option<Vec<TraceInitialNpcTransient>>,
     #[serde(default)]
     initial_save: Option<TraceInitialSave>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, bincode::Encode, bincode::Decode,
+)]
+#[serde(deny_unknown_fields)]
+struct TraceInitialNpcTransient {
+    creation_order: u32,
+    maximal_visibility: u16,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -296,6 +310,10 @@ fn validate_trace_header(header: &TraceHeader) {
         ),
         _ => unreachable!(),
     }
+    assert!(
+        header.schema == 16 || header.initial_npc_transients.is_none(),
+        "only schema 16 may declare initial_npc_transients"
+    );
 }
 
 fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
@@ -331,6 +349,98 @@ fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
         }
         (schema, _, _) => unreachable!("schema {schema} was validated before initial_save"),
     }
+}
+
+fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialNpcTransient]) {
+    let mut runtime_by_creation_order = BTreeMap::new();
+    for id in engine.npc_ids() {
+        let creation_order = engine.original_creation_order(id);
+        assert!(
+            runtime_by_creation_order
+                .insert(creation_order, id)
+                .is_none(),
+            "two Rust NPCs share Original creation order {creation_order}"
+        );
+    }
+    assert_eq!(
+        transients.len(),
+        runtime_by_creation_order.len(),
+        "schema-16 initial_npc_transients must cover every NPC exactly once"
+    );
+
+    let mut seen = BTreeSet::new();
+    for transient in transients {
+        assert!(
+            seen.insert(transient.creation_order),
+            "schema-16 initial_npc_transients repeats creation order {}",
+            transient.creation_order
+        );
+        let id = runtime_by_creation_order
+            .get(&transient.creation_order)
+            .copied()
+            .unwrap_or_else(|| {
+                panic!(
+                    "schema-16 NPC transient creation order {} is absent from the Rust engine",
+                    transient.creation_order
+                )
+            });
+        engine.restore_parity_npc_maximal_visibility(id, transient.maximal_visibility);
+    }
+}
+
+fn reconstruct_unrecorded_maximal_visibility(
+    leaning_out: bool,
+    visibilities: impl IntoIterator<Item = f32>,
+) -> u16 {
+    let view_speed = if leaning_out {
+        robin_engine::ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
+    } else {
+        robin_engine::ai_vision::BASE_VIEW_SPEED
+    };
+    visibilities
+        .into_iter()
+        .map(|visibility| (view_speed as f32 * visibility) as u16)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Compatibility for already-recorded multi-segment schema-16 sessions.
+///
+/// Session 1 begins in a fresh Original process, where the omitted member has
+/// its constructor value zero. Later loaded-save segments continue the same
+/// process and therefore retain the preceding value. Restrict the inference to
+/// dead/unconscious observers: Original returns before clearing the maximum,
+/// and the four known interactive failures prove that the maximum-supplying
+/// detectable remains serialized in those observers' buckets.
+fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> usize {
+    let restorations = engine
+        .npc_ids()
+        .into_iter()
+        .filter_map(|id| {
+            let entity = engine
+                .get_entity(id)
+                .unwrap_or_else(|| panic!("legacy parity fallback lost NPC {id:?}"));
+            let npc = entity
+                .npc_data()
+                .unwrap_or_else(|| panic!("legacy parity fallback found non-NPC {id:?}"));
+            let retains_maximum =
+                entity.is_dead() || entity.human_data().is_some_and(|human| human.unconscious);
+            retains_maximum.then(|| {
+                let value = reconstruct_unrecorded_maximal_visibility(
+                    npc.view_lean_out,
+                    npc.detectable_lists
+                        .iter()
+                        .flatten()
+                        .map(|detectable| detectable.last_visibility),
+                );
+                (id, value)
+            })
+        })
+        .collect::<Vec<_>>();
+    for &(id, value) in &restorations {
+        engine.restore_parity_npc_maximal_visibility(id, value);
+    }
+    restorations.len()
 }
 
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
@@ -2439,8 +2549,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 63;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v63.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 64;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v64.native-bincode.zst";
 const TRACE_CACHE_FOOTER_MAGIC: [u8; 16] = *b"RHPRCACHEFOOTER!";
 const TRACE_CACHE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
@@ -2480,6 +2590,68 @@ struct BinaryTraceFooter {
     version: u32,
     frame_count: u64,
     final_frame: u64,
+}
+
+/// Structural extent of the authoritative Original frame stream.
+///
+/// `frame_count` counts snapshots, not universal-frame increments.  Most
+/// snapshots advance the universal frame once, but Original records a final
+/// mission-success/interruption snapshot after `PerformHourglass` returns
+/// before incrementing the clock.  Such a record legitimately has
+/// `frame_before == frame_after`, so `initial_frame + frame_count` is not the
+/// stream's final frame.  The explicit frame envelopes are the authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TraceTimeline {
+    next_frame_before: u64,
+    frame_count: u64,
+}
+
+impl TraceTimeline {
+    fn new(initial_frame: u64) -> Self {
+        Self {
+            next_frame_before: initial_frame,
+            frame_count: 0,
+        }
+    }
+
+    fn observe(&mut self, frame_before: u64, frame_after: u64) -> Result<(), String> {
+        if frame_before != self.next_frame_before {
+            return Err(format!(
+                "frame {frame_before}->{frame_after} does not continue after frame {}",
+                self.next_frame_before
+            ));
+        }
+        let advanced_frame = frame_before
+            .checked_add(1)
+            .ok_or_else(|| format!("frame {frame_before} cannot advance without overflowing"))?;
+        if frame_after != frame_before && frame_after != advanced_frame {
+            return Err(format!(
+                "frame {frame_before}->{frame_after} must either retain or advance the universal frame once"
+            ));
+        }
+        self.next_frame_before = frame_after;
+        self.frame_count = self
+            .frame_count
+            .checked_add(1)
+            .ok_or_else(|| "parity frame count overflowed u64".to_owned())?;
+        Ok(())
+    }
+
+    fn validate_terminator(&self, frame_count: u64, final_frame: u64) -> Result<(), String> {
+        if frame_count != self.frame_count {
+            return Err(format!(
+                "terminator frame_count={frame_count} disagrees with {} frame records",
+                self.frame_count
+            ));
+        }
+        if final_frame != self.next_frame_before {
+            return Err(format!(
+                "terminator final_frame={final_frame} disagrees with the last frame_after={}",
+                self.next_frame_before
+            ));
+        }
+        Ok(())
+    }
 }
 
 struct Options {
@@ -3087,6 +3259,21 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         );
         eprintln!("atomically adopted schema-12 Original Linux-v48 save");
     }
+    if let Some(transients) = header.initial_npc_transients.as_deref() {
+        apply_initial_npc_transients(&mut engine, transients);
+        eprintln!(
+            "restored {} explicit schema-16 NPC session-boundary transients",
+            transients.len()
+        );
+    } else if header.schema == 16
+        && header.start_state == TraceStartState::LoadedSave
+        && header.session_index > 1
+    {
+        let restored = apply_legacy_segment_visibility_fallback(&mut engine);
+        eprintln!(
+            "warning: legacy schema-16 segment lacks initial_npc_transients; reconstructed maximal_visibility for {restored} dead/unconscious NPCs"
+        );
+    }
     if rewind_loaded_save_rng {
         let setup_draws = engine
             .original_rng_replay_cursor()
@@ -3171,6 +3358,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let mut rng_diagnostic_time = Duration::ZERO;
 
     let mut line_index = 0_usize;
+    let mut trace_timeline = TraceTimeline::new(header.initial_frame);
     let terminator = loop {
         let mut frame = match records.read_record() {
             BinaryTraceRecord::Frame(frame) => frame,
@@ -3187,8 +3375,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.frame_before, frame.frame_after
             );
         }
-        assert_eq!(frame.frame_before, header.initial_frame + line_index as u64);
-        assert_eq!(frame.frame_after, frame.frame_before + 1);
+        trace_timeline
+            .observe(frame.frame_before, frame.frame_after)
+            .unwrap_or_else(|error| panic!("invalid parity frame timeline: {error}"));
         line_index += 1;
         if http_server.is_some() {
             loop {
@@ -3802,11 +3991,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 u64::try_from(line_index).expect("parity frame count exceeds u64"),
                 "parity terminator frame_count disagrees with the frame stream"
             );
-            assert_eq!(
-                final_frame,
-                header.initial_frame + frame_count,
-                "parity terminator final_frame disagrees with its initial frame and frame count"
-            );
+            trace_timeline
+                .validate_terminator(frame_count, final_frame)
+                .unwrap_or_else(|error| panic!("invalid parity terminator timeline: {error}"));
             assert_eq!(
                 u64::from(engine.frame_counter()),
                 final_frame,
@@ -4584,14 +4771,12 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
                     cache_path.display()
                 )
             });
-            validate_binary_trace_footer(&footer, header.trace.initial_frame).unwrap_or_else(
-                |error| {
-                    panic!(
-                        "parity trace cache {} has an invalid fixed footer: {error}; remove the derived cache and retry",
-                        cache_path.display()
-                    )
-                },
-            );
+            validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
+                panic!(
+                    "parity trace cache {} has an invalid fixed footer: {error}; remove the derived cache and retry",
+                    cache_path.display()
+                )
+            });
             eprintln!("loaded parity trace cache {}", cache_path.display());
             return cache_path;
         }
@@ -4650,6 +4835,7 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
     });
     let started = std::time::Instant::now();
     let mut frame_count = 0_u64;
+    let mut trace_timeline = TraceTimeline::new(header.trace.initial_frame);
     let final_frame;
     {
         let mut encoder = zstd::stream::write::Encoder::new(
@@ -4668,6 +4854,11 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
             });
             if let Some(frame) = parse_trace_frame(&line, line_number) {
                 validate_trace_frame_envelope(header.trace.schema, &frame);
+                trace_timeline
+                    .observe(frame.frame_before, frame.frame_after)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid parity frame timeline on line {line_number}: {error}")
+                    });
                 write_binary_record(
                     &mut encoder,
                     &BinaryTraceRecord::Frame(frame),
@@ -4686,15 +4877,11 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
                     "invalid parity terminator record type on line {line_number}"
                 );
                 suffix.draws.validate();
-                assert_eq!(
-                    suffix.frame_count, frame_count,
-                    "parity terminator frame_count disagrees with the JSONL frame stream"
-                );
-                assert_eq!(
-                    suffix.final_frame,
-                    header.trace.initial_frame + frame_count,
-                    "parity terminator final_frame disagrees with its initial frame and frame count"
-                );
+                trace_timeline
+                    .validate_terminator(suffix.frame_count, suffix.final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid parity terminator timeline on line {line_number}: {error}")
+                    });
                 write_binary_record(
                     &mut encoder,
                     &BinaryTraceRecord::End {
@@ -4875,23 +5062,11 @@ fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter, String> {
     })
 }
 
-fn validate_binary_trace_footer(
-    footer: &BinaryTraceFooter,
-    initial_frame: u64,
-) -> Result<(), String> {
+fn validate_binary_trace_footer(footer: &BinaryTraceFooter) -> Result<(), String> {
     if footer.version != TRACE_CACHE_VERSION {
         return Err(format!(
             "footer version {} does not match runner version {TRACE_CACHE_VERSION}",
             footer.version
-        ));
-    }
-    let expected_final = initial_frame
-        .checked_add(footer.frame_count)
-        .ok_or_else(|| "footer initial_frame + frame_count overflows u64".to_owned())?;
-    if footer.final_frame != expected_final {
-        return Err(format!(
-            "footer final_frame {} does not equal initial_frame {initial_frame} + frame_count {}",
-            footer.final_frame, footer.frame_count
         ));
     }
     Ok(())
@@ -4962,10 +5137,16 @@ fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
     let mut result = Vec::new();
     let mut original_index = 0_usize;
     let mut frame_count = 0_u64;
+    let mut trace_timeline = TraceTimeline::new(header.trace.initial_frame);
     append_simulation_rng_draws(&mut result, &mut original_index, &header.rng_prefix.draws);
     loop {
         match reader.read_record() {
             BinaryTraceRecord::Frame(frame) => {
+                trace_timeline
+                    .observe(frame.frame_before, frame.frame_after)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid cached parity frame timeline during RNG pre-scan: {error}")
+                    });
                 append_simulation_rng_draws(&mut result, &mut original_index, &frame.rng_draws);
                 frame_count += 1;
             }
@@ -4982,7 +5163,13 @@ fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
                 let final_frame = final_frame
                     .unwrap_or_else(|| panic!("parity cache RNG pre-scan found incomplete End"));
                 assert_eq!(terminal_frame_count, frame_count);
-                assert_eq!(final_frame, header.trace.initial_frame + frame_count);
+                trace_timeline
+                    .validate_terminator(terminal_frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "invalid cached parity terminator timeline during RNG pre-scan: {error}"
+                        )
+                    });
                 reader
                     .validate_terminator(terminal_frame_count, final_frame)
                     .unwrap_or_else(|error| {
@@ -8254,6 +8441,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn schema16_npc_boundary_transients_are_typed_and_bounded() {
+        let parsed: Vec<TraceInitialNpcTransient> = serde_json::from_value(serde_json::json!([
+            {"creation_order": 96, "maximal_visibility": 31},
+            {"creation_order": 117, "maximal_visibility": 47}
+        ]))
+        .expect("parse schema-16 NPC boundary transients");
+        assert_eq!(
+            parsed,
+            [
+                TraceInitialNpcTransient {
+                    creation_order: 96,
+                    maximal_visibility: 31,
+                },
+                TraceInitialNpcTransient {
+                    creation_order: 117,
+                    maximal_visibility: 47,
+                },
+            ]
+        );
+        assert!(
+            serde_json::from_value::<TraceInitialNpcTransient>(serde_json::json!({
+                "creation_order": 96,
+                "maximal_visibility": 65_536
+            }))
+            .is_err(),
+            "Original muwMaximalVisibility is a UWORD and must not be widened silently"
+        );
+    }
+
+    #[test]
+    fn legacy_segment_visibility_fallback_matches_original_uword_conversion() {
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [0.0, 1.599_999_9, 0.25]),
+            31
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [2.399_999_9]),
+            47
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(true, [1.599_999_9]),
+            319
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, std::iter::empty()),
+            0
+        );
+    }
+
     fn write_test_cache_records(
         records: &[BinaryTraceRecord],
         footer: Option<BinaryTraceFooter>,
@@ -8290,6 +8527,53 @@ mod tests {
             final_frame: Some(final_frame),
             frame_count: Some(frame_count),
         }
+    }
+
+    #[test]
+    fn trace_timeline_accepts_terminal_snapshot_without_clock_advance() {
+        let mut timeline = TraceTimeline::new(9_245);
+        timeline.observe(9_245, 9_246).unwrap();
+        timeline.observe(9_246, 9_247).unwrap();
+        timeline.observe(9_247, 9_247).unwrap();
+
+        timeline.validate_terminator(3, 9_247).unwrap();
+        assert!(
+            timeline
+                .validate_terminator(3, 9_248)
+                .unwrap_err()
+                .contains("last frame_after=9247")
+        );
+        assert!(
+            timeline
+                .validate_terminator(2, 9_247)
+                .unwrap_err()
+                .contains("3 frame records")
+        );
+    }
+
+    #[test]
+    fn trace_timeline_rejects_gaps_rewinds_and_multi_tick_records() {
+        let mut gap = TraceTimeline::new(10);
+        assert!(
+            gap.observe(11, 12)
+                .unwrap_err()
+                .contains("continue after frame 10")
+        );
+
+        let mut rewind = TraceTimeline::new(10);
+        assert!(
+            rewind
+                .observe(10, 9)
+                .unwrap_err()
+                .contains("retain or advance")
+        );
+
+        let mut jump = TraceTimeline::new(10);
+        assert!(
+            jump.observe(10, 12)
+                .unwrap_err()
+                .contains("retain or advance")
+        );
     }
 
     #[test]

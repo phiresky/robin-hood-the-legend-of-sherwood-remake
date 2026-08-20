@@ -45,9 +45,12 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   raw input-device behavior are out of scope.
 - Completion: a cleanly closed Original session always ends with an
   `rng_suffix` record, even when its draw batch is empty. The terminator also
-  records `final_frame` and `frame_count`; raw EOF without this record means
-  the capture was interrupted or truncated and must not be accepted as a
-  complete replay oracle.
+  records `final_frame` and `frame_count`. `frame_count` is the number of frame
+  snapshots, while `final_frame` is the last snapshot's `frame_after`; a
+  terminal mission result can produce a snapshot without advancing the
+  universal frame, so these are not inferred from one another. Raw EOF without
+  this record means the capture was interrupted or truncated and must not be
+  accepted as a complete replay oracle.
 - Pathfinding: deterministic synchronous A*, while retaining the Original's
   request/processing phase boundary
 - Randomness: the Original's filtered gameplay `rand()` values form one global
