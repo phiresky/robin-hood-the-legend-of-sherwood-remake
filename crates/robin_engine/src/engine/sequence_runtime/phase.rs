@@ -133,9 +133,13 @@ impl EngineInner {
             .sequence_manager
             .begin_instruct_callback(owner, seq_id, elem_idx);
         self.dispatch_condolations(sim, assets);
-        self.orders
+        let still_selected = self
+            .orders
             .sequence_manager
             .end_instruct_callback(owner, seq_id, elem_idx);
+        if !still_selected {
+            return false;
+        }
 
         let target = self
             .orders
@@ -1017,9 +1021,18 @@ impl EngineInner {
                             .sequence_manager
                             .begin_instruct_callback(owner, seq_id, elem_idx);
                         self.dispatch_condolations(sim, assets);
-                        self.orders
+                        let still_selected = self
+                            .orders
                             .sequence_manager
                             .end_instruct_callback(owner, seq_id, elem_idx);
+                        if !still_selected {
+                            // A recursive Instruct accepted replacement work
+                            // while the outgoing element's condolence callback
+                            // ran. Original's post-callback pointer check sees
+                            // that `mpSequenceElement` no longer names this
+                            // incoming element and returns before Translate.
+                            break 'action;
+                        }
                         if trace_path_owner {
                             self.trace_path_owner_lifecycle(
                                 "after_instruct_callback",

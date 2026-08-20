@@ -3583,10 +3583,72 @@ fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
         SequenceState::InProgress
     );
 
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, incoming_sequence, 0),
+        "rejected recursive work must not supersede the incoming selection"
+    );
+}
+
+#[test]
+fn nested_instruct_callback_permanently_supersedes_its_parent_selection() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let outer = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::QuitSwordfight,
+            Some(owner),
+        ));
+    let nested = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
+
     engine
         .orders
         .sequence_manager
-        .end_instruct_callback(owner, incoming_sequence, 0);
+        .begin_instruct_callback(owner, outer, 0);
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, nested, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((nested, 0))
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, nested, 0),
+        "the recursive selection itself remains current"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        None,
+        "returning from recursive Instruct must not restore the overwritten parent pointer"
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, outer, 0),
+        "the outer Instruct must detect that recursive work superseded it"
+    );
 }
 
 #[test]

@@ -2617,7 +2617,7 @@ pub struct SequenceManager {
     /// `InProgress` yet. Entries only exist inside that callback boundary and
     /// are empty at stable frame/save boundaries.
     #[serde(default)]
-    actor_instructing: BTreeMap<EntityId, Vec<SequenceElementRef>>,
+    actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
 
     /// Actor selection held across the accepted element's command
     /// translation.
@@ -3223,7 +3223,7 @@ impl SequenceManager {
         actor: I,
     ) -> Option<(SequenceId, usize)> {
         let actor = actor.into();
-        if let Some(elem_ref) = self
+        if let Some((elem_ref, false)) = self
             .actor_instructing
             .get(&actor)
             .and_then(|stack| stack.last())
@@ -3298,34 +3298,42 @@ impl SequenceManager {
     }
 
     /// Select an incoming element while the outgoing element's synchronous
-    /// interruption callback runs. Nested Instruct calls use a stack because
-    /// Original temporarily replaces the actor pointer at each recursive
-    /// boundary.
+    /// interruption callback runs.
+    ///
+    /// Original stores this selection in one raw `mpSequenceElement` pointer
+    /// (`RHelementactor.cpp:1451-1456`). A recursively accepted `Instruct`
+    /// overwrites that pointer permanently; returning from the recursive call
+    /// does not restore its caller's selection. Keep the stack only to pair
+    /// Rust callback scopes, and mark the parent superseded whenever a nested
+    /// selection is installed.
     pub(crate) fn begin_instruct_callback(
         &mut self,
         owner: EntityId,
         sequence_id: SequenceId,
         element_index: usize,
     ) {
-        self.actor_instructing
-            .entry(owner)
-            .or_default()
-            .push(SequenceElementRef::new(sequence_id, element_index));
+        let stack = self.actor_instructing.entry(owner).or_default();
+        if let Some((_, superseded)) = stack.last_mut() {
+            *superseded = true;
+        }
+        stack.push((SequenceElementRef::new(sequence_id, element_index), false));
     }
 
-    /// Close a matching [`Self::begin_instruct_callback`] boundary.
+    /// Close a matching [`Self::begin_instruct_callback`] boundary, returning
+    /// whether recursive work left this element selected. This is Original's
+    /// post-priority callback pointer check (`RHelementactor.cpp:1473-1479`).
     pub(crate) fn end_instruct_callback(
         &mut self,
         owner: EntityId,
         sequence_id: SequenceId,
         element_index: usize,
-    ) {
+    ) -> bool {
         let expected = SequenceElementRef::new(sequence_id, element_index);
         let stack = self
             .actor_instructing
             .get_mut(&owner)
             .unwrap_or_else(|| panic!("missing Instruct callback selection for {owner:?}"));
-        let selected = stack
+        let (selected, superseded) = stack
             .pop()
             .expect("Instruct callback selection stack is empty");
         assert_eq!(
@@ -3335,6 +3343,7 @@ impl SequenceManager {
         if stack.is_empty() {
             self.actor_instructing.remove(&owner);
         }
+        !superseded
     }
 
     /// Find the first in-progress element owned by `actor` that
