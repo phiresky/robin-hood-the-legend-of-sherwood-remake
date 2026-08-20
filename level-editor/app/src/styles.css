@@ -370,3 +370,88 @@ label.check.inline {
   inset: 0;
   touch-action: none;
 }
+
+/* --- compose mode --- */
+
+.mode-switch button {
+  flex: 1;
+}
+
+.draft-info {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.draft-name {
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.dirty {
+  color: #fc6;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.placement-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.placement-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.placement-row:hover {
+  background: #2c2c2c;
+}
+
+.placement-row.selected {
+  background: #1e2a44;
+  outline: 1px solid #2563eb;
+}
+
+.placement-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.placement-name.missing {
+  color: #f66;
+}
+
+.placement-pos {
+  flex: none;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+.placement-row .row-delete {
+  flex: none;
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 1.3;
+  background: none;
+  border: none;
+  color: #888;
+}
+
+.placement-row .row-delete:hover {
+  color: #f66;
+}

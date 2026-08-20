@@ -21,8 +21,14 @@ import Viewer from "./Viewer";
 import { DEFAULT_TOGGLES, TOGGLE_LABELS, type OverlayToggles } from "./overlays";
 import { releaseLibrary, scanLibrary, type LibraryAsset, type LibraryIndex } from "./library";
 import { AssetDetail, LibrarySection } from "./Library";
+import { ComposeViewer, PlacementsPanel } from "./Compose";
+import { DEFAULT_DRAFT_SIZE, newDraft, openDraftFile, saveDraftFile } from "./compose";
+import type { MapDraft } from "@rle/shared";
+
+type Mode = "inspect" | "compose";
 
 export default function App() {
+  const [mode, setMode] = createSignal<Mode>("inspect");
   const [index, setIndex] = createSignal<DatadirIndex | null>(null);
   const [needsReconnect, setNeedsReconnect] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -39,6 +45,12 @@ export default function App() {
   const [library, setLibrary] = createSignal<LibraryIndex | null>(null);
   const [libraryNeedsReconnect, setLibraryNeedsReconnect] = createSignal(false);
   const [selectedAsset, setSelectedAsset] = createSignal<LibraryAsset | null>(null);
+
+  const [draft, setDraft] = createSignal<MapDraft | null>(null);
+  const [draftDocId, setDraftDocId] = createSignal(0);
+  const [draftHandle, setDraftHandle] = createSignal<FileSystemFileHandle | null>(null);
+  const [dirty, setDirty] = createSignal(false);
+  const [selectedPlacement, setSelectedPlacement] = createSignal<number | null>(null);
 
   const [toggles, setToggles] = createSignal<OverlayToggles>({ ...DEFAULT_TOGGLES });
   const [layerFilter, setLayerFilter] = createSignal<number | null>(null);
@@ -165,6 +177,74 @@ export default function App() {
     }
   }
 
+  // --- compose mode: draft document actions ---
+
+  function loadDraftDoc(d: MapDraft, handle: FileSystemFileHandle | null) {
+    setDraft(d);
+    setDraftHandle(handle);
+    setDirty(false);
+    setSelectedPlacement(null);
+    setDraftDocId((n) => n + 1);
+  }
+
+  function onNewDraft() {
+    const name = window.prompt("Draft name", "untitled");
+    if (name === null) return;
+    const sizeStr = window.prompt(
+      "Map size (width x height)",
+      `${DEFAULT_DRAFT_SIZE[0]}x${DEFAULT_DRAFT_SIZE[1]}`,
+    );
+    if (sizeStr === null) return;
+    const m = sizeStr.match(/^\s*(\d+)\s*[x×,]\s*(\d+)\s*$/);
+    if (!m) return setError(`invalid size: ${sizeStr}`);
+    loadDraftDoc(newDraft(name || "untitled", [Number(m[1]), Number(m[2])]), null);
+  }
+
+  async function onOpenDraft() {
+    try {
+      const { draft: d, handle } = await openDraftFile();
+      loadDraftDoc(d, handle);
+    } catch (e) {
+      if ((e as DOMException).name !== "AbortError") setError(String(e));
+    }
+  }
+
+  async function onSaveDraft() {
+    const d = draft();
+    if (!d) return;
+    try {
+      setDraftHandle(await saveDraftFile(d, draftHandle()));
+      setDirty(false);
+    } catch (e) {
+      if ((e as DOMException).name !== "AbortError") setError(String(e));
+    }
+  }
+
+  const updateDraft = (fn: (d: MapDraft) => MapDraft) => {
+    setDraft((d) => (d ? fn(d) : d));
+    setDirty(true);
+  };
+
+  const placeAsset = (asset: LibraryAsset, pos: [number, number]) =>
+    updateDraft((d) => ({
+      ...d,
+      placements: [...d.placements, { asset: asset.descriptor.id, pos }],
+    }));
+
+  const movePlacement = (idx: number, pos: [number, number]) =>
+    updateDraft((d) => ({
+      ...d,
+      placements: d.placements.map((p, i) => (i === idx ? { ...p, pos } : p)),
+    }));
+
+  const deletePlacement = (idx: number) => {
+    updateDraft((d) => ({
+      ...d,
+      placements: d.placements.filter((_, i) => i !== idx),
+    }));
+    setSelectedPlacement((s) => (s === null || s === idx ? null : s > idx ? s - 1 : s));
+  };
+
   const toggle = (key: keyof OverlayToggles) =>
     setToggles((t) => ({ ...t, [key]: !t[key] }));
 
@@ -183,6 +263,66 @@ export default function App() {
     <div class="app">
       <aside class="sidebar">
         <h1>RH Level Editor</h1>
+        <div class="row mode-switch">
+          <button
+            class={mode() === "inspect" ? "selected" : ""}
+            onClick={() => setMode("inspect")}
+          >
+            Inspect
+          </button>
+          <button
+            class={mode() === "compose" ? "selected" : ""}
+            onClick={() => setMode("compose")}
+          >
+            Compose
+          </button>
+        </div>
+        <Show when={mode() === "compose"}>
+          <section>
+            <h2>Draft</h2>
+            <Show
+              when={library()}
+              fallback={
+                <p class="hint">Connect the asset library below to start composing.</p>
+              }
+            >
+              <div class="row">
+                <button onClick={onNewDraft}>New…</button>
+                <button onClick={() => void onOpenDraft()}>Open…</button>
+                <button disabled={!draft()} onClick={() => void onSaveDraft()}>
+                  Save
+                </button>
+              </div>
+              <Show when={draft()}>
+                {(d) => (
+                  <div class="draft-info">
+                    <div class="draft-name">
+                      {d().name}
+                      <Show when={dirty()}>
+                        <span class="dirty" title="unsaved changes">
+                          ● unsaved changes
+                        </span>
+                      </Show>
+                    </div>
+                    <div class="hint">
+                      {d().size[0]}×{d().size[1]} · {d().placements.length} placement
+                      {d().placements.length === 1 ? "" : "s"}
+                    </div>
+                    <Show when={selectedAsset()}>
+                      {(a) => (
+                        <p class="hint">
+                          placing <b>{a().descriptor.name}</b> — click the canvas to
+                          drop, Esc to stop
+                        </p>
+                      )}
+                    </Show>
+                  </div>
+                )}
+              </Show>
+            </Show>
+          </section>
+        </Show>
+        <Show when={mode() === "inspect"}>
         <Show
           when={index()}
           fallback={
@@ -285,6 +425,7 @@ export default function App() {
             </>
           )}
         </Show>
+        </Show>
         <LibrarySection
           library={library}
           needsReconnect={libraryNeedsReconnect}
@@ -305,17 +446,47 @@ export default function App() {
           </span>
         </div>
       </aside>
-      <Viewer
-        image={image}
-        level={level}
-        mission={mission}
-        toggles={toggles}
-        layerFilter={layerFilter}
-        selection={selectionBbox}
-        onCursor={(x, y) => setCursor([x, y])}
-      />
-      <Show when={selectedAsset()}>
+      <Show
+        when={mode() === "compose"}
+        fallback={
+          <Viewer
+            image={image}
+            level={level}
+            mission={mission}
+            toggles={toggles}
+            layerFilter={layerFilter}
+            selection={selectionBbox}
+            onCursor={(x, y) => setCursor([x, y])}
+          />
+        }
+      >
+        <ComposeViewer
+          draft={draft}
+          docId={draftDocId}
+          library={library}
+          placing={selectedAsset}
+          onCancelPlace={() => setSelectedAsset(null)}
+          selected={selectedPlacement}
+          onSelect={setSelectedPlacement}
+          onPlace={placeAsset}
+          onMove={movePlacement}
+          onDelete={deletePlacement}
+          onCursor={(x, y) => setCursor([x, y])}
+        />
+      </Show>
+      <Show when={mode() === "inspect" && selectedAsset()}>
         {(asset) => <AssetDetail asset={asset} onClose={() => setSelectedAsset(null)} />}
+      </Show>
+      <Show when={mode() === "compose" ? draft() : null}>
+        {(d) => (
+          <PlacementsPanel
+            draft={d}
+            library={library}
+            selected={selectedPlacement}
+            onSelect={setSelectedPlacement}
+            onDelete={deletePlacement}
+          />
+        )}
       </Show>
     </div>
   );
