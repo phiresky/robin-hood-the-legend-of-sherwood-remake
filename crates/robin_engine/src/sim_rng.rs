@@ -805,7 +805,6 @@ mod tests {
             "crates/robin_rs/src/ingame_menu/dialogue.rs|fastrand::Rng::new",
             2,
         ),
-        ("crates/robin_rs/src/multiplayer/lobby.rs|fastrand::u64", 1),
     ];
 
     #[test]

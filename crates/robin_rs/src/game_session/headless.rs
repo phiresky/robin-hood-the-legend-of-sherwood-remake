@@ -7,7 +7,7 @@ use super::runtime::{
     TickPolicy,
 };
 use super::{dismiss_pending_modals, drain_steps, pop_matching_dismissal};
-use crate::multiplayer::lobby::current_epoch_ms;
+use crate::multiplayer::matchmaking::current_epoch_ms;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use serde::{Deserialize, Serialize};

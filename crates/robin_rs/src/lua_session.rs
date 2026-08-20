@@ -169,7 +169,7 @@ pub fn validate_launch_mode(
 
     let mode = if pending_replay || args.replay.is_some() || args.replay_data.is_some() {
         Some(UnsupportedSpellforgeMode::ReplayPlayback)
-    } else if args.server.is_some() {
+    } else if args.server {
         Some(UnsupportedSpellforgeMode::MultiplayerHost)
     } else if args.connect.is_some() {
         Some(UnsupportedSpellforgeMode::MultiplayerClient)
@@ -607,11 +607,11 @@ mod tests {
         assert_rejected_mode(&rollback, UnsupportedSpellforgeMode::RollbackVerification);
 
         let mut host = spellforge_args();
-        host.server = Some(":7878".to_owned());
+        host.server = true;
         assert_rejected_mode(&host, UnsupportedSpellforgeMode::MultiplayerHost);
 
         let mut client = spellforge_args();
-        client.connect = Some("localhost:7878".to_owned());
+        client.connect = Some("an-endpoint-id".to_owned());
         assert_rejected_mode(&client, UnsupportedSpellforgeMode::MultiplayerClient);
 
         assert!(matches!(

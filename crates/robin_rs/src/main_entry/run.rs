@@ -2,7 +2,7 @@
 
 use crate::game_session::{SessionResult, run_mission, run_mission_headless, run_session};
 use crate::host::ApplicationContext;
-use crate::main_menu::multiplayer_lobby::MultiplayerRole;
+use crate::main_menu::multiplayer_menu::MultiplayerRole;
 use crate::main_menu::{MainMenuChoice, show_main_menu};
 use crate::window::GameWindow;
 use robin_engine::campaign::Campaign;
@@ -338,7 +338,7 @@ pub async fn run_rust_game(
                     .position(|m| m.profile(&profiles).id == launch.mission_id)
                 else {
                     return Err(format!(
-                        "Multiplayer lobby selected unknown mission id {} ({})",
+                        "Multiplayer menu selected unknown mission id {} ({})",
                         launch.mission_id, launch.mission_name
                     ));
                 };
@@ -353,13 +353,12 @@ pub async fn run_rust_game(
                 campaign.force_next_mission(idx);
                 let mut mp_args = args.clone();
                 match launch.role {
-                    MultiplayerRole::Host { bind_addr } => {
+                    MultiplayerRole::Host => {
                         tracing::info!(
                             mission = %launch.mission_name,
-                            bind = %bind_addr,
                             "Main menu Multiplayer: hosting selected mission"
                         );
-                        mp_args.server = Some(bind_addr);
+                        mp_args.server = true;
                         mp_args.connect = None;
                     }
                     MultiplayerRole::Client { connect_addr } => {
@@ -368,7 +367,7 @@ pub async fn run_rust_game(
                             connect = %connect_addr,
                             "Main menu Multiplayer: joining selected mission"
                         );
-                        mp_args.server = None;
+                        mp_args.server = false;
                         mp_args.connect = Some(connect_addr);
                     }
                 }

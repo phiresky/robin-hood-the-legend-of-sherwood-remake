@@ -12,7 +12,7 @@ fn main() {
     robin_rs::init_tracing();
     let args = robin_rs::main_entry::parse_cli();
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-    let updater = if args.headless || args.lobby_server.is_some() {
+    let updater = if args.headless {
         None
     } else {
         robin_rs::auto_update::start_github_auto_update()
@@ -27,15 +27,6 @@ fn main() {
 /// run the async game on a dedicated thread (driven by `pollster`).
 #[cfg(not(target_arch = "wasm32"))]
 fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
-    if let Some(addr) = args.lobby_server.as_deref() {
-        return match robin_rs::multiplayer::lobby::run_lobby_server(addr) {
-            Ok(()) => 0,
-            Err(e) => {
-                tracing::error!("Lobby server failed: {e}");
-                1
-            }
-        };
-    }
     let (campaign, profiles, shipping) = match robin_rs::main_entry::rust_init() {
         Ok(c) => {
             tracing::info!("Rust initialization complete.");

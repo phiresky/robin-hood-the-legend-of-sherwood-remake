@@ -85,20 +85,17 @@ async-channel = "2"
 # that uses `performance.now()` on wasm and the std types on native.
 # `std::time::Instant::now()` panics on `wasm32-unknown-unknown`.
 web-time = "1"
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 # Native-only: tiny blocking HTTP server for the script-RPC endpoint.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 fs2 = "0.4"
 librashader = { git = "https://github.com/SnowflakePowered/librashader.git", rev = "87e8a97b50516d997defeaa168173dcd185d4022", default-features = false, features = ["presets", "runtime-wgpu", "stable"] }
 tiny_http = "0.12"
-# Multiplayer transport.  The host/server side still uses blocking
-# tungstenite in spawned OS threads; native clients use
-# tokio-tungstenite so inbound frames and outbound game-loop messages
-# are selected without read-timeout polling.
-tungstenite = "0.30"
-tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-tungstenite = "0.30"
+# Multiplayer transport: peer-to-peer QUIC with relay fallback and
+# hole punching.  Peers are addressed by their public-key endpoint id,
+# so no port forwarding or bind-address configuration is needed.
+iroh = "1.0.3"
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time", "io-util"] }
 # Non-poisoning mutexes for the multiplayer peer state shared across
 # transport worker threads.
 parking_lot = "0.12"
@@ -106,6 +103,17 @@ parking_lot = "0.12"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 # Read .zip mod packs for the custom-mission selector.
 zip = { version = "8", default-features = false, features = ["deflate"] }
+# Serverless matchmaking: hosts announce games on a well-known
+# iroh-gossip topic whose peers are found through the BitTorrent
+# Mainline DHT (distributed-topic-tracker) — no broker, no
+# configuration.  The DHT address lookup additionally lets endpoint
+# ids resolve without any hosted DNS/relay-discovery infrastructure.
+# ed25519-dalek matches the SigningKey type distributed-topic-tracker
+# expects (built from the iroh SecretKey bytes).
+iroh-gossip = { version = "0.101", features = ["net"] }
+distributed-topic-tracker = "0.3.5"
+ed25519-dalek = "3.0.0-rc.0"
+iroh-mainline-address-lookup = "0.4"
 
 # Desktop installer/update lifecycle hooks. Keep this target-scoped so the
 # Android cdylib and browser build do not pull in desktop packaging support.
@@ -139,16 +147,6 @@ web-sys = { version = "0.3", features = [
     "Storage",
     "Url",
     "UrlSearchParams",
-    # Multiplayer client transport (wasm clients connect to a
-    # native --server).  `BinaryType` lets us request binary frames
-    # rather than Base64-encoded strings; `MessageEvent` carries the
-    # received frame on `onmessage`; `CloseEvent` / `ErrorEvent` for
-    # disconnect signalling; `WebSocket` is the transport itself.
-    "WebSocket",
-    "BinaryType",
-    "MessageEvent",
-    "CloseEvent",
-    "ErrorEvent",
 ] }
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"

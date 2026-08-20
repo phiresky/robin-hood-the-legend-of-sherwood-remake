@@ -54,13 +54,6 @@ fn run_android(app: AndroidApp) -> Result<i32, String> {
     // devices the loopback bind fails with EPERM, so disable the desktop-only
     // listener without changing other application configuration.
     args.http_server = 0;
-    if args.lobby_server.is_some() {
-        return Err("Android builds do not support --lobby-server".to_owned());
-    }
-
-    // There is deliberately no Android lobby address default. Multiplayer
-    // uses the same ROBINHOOD_LOBBY_WS configuration as other platforms and
-    // reports that it is unavailable when a launcher has not supplied one.
     let shipping = load_bundled_shipping_datadir(&app)?;
     let (campaign, profiles, application_context) =
         crate::main_entry::rust_init_with_shipping(Some(shipping))?;

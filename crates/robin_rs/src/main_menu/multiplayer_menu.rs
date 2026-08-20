@@ -1,4 +1,5 @@
-//! Main-menu multiplayer lobby.
+//! Main-menu multiplayer screen: the matchmaking game browser plus
+//! the pre-game lobby (hosted / joined waiting room).
 
 use robin_engine::campaign::Campaign;
 
@@ -10,7 +11,7 @@ use crate::ingame_menu::layout::{
 };
 use crate::ingame_menu::resources::IngameMenuResources;
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
-use crate::multiplayer::lobby::{self, JoinedGame, LobbyGame};
+use crate::multiplayer::matchmaking::{self, GameListing, JoinedGame};
 use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::widget::{ColumnAlign, ColumnLayout, FrameWnd};
@@ -30,12 +31,14 @@ const ROW_HEIGHT: i32 = 24;
 const ID_JOIN: u32 = 0;
 const ID_CREATE: u32 = 1;
 const ID_START: u32 = 2;
-const ID_REFRESH: u32 = 3;
-const ID_BACK: u32 = 4;
+const ID_BACK: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum MultiplayerRole {
-    Host { bind_addr: String },
+    /// Host on this install's persistent iroh identity (the id the
+    /// matchmaking service advertised as the game's `connect_addr`).
+    Host,
+    /// Join the host at the given iroh endpoint id.
     Client { connect_addr: String },
 }
 
@@ -56,21 +59,19 @@ struct MissionChoice {
 }
 
 #[derive(Debug, Clone)]
-enum LobbyMode {
+enum MenuMode {
     Games,
     Missions,
     Hosted {
-        game: LobbyGame,
-        bind_addr: String,
-        host_token: String,
+        game: GameListing,
     },
     Joined {
         game: JoinedGame,
-        lobby_game: Option<LobbyGame>,
+        listing: Option<GameListing>,
     },
 }
 
-pub(crate) async fn show_multiplayer_lobby(
+pub(crate) async fn show_multiplayer_menu(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
@@ -79,38 +80,22 @@ pub(crate) async fn show_multiplayer_lobby(
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
 ) -> Option<MultiplayerLaunch> {
-    let lobby_url = match lobby::lobby_url_from_env() {
-        Ok(url) => url,
-        Err(err) => {
-            tracing::warn!("Multiplayer lobby unavailable: {err}");
-            err
-        }
-    };
     let nickname = multiplayer_nickname(application_context);
     let missions = mission_choices(campaign, profiles);
-    let lobby_client = if lobby_url.starts_with("ws://") || lobby_url.starts_with("wss://") {
-        match lobby::LobbyClient::connect(&lobby_url) {
-            Ok(client) => {
-                if let Err(err) = client.list_games() {
-                    tracing::warn!("Multiplayer lobby initial list failed: {err}");
-                }
-                Some(client)
-            }
+    let (matchmaking_client, mut matchmaking_label) =
+        match matchmaking::MatchmakingSession::open(nickname.clone()) {
+            Ok(session) => (
+                Some(session),
+                "Matchmaking: searching for players...".to_string(),
+            ),
             Err(err) => {
-                tracing::warn!("Multiplayer lobby connection failed: {err}");
-                None
+                tracing::warn!("Multiplayer matchmaking unavailable: {err}");
+                (None, err)
             }
-        }
-    } else {
-        None
-    };
+        };
     let mut games = Vec::new();
-    let mut status = if lobby_client.is_some() {
-        format!("Lobby: {lobby_url}")
-    } else {
-        lobby_url.clone()
-    };
-    let mut mode = LobbyMode::Games;
+    let mut status = matchmaking_label.clone();
+    let mut mode = MenuMode::Games;
     let mut selected: usize = 0;
     let mut scroll_offset: usize = 0;
     let mut input_state = ModalInputState::new();
@@ -121,10 +106,9 @@ pub(crate) async fn show_multiplayer_lobby(
     frame.enabled = true;
     frame.input_enabled = true;
     for (id, y) in [
-        (ID_JOIN, btn_y_base - 4 * (btn_h + 2)),
-        (ID_CREATE, btn_y_base - 3 * (btn_h + 2)),
-        (ID_START, btn_y_base - 2 * (btn_h + 2)),
-        (ID_REFRESH, btn_y_base - (btn_h + 2)),
+        (ID_JOIN, btn_y_base - 3 * (btn_h + 2)),
+        (ID_CREATE, btn_y_base - 2 * (btn_h + 2)),
+        (ID_START, btn_y_base - (btn_h + 2)),
         (ID_BACK, btn_y_base),
     ] {
         frame.add_widget_absolute(widget_bridge::make_button_enabled(
@@ -139,10 +123,10 @@ pub(crate) async fn show_multiplayer_lobby(
         );
 
         let rows_len = match &mode {
-            LobbyMode::Games => games.len(),
-            LobbyMode::Missions => missions.len(),
-            LobbyMode::Hosted { .. } => 1,
-            LobbyMode::Joined { .. } => 1,
+            MenuMode::Games => games.len(),
+            MenuMode::Missions => missions.len(),
+            MenuMode::Hosted { .. } => 1,
+            MenuMode::Joined { .. } => 1,
         };
         if rows_len == 0 {
             selected = 0;
@@ -153,27 +137,23 @@ pub(crate) async fn show_multiplayer_lobby(
         scroll_offset = clamp_scroll_offset(scroll_offset, rows_len);
         ensure_selected_visible(selected, &mut scroll_offset, rows_len);
 
-        while let Some(event) = lobby_client.as_ref().and_then(|client| client.try_recv()) {
+        while let Some(event) = matchmaking_client
+            .as_ref()
+            .and_then(|client| client.try_recv())
+        {
             match event {
-                lobby::LobbyEvent::Games(next) => {
+                matchmaking::MatchmakingEvent::Games(next) => {
                     games = next;
-                    status = format!("Lobby: {lobby_url}");
+                    status = matchmaking_label.clone();
                 }
-                lobby::LobbyEvent::Created(created) => {
-                    status = format!(
-                        "Created game `{}`. Press Start when ready.",
-                        created.game.id
-                    );
-                    mode = LobbyMode::Hosted {
-                        game: created.game,
-                        bind_addr: lobby::bind_addr_from_env(),
-                        host_token: created.host_token,
-                    };
+                matchmaking::MatchmakingEvent::Created(created) => {
+                    status = "Game created. Press Start when ready.".to_string();
+                    mode = MenuMode::Hosted { game: created };
                     selected = 0;
                 }
-                lobby::LobbyEvent::Joined(joined) => {
+                matchmaking::MatchmakingEvent::Joined(joined) => {
                     if joined.connect_addr.is_empty() {
-                        status = "Lobby did not return a game-server address".to_string();
+                        status = "Matchmaking did not return a host address".to_string();
                     } else if joined.start_at_epoch_ms.is_some() {
                         return Some(MultiplayerLaunch {
                             mission_id: joined.mission_id,
@@ -185,36 +165,32 @@ pub(crate) async fn show_multiplayer_lobby(
                             start_at_epoch_ms: joined.start_at_epoch_ms,
                         });
                     } else {
-                        let lobby_game = games.iter().find(|g| g.id == joined.game_id).cloned();
+                        let listing = games.iter().find(|g| g.id == joined.game_id).cloned();
                         status = "Joined game. Waiting for host to start...".to_string();
-                        mode = LobbyMode::Joined {
+                        mode = MenuMode::Joined {
                             game: joined,
-                            lobby_game,
+                            listing,
                         };
                         selected = 0;
                     }
                 }
-                lobby::LobbyEvent::Started(started) => {
-                    if let LobbyMode::Hosted {
-                        game, bind_addr, ..
-                    } = &mode
+                matchmaking::MatchmakingEvent::Started(started) => {
+                    if let MenuMode::Hosted { game, .. } = &mode
                         && game.id == started.game_id
                     {
                         return Some(MultiplayerLaunch {
                             mission_id: started.mission_id,
                             mission_name: started.mission_name,
-                            role: MultiplayerRole::Host {
-                                bind_addr: bind_addr.clone(),
-                            },
+                            role: MultiplayerRole::Host,
                             expected_players: started.expected_players,
                             start_at_epoch_ms: started.start_at_epoch_ms,
                         });
                     }
                 }
-                lobby::LobbyEvent::GameUpdated(updated) => {
+                matchmaking::MatchmakingEvent::GameUpdated(updated) => {
                     upsert_game(&mut games, updated.clone());
                     match &mut mode {
-                        LobbyMode::Hosted { game, .. } if game.id == updated.id => {
+                        MenuMode::Hosted { game, .. } if game.id == updated.id => {
                             let previous_players = game.players;
                             *game = updated;
                             if game.players != previous_players {
@@ -225,19 +201,19 @@ pub(crate) async fn show_multiplayer_lobby(
                                 );
                             }
                         }
-                        LobbyMode::Joined { game, lobby_game } if game.game_id == updated.id => {
+                        MenuMode::Joined { game, listing } if game.game_id == updated.id => {
                             status = format!(
                                 "{} player{} in game. Waiting for host to start...",
                                 updated.players,
                                 if updated.players == 1 { "" } else { "s" }
                             );
-                            *lobby_game = Some(updated);
+                            *listing = Some(updated);
                         }
                         _ => {}
                     }
                 }
-                lobby::LobbyEvent::GameStarted(started) => {
-                    if let LobbyMode::Joined { game, .. } = &mode
+                matchmaking::MatchmakingEvent::GameStarted(started) => {
+                    if let MenuMode::Joined { game, .. } = &mode
                         && game.game_id == started.game_id
                     {
                         return Some(MultiplayerLaunch {
@@ -251,32 +227,40 @@ pub(crate) async fn show_multiplayer_lobby(
                         });
                     }
                 }
-                lobby::LobbyEvent::Error(err) => status = err,
-                lobby::LobbyEvent::Disconnected(err) => status = err,
+                matchmaking::MatchmakingEvent::Neighbors(count) => {
+                    matchmaking_label = if count == 0 {
+                        "Matchmaking: searching for players...".to_string()
+                    } else {
+                        format!(
+                            "Matchmaking: {count} player{} online",
+                            if count == 1 { "" } else { "s" }
+                        )
+                    };
+                    if matches!(mode, MenuMode::Games) {
+                        status = matchmaking_label.clone();
+                    }
+                }
+                matchmaking::MatchmakingEvent::Error(err) => status = err,
+                matchmaking::MatchmakingEvent::Disconnected(err) => status = err,
             }
         }
 
-        let lobby_connected = lobby_client.is_some();
-        let can_join =
-            lobby_connected && matches!(mode, LobbyMode::Games) && games.get(selected).is_some();
-        let can_start = matches!(mode, LobbyMode::Hosted { .. });
+        let matchmaking_connected = matchmaking_client.is_some();
+        let can_join = matchmaking_connected
+            && matches!(mode, MenuMode::Games)
+            && games.get(selected).is_some();
+        let can_start = matches!(mode, MenuMode::Hosted { .. });
         set_button(&mut frame, ID_JOIN, "Join", can_join);
         set_button(
             &mut frame,
             ID_CREATE,
             match mode {
-                LobbyMode::Missions => "Create",
+                MenuMode::Missions => "Create",
                 _ => "Create Game",
             },
-            lobby_connected && matches!(mode, LobbyMode::Games | LobbyMode::Missions),
+            matchmaking_connected && matches!(mode, MenuMode::Games | MenuMode::Missions),
         );
         set_button(&mut frame, ID_START, "Start", can_start);
-        set_button(
-            &mut frame,
-            ID_REFRESH,
-            "Refresh",
-            matches!(mode, LobbyMode::Games),
-        );
         set_button(&mut frame, ID_BACK, "Back", true);
 
         let mut activated: Option<u32> = None;
@@ -361,12 +345,12 @@ pub(crate) async fn show_multiplayer_lobby(
                     keycode: Keycode::KpEnter,
                     ..
                 } => {
-                    activated = Some(match mode {
-                        LobbyMode::Games => ID_JOIN,
-                        LobbyMode::Missions => ID_CREATE,
-                        LobbyMode::Hosted { .. } => ID_START,
-                        LobbyMode::Joined { .. } => ID_REFRESH,
-                    });
+                    activated = match mode {
+                        MenuMode::Games => Some(ID_JOIN),
+                        MenuMode::Missions => Some(ID_CREATE),
+                        MenuMode::Hosted { .. } => Some(ID_START),
+                        MenuMode::Joined { .. } => None,
+                    };
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
@@ -385,12 +369,12 @@ pub(crate) async fn show_multiplayer_lobby(
                             scroll_offset + ((vy - LIST_RECT.y - 4) / ROW_HEIGHT).max(0) as usize;
                         if row < rows_len {
                             selected = row;
-                            activated = Some(match mode {
-                                LobbyMode::Games => ID_JOIN,
-                                LobbyMode::Missions => ID_CREATE,
-                                LobbyMode::Hosted { .. } => ID_START,
-                                LobbyMode::Joined { .. } => ID_REFRESH,
-                            });
+                            activated = match mode {
+                                MenuMode::Games => Some(ID_JOIN),
+                                MenuMode::Missions => Some(ID_CREATE),
+                                MenuMode::Hosted { .. } => Some(ID_START),
+                                MenuMode::Joined { .. } => None,
+                            };
                         }
                     }
                 }
@@ -408,78 +392,64 @@ pub(crate) async fn show_multiplayer_lobby(
         if let Some(id) = activated {
             match id {
                 ID_BACK => match mode {
-                    LobbyMode::Games => return None,
+                    MenuMode::Games => return None,
                     _ => {
-                        mode = LobbyMode::Games;
+                        if matches!(mode, MenuMode::Hosted { .. } | MenuMode::Joined { .. })
+                            && let Some(session) = matchmaking_client.as_ref()
+                            && let Err(err) = session.leave_game()
+                        {
+                            tracing::warn!("matchmaking leave failed: {err}");
+                        }
+                        mode = MenuMode::Games;
                         selected = 0;
                         scroll_offset = 0;
+                        status = matchmaking_label.clone();
                     }
                 },
-                ID_REFRESH => match lobby_client.as_ref().map(|client| client.list_games()) {
-                    Some(Ok(())) => {
-                        status = format!("Lobby: {lobby_url}");
-                    }
-                    Some(Err(err)) => {
-                        status = err;
-                    }
-                    None => status = "Lobby is not connected".to_string(),
-                },
-                ID_JOIN if matches!(mode, LobbyMode::Games) => {
+                ID_JOIN if matches!(mode, MenuMode::Games) => {
                     if let Some(game) = games.get(selected) {
-                        match lobby_client
+                        match matchmaking_client
                             .as_ref()
-                            .map(|client| client.join_game(game.id.clone(), nickname.clone()))
+                            .map(|session| session.join_game(game.id.clone()))
                         {
                             Some(Ok(())) => {
                                 status = "Joining game...".to_string();
                             }
                             Some(Err(err)) => status = err,
-                            None => status = "Lobby is not connected".to_string(),
+                            None => status = "Matchmaking is not connected".to_string(),
                         }
                     }
                 }
-                ID_CREATE if matches!(mode, LobbyMode::Games) => {
+                ID_CREATE if matches!(mode, MenuMode::Games) => {
                     if missions.is_empty() {
                         status = "No missions are available to host".to_string();
                     } else {
-                        mode = LobbyMode::Missions;
+                        mode = MenuMode::Missions;
                         selected = 0;
                         scroll_offset = 0;
                         status = "Select a mission for the hosted game".to_string();
                     }
                 }
-                ID_CREATE if matches!(mode, LobbyMode::Missions) => {
+                ID_CREATE if matches!(mode, MenuMode::Missions) => {
                     if let Some(mission) = missions.get(selected) {
-                        let bind_addr = lobby::bind_addr_from_env();
-                        match lobby_client.as_ref().map(|client| {
-                            client.create_game(
-                                mission.mission_id,
-                                mission.mission_name.clone(),
-                                nickname.clone(),
-                                bind_addr,
-                            )
+                        match matchmaking_client.as_ref().map(|session| {
+                            session.create_game(mission.mission_id, mission.mission_name.clone())
                         }) {
                             Some(Ok(())) => status = "Creating game...".to_string(),
                             Some(Err(err)) => status = err,
-                            None => status = "Lobby is not connected".to_string(),
+                            None => status = "Matchmaking is not connected".to_string(),
                         }
                     }
                 }
                 ID_START => {
-                    if let LobbyMode::Hosted {
-                        game,
-                        bind_addr,
-                        host_token,
-                    } = &mode
-                    {
-                        let _ = bind_addr;
-                        match lobby_client
+                    if matches!(mode, MenuMode::Hosted { .. }) {
+                        match matchmaking_client
                             .as_ref()
-                            .map(|client| client.start_game(game.id.clone(), host_token.clone()))
+                            .map(|session| session.start_game())
                         {
                             Some(Ok(())) => status = "Starting game...".to_string(),
                             Some(Err(err)) => status = err,
-                            None => status = "Lobby is not connected".to_string(),
+                            None => status = "Matchmaking is not connected".to_string(),
                         }
                     }
                 }
@@ -492,7 +462,7 @@ pub(crate) async fn show_multiplayer_lobby(
         if let Some(bg) = resources.menu_bg[2] {
             draw_screen_background(renderer, &bg);
         }
-        render_lobby(
+        render_menu(
             renderer,
             resources,
             transform,
@@ -517,7 +487,7 @@ pub(crate) async fn show_multiplayer_lobby(
 
 fn set_button(frame: &mut FrameWnd, id: u32, label: &str, enabled: bool) {
     let Some(widget) = frame.widget_mut(id) else {
-        panic!("Multiplayer lobby: missing button widget {id}");
+        panic!("Multiplayer menu: missing button widget {id}");
     };
     widget.base_mut().set_text(label);
     if widget.base().enabled != enabled {
@@ -526,12 +496,12 @@ fn set_button(frame: &mut FrameWnd, id: u32, label: &str, enabled: bool) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_lobby(
+fn render_menu(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     transform: MenuTransform,
-    mode: &LobbyMode,
-    games: &[LobbyGame],
+    mode: &MenuMode,
+    games: &[GameListing],
     missions: &[MissionChoice],
     selected: usize,
     scroll_offset: usize,
@@ -539,10 +509,10 @@ fn render_lobby(
 ) {
     if let Some(font) = resources.title_font() {
         let title = match mode {
-            LobbyMode::Games => "Multiplayer",
-            LobbyMode::Missions => "Create Multiplayer Game",
-            LobbyMode::Hosted { .. } => "Multiplayer Game Created",
-            LobbyMode::Joined { .. } => "Waiting For Host",
+            MenuMode::Games => "Multiplayer",
+            MenuMode::Missions => "Create Multiplayer Game",
+            MenuMode::Hosted { .. } => "Game Lobby",
+            MenuMode::Joined { .. } => "Game Lobby",
         };
         let tw = font.text_width(title);
         render_text_virt(renderer, font, transform, title, (MENU_W - tw) / 2, 24);
@@ -550,21 +520,21 @@ fn render_lobby(
 
     draw_panel(renderer, transform, &LIST_RECT);
     let rows: Vec<String> = match mode {
-        LobbyMode::Games => {
+        MenuMode::Games => {
             if games.is_empty() {
                 vec!["No games listed".to_string()]
             } else {
                 games.iter().map(format_game_row).collect()
             }
         }
-        LobbyMode::Hosted { game, .. } => vec![format_game_row(game)],
-        LobbyMode::Joined { game, lobby_game } => vec![
-            lobby_game
+        MenuMode::Hosted { game, .. } => vec![format_game_row(game)],
+        MenuMode::Joined { game, listing } => vec![
+            listing
                 .as_ref()
                 .map(format_game_row)
                 .unwrap_or_else(|| format!("{} | joined |  | waiting", game.mission_name)),
         ],
-        LobbyMode::Missions => missions
+        MenuMode::Missions => missions
             .iter()
             .map(|m| format!("{} | {}", m.label, m.mission_id))
             .collect(),
@@ -578,9 +548,9 @@ fn render_lobby(
     {
         let is_selected = row_idx == selected
             && match mode {
-                LobbyMode::Games => !games.is_empty(),
-                LobbyMode::Hosted { .. } | LobbyMode::Joined { .. } => true,
-                LobbyMode::Missions => !missions.is_empty(),
+                MenuMode::Games => !games.is_empty(),
+                MenuMode::Hosted { .. } | MenuMode::Joined { .. } => true,
+                MenuMode::Missions => !missions.is_empty(),
             };
         if is_selected {
             fill_virtual_rect(
@@ -594,7 +564,7 @@ fn render_lobby(
             );
         }
         if let Some(font) = resources.list_font(is_selected, is_selected) {
-            let column_layout = lobby_column_layout(mode);
+            let column_layout = menu_column_layout(mode);
             let row_area_x = (LIST_RECT.x + 10) as f32;
             let row_area_w = (LIST_RECT.w - 20) as f32;
             for cell in column_layout.layout_row(row, row_area_x, row_area_w) {
@@ -729,7 +699,7 @@ fn mission_choices(
 fn multiplayer_nickname(application_context: &ApplicationContext) -> String {
     let name = application_context
         .active_profile_snapshot()
-        .unwrap_or_else(|error| panic!("multiplayer lobby requires an active profile: {error}"))
+        .unwrap_or_else(|error| panic!("multiplayer menu requires an active profile: {error}"))
         .name;
     if !name.trim().is_empty() {
         return name;
@@ -739,7 +709,7 @@ fn multiplayer_nickname(application_context: &ApplicationContext) -> String {
         .unwrap_or_else(|_| "player".to_string())
 }
 
-fn upsert_game(games: &mut Vec<LobbyGame>, game: LobbyGame) {
+fn upsert_game(games: &mut Vec<GameListing>, game: GameListing) {
     if let Some(existing) = games.iter_mut().find(|g| g.id == game.id) {
         *existing = game;
     } else {
@@ -747,7 +717,7 @@ fn upsert_game(games: &mut Vec<LobbyGame>, game: LobbyGame) {
     }
 }
 
-fn format_game_row(game: &LobbyGame) -> String {
+fn format_game_row(game: &GameListing) -> String {
     let players = if game.max_players == 0 {
         game.players.to_string()
     } else {
@@ -761,9 +731,9 @@ fn format_game_row(game: &LobbyGame) -> String {
     format!("{}|{}|{}|{}", game.mission_name, game.host, players, state)
 }
 
-fn lobby_column_layout(mode: &LobbyMode) -> ColumnLayout {
+fn menu_column_layout(mode: &MenuMode) -> ColumnLayout {
     match mode {
-        LobbyMode::Missions => {
+        MenuMode::Missions => {
             ColumnLayout::new(&[(0.82, ColumnAlign::Left), (0.18, ColumnAlign::Right)])
         }
         _ => ColumnLayout::new(&[

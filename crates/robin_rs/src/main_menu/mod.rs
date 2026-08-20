@@ -46,7 +46,7 @@ use robin_engine::sound_config::SoundConfig;
 pub(crate) mod credits;
 pub(crate) mod custom_missions;
 pub(crate) mod movies;
-pub(crate) mod multiplayer_lobby;
+pub(crate) mod multiplayer_menu;
 pub(crate) mod options;
 pub(crate) mod player_select;
 pub(crate) mod save_load;
@@ -55,7 +55,7 @@ pub(crate) mod save_load;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MainMenuChoice {
     Start,
-    Multiplayer(multiplayer_lobby::MultiplayerLaunch),
+    Multiplayer(multiplayer_menu::MultiplayerLaunch),
     /// Player chose a save slot to load — the caller should start a
     /// session seeded with a `SaveLoadRequest::Load` for that slot.
     Load {
@@ -79,7 +79,7 @@ enum ClickAction {
     /// Open the save/load picker in Load mode; on slot selection, return
     /// [`MainMenuChoice::Load`].
     LoadGame,
-    /// Connect to the configured lobby server and select/create a game.
+    /// Open the serverless matchmaking browser and select/create a game.
     Multiplayer,
     /// Open the player-profile selector in place.  Mutates the global
     /// [`robin_engine::player_profile::PlayerProfileManager`].
@@ -596,7 +596,7 @@ async fn dispatch_click(
             )
             .await
         }
-        ClickAction::Multiplayer => multiplayer_lobby::show_multiplayer_lobby(
+        ClickAction::Multiplayer => multiplayer_menu::show_multiplayer_menu(
             event_pump,
             renderer,
             menu_resources,

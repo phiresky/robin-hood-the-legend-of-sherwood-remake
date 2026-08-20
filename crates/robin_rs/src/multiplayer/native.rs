@@ -1,92 +1,156 @@
-//! Native (non-wasm) WebSocket server / client for the multiplayer
-//! transport.  Each external function spawns one or more OS threads
-//! that own the socket I/O; the game loop talks to them through
-//! [`super::NetChannels`].
+//! Native iroh (peer-to-peer QUIC) server / client for the
+//! multiplayer transport.  Each external function spawns one OS
+//! thread that owns a tokio runtime driving the iroh endpoint; the
+//! game loop talks to it through [`super::NetChannels`].
+//!
+//! Peers are addressed by iroh endpoint id (a public key), not by
+//! host:port.  Connectivity — hole punching, relay fallback, address
+//! lookup — is handled entirely by iroh, so hosting needs no port
+//! forwarding and no bind-address configuration.
+//!
+//! Each session runs over a single bidirectional QUIC stream per
+//! peer, carrying length-prefixed [`NetMsg`] frames.  The joining
+//! side opens the stream and sends `Hello`; the host answers
+//! `Welcome` on the same stream.
 
+use super::identity::{GAME_ALPN, bind_endpoint, game_secret_key, parse_connect_addr};
 use super::{
     FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, NET_PROTOCOL_VERSION, NetEvent, NetMsg,
     NetOutbound, decode_msg, encode_msg,
 };
-use futures_util::{SinkExt, StreamExt};
-// Non-poisoning mutex: a panicking worker thread must not turn every
-// later lock of the shared peer state into a second panic.
+use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream};
+use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
+// Non-poisoning mutex: a panicking worker must not turn every later
+// lock of the shared peer state into a second panic.
 use parking_lot::Mutex;
 use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use std::collections::HashMap;
-use std::io::ErrorKind;
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tungstenite::Message as WsMessage;
-use tungstenite::accept as ws_accept;
-use tungstenite::client::IntoClientRequest;
-
-type AsyncWs =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-// ─── Server ──────────────────────────────────────────────────────
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Upper bound for one wire frame.  Initial engine snapshots are the
+/// largest payload (whole serialized engine state); everything else is
+/// tiny.  Anything above this is treated as a protocol violation.
+const MAX_FRAME_BYTES: usize = 256 * 1024 * 1024;
+
+/// QUIC close code used for orderly application shutdown.
+const CLOSE_GRACEFUL: u32 = 0;
+
+// ─── Framing ─────────────────────────────────────────────────────
+
+async fn write_frame(send: &mut SendStream, msg: &NetMsg) -> Result<(), String> {
+    let bytes = encode_msg(msg);
+    let len = u32::try_from(bytes.len()).map_err(|_| "outbound frame exceeds u32".to_string())?;
+    send.write_all(&len.to_le_bytes())
+        .await
+        .map_err(|e| format!("write frame length: {e}"))?;
+    send.write_all(&bytes)
+        .await
+        .map_err(|e| format!("write frame body: {e}"))?;
+    Ok(())
+}
+
+/// Read one frame.  `Ok(None)` means the stream finished cleanly at a
+/// frame boundary (graceful close).
+async fn read_frame(recv: &mut RecvStream) -> Result<Option<NetMsg>, String> {
+    let mut len_buf = [0u8; 4];
+    match recv.read_exact(&mut len_buf).await {
+        Ok(()) => {}
+        Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
+        Err(e) => return Err(format!("read frame length: {e}")),
+    }
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > MAX_FRAME_BYTES {
+        return Err(format!("inbound frame of {len} bytes exceeds limit"));
+    }
+    let mut buf = vec![0u8; len];
+    recv.read_exact(&mut buf)
+        .await
+        .map_err(|e| format!("read frame body: {e}"))?;
+    decode_msg(&buf)
+        .map(Some)
+        .map_err(|e| format!("decode frame: {e}"))
+}
+
+fn current_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Bridge a std mpsc receiver (game loop side) onto a tokio unbounded
+/// channel so async code can `select!` on it.  The bridge thread
+/// exits when cancellation flips or either channel closes.
+fn spawn_outgoing_bridge(
+    name: &str,
+    outgoing_rx: Receiver<NetOutbound>,
+    cancellation: Arc<AtomicBool>,
+) -> std::io::Result<(JoinHandle<()>, UnboundedReceiver<NetOutbound>)> {
+    let (tx, rx) = unbounded_channel::<NetOutbound>();
+    let handle = thread::Builder::new()
+        .name(name.to_string())
+        .spawn(move || {
+            while !cancellation.load(Ordering::Acquire) {
+                let msg = match outgoing_rx.recv_timeout(WORKER_POLL_INTERVAL) {
+                    Ok(msg) => msg,
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
+                if tx.send(msg).is_err() {
+                    break;
+                }
+            }
+        })?;
+    Ok((handle, rx))
+}
+
+// ─── Server ──────────────────────────────────────────────────────
+
 /// Handle to a running multiplayer server.
 ///
-/// Shutdown is deterministic: cancellation stops the accept and outgoing
-/// loops, active peer queues are closed, and every spawned worker is joined.
+/// Shutdown is deterministic: the shutdown signal makes the runtime
+/// close the iroh endpoint (which ends the accept loop and every peer
+/// connection), the outgoing pump stops, and the runtime thread plus
+/// its bridge thread are joined before `shutdown` returns.
 pub struct ServerHandle {
     /// `(local_seat, mission_seed)` the server is operating with.
     pub local_seat: PlayerId,
     pub mission_seed: u64,
-    local_addr: SocketAddr,
+    endpoint_id: EndpointId,
+    endpoint_addr: EndpointAddr,
     cancellation: Arc<AtomicBool>,
-    peers: Arc<Mutex<ServerPeers>>,
-    accept_thread: Option<JoinHandle<()>>,
-    outgoing_thread: Option<JoinHandle<()>>,
-    peer_threads: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    active_connections: Arc<Mutex<HashMap<u64, TcpStream>>>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    runtime_thread: Option<JoinHandle<()>>,
 }
 
 impl ServerHandle {
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local_addr
+    /// The stable public id peers dial to reach this server.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
+
+    /// Full endpoint address (id + transport addresses) as a connect
+    /// string for [`connect_client`].  Lets peers dial explicit direct
+    /// addresses without relay/DNS lookup (tests, LAN-only setups).
+    pub fn connect_string(&self) -> String {
+        serde_json::to_string(&self.endpoint_addr).expect("EndpointAddr serialization cannot fail")
     }
 
     pub fn shutdown(&mut self) {
         self.cancellation.store(true, Ordering::Release);
-
-        if let Some(handle) = self.accept_thread.take()
+        let _ = self.shutdown_tx.send(true);
+        if let Some(handle) = self.runtime_thread.take()
             && handle.join().is_err()
         {
-            tracing::error!("multiplayer accept worker panicked during shutdown");
+            tracing::error!("multiplayer server runtime panicked during shutdown");
         }
-
-        // Closing peer queues wakes writers; shutting down the sockets wakes
-        // readers and partial WebSocket handshakes immediately.
-        self.peers.lock().senders.clear();
-        for stream in self.active_connections.lock().values() {
-            let _ = stream.shutdown(Shutdown::Both);
-        }
-
-        if let Some(handle) = self.outgoing_thread.take()
-            && handle.join().is_err()
-        {
-            tracing::error!("multiplayer outgoing worker panicked during shutdown");
-        }
-
-        let peer_threads = std::mem::take(&mut *self.peer_threads.lock());
-        for handle in peer_threads {
-            if handle.join().is_err() {
-                tracing::error!("multiplayer peer worker panicked during shutdown");
-            }
-        }
-        self.active_connections.lock().clear();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn peer_worker_count(&self) -> usize {
-        self.peer_threads.lock().len()
     }
 }
 
@@ -97,19 +161,18 @@ impl Drop for ServerHandle {
 }
 
 /// Per-peer state tracked by the server.  Wrapped in an `Arc<Mutex<>>`
-/// so the accept thread, the broadcast loop, and each per-peer
-/// receive thread can share access.
+/// so the accept task, the outgoing pump, and each per-peer task can
+/// share access.
 struct ServerPeers {
     /// Next [`PlayerId`] to assign for a peer with a nickname the
     /// server has not seen before.  Starts at 1 — seat 0 is the host.
     next_seat: u8,
     /// Active peers, keyed by their assigned [`PlayerId`].  The value
     /// is the sender used to push outbound frames into that peer's
-    /// per-connection writer thread.
-    senders: HashMap<u8, Sender<NetMsg>>,
-    /// Nicknames per active seat (for `SeatJoined` rebroadcasts and
-    /// so peers see each other's labels).  Mirrors what the host
-    /// folds into [`PlayerCommand::ConnectSeat`].
+    /// writer task.
+    senders: HashMap<u8, UnboundedSender<NetMsg>>,
+    /// Nicknames per active seat (so peers see each other's labels).
+    /// Mirrors what the host folds into [`PlayerCommand::ConnectSeat`].
     nicknames: HashMap<u8, String>,
     /// Seats that previously hosted a peer who has since
     /// disconnected, keyed by nickname.  When a fresh `Hello` arrives
@@ -140,58 +203,9 @@ impl ServerPeers {
     }
 }
 
-/// Joins a per-peer writer even when the handshake handler returns early.
-struct PeerWriterGuard {
-    seat: u8,
-    peers: Arc<Mutex<ServerPeers>>,
-    handle: Option<JoinHandle<()>>,
-}
-
-impl PeerWriterGuard {
-    fn join(mut self) {
-        self.close_and_join();
-    }
-
-    fn close_and_join(&mut self) {
-        {
-            let mut peers = self.peers.lock();
-            peers.senders.remove(&self.seat);
-            peers.ready_seats.remove(&self.seat);
-            peers.nicknames.remove(&self.seat);
-        }
-        if let Some(handle) = self.handle.take()
-            && handle.join().is_err()
-        {
-            tracing::error!(seat = self.seat, "peer writer worker panicked");
-        }
-    }
-}
-
-impl Drop for PeerWriterGuard {
-    fn drop(&mut self) {
-        self.close_and_join();
-    }
-}
-
-struct ActiveConnectionGuard {
-    id: u64,
-    connections: Arc<Mutex<HashMap<u64, TcpStream>>>,
-}
-
-impl Drop for ActiveConnectionGuard {
-    fn drop(&mut self) {
-        self.connections.lock().remove(&self.id);
-    }
-}
-
-fn current_epoch_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-fn maybe_begin_sim_locked(peers: &mut ServerPeers) -> Option<(u32, u64, Vec<Sender<NetMsg>>)> {
+fn maybe_begin_sim_locked(
+    peers: &mut ServerPeers,
+) -> Option<(u32, u64, Vec<UnboundedSender<NetMsg>>)> {
     if peers.begin_sent.is_some() {
         return None;
     }
@@ -220,15 +234,32 @@ fn maybe_begin_sim_locked(peers: &mut ServerPeers) -> Option<(u32, u64, Vec<Send
     Some((begin_frame, start_epoch_ms, senders))
 }
 
-/// Start a multiplayer server on `addr`.  The server runs the host
-/// seat (seat 0) locally — the returned [`NetEvent`] stream will
-/// receive each peer's inputs and seat-join/leave events.  The local
-/// process should also push its own [`PlayerCommand`]s into
-/// `outgoing_rx` via the sibling sender so they are broadcast to
-/// peers and folded into the local input batch.
+/// Per-session context shared by every server task.
+struct ServerContext {
+    peers: Mutex<ServerPeers>,
+    incoming_tx: Sender<NetEvent>,
+    host_nickname: String,
+    mission_id: String,
+    mission_seed: u64,
+    sim_config: robin_engine::engine::SimConfig,
+    frame_cursor: FrameCursor,
+    initial_snapshot: InitialSnapshot,
+    cancellation: Arc<AtomicBool>,
+}
+
+/// Start a multiplayer server on this install's persistent iroh
+/// identity.  The server runs the host seat (seat 0) locally — the
+/// returned [`NetEvent`] stream will receive each peer's inputs and
+/// seat-join/leave events.  The local process should also push its
+/// own [`PlayerCommand`]s into `outgoing_rx` via the sibling sender
+/// so they are broadcast to peers and folded into the local input
+/// batch.
+///
+/// Peers connect to [`ServerHandle::endpoint_id`], which equals
+/// [`super::identity::local_endpoint_id_string`] — known before this
+/// call, so matchmaking can advertise it ahead of mission launch.
 #[allow(clippy::too_many_arguments)]
 pub fn start_server(
-    addr: &str,
     host_nickname: String,
     mission_id: String,
     mission_seed: u64,
@@ -239,272 +270,290 @@ pub fn start_server(
     initial_snapshot: InitialSnapshot,
     expected_players: u32,
 ) -> std::io::Result<ServerHandle> {
-    let listener = TcpListener::bind(addr)?;
-    listener.set_nonblocking(true)?;
-    let local_addr = listener.local_addr()?;
-    tracing::info!(
-        addr = %local_addr,
-        seed = mission_seed,
-        "multiplayer server listening"
-    );
+    let key = game_secret_key().map_err(std::io::Error::other)?;
+    start_server_with_key(
+        key,
+        host_nickname,
+        mission_id,
+        mission_seed,
+        sim_config,
+        incoming_tx,
+        outgoing_rx,
+        frame_cursor,
+        initial_snapshot,
+        expected_players,
+    )
+}
 
-    let peers = Arc::new(Mutex::new(ServerPeers::new(expected_players.max(1))));
+/// [`start_server`] with an explicit identity key.  Tests use this to
+/// avoid touching the per-install on-disk identity.
+#[allow(clippy::too_many_arguments)]
+pub fn start_server_with_key(
+    key: SecretKey,
+    host_nickname: String,
+    mission_id: String,
+    mission_seed: u64,
+    sim_config: robin_engine::engine::SimConfig,
+    incoming_tx: Sender<NetEvent>,
+    outgoing_rx: Receiver<NetOutbound>,
+    frame_cursor: FrameCursor,
+    initial_snapshot: InitialSnapshot,
+    expected_players: u32,
+) -> std::io::Result<ServerHandle> {
     let cancellation = Arc::new(AtomicBool::new(false));
-    let peer_threads = Arc::new(Mutex::new(Vec::new()));
-    let active_connections = Arc::new(Mutex::new(HashMap::new()));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (bridge_thread, outgoing_async_rx) = spawn_outgoing_bridge(
+        "mp-server-outgoing-bridge",
+        outgoing_rx,
+        Arc::clone(&cancellation),
+    )?;
 
-    // Spawn a thread that takes locally-produced PlayerCommands,
-    // stamps them with seat 0 + a target frame, fans them out to every
-    // peer's writer queue, AND echoes them back into incoming_tx so
-    // the local game loop applies them in the same input order every
-    // other machine does.  Target frame = current sim frame +
-    // INPUT_DELAY_FRAMES so peers (which receive the broadcast over
-    // the wire with some latency) still have time to apply at the
-    // matching frame; if a peer is already past the target, the
-    // rollback path picks up the slack.
-    let outgoing_thread = {
-        let peers = Arc::clone(&peers);
-        let incoming_tx = incoming_tx.clone();
-        let cursor = Arc::clone(&frame_cursor);
-        let cancellation = Arc::clone(&cancellation);
-        thread::Builder::new()
-            .name("mp-server-outgoing".into())
-            .spawn(move || {
-                while !cancellation.load(Ordering::Acquire) {
-                    let msg = match outgoing_rx.recv_timeout(WORKER_POLL_INTERVAL) {
-                        Ok(msg) => msg,
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    };
-                    match msg {
-                        NetOutbound::Input {
-                            origin_frame,
-                            command,
-                        } => {
-                            let now = cursor.load(Ordering::Relaxed);
-                            let target = now.max(origin_frame).saturating_add(INPUT_DELAY_FRAMES);
-                            let inp = PlayerInput::new(PlayerId::HOST, command);
-                            broadcast_input(&peers, &incoming_tx, now, origin_frame, target, inp);
-                        }
-                        NetOutbound::StateHash {
-                            frame,
-                            hash,
-                            clock_frame,
-                            ms_until_next_frame,
-                        } => {
-                            // Authoritative-host state hash: broadcast as
-                            // a wire `StateHash` to every peer.  No echo
-                            // into our own incoming channel — the local
-                            // game loop already has the value (it just
-                            // computed the hash before pushing here).
-                            let to_send: Vec<Sender<NetMsg>> = {
-                                let p = peers.lock();
-                                p.senders.values().cloned().collect()
-                            };
-                            for sender in to_send {
-                                let _ = sender.send(NetMsg::StateHash {
-                                    frame,
-                                    hash,
-                                    clock_frame,
-                                    ms_until_next_frame,
-                                });
-                            }
-                        }
-                        NetOutbound::InitialSnapshot {
-                            frame,
-                            engine_bytes,
-                        } => {
-                            // A peer can complete the WebSocket handshake
-                            // before mission setup has produced the
-                            // frame-0 snapshot.  Push the snapshot to all
-                            // currently-connected peers as soon as it
-                            // exists; later peers still receive it through
-                            // the handshake cache.
-                            let to_send: Vec<Sender<NetMsg>> = {
-                                let p = peers.lock();
-                                p.senders.values().cloned().collect()
-                            };
-                            for sender in to_send {
-                                let _ = sender.send(NetMsg::InitialSnapshot {
-                                    frame,
-                                    engine_bytes: engine_bytes.clone(),
-                                });
-                            }
-                        }
-                        NetOutbound::ReadyToSim { frame } => {
-                            let begin = {
-                                let mut p = peers.lock();
-                                p.host_ready_frame = Some(frame);
-                                maybe_begin_sim_locked(&mut p)
-                            };
-                            if let Some((begin_frame, start_epoch_ms, senders)) = begin {
-                                tracing::info!(
-                                    frame = begin_frame,
-                                    start_epoch_ms,
-                                    "multiplayer: ready barrier complete"
-                                );
-                                let _ = incoming_tx.send(NetEvent::BeginSim {
-                                    frame: begin_frame,
-                                    start_epoch_ms,
-                                });
-                                for sender in senders {
-                                    let _ = sender.send(NetMsg::BeginSim {
-                                        frame: begin_frame,
-                                        start_epoch_ms,
-                                    });
-                                }
-                            }
-                        }
-                        NetOutbound::ModalDismiss { kind, result } => {
-                            let _ = incoming_tx.send(NetEvent::ModalDismiss {
-                                kind: kind.clone(),
-                                result,
-                            });
-                            let to_send: Vec<Sender<NetMsg>> = {
-                                let p = peers.lock();
-                                p.senders.values().cloned().collect()
-                            };
-                            for sender in to_send {
-                                let _ = sender.send(NetMsg::ModalDismiss {
-                                    kind: kind.clone(),
-                                    result,
-                                });
-                            }
-                        }
-                    }
-                }
-                tracing::info!("server outgoing-pump thread stopped");
-            })?
-    };
+    let context = Arc::new(ServerContext {
+        peers: Mutex::new(ServerPeers::new(expected_players.max(1))),
+        incoming_tx,
+        host_nickname,
+        mission_id,
+        mission_seed,
+        sim_config,
+        frame_cursor,
+        initial_snapshot,
+        cancellation: Arc::clone(&cancellation),
+    });
 
-    // Accept loop — for each new connection, spawn handler threads.
-    let peers_for_accept = Arc::clone(&peers);
-    let host_nick_for_accept = host_nickname;
-    let mission_id_for_accept = mission_id;
-    let cursor_for_accept = Arc::clone(&frame_cursor);
-    let snapshot_for_accept = std::sync::Arc::clone(&initial_snapshot);
-    let cancellation_for_accept = Arc::clone(&cancellation);
-    let peer_threads_for_accept = Arc::clone(&peer_threads);
-    let active_connections_for_accept = Arc::clone(&active_connections);
-    let accept_thread = match thread::Builder::new()
-        .name("mp-accept".into())
-        .spawn(move || {
-            let mut next_connection_id = 0_u64;
-            while !cancellation_for_accept.load(Ordering::Acquire) {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        let connection_id = next_connection_id;
-                        let Some(next_id) = next_connection_id.checked_add(1) else {
-                            tracing::error!("multiplayer connection id overflow");
-                            break;
-                        };
-                        next_connection_id = next_id;
-                        let shutdown_stream = match stream.try_clone() {
-                            Ok(stream) => stream,
-                            Err(e) => {
-                                tracing::warn!("failed to track accepted peer socket: {e}");
-                                continue;
-                            }
-                        };
-                        active_connections_for_accept
-                            .lock()
-                            .insert(connection_id, shutdown_stream);
-                        let peers = Arc::clone(&peers_for_accept);
-                        let incoming_tx = incoming_tx.clone();
-                        let host_nick = host_nick_for_accept.clone();
-                        let mission_id = mission_id_for_accept.clone();
-                        let cursor = Arc::clone(&cursor_for_accept);
-                        let snapshot = std::sync::Arc::clone(&snapshot_for_accept);
-                        let cancellation = Arc::clone(&cancellation_for_accept);
-                        let active_connections = Arc::clone(&active_connections_for_accept);
-                        let handle =
-                            thread::Builder::new()
-                                .name("mp-handshake".into())
-                                .spawn(move || {
-                                    let _connection_guard = ActiveConnectionGuard {
-                                        id: connection_id,
-                                        connections: active_connections,
-                                    };
-                                    if let Err(e) = handle_incoming_peer(
-                                        stream,
-                                        peers,
-                                        incoming_tx,
-                                        host_nick,
-                                        mission_id.clone(),
-                                        mission_seed,
-                                        sim_config,
-                                        cursor,
-                                        snapshot,
-                                        Arc::clone(&cancellation),
-                                    ) && !cancellation.load(Ordering::Acquire)
-                                    {
-                                        tracing::warn!("incoming peer handler ended: {e}");
-                                    }
-                                });
-                        match handle {
-                            Ok(handle) => peer_threads_for_accept.lock().push(handle),
-                            Err(e) => {
-                                active_connections_for_accept.lock().remove(&connection_id);
-                                tracing::error!("failed to spawn peer worker: {e}");
-                            }
-                        }
-                    }
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                        thread::sleep(WORKER_POLL_INTERVAL);
-                    }
-                    Err(_e) if cancellation_for_accept.load(Ordering::Acquire) => break,
-                    Err(e) => {
-                        tracing::warn!("accept error: {e}");
-                        break;
-                    }
+    let (startup_tx, startup_rx) =
+        std::sync::mpsc::sync_channel::<Result<(EndpointId, EndpointAddr), String>>(1);
+    let runtime_thread = thread::Builder::new().name("mp-server".into()).spawn({
+        let context = Arc::clone(&context);
+        move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let _ = startup_tx.send(Err(format!("build tokio runtime: {e}")));
+                    return;
                 }
+            };
+            rt.block_on(run_server(
+                key,
+                context,
+                outgoing_async_rx,
+                startup_tx,
+                shutdown_rx,
+            ));
+            if bridge_thread.join().is_err() {
+                tracing::error!("multiplayer server outgoing bridge panicked");
             }
-        }) {
-        Ok(handle) => handle,
+        }
+    })?;
+
+    let (endpoint_id, endpoint_addr) = match startup_rx.recv() {
+        Ok(Ok(result)) => result,
+        Ok(Err(err)) => {
+            cancellation.store(true, Ordering::Release);
+            let _ = shutdown_tx.send(true);
+            let _ = runtime_thread.join();
+            return Err(std::io::Error::other(err));
+        }
         Err(e) => {
             cancellation.store(true, Ordering::Release);
-            let _ = outgoing_thread.join();
-            return Err(e);
+            let _ = shutdown_tx.send(true);
+            let _ = runtime_thread.join();
+            return Err(std::io::Error::other(format!(
+                "server startup channel closed: {e}"
+            )));
         }
     };
+    tracing::info!(
+        endpoint_id = %endpoint_id,
+        seed = mission_seed,
+        "multiplayer server listening on iroh"
+    );
 
     Ok(ServerHandle {
         local_seat: PlayerId::HOST,
         mission_seed,
-        local_addr,
+        endpoint_id,
+        endpoint_addr,
         cancellation,
-        peers,
-        accept_thread: Some(accept_thread),
-        outgoing_thread: Some(outgoing_thread),
-        peer_threads,
-        active_connections,
+        shutdown_tx,
+        runtime_thread: Some(runtime_thread),
     })
 }
 
+async fn run_server(
+    key: SecretKey,
+    context: Arc<ServerContext>,
+    outgoing_async_rx: UnboundedReceiver<NetOutbound>,
+    startup_tx: std::sync::mpsc::SyncSender<Result<(EndpointId, EndpointAddr), String>>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) {
+    let endpoint = match bind_endpoint(key, GAME_ALPN).await {
+        Ok(endpoint) => endpoint,
+        Err(e) => {
+            let _ = startup_tx.send(Err(e));
+            return;
+        }
+    };
+    let _ = startup_tx.send(Ok((endpoint.id(), endpoint.addr())));
+
+    let pump = tokio::spawn(run_server_outgoing_pump(
+        Arc::clone(&context),
+        outgoing_async_rx,
+    ));
+    let accept = tokio::spawn(run_server_accept_loop(
+        Arc::clone(&context),
+        endpoint.clone(),
+    ));
+
+    // Root task: wait for shutdown, then close the endpoint (which
+    // ends every peer connection and wakes the accept loop).
+    let _ = shutdown_rx.wait_for(|stop| *stop).await;
+    endpoint.close().await;
+    accept.abort();
+    pump.abort();
+    let _ = accept.await;
+    let _ = pump.await;
+    tracing::info!("multiplayer server runtime stopped");
+}
+
+/// Take locally-produced messages from the game loop, stamp them with
+/// seat 0 + a target frame, fan them out to every peer's writer
+/// queue, AND echo them back into `incoming_tx` so the local game
+/// loop applies them in the same input order every other machine
+/// does.  Target frame = current sim frame + [`INPUT_DELAY_FRAMES`]
+/// so peers (which receive the broadcast over the wire with some
+/// latency) still have time to apply at the matching frame; if a peer
+/// is already past the target, the rollback path picks up the slack.
+async fn run_server_outgoing_pump(
+    context: Arc<ServerContext>,
+    mut outgoing_async_rx: UnboundedReceiver<NetOutbound>,
+) {
+    while let Some(msg) = outgoing_async_rx.recv().await {
+        match msg {
+            NetOutbound::Input {
+                origin_frame,
+                command,
+            } => {
+                let now = context.frame_cursor.load(Ordering::Relaxed);
+                let target = now.max(origin_frame).saturating_add(INPUT_DELAY_FRAMES);
+                let inp = PlayerInput::new(PlayerId::HOST, command);
+                broadcast_input(&context, now, origin_frame, target, inp);
+            }
+            NetOutbound::StateHash {
+                frame,
+                hash,
+                clock_frame,
+                ms_until_next_frame,
+            } => {
+                // Authoritative-host state hash: broadcast as a wire
+                // `StateHash` to every peer.  No echo into our own
+                // incoming channel — the local game loop already has
+                // the value (it just computed the hash before pushing
+                // here).
+                broadcast_msg(
+                    &context,
+                    NetMsg::StateHash {
+                        frame,
+                        hash,
+                        clock_frame,
+                        ms_until_next_frame,
+                    },
+                );
+            }
+            NetOutbound::InitialSnapshot {
+                frame,
+                engine_bytes,
+            } => {
+                // A peer can complete the handshake before mission
+                // setup has produced the frame-0 snapshot.  Push the
+                // snapshot to all currently-connected peers as soon
+                // as it exists; later peers still receive it through
+                // the handshake cache.
+                broadcast_msg(
+                    &context,
+                    NetMsg::InitialSnapshot {
+                        frame,
+                        engine_bytes,
+                    },
+                );
+            }
+            NetOutbound::ReadyToSim { frame } => {
+                let begin = {
+                    let mut p = context.peers.lock();
+                    p.host_ready_frame = Some(frame);
+                    maybe_begin_sim_locked(&mut p)
+                };
+                announce_begin_sim(&context, begin);
+            }
+            NetOutbound::ModalDismiss { kind, result } => {
+                let _ = context.incoming_tx.send(NetEvent::ModalDismiss {
+                    kind: kind.clone(),
+                    result,
+                });
+                broadcast_msg(&context, NetMsg::ModalDismiss { kind, result });
+            }
+        }
+    }
+    tracing::info!("server outgoing pump stopped");
+}
+
+fn announce_begin_sim(
+    context: &ServerContext,
+    begin: Option<(u32, u64, Vec<UnboundedSender<NetMsg>>)>,
+) {
+    if let Some((begin_frame, start_epoch_ms, senders)) = begin {
+        tracing::info!(
+            frame = begin_frame,
+            start_epoch_ms,
+            "multiplayer: ready barrier complete"
+        );
+        let _ = context.incoming_tx.send(NetEvent::BeginSim {
+            frame: begin_frame,
+            start_epoch_ms,
+        });
+        for sender in senders {
+            let _ = sender.send(NetMsg::BeginSim {
+                frame: begin_frame,
+                start_epoch_ms,
+            });
+        }
+    }
+}
+
+/// Send one message to every connected peer's writer queue.
+fn broadcast_msg(context: &ServerContext, msg: NetMsg) {
+    let to_send: Vec<UnboundedSender<NetMsg>> = {
+        let p = context.peers.lock();
+        p.senders.values().cloned().collect()
+    };
+    for sender in to_send {
+        let _ = sender.send(msg.clone());
+    }
+}
+
 /// Send a [`NetMsg::BroadcastInput`] to every peer plus echo it into
-/// the local game-loop event stream.  Drops senders that error out
-/// (signals a disconnected peer; the per-peer reader thread emits
-/// `SeatLeft` on the way out).
+/// the local game-loop event stream.  A send failure just means that
+/// peer's writer task ended (its reader emits `DisconnectSeat` on the
+/// way out).
 fn broadcast_input(
-    peers: &Arc<Mutex<ServerPeers>>,
-    incoming_tx: &Sender<NetEvent>,
+    context: &ServerContext,
     server_frame: u32,
     origin_frame: u32,
     target_frame: u32,
     inp: PlayerInput,
 ) {
     // Local fan-in: feed the input back into our own game loop.
-    let _ = incoming_tx.send(NetEvent::Input {
+    let _ = context.incoming_tx.send(NetEvent::Input {
         server_frame,
         origin_frame,
         target_frame,
         input: inp.clone(),
     });
 
-    // Send to every peer.  Hold the lock briefly to clone the
-    // sender list; the actual sends happen unlocked.
-    let to_send: Vec<(u8, Sender<NetMsg>)> = {
-        let p = peers.lock();
+    let to_send: Vec<(u8, UnboundedSender<NetMsg>)> = {
+        let p = context.peers.lock();
         p.senders.iter().map(|(k, v)| (*k, v.clone())).collect()
     };
     for (seat, sender) in to_send {
@@ -522,55 +571,43 @@ fn broadcast_input(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn handle_incoming_peer(
-    stream: TcpStream,
-    peers: Arc<Mutex<ServerPeers>>,
-    incoming_tx: Sender<NetEvent>,
-    host_nickname: String,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
-    cancellation: Arc<AtomicBool>,
+async fn run_server_accept_loop(context: Arc<ServerContext>, endpoint: Endpoint) {
+    while let Some(incoming) = endpoint.accept().await {
+        let context = Arc::clone(&context);
+        tokio::spawn(async move {
+            let cancelled = context.cancellation.load(Ordering::Acquire);
+            if let Err(e) = handle_incoming_peer(&context, incoming).await
+                && !cancelled
+                && !context.cancellation.load(Ordering::Acquire)
+            {
+                tracing::warn!("incoming peer handler ended: {e}");
+            }
+        });
+    }
+    tracing::info!("multiplayer accept loop stopped");
+}
+
+async fn handle_incoming_peer(
+    context: &ServerContext,
+    incoming: iroh::endpoint::Incoming,
 ) -> Result<(), String> {
-    if let Err(e) = stream.set_nodelay(true) {
-        tracing::warn!("failed to set TCP_NODELAY on peer stream: {e}");
-    }
-    let peer_addr = stream
-        .peer_addr()
-        .map(|a| a.to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-    tracing::info!(peer = %peer_addr, "incoming connection");
+    let conn = incoming
+        .await
+        .map_err(|e| format!("peer connecting: {e}"))?;
+    let peer_id = conn.remote_id().to_string();
+    tracing::info!(peer = %peer_id, "incoming connection");
 
-    // Dup the TCP stream BEFORE the WebSocket handshake so the writer
-    // thread can wrap its own half once the handshake completes.
-    // Both halves see the same TCP connection (full-duplex), and we
-    // discipline ourselves: the reader thread only ever reads; the
-    // writer thread only ever writes.  WebSocket framing is
-    // direction-independent so per-half WebSocket instances don't
-    // confuse each other.
-    let writer_stream = stream
-        .try_clone()
-        .map_err(|e| format!("dup peer stream: {e}"))?;
-    if let Err(e) = writer_stream.set_nodelay(true) {
-        tracing::warn!("failed to set TCP_NODELAY on peer writer stream: {e}");
-    }
-
-    let mut ws = ws_accept(stream).map_err(|e| format!("ws upgrade: {e}"))?;
+    let (mut send, mut recv) = conn
+        .accept_bi()
+        .await
+        .map_err(|e| format!("accept peer stream: {e}"))?;
 
     // Receive Hello.  Reject anything else.
-    let hello_frame = ws.read().map_err(|e| format!("read Hello: {e}"))?;
-    let hello_bytes = match hello_frame {
-        WsMessage::Binary(b) => b,
-        other => return Err(format!("expected binary Hello, got {other:?}")),
-    };
-    let nickname = match decode_msg(&hello_bytes).map_err(|e| format!("decode Hello: {e}"))? {
-        NetMsg::Hello {
+    let nickname = match read_frame(&mut recv).await? {
+        Some(NetMsg::Hello {
             protocol_version,
             nickname,
-        } => {
+        }) => {
             if protocol_version != NET_PROTOCOL_VERSION {
                 return Err(format!(
                     "protocol mismatch (peer={protocol_version}, server={NET_PROTOCOL_VERSION})"
@@ -578,92 +615,56 @@ fn handle_incoming_peer(
             }
             nickname
         }
-        other => return Err(format!("expected Hello, got {other:?}")),
+        Some(other) => return Err(format!("expected Hello, got {other:?}")),
+        None => return Err("connection closed before Hello".to_string()),
     };
 
     // Assign a seat — reuse the previously-held one if this nickname
     // is a returning peer.  Otherwise allocate the next fresh seat.
-    let (assigned_seat_u8, write_rx, is_rejoin) = {
-        let mut p = peers.lock();
-        let (seat, rejoin) = if let Some(prior) = p.disconnected_seats.remove(&nickname) {
+    let (assigned_seat_u8, mut write_rx) = {
+        let mut p = context.peers.lock();
+        let seat = if let Some(prior) = p.disconnected_seats.remove(&nickname) {
             tracing::info!(
                 nickname = %nickname,
                 seat = prior,
                 "peer rejoining: reassigning prior seat"
             );
-            (prior, true)
+            prior
         } else {
             let next = p.next_seat;
             p.next_seat = next.checked_add(1).ok_or("seat overflow")?;
-            (next, false)
+            next
         };
-        let (write_tx, write_rx) = channel::<NetMsg>();
+        let (write_tx, write_rx) = unbounded_channel::<NetMsg>();
         p.senders.insert(seat, write_tx);
         p.nicknames.insert(seat, nickname.clone());
-        (seat, write_rx, rejoin)
+        (seat, write_rx)
     };
     let assigned_seat = PlayerId(assigned_seat_u8);
-    let _ = is_rejoin;
 
-    // Spawn the writer thread, owned by this peer.  It drains
-    // `write_rx` (frames the broadcast loop / handshake pushes) and
-    // writes them onto the duplicated TCP half.
-    let writer_cancellation = Arc::clone(&cancellation);
-    let writer_handle = thread::Builder::new()
-        .name(format!("mp-peer-{assigned_seat_u8}-tx"))
-        .spawn(move || {
-            let mut writer_ws = tungstenite::WebSocket::from_raw_socket(
-                writer_stream,
-                tungstenite::protocol::Role::Server,
-                None,
-            );
-            while !writer_cancellation.load(Ordering::Acquire) {
-                let msg = match write_rx.recv_timeout(WORKER_POLL_INTERVAL) {
-                    Ok(msg) => msg,
-                    Err(RecvTimeoutError::Timeout) => continue,
-                    Err(RecvTimeoutError::Disconnected) => break,
-                };
-                let bytes = encode_msg(&msg);
-                if let Err(e) = writer_ws.send(WsMessage::Binary(bytes.into())) {
-                    tracing::warn!(seat = assigned_seat_u8, "writer send failed: {e}");
-                    break;
-                }
-                if let Err(e) = writer_ws.flush() {
-                    tracing::warn!(seat = assigned_seat_u8, "writer flush failed: {e}");
-                    break;
-                }
-            }
-            tracing::info!(seat = assigned_seat_u8, "peer writer thread stopped");
-        })
-        .map_err(|e| format!("spawn peer writer: {e}"))?;
-    let writer = PeerWriterGuard {
-        seat: assigned_seat_u8,
-        peers: Arc::clone(&peers),
-        handle: Some(writer_handle),
-    };
-
-    // Send Welcome to this peer.  Goes through the writer queue so
-    // the writer thread is the only thing that touches the outbound
-    // half of the socket.  If the host has cached an initial-state
-    // snapshot we follow up with that — mid-mission joiners adopt
-    // it instead of trying to reproduce engine init from seed alone.
+    // Queue Welcome for this peer.  Goes through the writer queue so
+    // the writer task is the only thing that touches the outbound
+    // half of the stream.  If the host has cached an initial-state
+    // snapshot we follow up with that — mid-mission joiners adopt it
+    // instead of trying to reproduce engine init from seed alone.
     {
-        let p = peers.lock();
+        let p = context.peers.lock();
         if let Some(sender) = p.senders.get(&assigned_seat_u8) {
             sender
                 .send(NetMsg::Welcome {
                     your_seat: assigned_seat,
-                    mission_id: mission_id.clone(),
-                    mission_seed,
-                    sim_config,
-                    host_nickname: host_nickname.clone(),
+                    mission_id: context.mission_id.clone(),
+                    mission_seed: context.mission_seed,
+                    sim_config: context.sim_config,
+                    host_nickname: context.host_nickname.clone(),
                 })
                 .map_err(|_| "writer queue closed before Welcome")?;
-            // `InitialSnapshot` is a plain std mutex shared with the game
-            // loop; the snapshot value is only ever replaced wholesale, so
-            // recover it if a prior holder panicked instead of silently
-            // skipping the snapshot send.
-            let snapshot_frame = if let Some((frame, engine)) = initial_snapshot
+            // `InitialSnapshot` is a plain std mutex shared with the
+            // game loop; the snapshot value is only ever replaced
+            // wholesale, so recover it if a prior holder panicked
+            // instead of silently skipping the snapshot send.
+            let snapshot_frame = if let Some((frame, engine)) = context
+                .initial_snapshot
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
@@ -713,13 +714,13 @@ fn handle_incoming_peer(
     }
 
     // Broadcast ConnectSeat as a regular tagged BroadcastInput.
-    // Routing through `broadcast_input` stamps `target_frame` from the
-    // shared cursor (so the local echo and every peer apply the
+    // Routing through `broadcast_input` stamps `target_frame` from
+    // the shared cursor (so the local echo and every peer apply the
     // ConnectSeat at the same simulation frame), keeping the seat's
-    // arrival deterministic across machines.  Receivers fold it
-    // into the engine's `seats` vec just like any other input.
+    // arrival deterministic across machines.  Receivers fold it into
+    // the engine's `seats` vec just like any other input.
     {
-        let now = frame_cursor.load(Ordering::Relaxed);
+        let now = context.frame_cursor.load(Ordering::Relaxed);
         let target = now.saturating_add(INPUT_DELAY_FRAMES);
         let inp = PlayerInput::new(
             PlayerId::HOST,
@@ -728,40 +729,47 @@ fn handle_incoming_peer(
                 nickname: nickname.clone(),
             },
         );
-        broadcast_input(&peers, &incoming_tx, now, now, target, inp);
+        broadcast_input(context, now, now, target, inp);
     }
 
-    // Reader loop on the original WebSocket half.  Every Input
-    // received gets stamped with the peer's assigned seat (defensive
-    // — the client tags its own outgoing too, but we don't trust the
-    // wire) and a target frame derived from the server's current sim
-    // frame at receive time, before broadcasting.
-    let result = run_server_peer_reader(
-        &mut ws,
-        assigned_seat,
-        Arc::clone(&peers),
-        incoming_tx.clone(),
-        Arc::clone(&frame_cursor),
-        Arc::clone(&cancellation),
-    );
+    // Writer half: drain the peer's queue onto the stream.  Reader
+    // half: every Input received gets stamped with the peer's
+    // assigned seat (defensive — the client tags its own outgoing
+    // too, but we don't trust the wire) and a target frame derived
+    // from the server's current sim frame at receive time, before
+    // broadcasting.  Both halves run in this task via `select!` so
+    // either side ending tears the peer down.
+    let result = {
+        let writer = async {
+            while let Some(msg) = write_rx.recv().await {
+                write_frame(&mut send, &msg).await?;
+            }
+            // Queue closed: seat was dropped (shutdown or cleanup).
+            Ok::<(), String>(())
+        };
+        let reader = run_server_peer_reader(context, assigned_seat, &mut recv);
+        tokio::select! {
+            result = reader => result,
+            result = writer => result.map_err(|e| format!("peer writer: {e}")),
+        }
+    };
 
-    // On disconnect: drop the peer slot, broadcast SeatLeft.  The
-    // writer thread will exit once we drop its sender.  The nickname
-    // is parked in `disconnected_seats` so a future `Hello` from the
-    // same nickname is reassigned the same seat — the sim preserves
-    // the seat's selection / hotgroups across the disconnect, so the
-    // rejoining peer takes back ownership of the PCs they were
-    // controlling.
+    // On disconnect: drop the peer slot, broadcast DisconnectSeat.
+    // The nickname is parked in `disconnected_seats` so a future
+    // `Hello` from the same nickname is reassigned the same seat —
+    // the sim preserves the seat's selection / hotgroups across the
+    // disconnect, so the rejoining peer takes back ownership of the
+    // PCs they were controlling.
     {
-        let mut p = peers.lock();
+        let mut p = context.peers.lock();
         p.senders.remove(&assigned_seat_u8);
         p.ready_seats.remove(&assigned_seat_u8);
         if let Some(nick) = p.nicknames.remove(&assigned_seat_u8) {
             p.disconnected_seats.insert(nick, assigned_seat_u8);
         }
     }
-    if !cancellation.load(Ordering::Acquire) {
-        let now = frame_cursor.load(Ordering::Relaxed);
+    if !context.cancellation.load(Ordering::Acquire) {
+        let now = context.frame_cursor.load(Ordering::Relaxed);
         let target = now.saturating_add(INPUT_DELAY_FRAMES);
         let inp = PlayerInput::new(
             PlayerId::HOST,
@@ -769,90 +777,53 @@ fn handle_incoming_peer(
                 player_id: assigned_seat,
             },
         );
-        broadcast_input(&peers, &incoming_tx, now, now, target, inp);
+        broadcast_input(context, now, now, target, inp);
     }
-
-    writer.join();
+    conn.close(CLOSE_GRACEFUL.into(), b"session over");
 
     result
 }
 
-fn run_server_peer_reader(
-    ws: &mut tungstenite::WebSocket<TcpStream>,
+async fn run_server_peer_reader(
+    context: &ServerContext,
     seat: PlayerId,
-    peers: Arc<Mutex<ServerPeers>>,
-    incoming_tx: Sender<NetEvent>,
-    frame_cursor: FrameCursor,
-    cancellation: Arc<AtomicBool>,
+    recv: &mut RecvStream,
 ) -> Result<(), String> {
-    while !cancellation.load(Ordering::Acquire) {
-        match ws.read() {
-            Ok(WsMessage::Binary(b)) => match decode_msg(&b) {
-                Ok(NetMsg::Input {
-                    origin_frame,
-                    command,
-                }) => {
-                    let now = frame_cursor.load(Ordering::Relaxed);
-                    let target = now.max(origin_frame).saturating_add(INPUT_DELAY_FRAMES);
-                    let inp = PlayerInput::new(seat, command);
-                    broadcast_input(&peers, &incoming_tx, now, origin_frame, target, inp);
-                }
-                Ok(NetMsg::Note(s)) => {
-                    tracing::info!(?seat, note = %s, "peer note");
-                }
-                Ok(NetMsg::ModalDismiss { kind, result }) => {
-                    let _ = incoming_tx.send(NetEvent::ModalDismiss {
-                        kind: kind.clone(),
-                        result,
-                    });
-                    let to_send: Vec<Sender<NetMsg>> = {
-                        let p = peers.lock();
-                        p.senders.values().cloned().collect()
-                    };
-                    for sender in to_send {
-                        let _ = sender.send(NetMsg::ModalDismiss {
-                            kind: kind.clone(),
-                            result,
-                        });
-                    }
-                }
-                Ok(NetMsg::ReadyToSim { frame }) => {
-                    let begin = {
-                        let mut p = peers.lock();
-                        p.ready_seats.insert(seat.0, frame);
-                        maybe_begin_sim_locked(&mut p)
-                    };
-                    if let Some((begin_frame, start_epoch_ms, senders)) = begin {
-                        tracing::info!(
-                            frame = begin_frame,
-                            start_epoch_ms,
-                            "multiplayer: ready barrier complete"
-                        );
-                        let _ = incoming_tx.send(NetEvent::BeginSim {
-                            frame: begin_frame,
-                            start_epoch_ms,
-                        });
-                        for sender in senders {
-                            let _ = sender.send(NetMsg::BeginSim {
-                                frame: begin_frame,
-                                start_epoch_ms,
-                            });
-                        }
-                    }
-                }
-                Ok(other) => {
-                    tracing::debug!(?seat, ?other, "ignoring inbound message from peer");
-                }
-                Err(e) => {
-                    tracing::warn!(?seat, "decode failure from peer: {e}");
-                }
-            },
-            Ok(WsMessage::Close(_)) => return Ok(()),
-            Ok(_) => {}
-            Err(e) => return Err(format!("read: {e}")),
+    loop {
+        match read_frame(recv).await? {
+            Some(NetMsg::Input {
+                origin_frame,
+                command,
+            }) => {
+                let now = context.frame_cursor.load(Ordering::Relaxed);
+                let target = now.max(origin_frame).saturating_add(INPUT_DELAY_FRAMES);
+                let inp = PlayerInput::new(seat, command);
+                broadcast_input(context, now, origin_frame, target, inp);
+            }
+            Some(NetMsg::Note(s)) => {
+                tracing::info!(?seat, note = %s, "peer note");
+            }
+            Some(NetMsg::ModalDismiss { kind, result }) => {
+                let _ = context.incoming_tx.send(NetEvent::ModalDismiss {
+                    kind: kind.clone(),
+                    result,
+                });
+                broadcast_msg(context, NetMsg::ModalDismiss { kind, result });
+            }
+            Some(NetMsg::ReadyToSim { frame }) => {
+                let begin = {
+                    let mut p = context.peers.lock();
+                    p.ready_seats.insert(seat.0, frame);
+                    maybe_begin_sim_locked(&mut p)
+                };
+                announce_begin_sim(context, begin);
+            }
+            Some(other) => {
+                tracing::debug!(?seat, ?other, "ignoring inbound message from peer");
+            }
+            None => return Ok(()),
         }
     }
-    Ok(())
 }
 
 // ─── Client ──────────────────────────────────────────────────────
@@ -901,27 +872,39 @@ impl Drop for ClientHandle {
     }
 }
 
-/// Connect to a multiplayer server and run the I/O thread.  Returns
-/// once the WebSocket handshake completes; the assigned seat is
-/// reported through `incoming_tx` as a [`NetEvent::AssignedLocalSeat`].
-pub fn connect_client<A: ToSocketAddrs + std::fmt::Display>(
-    addr: A,
+/// Connect to a multiplayer server and run the I/O thread.  `addr` is
+/// the host's endpoint id (or a full endpoint-address connect string,
+/// see [`parse_connect_addr`]).  Returns once the handshake
+/// completes; the assigned seat is reported through `incoming_tx` as
+/// a [`NetEvent::AssignedLocalSeat`].
+///
+/// The client binds an *ephemeral* iroh identity: unlike hosting,
+/// joining needs no stable id (rejoin seat reuse is keyed by
+/// nickname), and an ephemeral key lets two clients share a machine
+/// with the hosting install.
+pub fn connect_client(
+    addr: impl AsRef<str>,
     nickname: String,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
 ) -> std::io::Result<ClientHandle> {
-    let addr_str = addr.to_string();
+    let server_addr = parse_connect_addr(addr.as_ref()).map_err(std::io::Error::other)?;
+    let addr_display = addr.as_ref().to_string();
     let assigned_seat = Arc::new(Mutex::new(None));
     let assigned_clone = Arc::clone(&assigned_seat);
     let cancellation = Arc::new(AtomicBool::new(false));
     let cancellation_for_thread = Arc::clone(&cancellation);
     let (handshake_tx, handshake_rx) = std::sync::mpsc::sync_channel(1);
+    let (bridge_thread, mut outgoing_async_rx) = spawn_outgoing_bridge(
+        "mp-client-outgoing-bridge",
+        outgoing_rx,
+        Arc::clone(&cancellation),
+    )?;
     let io_thread = thread::Builder::new()
         .name("mp-client".into())
         .spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
+                .enable_all()
                 .build()
             {
                 Ok(rt) => rt,
@@ -930,18 +913,23 @@ pub fn connect_client<A: ToSocketAddrs + std::fmt::Display>(
                     return;
                 }
             };
+            let cancellation_for_io = Arc::clone(&cancellation_for_thread);
             rt.block_on(async move {
                 run_client_io_async(
-                    addr_str,
+                    server_addr,
                     nickname,
                     incoming_tx,
-                    outgoing_rx,
+                    &mut outgoing_async_rx,
                     assigned_clone,
                     handshake_tx,
-                    Arc::clone(&cancellation_for_thread),
+                    cancellation_for_io,
                 )
                 .await;
             });
+            cancellation_for_thread.store(true, Ordering::Release);
+            if bridge_thread.join().is_err() {
+                tracing::error!("multiplayer client outgoing bridge panicked");
+            }
         })?;
 
     let (your_seat, mission_id, mission_seed, sim_config) = match handshake_rx.recv() {
@@ -959,7 +947,12 @@ pub fn connect_client<A: ToSocketAddrs + std::fmt::Display>(
             )));
         }
     };
-    tracing::info!(%addr, ?your_seat, seed = mission_seed, "multiplayer client connected");
+    tracing::info!(
+        addr = %addr_display,
+        ?your_seat,
+        seed = mission_seed,
+        "multiplayer client connected"
+    );
 
     Ok(ClientHandle {
         assigned_seat,
@@ -971,16 +964,25 @@ pub fn connect_client<A: ToSocketAddrs + std::fmt::Display>(
     })
 }
 
-/// One round of (TCP connect → WebSocket upgrade → Hello → Welcome).
-/// Returns the live async `WebSocket` plus the assigned seat and
-/// mission seed.  Used both for the initial handshake and for the
-/// auto-retry path after disconnects.
+/// A live client session: the connection plus its single
+/// bidirectional message stream.
+struct ClientSession {
+    // Held so the QUIC connection stays open for the streams' lifetime.
+    _conn: Connection,
+    send: SendStream,
+    recv: RecvStream,
+}
+
+/// One round of (connect → open stream → Hello → Welcome).  Used both
+/// for the initial handshake and for the auto-retry path after
+/// disconnects.
 async fn handshake_async(
-    addr: &str,
+    endpoint: &Endpoint,
+    server_addr: &EndpointAddr,
     nickname: &str,
 ) -> Result<
     (
-        AsyncWs,
+        ClientSession,
         PlayerId,
         String,
         u64,
@@ -988,59 +990,65 @@ async fn handshake_async(
     ),
     String,
 > {
-    let url = format!("ws://{addr}/");
-    let request = url
-        .into_client_request()
-        .map_err(|e| format!("bad url: {e}"))?;
-    let (mut ws, _resp) = tokio_tungstenite::connect_async(request)
+    let conn = endpoint
+        .connect(server_addr.clone(), GAME_ALPN)
         .await
         .map_err(|e| format!("connect: {e}"))?;
-
-    let hello = encode_msg(&NetMsg::Hello {
-        protocol_version: NET_PROTOCOL_VERSION,
-        nickname: nickname.to_string(),
-    });
-    ws.send(WsMessage::Binary(hello.into()))
+    let (mut send, mut recv) = conn
+        .open_bi()
         .await
-        .map_err(|e| format!("send Hello: {e}"))?;
+        .map_err(|e| format!("open stream: {e}"))?;
 
-    let welcome_frame = ws
-        .next()
-        .await
-        .ok_or_else(|| "connection closed before Welcome".to_string())?
-        .map_err(|e| format!("read Welcome: {e}"))?;
-    let welcome_bytes = match welcome_frame {
-        WsMessage::Binary(b) => b,
-        other => return Err(format!("expected binary Welcome, got {other:?}")),
-    };
-    match decode_msg(&welcome_bytes).map_err(|e| format!("decode Welcome: {e}"))? {
-        NetMsg::Welcome {
+    write_frame(
+        &mut send,
+        &NetMsg::Hello {
+            protocol_version: NET_PROTOCOL_VERSION,
+            nickname: nickname.to_string(),
+        },
+    )
+    .await
+    .map_err(|e| format!("send Hello: {e}"))?;
+
+    match read_frame(&mut recv).await? {
+        Some(NetMsg::Welcome {
             your_seat,
             mission_id,
             mission_seed,
             sim_config,
             host_nickname,
-        } => {
+        }) => {
             tracing::info!(
                 ?your_seat,
                 seed = mission_seed,
                 host = %host_nickname,
                 "welcomed by server"
             );
-            Ok((ws, your_seat, mission_id, mission_seed, sim_config))
+            Ok((
+                ClientSession {
+                    _conn: conn,
+                    send,
+                    recv,
+                },
+                your_seat,
+                mission_id,
+                mission_seed,
+                sim_config,
+            ))
         }
-        other => Err(format!("expected Welcome, got {other:?}")),
+        Some(other) => Err(format!("expected Welcome, got {other:?}")),
+        None => Err("connection closed before Welcome".to_string()),
     }
 }
 
 async fn handshake_or_cancel(
-    addr: &str,
+    endpoint: &Endpoint,
+    server_addr: &EndpointAddr,
     nickname: &str,
     cancellation: &AtomicBool,
 ) -> Option<
     Result<
         (
-            AsyncWs,
+            ClientSession,
             PlayerId,
             String,
             u64,
@@ -1050,7 +1058,7 @@ async fn handshake_or_cancel(
     >,
 > {
     tokio::select! {
-        result = handshake_async(addr, nickname) => Some(result),
+        result = handshake_async(endpoint, server_addr, nickname) => Some(result),
         _ = wait_for_cancel(cancellation) => None,
     }
 }
@@ -1072,81 +1080,66 @@ fn validate_reconnect_state(
 }
 
 /// Drive one connection until it ends, then auto-reconnect with
-/// exponential backoff.  Returns when the channel side of the
-/// outgoing queue closes (the game loop dropping `host.net`).
+/// exponential backoff.  Returns when the game loop drops the
+/// outgoing queue (`host.net` dropped) or shutdown is requested.
 async fn run_client_io_async(
-    addr: String,
+    server_addr: EndpointAddr,
     nickname: String,
     incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
+    outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<
         Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
     >,
     cancellation: Arc<AtomicBool>,
 ) {
-    let (outgoing_async_tx, mut outgoing_async_rx) =
-        tokio::sync::mpsc::unbounded_channel::<NetOutbound>();
-    let bridge_cancellation = Arc::clone(&cancellation);
-    let outgoing_bridge = match thread::Builder::new()
-        .name("mp-client-outgoing-bridge".into())
-        .spawn(move || {
-            while !bridge_cancellation.load(Ordering::Acquire) {
-                let msg = match outgoing_rx.recv_timeout(WORKER_POLL_INTERVAL) {
-                    Ok(msg) => msg,
-                    Err(RecvTimeoutError::Timeout) => continue,
-                    Err(RecvTimeoutError::Disconnected) => break,
-                };
-                if outgoing_async_tx.send(msg).is_err() {
-                    break;
-                }
-            }
-        }) {
-        Ok(handle) => handle,
+    let endpoint = match bind_endpoint(SecretKey::generate(), GAME_ALPN).await {
+        Ok(endpoint) => endpoint,
         Err(e) => {
-            let _ =
-                initial_handshake_tx.send(Err(format!("spawn multiplayer outgoing bridge: {e}")));
+            let _ = initial_handshake_tx.send(Err(e));
             return;
         }
     };
 
     run_client_io_inner(
-        addr,
+        &endpoint,
+        server_addr,
         nickname,
         incoming_tx,
-        &mut outgoing_async_rx,
+        outgoing_async_rx,
         assigned,
         initial_handshake_tx,
-        Arc::clone(&cancellation),
+        cancellation,
     )
     .await;
 
-    cancellation.store(true, Ordering::Release);
-    if outgoing_bridge.join().is_err() {
-        tracing::error!("multiplayer client outgoing bridge panicked");
-    }
+    endpoint.close().await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_client_io_inner(
-    addr: String,
+    endpoint: &Endpoint,
+    server_addr: EndpointAddr,
     nickname: String,
     incoming_tx: Sender<NetEvent>,
-    outgoing_async_rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetOutbound>,
+    outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<
         Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
     >,
     cancellation: Arc<AtomicBool>,
 ) {
-    let (mut ws, your_seat, mission_id, mission_seed, sim_config) = {
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let (mut session, your_seat, mission_id, mission_seed, sim_config) = {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut backoff = std::time::Duration::from_millis(50);
         loop {
             if cancellation.load(Ordering::Acquire) {
                 let _ = initial_handshake_tx.send(Err("transport cancelled".into()));
                 return;
             }
-            let Some(handshake) = handshake_or_cancel(&addr, &nickname, &cancellation).await else {
+            let Some(handshake) =
+                handshake_or_cancel(endpoint, &server_addr, &nickname, &cancellation).await
+            else {
                 let _ = initial_handshake_tx.send(Err("transport cancelled".into()));
                 return;
             };
@@ -1184,14 +1177,7 @@ async fn run_client_io_inner(
 
     let mut backoff = std::time::Duration::from_millis(500);
     loop {
-        match run_session_async(
-            ws,
-            &incoming_tx,
-            outgoing_async_rx,
-            Arc::clone(&cancellation),
-        )
-        .await
-        {
+        match run_session_async(session, &incoming_tx, outgoing_async_rx, &cancellation).await {
             SessionEnd::Graceful => break,
             SessionEnd::Drop(reason) => {
                 tracing::warn!("client session ended: {reason}; reconnecting...");
@@ -1208,15 +1194,17 @@ async fn run_client_io_inner(
         }
         backoff = (backoff * 2).min(std::time::Duration::from_secs(10));
 
-        ws = loop {
+        session = loop {
             if cancellation.load(Ordering::Acquire) {
                 return;
             }
-            let Some(handshake) = handshake_or_cancel(&addr, &nickname, &cancellation).await else {
+            let Some(handshake) =
+                handshake_or_cancel(endpoint, &server_addr, &nickname, &cancellation).await
+            else {
                 return;
             };
             match handshake {
-                Ok((new_ws, new_seat, new_mission_id, new_seed, new_config)) => {
+                Ok((new_session, new_seat, new_mission_id, new_seed, new_config)) => {
                     if let Err(message) = validate_reconnect_state(
                         &mission_id,
                         mission_seed,
@@ -1238,7 +1226,7 @@ async fn run_client_io_inner(
                         sim_config: new_config,
                     });
                     backoff = std::time::Duration::from_millis(500);
-                    break new_ws;
+                    break new_session;
                 }
                 Err(e) => {
                     tracing::warn!("reconnect failed: {e}; will retry in {backoff:?}");
@@ -1256,7 +1244,7 @@ async fn run_client_io_inner(
 
 /// Why a client session ended.
 enum SessionEnd {
-    /// Server closed cleanly (Close frame received).
+    /// Server closed the stream cleanly.
     Graceful,
     /// Network error / unexpected drop — caller should retry.
     Drop(String),
@@ -1265,39 +1253,46 @@ enum SessionEnd {
     OutgoingClosed,
 }
 
-/// Run one client session by selecting over inbound WebSocket frames
-/// and outbound game-loop messages.  This avoids the old read-timeout
-/// polling loop, so local inputs are sent as soon as the game loop
-/// queues them.
+/// Run one client session by racing a whole-session reader loop
+/// against a whole-session writer loop, so local inputs are sent as
+/// soon as the game loop queues them.  The reader and writer each own
+/// their stream half for the session's lifetime — a `select!` over
+/// individual `read_frame` calls would drop partially-read frames
+/// when another branch fires first.
 async fn run_session_async(
-    mut ws: AsyncWs,
+    session: ClientSession,
     incoming_tx: &Sender<NetEvent>,
-    outgoing_rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetOutbound>,
-    cancellation: Arc<AtomicBool>,
+    outgoing_rx: &mut UnboundedReceiver<NetOutbound>,
+    cancellation: &AtomicBool,
 ) -> SessionEnd {
-    loop {
-        tokio::select! {
-            _ = wait_for_cancel(&cancellation) => return SessionEnd::OutgoingClosed,
-            incoming = ws.next() => {
-                let Some(incoming) = incoming else {
-                    return SessionEnd::Graceful;
-                };
-                match incoming {
-                    Ok(WsMessage::Binary(b)) => handle_client_wire_frame(incoming_tx, &b),
-                    Ok(WsMessage::Close(_)) => return SessionEnd::Graceful,
-                    Ok(_) => {}
-                    Err(e) => return SessionEnd::Drop(format!("read: {e}")),
-                }
-            }
-            outgoing = outgoing_rx.recv() => {
-                let Some(outgoing) = outgoing else {
-                    return SessionEnd::OutgoingClosed;
-                };
-                if let Err(e) = send_client_outgoing(&mut ws, outgoing).await {
-                    return SessionEnd::Drop(e);
-                }
+    let ClientSession {
+        _conn,
+        mut send,
+        mut recv,
+    } = session;
+    let reader = async {
+        loop {
+            match read_frame(&mut recv).await {
+                Ok(Some(msg)) => handle_client_wire_msg(incoming_tx, msg),
+                Ok(None) => return SessionEnd::Graceful,
+                Err(e) => return SessionEnd::Drop(e),
             }
         }
+    };
+    let writer = async {
+        loop {
+            let Some(outgoing) = outgoing_rx.recv().await else {
+                return SessionEnd::OutgoingClosed;
+            };
+            if let Err(e) = send_client_outgoing(&mut send, outgoing).await {
+                return SessionEnd::Drop(e);
+            }
+        }
+    };
+    tokio::select! {
+        _ = wait_for_cancel(cancellation) => SessionEnd::OutgoingClosed,
+        end = reader => end,
+        end = writer => end,
     }
 }
 
@@ -1315,14 +1310,14 @@ async fn sleep_or_cancel(duration: Duration, cancellation: &AtomicBool) -> bool 
     }
 }
 
-fn handle_client_wire_frame(incoming_tx: &Sender<NetEvent>, bytes: &[u8]) {
-    match decode_msg(bytes) {
-        Ok(NetMsg::BroadcastInput {
+fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) {
+    match msg {
+        NetMsg::BroadcastInput {
             server_frame,
             origin_frame,
             target_frame,
             input,
-        }) => {
+        } => {
             let _ = incoming_tx.send(NetEvent::Input {
                 server_frame,
                 origin_frame,
@@ -1330,15 +1325,15 @@ fn handle_client_wire_frame(incoming_tx: &Sender<NetEvent>, bytes: &[u8]) {
                 input,
             });
         }
-        Ok(NetMsg::Note(s)) => {
+        NetMsg::Note(s) => {
             let _ = incoming_tx.send(NetEvent::Note(s));
         }
-        Ok(NetMsg::StateHash {
+        NetMsg::StateHash {
             frame,
             hash,
             clock_frame,
             ms_until_next_frame,
-        }) => {
+        } => {
             let _ = incoming_tx.send(NetEvent::PeerStateHash {
                 frame,
                 hash,
@@ -1346,49 +1341,47 @@ fn handle_client_wire_frame(incoming_tx: &Sender<NetEvent>, bytes: &[u8]) {
                 ms_until_next_frame,
             });
         }
-        Ok(NetMsg::InitialSnapshot {
+        NetMsg::InitialSnapshot {
             frame,
             engine_bytes,
-        }) => {
+        } => {
             let _ = incoming_tx.send(NetEvent::InitialSnapshot {
                 frame,
                 engine_bytes,
             });
         }
-        Ok(NetMsg::BeginSim {
+        NetMsg::BeginSim {
             frame,
             start_epoch_ms,
-        }) => {
+        } => {
             let _ = incoming_tx.send(NetEvent::BeginSim {
                 frame,
                 start_epoch_ms,
             });
         }
-        Ok(NetMsg::ModalDismiss { kind, result }) => {
+        NetMsg::ModalDismiss { kind, result } => {
             let _ = incoming_tx.send(NetEvent::ModalDismiss { kind, result });
         }
-        Ok(other) => {
+        other => {
             tracing::debug!(?other, "ignoring unexpected wire message");
-        }
-        Err(e) => {
-            tracing::warn!("decode error: {e}");
         }
     }
 }
 
-async fn send_client_outgoing(ws: &mut AsyncWs, outgoing: NetOutbound) -> Result<(), String> {
+async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> Result<(), String> {
     match outgoing {
         NetOutbound::Input {
             origin_frame,
             command,
         } => {
-            let frame = encode_msg(&NetMsg::Input {
-                origin_frame,
-                command,
-            });
-            ws.send(WsMessage::Binary(frame.into()))
-                .await
-                .map_err(|e| format!("send: {e}"))?;
+            write_frame(
+                send,
+                &NetMsg::Input {
+                    origin_frame,
+                    command,
+                },
+            )
+            .await?;
         }
         NetOutbound::StateHash { .. } => {
             // Clients don't broadcast hashes.
@@ -1397,16 +1390,10 @@ async fn send_client_outgoing(ws: &mut AsyncWs, outgoing: NetOutbound) -> Result
             // Clients do not publish authoritative snapshots.
         }
         NetOutbound::ReadyToSim { frame } => {
-            let frame = encode_msg(&NetMsg::ReadyToSim { frame });
-            ws.send(WsMessage::Binary(frame.into()))
-                .await
-                .map_err(|e| format!("send: {e}"))?;
+            write_frame(send, &NetMsg::ReadyToSim { frame }).await?;
         }
         NetOutbound::ModalDismiss { kind, result } => {
-            let frame = encode_msg(&NetMsg::ModalDismiss { kind, result });
-            ws.send(WsMessage::Binary(frame.into()))
-                .await
-                .map_err(|e| format!("send: {e}"))?;
+            write_frame(send, &NetMsg::ModalDismiss { kind, result }).await?;
         }
     }
     Ok(())

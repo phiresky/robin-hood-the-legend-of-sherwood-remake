@@ -10,7 +10,7 @@ A list of which additional features we have added, which ones we might still wan
   follow dated `nightly-YYYY-MM-DD` prereleases. Downloads do not interrupt
   play: completed updates are applied silently after a normal game exit, and
   a previously downloaded pending update is applied before the next startup.
-  Headless games, lobby servers, standalone archives, and developer builds do
+  Headless games, standalone archives, and developer builds do
   not attempt to update themselves.
 
 - **Startup datadir selector.** When `ROBINHOOD_DATA_DIR` is unset, the
@@ -182,11 +182,16 @@ A list of which additional features we have added, which ones we might still wan
   command values and malformed/non-contiguous traces fail loudly; the first
   divergent frame is reported field-by-field.
 
-- **Basic multiplayer**. Native host/client networking, wasm WebSocket clients,
-  seat IDs, input delay, rollback for late inputs, mission seed sync,
-  state-hash desync detection, mid-mission state snapshots for joiners, and
-  client reconnect are implemented. The current design is predictive rollback
-  netcode rather than strict "wait for every peer before ticking" lockstep.
+- **Basic multiplayer**. Native host/client networking over iroh
+  (peer-to-peer QUIC with relay fallback; peers addressed by endpoint id, no
+  port forwarding), seat IDs, input delay, rollback for late inputs, mission
+  seed sync, state-hash desync detection, mid-mission state snapshots for
+  joiners, and client reconnect are implemented. Matchmaking is fully
+  serverless: the multiplayer menu joins a well-known iroh-gossip topic
+  bootstrapped through the BitTorrent Mainline DHT, so games are discovered
+  with no broker, master server, or configuration. The current design is
+  predictive rollback netcode rather than strict "wait for every peer before
+  ticking" lockstep. Browser clients are pending iroh wasm support.
 
 - **Partial Spellforge Lua mission support**. Custom-mission launch can extract
   and sandbox a Lua companion, register native shims, and call its
@@ -229,8 +234,8 @@ A list of which additional features we have added, which ones we might still wan
     are being captured.
 
 - **Multiplayer follow-ups**
-  - Add lobby leave/destroy events so clients stop showing stale sessions when
-    the host closes or leaves.
+  - Sign matchmaking announcements with the game identity key so a peer
+    cannot advertise a game under another host's endpoint id.
   - Merge rewind, rollback checking, EngineManager history, and multiplayer
     rollback into one shared timeline/history subsystem.
   - Keep flattening blocking modal flows so network events, replay commands,
