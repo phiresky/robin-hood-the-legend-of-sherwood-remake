@@ -213,27 +213,43 @@ start_collector() {
 }
 
 collect() {
-    local campaign=$1 relative remote_campaign incoming list marker marker_dir marker_base
-    local log_rel rel file destination
+    local campaign=$1 relative remote_campaign incoming available pending imported imported_tmp
+    local lock_file lock_fd rel file destination
     relative=${campaign#"$workspace"/}; remote_campaign="$remote_root/$relative"
-    incoming="$campaign/.distributed-incoming"; list="$workspace/tmp/schema16-remote-origin.files"
-    mkdir -p -- "$incoming" "${list%/*}"
-    ssh_worker "cd '$remote_root' && find '${relative}/traces' -type f -name '*.complete' -newer '${relative}/.distributed-remote-start' -printf '%p\\0'" >"$list.markers"
-    : >"$list"
-    while IFS= read -r -d '' marker; do
-        printf '%s\n' "$marker" >>"$list"
-        marker_dir=${marker%/*}
-        marker_base=${marker##*/}; marker_base=${marker_base%.complete}
-        ssh_worker "find '$remote_root/$marker_dir' -maxdepth 1 -type f -name '$marker_base-session-*.jsonl.zst' -printf '%p\\n'" \
-            | sed "s#^$remote_root/##" >>"$list"
-        log_rel=${marker/\/traces\//\/logs\/}; log_rel=${log_rel%.complete}.log
-        if ssh_worker "test -f '$remote_root/$log_rel'"; then
-            printf '%s\n' "$log_rel" >>"$list"
-        fi
-    done <"$list.markers"
-    [[ -s "$list" ]] || return 0
-    sort -u -o "$list" "$list"
-    rsync -aR --files-from="$list" -e "ssh -F $ssh_config" "$remote_host:$remote_root/" "$incoming/"
+    incoming="$campaign/.distributed-incoming"
+    imported="$campaign/.distributed-imported-files"
+    lock_file="$campaign/.distributed-collector.lock"
+    mkdir -p -- "$incoming" "$workspace/tmp"
+    exec {lock_fd}>"$lock_file"
+    flock "$lock_fd"
+    available=$(mktemp "$workspace/tmp/schema16-remote-available.XXXXXX")
+    pending=$(mktemp "$workspace/tmp/schema16-remote-pending.XXXXXX")
+    imported_tmp=$(mktemp "$workspace/tmp/schema16-remote-imported.XXXXXX")
+    touch "$imported"
+
+    # Inventory the whole remote-origin suffix in one SSH round trip.  The
+    # start marker was created after the pre-migration local corpus sync, so
+    # only files authored by remote shards compare newer.  A persistent local
+    # manifest turns later scans into a cheap set difference instead of
+    # retransferring and revalidating every earlier result.
+    ssh_worker "cd '$remote_root' && { \
+        find '${relative}/traces' -type f \
+            \( -name '*.jsonl.zst' -o -name '*.complete' \) \
+            -newer '${relative}/.distributed-remote-start' -printf '%p\\n'; \
+        find '${relative}/logs' -type f -name '*.log' \
+            -newer '${relative}/.distributed-remote-start' -printf '%p\\n'; \
+    } | sort -u" >"$available"
+    sort -u "$imported" >"$imported_tmp"
+    mv -f -- "$imported_tmp" "$imported"
+    comm -23 "$available" "$imported" >"$pending"
+    if [[ ! -s "$pending" ]]; then
+        rm -f -- "$available" "$pending"
+        exec {lock_fd}>&-
+        return 0
+    fi
+
+    rsync -aR --files-from="$pending" -e "ssh -F $ssh_config" \
+        "$remote_host:$remote_root/" "$incoming/"
     while IFS= read -r rel; do
         file="$incoming/$rel"; destination="$workspace/$rel"
         if [[ "$file" == *.jsonl.zst ]]; then zstd -t -q --long=31 -- "$file"; fi
@@ -244,7 +260,12 @@ collect() {
         else
             mv -- "$file" "$destination"
         fi
-    done <"$list"
+        printf '%s\n' "$rel" >>"$imported"
+    done <"$pending"
+    sort -u "$imported" >"$imported_tmp"
+    mv -f -- "$imported_tmp" "$imported"
+    rm -f -- "$available" "$pending"
+    exec {lock_fd}>&-
 }
 
 status() {
