@@ -1,0 +1,11 @@
+{
+  "slug": "dover",
+  "title": "Dover Castle",
+  "page_url": "",
+  "author": "phiresky",
+  "map": "Dover",
+  "uploaded": "Aug 19, 2026",
+  "tags": ["Hackable"],
+  "description": "Sandbox map of Dover Castle rendered from a Gaussian-splat reconstruction. Editable terrain images live in Data/Levels/Day/; see the README in this directory for how the background and occlusion depth field are regenerated.",
+  "hackable_mission": "Dover"
+}

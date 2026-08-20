@@ -166,16 +166,6 @@ pub struct CliArgs {
     #[arg(long, value_name = "ZIP", requires = "mission")]
     pub custom_mission: Option<std::path::PathBuf>,
 
-    /// Run only the headless multiplayer lobby broker on this WebSocket
-    /// bind address.  With no value, binds `0.0.0.0:7879`.
-    #[arg(
-        long,
-        value_name = "HOST:PORT",
-        num_args = 0..=1,
-        default_missing_value = crate::multiplayer::lobby::DEFAULT_LOBBY_BIND
-    )]
-    pub lobby_server: Option<String>,
-
     /// TCP port for the local script-RPC HTTP server.
     /// Default 17640 (loopback only). Set to 0 to disable.
     /// See `crate::http_server` for the wire format.
@@ -219,29 +209,30 @@ pub struct CliArgs {
     #[arg(long)]
     pub wait_for_command: bool,
 
-    /// Run as a multiplayer server, listening for peer connections on
-    /// the given `host:port` (e.g. `0.0.0.0:7878`).  Bare-string `:7878`
-    /// also works (binds all interfaces).  This process drives seat 0
-    /// (`PlayerId::HOST`); peers receive `PlayerId(1+)` in join order.
+    /// Run as a multiplayer server on this install's persistent iroh
+    /// identity.  Peers connect to the endpoint id logged at startup
+    /// (no port forwarding or bind address needed).  This process
+    /// drives seat 0 (`PlayerId::HOST`); peers receive `PlayerId(1+)`
+    /// in join order.
     ///
     /// Mutually exclusive with `--connect`.
-    #[arg(long, value_name = "HOST:PORT")]
-    pub server: Option<String>,
+    #[arg(long)]
+    pub server: bool,
 
-    /// Run as a multiplayer client, connecting to `host:port`.  The
-    /// server assigns a join-order seat which the client then drives
-    /// for the rest of the session.
+    /// Run as a multiplayer client, connecting to the host's iroh
+    /// endpoint id.  The server assigns a join-order seat which the
+    /// client then drives for the rest of the session.
     ///
     /// Mutually exclusive with `--server`.
-    #[arg(long, value_name = "HOST:PORT")]
+    #[arg(long, value_name = "ENDPOINT_ID")]
     pub connect: Option<String>,
 
-    /// Internal lobby handoff: keep the simulation paused until this
+    /// Internal matchmaking handoff: keep the simulation paused until this
     /// wall-clock timestamp so host and joiners begin together.
     #[arg(long, hide = true)]
     pub mp_start_at_epoch_ms: Option<u64>,
 
-    /// Internal lobby handoff: total player count the host should wait
+    /// Internal matchmaking handoff: total player count the host should wait
     /// for at the multiplayer ready barrier.
     #[arg(long, hide = true)]
     pub mp_expected_players: Option<u32>,
@@ -344,13 +335,12 @@ impl Default for CliArgs {
             mission: None,
             proto: None,
             custom_mission: None,
-            lobby_server: None,
             http_server: crate::http_server::DEFAULT_PORT,
             fast_forward: false,
             headless: false,
             start_paused: false,
             wait_for_command: false,
-            server: None,
+            server: false,
             connect: None,
             mp_start_at_epoch_ms: None,
             mp_expected_players: None,

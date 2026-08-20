@@ -233,6 +233,82 @@ impl GpuResources {
                 _texture: tex,
                 _view: view,
                 bind_group,
+                width: mask_w as u32,
+                height: mask_h as u32,
+            },
+        );
+        true
+    }
+
+    pub(super) fn upload_occlusion_depth(
+        &mut self,
+        gpu: &GpuContext,
+        texture_index: u32,
+        depth: &[u16],
+        width: u16,
+        height: u16,
+    ) -> bool {
+        let width = u32::from(width);
+        let height = u32::from(height);
+        if width == 0 || height == 0 || depth.len() != width as usize * height as usize {
+            return false;
+        }
+        upload_counter::inc("occlusion depth");
+        // Store the high/low bytes separately. R16Unorm requires an optional
+        // native wgpu feature, while Rg8Unorm is portable to WebGL/WebGPU too.
+        let mut encoded = Vec::with_capacity(depth.len() * 2);
+        for value in depth {
+            encoded.extend_from_slice(&value.to_be_bytes());
+        }
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("continuous occlusion depth"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rg8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &encoded,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 2),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = make_tex_bg(
+            &gpu.device,
+            &self.bgl_tex,
+            &view,
+            &self.sampler,
+            "continuous occlusion depth bg",
+        );
+        self.mask_alpha_cache.insert(
+            texture_index,
+            MaskAlpha {
+                _texture: texture,
+                _view: view,
+                bind_group,
+                width,
+                height,
             },
         );
         true

@@ -1,4 +1,4 @@
-//! Multiplayer transport — WebSocket-based server / client.
+//! Multiplayer transport — iroh (peer-to-peer QUIC) server / client.
 //!
 //! The wire-format types ([`NetMsg`], [`NetEvent`], [`NetOutbound`])
 //! and protocol constants live in
@@ -17,7 +17,9 @@ pub(crate) use robin_engine::multiplayer::{
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};
 
-pub mod lobby;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod identity;
+pub mod matchmaking;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
@@ -33,14 +35,13 @@ pub use wasm::{ClientHandle, connect_client};
 
 /// Owns every worker and platform resource for one multiplayer transport.
 ///
-/// Dropping the runtime cancels its workers, closes sockets/listeners, and
-/// joins native threads. The browser implementation removes its callbacks,
-/// cancels its outgoing timer, and closes the WebSocket.
+/// Dropping the runtime cancels its workers, closes the iroh endpoint
+/// (ending every peer connection), and joins native threads.
 ///
 /// Original provenance: `original-code/sblibng/SBNetwork.cpp`,
 /// `SBNetwork::~SBNetwork()` closes an active session and releases the
 /// DirectPlay object. This runtime preserves that resource-owning RAII
-/// behavior for the port's WebSocket transport.
+/// behavior for the port's iroh transport.
 pub enum MultiplayerRuntime {
     #[cfg(not(target_arch = "wasm32"))]
     Server(ServerHandle),
@@ -141,16 +142,16 @@ impl Deref for NetChannels {
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
     use super::*;
-    use crate::multiplayer::native::{connect_client, start_server};
+    use crate::multiplayer::native::{connect_client, start_server_with_key};
     use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
-    fn make_server_handle() -> (NetChannels, ServerHandle, std::net::SocketAddr) {
-        let (channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) =
+    fn start_owned_server() -> (NetChannels, String) {
+        let (mut channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) =
             NetChannels::new();
-        let handle = start_server(
-            "127.0.0.1:0",
+        let handle = start_server_with_key(
+            iroh::SecretKey::generate(),
             "host".into(),
             "Dem_Lei_MP".into(),
             42,
@@ -161,41 +162,15 @@ mod tests {
             initial_snapshot,
             1,
         )
-        .expect("start server on an ephemeral port");
-        let local_addr = handle.local_addr();
-        (channels, handle, local_addr)
-    }
-
-    fn start_owned_server() -> (NetChannels, std::net::SocketAddr) {
-        let (mut channels, handle, local_addr) = make_server_handle();
+        .expect("start server on an ephemeral iroh identity");
+        let connect_string = handle.connect_string();
         channels.attach_runtime(handle);
-        (channels, local_addr)
+        (channels, connect_string)
     }
 
     #[test]
-    fn dropping_owned_runtime_releases_listener() {
-        let (channels, local_addr) = start_owned_server();
-
-        drop(channels);
-
-        let rebound = std::net::TcpListener::bind(local_addr)
-            .expect("runtime drop must stop and join the listener before returning");
-        drop(rebound);
-    }
-
-    #[test]
-    fn dropping_runtime_joins_idle_peer_worker() {
-        let (mut channels, handle, local_addr) = make_server_handle();
-        let idle_peer = std::net::TcpStream::connect(local_addr).expect("connect idle peer");
-        let accept_deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while handle.peer_worker_count() == 0 {
-            assert!(
-                std::time::Instant::now() < accept_deadline,
-                "server did not start the idle peer worker"
-            );
-            std::thread::yield_now();
-        }
-        channels.attach_runtime(handle);
+    fn dropping_owned_runtime_joins_workers() {
+        let (channels, _connect_string) = start_owned_server();
         let (done_tx, done_rx) = channel();
 
         let shutdown_thread = std::thread::spawn(move || {
@@ -204,15 +179,11 @@ mod tests {
         });
 
         done_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("runtime shutdown must cancel and join an idle handshake worker");
+            .recv_timeout(Duration::from_secs(10))
+            .expect("runtime drop must close the endpoint and join its workers");
         shutdown_thread
             .join()
             .expect("runtime shutdown test worker must not panic");
-        drop(idle_peer);
-        let rebound = std::net::TcpListener::bind(local_addr)
-            .expect("joined runtime must release its listener");
-        drop(rebound);
     }
 
     #[test]
@@ -224,8 +195,8 @@ mod tests {
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let mut expected_config = robin_engine::engine::SimConfig::default();
         expected_config.amount_of_speaking = 9;
-        let _server = start_server(
-            "127.0.0.1:0",
+        let _server = start_server_with_key(
+            iroh::SecretKey::generate(),
             "host".into(),
             "Dem_Lei_MP".into(),
             42,
@@ -237,7 +208,7 @@ mod tests {
             2,
         )
         .expect("start_server");
-        let addr = _server.local_addr().to_string();
+        let addr = _server.connect_string();
 
         // Client side.
         let (client_in_tx, client_in_rx) = channel::<NetEvent>();
@@ -328,8 +299,8 @@ mod tests {
         let (server_out_tx, server_out_rx) = channel::<NetOutbound>();
         let server_cursor = new_frame_cursor();
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let _server = start_server(
-            "127.0.0.1:0",
+        let _server = start_server_with_key(
+            iroh::SecretKey::generate(),
             "host".into(),
             "Dem_Lei_MP".into(),
             42,
@@ -344,7 +315,7 @@ mod tests {
         let (client_in_tx, client_in_rx) = channel::<NetEvent>();
         let (client_out_tx, client_out_rx) = channel::<NetOutbound>();
         let _client = connect_client(
-            _server.local_addr().to_string(),
+            _server.connect_string(),
             "alice".into(),
             client_in_tx,
             client_out_rx,

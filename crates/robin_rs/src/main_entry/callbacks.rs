@@ -1079,6 +1079,15 @@ pub(super) fn force_mission_launch(
         return Ok(Some((idx, profile.location)));
     }
     campaign.reset(profiles_mut, application_context.sim_config().difficulty);
+    if robin_engine::level_data::hackable_level_exists(mission_name) {
+        // Hackable JSON levels are not part of the legacy campaign and
+        // therefore have no preceding mission from which to inherit a gang.
+        campaign.create_gang_from_pcs(
+            "R",
+            profiles_mut,
+            application_context.sim_config().difficulty,
+        );
+    }
     if args.mission_start_map_output.is_some() {
         // Use the walkthrough's practical campaign teams where it gives one.
         // For optional missions, derive the recruited heroes from prerequisite

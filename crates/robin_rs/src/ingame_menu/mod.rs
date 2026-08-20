@@ -29,6 +29,7 @@ pub mod briefings;
 pub mod buy_blazons;
 pub mod debriefing;
 pub mod dialogue;
+pub mod gameplay;
 pub mod graphics;
 pub mod layout;
 pub mod mission_description;

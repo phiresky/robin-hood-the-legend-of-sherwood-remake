@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+# extracted asset library — large derived data, distribution handled separately
+library/
+# pipeline work products (tiles, masks, fal responses)
+work/

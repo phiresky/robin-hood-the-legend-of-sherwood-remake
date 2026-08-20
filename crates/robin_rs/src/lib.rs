@@ -170,6 +170,8 @@ pub mod campaign_map;
 pub mod console_overlay;
 pub mod corner_hud;
 pub mod cursor;
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+pub mod datadir_locator;
 pub mod debug_stub;
 pub mod draw_manager;
 pub mod focus_manager;

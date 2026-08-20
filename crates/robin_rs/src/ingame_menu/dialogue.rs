@@ -31,6 +31,7 @@ use crate::gfx_types::Keycode;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
+use crate::widget::FrameWnd;
 use robin_engine::resource_ids;
 
 use super::layout::{
@@ -38,8 +39,7 @@ use super::layout::{
     enter_modal_gpu_phase,
 };
 use super::resources::{
-    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_INFOBULLE_BUTTON_DIALOG_ABANDON,
-    MT_INFOBULLE_BUTTON_DIALOG_CONTINUE,
+    IngameMenuResources, MT_INFOBULLE_BUTTON_DIALOG_ABANDON, MT_INFOBULLE_BUTTON_DIALOG_CONTINUE,
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
@@ -228,11 +228,13 @@ pub async fn show_dialogue(
     let virt_x = (MENU_W - WIN_W) / 2;
     let virt_y = (MENU_H - WIN_H) / 2;
 
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let skip_label = resources.menu_text.get(MT_BTN_OK);
-    let stop_label = resources.menu_text.get(MT_BTN_CANCEL);
-
-    // Centre buttons horizontally inside the window.
+    // Skip / Stop are the round `RHID_OK` / `RHID_CANCEL` wax-seal
+    // sprites with no label, centred horizontally as a pair at y=384
+    // like the original dialogue window.
+    let (ok_w, ok_h) = resources.ok_button_dimensions();
+    let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
+    let btn_w = ok_w.max(cancel_w);
+    let btn_h = ok_h.max(cancel_h);
     let n = 2i32;
     let spacing = 8;
     let total_w = n * btn_w + (n - 1) * spacing;
@@ -240,17 +242,30 @@ pub async fn show_dialogue(
     let btn_y = (virt_y + 384).min(virt_y + WIN_H - btn_h - 16);
 
     // Build a FrameWnd with Skip and Stop buttons.
-    let mut frame = widget_bridge::make_button_frame(&[
-        (ID_SKIP, &skip_label, start_x, btn_y, btn_w, btn_h),
-        (
-            ID_STOP,
-            &stop_label,
-            start_x + btn_w + spacing,
-            btn_y,
-            btn_w,
-            btn_h,
-        ),
-    ]);
+    let mut frame = FrameWnd::default();
+    frame.enabled = true;
+    frame.input_enabled = true;
+    frame.add_widget_absolute(widget_bridge::make_button_with_resource(
+        ID_SKIP,
+        "",
+        true,
+        robin_engine::resource_ids::RHID_OK,
+        start_x,
+        btn_y,
+        btn_w,
+        btn_h,
+    ));
+    frame.add_widget_absolute(widget_bridge::make_button_with_resource(
+        ID_STOP,
+        "",
+        true,
+        robin_engine::resource_ids::RHID_CANCEL,
+        start_x + btn_w + spacing,
+        btn_y,
+        btn_w,
+        btn_h,
+    ));
+    widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
     // Per-widget tooltip text rendered by the hover-tooltip loop below.
     let skip_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE);
@@ -541,26 +556,41 @@ impl DialogueModalState {
         let virt_x = (MENU_W - WIN_W) / 2;
         let virt_y = (MENU_H - WIN_H) / 2;
 
-        let (btn_w, btn_h) = resources.button_dimensions();
-        let skip_label = resources.menu_text.get(MT_BTN_OK);
-        let stop_label = resources.menu_text.get(MT_BTN_CANCEL);
+        // Same round wax-seal Skip / Stop pair as `show_dialogue`.
+        let (ok_w, ok_h) = resources.ok_button_dimensions();
+        let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
+        let btn_w = ok_w.max(cancel_w);
+        let btn_h = ok_h.max(cancel_h);
         let n = 2i32;
         let spacing = 8;
         let total_w = n * btn_w + (n - 1) * spacing;
         let start_x = virt_x + (WIN_W - total_w) / 2;
         let btn_y = (virt_y + 384).min(virt_y + WIN_H - btn_h - 16);
 
-        let mut frame = widget_bridge::make_button_frame(&[
-            (ID_SKIP, &skip_label, start_x, btn_y, btn_w, btn_h),
-            (
-                ID_STOP,
-                &stop_label,
-                start_x + btn_w + spacing,
-                btn_y,
-                btn_w,
-                btn_h,
-            ),
-        ]);
+        let mut frame = FrameWnd::default();
+        frame.enabled = true;
+        frame.input_enabled = true;
+        frame.add_widget_absolute(widget_bridge::make_button_with_resource(
+            ID_SKIP,
+            "",
+            true,
+            robin_engine::resource_ids::RHID_OK,
+            start_x,
+            btn_y,
+            btn_w,
+            btn_h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button_with_resource(
+            ID_STOP,
+            "",
+            true,
+            robin_engine::resource_ids::RHID_CANCEL,
+            start_x + btn_w + spacing,
+            btn_y,
+            btn_w,
+            btn_h,
+        ));
+        widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
         let skip_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE);
         let stop_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON);

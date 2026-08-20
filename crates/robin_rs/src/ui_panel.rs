@@ -355,114 +355,71 @@ impl PortraitCache {
             self.surfaces.iter().filter(|s| s.is_some()).count(),
         );
 
-        let (width, height, pixels) = decode_embedded_png_rgba(include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/ui/allied_portrait_background.png"
-        )))
-        .expect("embedded allied portrait background must be a valid RGB/RGBA PNG");
+        let (width, height, pixels) =
+            decode_embedded_png_rgba(&read_ui_asset("allied_portrait_background.png"))
+                .expect("allied portrait background must be a valid RGB/RGBA PNG");
         assert_eq!(
             (width, height),
             (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
-            "embedded allied portrait background must match the native open HUD slot"
+            "allied portrait background must match the native open HUD slot"
         );
         self.allied_portrait_background = Some(
             renderer
                 .create_rgba_gpu_image(width, height, &pixels, "allied portrait background")
-                .expect("embedded allied portrait background dimensions must match its payload"),
+                .expect("allied portrait background dimensions must match its payload"),
         );
 
-        let (width, height, pixels) = decode_embedded_png_rgba(include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/ui/allied_portrait_foreground.png"
-        )))
-        .expect("embedded allied portrait foreground must be a valid RGB/RGBA PNG");
+        let (width, height, pixels) =
+            decode_embedded_png_rgba(&read_ui_asset("allied_portrait_foreground.png"))
+                .expect("allied portrait foreground must be a valid RGB/RGBA PNG");
         assert_eq!(
             (width, height),
             (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
-            "embedded allied portrait foreground must match the native open HUD slot"
+            "allied portrait foreground must match the native open HUD slot"
         );
         self.allied_portrait_foreground = Some(
             renderer
                 .create_rgba_gpu_image(width, height, &pixels, "allied portrait foreground")
-                .expect("embedded allied portrait foreground dimensions must match its payload"),
+                .expect("allied portrait foreground dimensions must match its payload"),
         );
 
-        for (index, (bytes, label)) in [
-            (
-                include_bytes!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../assets/ui/allied_pin_unpinned.png"
-                )) as &[u8],
-                "allied portrait pin (unpinned)",
-            ),
-            (
-                include_bytes!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../assets/ui/allied_pin_pinned.png"
-                )),
-                "allied portrait pin (pinned)",
-            ),
+        for (index, (file, label)) in [
+            ("allied_pin_unpinned.png", "allied portrait pin (unpinned)"),
+            ("allied_pin_pinned.png", "allied portrait pin (pinned)"),
         ]
         .into_iter()
         .enumerate()
         {
-            let (width, height, pixels) = decode_embedded_png_rgba(bytes)
-                .expect("embedded allied pin icon must be a valid RGB/RGBA PNG");
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file))
+                .expect("allied pin icon must be a valid RGB/RGBA PNG");
             assert_eq!(
                 (width, height),
                 (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE),
-                "embedded allied pin icon must be 27x27"
+                "allied pin icon must be 27x27"
             );
             self.allied_pin_icons[index] = Some(
                 renderer
                     .create_rgba_gpu_image(width, height, &pixels, label)
-                    .expect("embedded allied pin icon dimensions must match its payload"),
+                    .expect("allied pin icon dimensions must match its payload"),
             );
         }
 
-        for (index, bytes) in [
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_stance_hold.png"
-            )) as &[u8],
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_stance_defensive.png"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_stance_aggressive.png"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_patrol_off.png"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_patrol_on.png"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_line.png"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_box.png"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_staggered.png"
-            )),
-            include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_flank.png"
-            )),
+        for (index, file) in [
+            "allied_stance_hold.png",
+            "allied_stance_defensive.png",
+            "allied_stance_aggressive.png",
+            "allied_patrol_off.png",
+            "allied_patrol_on.png",
+            "allied_formation_line.png",
+            "allied_formation_box.png",
+            "allied_formation_staggered.png",
+            "allied_formation_flank.png",
         ]
         .into_iter()
         .enumerate()
         {
-            let (width, height, pixels) = decode_embedded_png_rgba(bytes)
-                .unwrap_or_else(|error| panic!("decode allied state icon {index}: {error}"));
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file))
+                .unwrap_or_else(|error| panic!("decode allied state icon {file}: {error}"));
             assert_eq!(
                 (width, height),
                 (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT),
@@ -1141,6 +1098,23 @@ pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
     renderer
         .create_surface_from_rgb565(pic.width, pic.height, &pixels)
         .expect("pic_to_surface: decoded picture dimensions must match RGB565 payload")
+}
+
+/// Read an engine-shipped UI asset through the virtual filesystem.
+///
+/// These files ship in `assets/core-datadir/Data/Interface/UI/` and are
+/// resolved through the overlay system, so mods can restyle them by
+/// overlaying the same path. They are required — a failed read means the
+/// core overlay datadir is missing next to the game, which is an
+/// installation error worth failing loudly on.
+fn read_ui_asset(name: &str) -> Vec<u8> {
+    let path = format!("Data/Interface/UI/{name}");
+    robin_engine::sbfile::SbFile::read_all(&path).unwrap_or_else(|error| {
+        panic!(
+            "required UI asset {path} could not be read (error {error}); \
+             is the core overlay datadir (assets/core-datadir/) missing?"
+        )
+    })
 }
 
 fn decode_embedded_png_rgba(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), String> {
@@ -3367,11 +3341,11 @@ mod tests {
         for bytes in [
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_portrait_background.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_portrait_background.png"
             )) as &[u8],
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_portrait_foreground.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_portrait_foreground.png"
             )),
         ] {
             let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
@@ -3392,11 +3366,11 @@ mod tests {
         for bytes in [
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_pin_unpinned.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_pin_unpinned.png"
             )) as &[u8],
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_pin_pinned.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_pin_pinned.png"
             )),
         ] {
             let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
@@ -3416,39 +3390,39 @@ mod tests {
         for bytes in [
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_stance_hold.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_stance_hold.png"
             )) as &[u8],
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_stance_defensive.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_stance_defensive.png"
             )),
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_stance_aggressive.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_stance_aggressive.png"
             )),
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_patrol_off.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_patrol_off.png"
             )),
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_patrol_on.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_patrol_on.png"
             )),
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_line.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_line.png"
             )),
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_box.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_box.png"
             )),
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_staggered.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_staggered.png"
             )),
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/ui/allied_formation_flank.png"
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_flank.png"
             )),
         ] {
             let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();

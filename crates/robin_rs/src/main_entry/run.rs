@@ -2,7 +2,7 @@
 
 use crate::game_session::{SessionResult, run_mission, run_mission_headless, run_session};
 use crate::host::ApplicationContext;
-use crate::main_menu::multiplayer_lobby::MultiplayerRole;
+use crate::main_menu::multiplayer_menu::MultiplayerRole;
 use crate::main_menu::{MainMenuChoice, show_main_menu};
 use crate::window::GameWindow;
 use robin_engine::campaign::Campaign;
@@ -338,7 +338,7 @@ pub async fn run_rust_game(
                     .position(|m| m.profile(&profiles).id == launch.mission_id)
                 else {
                     return Err(format!(
-                        "Multiplayer lobby selected unknown mission id {} ({})",
+                        "Multiplayer menu selected unknown mission id {} ({})",
                         launch.mission_id, launch.mission_name
                     ));
                 };
@@ -353,13 +353,12 @@ pub async fn run_rust_game(
                 campaign.force_next_mission(idx);
                 let mut mp_args = args.clone();
                 match launch.role {
-                    MultiplayerRole::Host { bind_addr } => {
+                    MultiplayerRole::Host => {
                         tracing::info!(
                             mission = %launch.mission_name,
-                            bind = %bind_addr,
                             "Main menu Multiplayer: hosting selected mission"
                         );
-                        mp_args.server = Some(bind_addr);
+                        mp_args.server = true;
                         mp_args.connect = None;
                     }
                     MultiplayerRole::Client { connect_addr } => {
@@ -368,7 +367,7 @@ pub async fn run_rust_game(
                             connect = %connect_addr,
                             "Main menu Multiplayer: joining selected mission"
                         );
-                        mp_args.server = None;
+                        mp_args.server = false;
                         mp_args.connect = Some(connect_addr);
                     }
                 }
@@ -387,7 +386,48 @@ pub async fn run_rust_game(
                 let SessionResult::QuitToMenu = outcome.result?;
                 tracing::info!("Returned to main menu from Multiplayer");
             }
-            MainMenuChoice::CustomMission(launch) => {
+            MainMenuChoice::CustomMission(
+                crate::main_menu::custom_missions::CustomMissionChoice::Hackable { mission, title },
+            ) => {
+                tracing::info!("Main menu CustomMission (hackable): {title} ({mission})");
+                let profiles_mut = std::sync::Arc::make_mut(&mut profiles);
+                campaign.reset(profiles_mut, application_context.sim_config().difficulty);
+                // Hackable levels are standalone sandboxes with no preceding
+                // campaign mission to inherit a gang from; start with Robin.
+                campaign.create_gang_from_pcs(
+                    "R",
+                    profiles_mut,
+                    application_context.sim_config().difficulty,
+                );
+                let idx = campaign
+                    .force_next_mission_by_name(profiles_mut, &mission, &mission, true)
+                    .ok_or_else(|| format!("failed to create hackable mission `{mission}`"))?;
+                campaign.current_mission_idx = Some(idx);
+                let location = campaign.missions[idx].profile(profiles_mut).location;
+                let mut callbacks = RustCallbacks::new(application_context.clone());
+                let mut sim_config = crate::game_session::initial_sim_config(args);
+                // Hackable descriptors carry no SCB StartUp class, so the
+                // script VM must stay off.
+                sim_config.script_enabled = false;
+                let outcome = run_mission(
+                    window,
+                    &mut callbacks,
+                    campaign,
+                    &profiles,
+                    idx,
+                    location,
+                    args,
+                    0,
+                    sim_config,
+                )
+                .await;
+                campaign = outcome.campaign;
+                outcome.result?;
+                tracing::info!("Returned to main menu from hackable level `{mission}`");
+            }
+            MainMenuChoice::CustomMission(
+                crate::main_menu::custom_missions::CustomMissionChoice::Mod(launch),
+            ) => {
                 let mods_root = crate::mod_pack::default_mods_root();
                 tracing::info!(
                     "Main menu CustomMission: slug={} rhm={} map={} spellforge={}",

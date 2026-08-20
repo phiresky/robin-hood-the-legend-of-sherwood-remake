@@ -936,6 +936,10 @@ pub struct PreDecodedBackground {
     pub width: u16,
     pub height: u16,
     pub pixels: Vec<u16>,
+    /// Optional continuous ground-depth field for custom rendered maps.
+    /// Values are normalized u16 map-ground Y; zero means no reconstructed
+    /// surface at that pixel.
+    pub occlusion_depth: Option<Vec<u16>>,
 }
 
 /// CPU-decoded minimap ready for GPU upload.  See [`PreDecodedBackground`].
@@ -1633,6 +1637,25 @@ pub fn load_mission_for_campaign(
     let profile = campaign.missions[idx].profile(profiles);
     let mission_filename = &profile.mission_filename;
     let proto_level_filename = &profile.proto_level_filename;
+
+    if crate::level_data::hackable_level_exists(mission_filename) {
+        let path = crate::level_data::hackable_level_descriptor_path(mission_filename);
+        tracing::info!("Loading hackable level descriptor: {path}");
+        let bytes = crate::sbfile::SbFile::read_all(&path).map_err(|error| {
+            EngineError::Io(std::io::Error::other(format!(
+                "required hackable level descriptor {path} could not be read: error {error}"
+            )))
+        })?;
+        let level =
+            crate::level_data::LoadedLevel::hackable_from_json(&bytes).map_err(|error| {
+                EngineError::Io(std::io::Error::other(format!(
+                    "failed to load {path}: {error}"
+                )))
+            })?;
+        progress(1.0);
+        progress(1.0);
+        return Ok(level);
+    }
 
     // The is_beggar predicate is needed because beggar civilians have
     // extra scroll-set data in the mission file.  We parse raw data
@@ -2733,6 +2756,35 @@ impl EngineInner {
                 .load_from_proto_stream(self.world.fast_grid_mut(), &motion_data.graph_bytes)
         {
             tracing::error!("Failed to load pathfinder graph: {e}");
+        }
+        if motion_data.graph_bytes.is_empty() {
+            // Hackable descriptors omit the legacy precomputed graph. Keep
+            // its hierarchy/state topology faithful to the authored motion
+            // areas so PathFinder can apply obstacle state and use its
+            // deterministic visibility-graph fallback for routing.
+            let graph = std::sync::Arc::make_mut(&mut assets.pathfinder_graph);
+            let shape: Vec<Vec<usize>> = graph
+                .static_data
+                .move_layers
+                .iter()
+                .map(|layer| {
+                    layer
+                        .iter()
+                        .map(|area| area.motion_obstacles.len())
+                        .collect()
+                })
+                .collect();
+            graph.layers = shape
+                .iter()
+                .map(|layer| {
+                    layer
+                        .iter()
+                        .map(|&obstacles| vec![Vec::new(); obstacles])
+                        .collect()
+                })
+                .collect();
+            graph.alternative_layers = graph.layers.clone();
+            graph.states = shape.iter().map(|layer| vec![0; layer.len()]).collect();
         }
 
         // ── Part 3: Build sector conversion table ──

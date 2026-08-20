@@ -2,8 +2,9 @@
 //!
 //! A 640x480 window using `RHID_MENU_BACKGROUND_2` as its background,
 //! with a title at `(0,0,500,480)`, a hardware info label at
-//! `(0,100,500,480)` and the four buttons Graphics / Sounds / Shortcuts
-//! / Back aligned bottom-right with spacing 2.  Escape maps to Back.
+//! `(0,100,500,480)` and the buttons Graphics / Sounds / Shortcuts /
+//! Gameplay / Back aligned bottom-right with spacing 2.  Escape maps to
+//! Back.
 //!
 //! Buttons are driven by the [`crate::widget`] system via the
 //! [`super::widget_bridge`].
@@ -21,6 +22,7 @@ use robin_engine::gameplay_config::GameplayConfig;
 use robin_engine::graphic_config::GraphicConfig;
 use robin_engine::sound_config::SoundConfig;
 
+use super::gameplay::show_gameplay;
 use super::graphics::show_graphics;
 use super::layout::{
     MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
@@ -48,8 +50,12 @@ pub struct OptionsOutcome {
 const BUTTON_GRAPHICS: u32 = 0;
 const BUTTON_SOUNDS: u32 = 1;
 const BUTTON_SHORTCUTS: u32 = 2;
-const BUTTON_ALLIED_CONTROL: u32 = 3;
-const BUTTON_BACK: u32 = 4;
+const BUTTON_GAMEPLAY: u32 = 3;
+/// Desktop only: re-select the game data folder (see
+/// [`crate::datadir_locator`]).
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+const BUTTON_GAME_DATA: u32 = 4;
+const BUTTON_BACK: u32 = 5;
 
 /// Display the in-game options hub.
 ///
@@ -91,30 +97,31 @@ pub async fn show_options(
         let graphics_label = resources.menu_text.get(MT_BTN_GRAPHICS);
         let sounds_label = resources.menu_text.get(MT_BTN_SOUNDS);
         let shortcuts_label = resources.menu_text.get(MT_BTN_SHORTCUTS);
-        let allied_control_label = format!(
-            "Control Allied Soldiers: {}",
-            if gameplay_config.control_allied_soldiers {
-                "On"
-            } else {
-                "Off"
-            }
-        );
         let back_label = resources.menu_text.get(MT_BTN_BACK);
-        let labels: &[(&str, bool)] = &[
-            (&graphics_label, true),
-            (&sounds_label, true),
-            (&shortcuts_label, true),
-            (&allied_control_label, true),
-            (&back_label, true),
+        #[allow(unused_mut)]
+        let mut entries: Vec<(u32, &str)> = vec![
+            (BUTTON_GRAPHICS, &graphics_label),
+            (BUTTON_SOUNDS, &sounds_label),
+            (BUTTON_SHORTCUTS, &shortcuts_label),
+            (BUTTON_GAMEPLAY, "Gameplay"),
         ];
-        let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        entries.push((BUTTON_GAME_DATA, "Game Data Folder"));
+        entries.push((BUTTON_BACK, &back_label));
+        let labels: Vec<(&str, bool)> = entries.iter().map(|&(_, label)| (label, true)).collect();
+        let menu_buttons = align_bottom_right(&labels, btn_w, btn_h);
 
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
         for (i, mb) in menu_buttons.iter().enumerate() {
             frame.add_widget_absolute(widget_bridge::make_button(
-                i as u32, &mb.label, mb.x, mb.y, mb.w, mb.h,
+                entries[i].0,
+                &mb.label,
+                mb.x,
+                mb.y,
+                mb.w,
+                mb.h,
             ));
         }
 
@@ -240,14 +247,25 @@ pub async fn show_options(
                         // graphic/sound profile dirty.
                         outcome.key_config_changed |= changed;
                     }
-                    BUTTON_ALLIED_CONTROL => {
-                        gameplay_config.control_allied_soldiers =
-                            !gameplay_config.control_allied_soldiers;
-                        outcome.changed = true;
-                        // Rebuild the hub so the button label reflects the
-                        // newly persisted setting immediately.
-                        re_display = true;
-                        done = true;
+                    BUTTON_GAMEPLAY => {
+                        let changed = show_gameplay(
+                            event_pump,
+                            renderer,
+                            resources,
+                            cursor.as_mut().map(|c| c.reborrow()),
+                            gameplay_config,
+                        )
+                        .await;
+                        outcome.changed |= changed;
+                    }
+                    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+                    BUTTON_GAME_DATA => {
+                        // Opens the native folder picker; the modal loop is
+                        // frozen while the OS dialog is up, which is fine —
+                        // both are modal. The new folder is remembered and
+                        // applies on the next launch (resources from the
+                        // old datadir are already loaded).
+                        crate::datadir_locator::change_datadir_interactive();
                     }
                     BUTTON_BACK => done = true,
                     _ => {}

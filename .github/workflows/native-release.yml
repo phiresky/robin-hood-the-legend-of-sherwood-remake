@@ -141,6 +141,15 @@ jobs:
           mkdir -p target/package-input target/release-assets
           cp "target/release/${{ matrix.executable }}" target/package-input/
           cp README.md target/package-input/
+          # Engine-shipped overlay datadirs, resolved relative to the
+          # executable at runtime: the core overlay (bitmap fonts, UI
+          # icons) is required; mods/ (e.g. hackable levels) ships when
+          # the checkout carries any.
+          mkdir -p target/package-input/assets
+          cp -R assets/core-datadir target/package-input/assets/
+          if [ -d mods ]; then
+            cp -R mods target/package-input/
+          fi
 
       - name: Create Windows standalone binary
         if: runner.os == 'Windows'
@@ -150,7 +159,7 @@ jobs:
 
       - name: Create Linux standalone binary
         if: runner.os == 'Linux'
-        run: tar -C target/package-input -czf target/release-assets/robin-linux-x86_64.tar.gz robin README.md
+        run: tar -C target/package-input -czf target/release-assets/robin-linux-x86_64.tar.gz .
 
       - name: Build Windows Velopack installers
         if: runner.os == 'Windows'

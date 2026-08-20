@@ -1372,7 +1372,19 @@ pub(crate) fn render_entities_gpu(
             // transparency part; the hidden outline pass restores those edge
             // pixels.
             let screen_masks = sprite_screen_masks(engine, &mask_indices, view, zoom);
-            renderer.mask_queued_draws(sprite_draw_checkpoint, &screen_masks, dst_rect);
+            if use_projectile_path {
+                renderer.mask_queued_draws(sprite_draw_checkpoint, &screen_masks, dst_rect);
+            } else {
+                renderer.mask_queued_draws_with_depth(
+                    sprite_draw_checkpoint,
+                    &screen_masks,
+                    dst_rect,
+                    view.x,
+                    view.y,
+                    zoom,
+                    projectile_mask_position.y,
+                );
+            }
 
             for &(mask_idx, mask_rect) in &screen_masks {
                 let mask = &engine.fast_grid().level.masks[mask_idx as usize];

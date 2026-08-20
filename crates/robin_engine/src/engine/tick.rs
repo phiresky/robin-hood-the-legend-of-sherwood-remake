@@ -2780,7 +2780,9 @@ impl EngineInner {
         // script's Hourglass fires only when
         // `frame_counter % 25 == 0` — i.e. once per real second — with
         // the game-second index as its argument.
-        if self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND) {
+        if self.control.sim_config.script_enabled
+            && self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND)
+        {
             let game_seconds = self.control.frame_counter / FRAMES_PER_SECOND;
 
             if let Err(error) = self.call_script_vm(

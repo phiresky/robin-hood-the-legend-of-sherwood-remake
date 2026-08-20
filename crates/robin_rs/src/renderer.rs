@@ -107,7 +107,12 @@ struct MaskAlpha {
     _texture: wgpu::Texture,
     _view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
 }
+
+/// `MaskIndex` is a `NonMaxU32`, so this cannot collide with a legacy mask.
+const OCCLUSION_DEPTH_TEXTURE_INDEX: u32 = u32::MAX;
 
 struct BackgroundTexture {
     _view: wgpu::TextureView,
@@ -1379,6 +1384,18 @@ impl Renderer {
             .upload_mask_alpha(&self.gpu, mask_index, bitmap, mask_w, mask_h)
     }
 
+    /// Upload a map-sized R16 ground-depth field. Each texel stores the
+    /// map-ground Y of the visible reconstructed surface at that pixel.
+    pub fn upload_occlusion_depth(&mut self, depth: &[u16], width: u16, height: u16) -> bool {
+        self.resources.upload_occlusion_depth(
+            &self.gpu,
+            OCCLUSION_DEPTH_TEXTURE_INDEX,
+            depth,
+            width,
+            height,
+        )
+    }
+
     /// Return a stable insertion point immediately before the next sprite or
     /// ground-mark draw that may need building occlusion.
     pub(crate) fn draw_queue_checkpoint(&self) -> usize {
@@ -1397,12 +1414,55 @@ impl Renderer {
         masks: &[(u32, Rect)],
         clip_rect: Rect,
     ) {
+        self.mask_queued_draws_impl(checkpoint, masks, clip_rect, None);
+    }
+
+    /// Apply legacy masks plus the continuous reconstructed-geometry depth
+    /// field to one grounded sprite. `actor_ground_y` is world Y (not the
+    /// projected map Y), so elevated and inclined paths compare correctly.
+    pub(crate) fn mask_queued_draws_with_depth(
+        &mut self,
+        checkpoint: usize,
+        masks: &[(u32, Rect)],
+        clip_rect: Rect,
+        view_x: f32,
+        view_y: f32,
+        zoom: f32,
+        actor_ground_y: f32,
+    ) {
+        let depth = self
+            .resources
+            .mask_alpha_cache
+            .get(&OCCLUSION_DEPTH_TEXTURE_INDEX)
+            .map(|mask| {
+                let rect = Rect::new(
+                    (-view_x * zoom).round() as i32,
+                    (-view_y * zoom).round() as i32,
+                    (mask.width as f32 * zoom).round() as u32,
+                    (mask.height as f32 * zoom).round() as u32,
+                );
+                // A small bias prevents the character's own ground surface
+                // from flickering into stencil through quantization/filtering.
+                let threshold = (actor_ground_y / mask.height as f32 + 2.0 / mask.height as f32)
+                    .clamp(0.0, 1.0);
+                (rect, threshold)
+            });
+        self.mask_queued_draws_impl(checkpoint, masks, clip_rect, depth);
+    }
+
+    fn mask_queued_draws_impl(
+        &mut self,
+        checkpoint: usize,
+        masks: &[(u32, Rect)],
+        clip_rect: Rect,
+        depth: Option<(Rect, f32)>,
+    ) {
         assert!(
             checkpoint <= self.frame.queued.len(),
             "sprite mask checkpoint {checkpoint} exceeds draw queue length {}",
             self.frame.queued.len()
         );
-        if masks.is_empty() {
+        if masks.is_empty() && depth.is_none() {
             return;
         }
         assert!(
@@ -1410,7 +1470,7 @@ impl Renderer {
             "sprite masks require at least one queued draw"
         );
 
-        let mut stencil_draws = Vec::with_capacity(masks.len());
+        let mut stencil_draws = Vec::with_capacity(masks.len() + usize::from(depth.is_some()));
         for &(mask_index, mask_rect) in masks {
             assert!(
                 self.resources.mask_alpha_cache.contains_key(&mask_index),
@@ -1423,10 +1483,24 @@ impl Renderer {
                 dst,
                 corners: None,
                 uv,
-                tint: [1.0; 4],
+                tint: [0.5, 0.0, 1.0, 1.0],
                 tex: TextureRef::MaskAlpha(mask_index),
                 blend: BlendMode::None,
             });
+        }
+        if let Some((depth_rect, threshold)) = depth {
+            if let Some((dst, uv)) = clip_dst_to_uv(depth_rect, clip_rect) {
+                stencil_draws.push(QueuedDraw {
+                    dst,
+                    corners: None,
+                    uv,
+                    // Green selects 16-bit high/low reconstruction in the
+                    // shared mask-stencil shader.
+                    tint: [threshold, 1.0, 1.0, 1.0],
+                    tex: TextureRef::MaskAlpha(OCCLUSION_DEPTH_TEXTURE_INDEX),
+                    blend: BlendMode::None,
+                });
+            }
         }
         if stencil_draws.is_empty() {
             return;
@@ -1440,7 +1514,7 @@ impl Renderer {
             dst: clip_rect,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
-            tint: [1.0; 4],
+            tint: [0.5, 0.0, 1.0, 1.0],
             tex: TextureRef::StencilClear,
             blend: BlendMode::None,
         });

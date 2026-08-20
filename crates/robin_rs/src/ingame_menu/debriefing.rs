@@ -23,10 +23,9 @@ use super::layout::{
     enter_modal_gpu_phase, render_text_in_box,
 };
 use super::resources::{
-    IngameMenuResources, MT_BTN_LOAD, MT_BTN_OK, MT_BTN_RESTART, MT_INFOBULLE_BUTTON_OK,
-    MT_INFOBULLE_BUTTON_RECOMMENCER, MT_STR_DB_S06, MT_STR_DB_S07, MT_STR_DB_S08, MT_STR_DB_S09,
-    MT_STR_DB_S10, MT_STR_DB_S11, MT_STR_DB_S13, MT_STR_DB_S17, MT_STR_DB_S18, MT_TTL_MISSION_LOST,
-    MT_TTL_MISSION_WON, MenuText,
+    IngameMenuResources, MT_BTN_LOAD, MT_INFOBULLE_BUTTON_OK, MT_INFOBULLE_BUTTON_RECOMMENCER,
+    MT_STR_DB_S06, MT_STR_DB_S07, MT_STR_DB_S08, MT_STR_DB_S09, MT_STR_DB_S10, MT_STR_DB_S11,
+    MT_STR_DB_S13, MT_STR_DB_S17, MT_STR_DB_S18, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON, MenuText,
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
@@ -529,10 +528,12 @@ impl DebriefingPageState {
         let transform = MenuTransform::centered(sw, sh);
         let virt_x = (MENU_W - WIN_W) / 2;
         let virt_y = (MENU_H - WIN_H) / 2;
-        let (btn_w, btn_h) = resources.button_dimensions();
-        let ok_label = resources.menu_text.get(MT_BTN_OK);
-        let restart_label = resources.menu_text.get(MT_BTN_RESTART);
-        let load_label = resources.menu_text.get(MT_BTN_LOAD);
+        // The original debriefing uses the round `RHID_OK` seal
+        // (centred) plus dedicated `RHID_RESTART` / `RHID_LOAD` seal
+        // sprites at fixed x = 50 / 100, all label-less.
+        let (ok_w, ok_h) = resources.ok_button_dimensions();
+        let (restart_w, restart_h) = resources.restart_button_dimensions();
+        let (load_w, load_h) = resources.load_button_dimensions();
 
         let mut frame = FrameWnd::default();
         frame.enabled = true;
@@ -540,28 +541,42 @@ impl DebriefingPageState {
         let btn_y = virt_y + OK_BTN_Y;
         let restart_x = virt_x + 50;
         let load_x = virt_x + 100;
-        let ok_x = virt_x + (WIN_W - btn_w) / 2;
-        frame.add_widget_absolute(widget_bridge::make_button(
-            BTN_OK, &ok_label, ok_x, btn_y, btn_w, btn_h,
+        let ok_x = virt_x + (WIN_W - ok_w) / 2;
+        frame.add_widget_absolute(widget_bridge::make_button_with_resource(
+            BTN_OK,
+            "",
+            true,
+            robin_engine::resource_ids::RHID_OK,
+            ok_x,
+            btn_y,
+            ok_w,
+            ok_h,
         ));
         if restart_allowed {
-            frame.add_widget_absolute(widget_bridge::make_button(
+            frame.add_widget_absolute(widget_bridge::make_button_with_resource(
                 BTN_RESTART,
-                &restart_label,
+                "",
+                true,
+                robin_engine::resource_ids::RHID_RESTART,
                 restart_x,
                 btn_y,
-                btn_w,
-                btn_h,
+                restart_w,
+                restart_h,
             ));
-            frame.add_widget_absolute(widget_bridge::make_button(
+            frame.add_widget_absolute(widget_bridge::make_button_with_resource(
                 BTN_LOAD,
-                &load_label,
+                "",
+                true,
+                robin_engine::resource_ids::RHID_LOAD,
                 load_x,
                 btn_y,
-                btn_w,
-                btn_h,
+                load_w,
+                load_h,
             ));
         }
+        // Per-pixel hit masks so the transparent corners around each
+        // round seal don't capture clicks.
+        widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
         let ok_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_OK);
         let restart_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_RECOMMENCER);

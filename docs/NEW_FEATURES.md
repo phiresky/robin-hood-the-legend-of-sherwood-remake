@@ -10,8 +10,48 @@ A list of which additional features we have added, which ones we might still wan
   follow dated `nightly-YYYY-MM-DD` prereleases. Downloads do not interrupt
   play: completed updates are applied silently after a normal game exit, and
   a previously downloaded pending update is applied before the next startup.
-  Headless games, lobby servers, standalone archives, and developer builds do
+  Headless games, standalone archives, and developer builds do
   not attempt to update themselves.
+
+- **Startup datadir selector.** When `ROBINHOOD_DATA_DIR` is unset, the
+  game resolves the data folder itself: a previously confirmed choice
+  (remembered in `datadir.txt` next to the saves) is used silently;
+  otherwise it auto-detects an installation — working directory,
+  executable directory, then the usual install locations of the original
+  CD (`Program Files\Wanadoo Edition\<localized title>`, per the Wise
+  installer script), GOG (GOG Games, GOG.com, Galaxy), and Steam,
+  plus Wine/Heroic/Lutris prefixes on Linux — validated via
+  `Data/robinhood.bks` (case-insensitive; `Data/datadir.bin` shipping
+  bundles also count). A native dialog always confirms the result: OK
+  accepts the found installation, Cancel opens the OS folder picker. The
+  dialog recommends a GOG purchase. The remembered folder can be changed
+  later via Options → "Game Data Folder" (applies on next launch).
+  Headless runs use the auto-detected folder without a dialog and keep
+  the descriptive terminal error otherwise.
+
+- **Core overlay datadir.** `assets/core-datadir/` is registered as an
+  always-on overlay ahead of the `mods/` overlays. It currently restores
+  the game's native bitmap fonts (~280 KB) plus the font `manager.cfg`,
+  fixing the Steam release — whose depot ships only the international
+  TrueType (SimSun) font set and therefore renders every menu in a
+  Windows system font in the original build too. See
+  `assets/core-datadir/README.md`.
+
+- **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
+  overlay datadir at startup, and any overlay may ship an editable
+  `Data/Levels/<mission>.level.json` geometry descriptor (title, spawn point,
+  walkable polygon, architectural volumes) that expands into normal level
+  structs at load time — no legacy RHP/RHM/terrain encoding involved.
+  Backgrounds and minimaps can be plain PNGs, optionally paired with a 16-bit
+  `<map>.occlusion-depth.png` for continuous sprite occlusion. Discovered
+  levels get a main-menu entry (descriptor `title`) and can be launched
+  directly with `--mission <name>`; they run as unscripted sandboxes. The
+  repository bundles one such level in `mods/dover/`: a Dover Castle
+  exploration map made from a Gaussian splat, rendered by the reproducible
+  standalone WGPU renderer under `scripts/dover_splat_renderer/`, which levels
+  the reconstructed ground plane, renders at the original game's 35-degree
+  elevation, and keeps the playable castle orthographic while smoothly
+  applying perspective only behind it.
 
 - **Direct custom-mission launch.** `--custom-mission <zip>` mounts a vanilla
   mod archive for the lifetime of a direct `--mission <name>` launch. Pair it
@@ -142,11 +182,16 @@ A list of which additional features we have added, which ones we might still wan
   command values and malformed/non-contiguous traces fail loudly; the first
   divergent frame is reported field-by-field.
 
-- **Basic multiplayer**. Native host/client networking, wasm WebSocket clients,
-  seat IDs, input delay, rollback for late inputs, mission seed sync,
-  state-hash desync detection, mid-mission state snapshots for joiners, and
-  client reconnect are implemented. The current design is predictive rollback
-  netcode rather than strict "wait for every peer before ticking" lockstep.
+- **Basic multiplayer**. Native host/client networking over iroh
+  (peer-to-peer QUIC with relay fallback; peers addressed by endpoint id, no
+  port forwarding), seat IDs, input delay, rollback for late inputs, mission
+  seed sync, state-hash desync detection, mid-mission state snapshots for
+  joiners, and client reconnect are implemented. Matchmaking is fully
+  serverless: the multiplayer menu joins a well-known iroh-gossip topic
+  bootstrapped through the BitTorrent Mainline DHT, so games are discovered
+  with no broker, master server, or configuration. The current design is
+  predictive rollback netcode rather than strict "wait for every peer before
+  ticking" lockstep. Browser clients are pending iroh wasm support.
 
 - **Partial Spellforge Lua mission support**. Custom-mission launch can extract
   and sandbox a Lua companion, register native shims, and call its
@@ -189,8 +234,8 @@ A list of which additional features we have added, which ones we might still wan
     are being captured.
 
 - **Multiplayer follow-ups**
-  - Add lobby leave/destroy events so clients stop showing stale sessions when
-    the host closes or leaves.
+  - Sign matchmaking announcements with the game identity key so a peer
+    cannot advertise a game under another host's endpoint id.
   - Merge rewind, rollback checking, EngineManager history, and multiplayer
     rollback into one shared timeline/history subsystem.
   - Keep flattening blocking modal flows so network events, replay commands,

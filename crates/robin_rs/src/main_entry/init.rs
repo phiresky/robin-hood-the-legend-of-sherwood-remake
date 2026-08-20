@@ -1,7 +1,7 @@
 //! Data-directory, locale, profile, and key-config initialization.
 
 #[cfg(any(not(target_arch = "wasm32"), target_os = "android"))]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::host::ApplicationContext;
 use crate::key_config_store::KeyConfigStore;
@@ -37,8 +37,83 @@ pub const FALLBACK_LOCALE_FOLDER: &str = "1033";
 /// separator (`:` on Unix, `;` on Windows).
 pub const OVERLAY_DATA_DIRS_ENV: &str = "ROBINHOOD_OVERLAY_DATA_DIRS";
 
+/// Directory whose immediate subdirectories are registered as overlay
+/// datadirs at startup.  Repository-shipped mods (e.g. hackable JSON
+/// levels) live here.
+pub const MODS_DIR: &str = "mods";
+
+/// Engine-shipped overlay datadir: assets every installation needs on
+/// top of its game data (e.g. the native bitmap fonts the Steam release
+/// is missing). Registered before the `mods/` overlays.
+pub const CORE_OVERLAY_DIR: &str = "assets/core-datadir";
+
+/// Resolve an engine-shipped resource directory that lives next to the
+/// installation: try the working directory first, then next to the
+/// executable, then the dev layout (executable in `target/<profile>/`,
+/// resources at the workspace root). The game may be launched from any
+/// working directory since the datadir is resolved independently.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_install_resource_dir(name: &str) -> Option<std::path::PathBuf> {
+    let mut candidates = vec![PathBuf::from(name)];
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        candidates.push(exe_dir.join(name));
+        candidates.push(exe_dir.join("..").join("..").join(name));
+    }
+    candidates.into_iter().find(|path| path.is_dir())
+}
+
+/// Resolve the repository/install `mods/` directory whose subdirectories
+/// are auto-mounted as overlay datadirs.  `None` when the installation
+/// ships no such directory.  Also scanned by the Custom Missions picker
+/// so overlay-shipped mods (hackable levels) can carry a `details.json`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
+    resolve_install_resource_dir(MODS_DIR)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
+    None
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn add_overlay_data_dirs() {
+    match resolve_install_resource_dir(CORE_OVERLAY_DIR) {
+        Some(dir) => {
+            let dir = dir.to_string_lossy().into_owned();
+            match SbFile::add_overlay_path(&dir) {
+                SBFILE_NO_ERROR => tracing::info!("Registered core overlay datadir: {dir}"),
+                SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
+                err => tracing::warn!("Core overlay datadir {dir} unavailable: {err}"),
+            }
+        }
+        None => tracing::warn!(
+            "Core overlay datadir {CORE_OVERLAY_DIR} was not found next to the game; \
+             engine-shipped assets (fonts, UI icons) will be missing"
+        ),
+    }
+
+    if let Some(mods_dir) = resolve_install_resource_dir(MODS_DIR)
+        && let Ok(entries) = std::fs::read_dir(mods_dir)
+    {
+        // Sort for a deterministic overlay lookup order.
+        let mut mod_dirs: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        mod_dirs.sort();
+        for dir in mod_dirs {
+            match SbFile::add_overlay_path(&dir) {
+                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay datadir: {dir}"),
+                SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
+                err => tracing::warn!("Failed to register mod overlay datadir {dir}: {err}"),
+            }
+        }
+    }
+
     let Ok(value) = std::env::var(OVERLAY_DATA_DIRS_ENV) else {
         return;
     };
@@ -104,7 +179,11 @@ pub fn register_language_data_paths_for_tool() {
 fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
     let data_dir = data_dir_override
         .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| std::env::var("ROBINHOOD_DATA_DIR").ok());
+        .or_else(|| {
+            std::env::var("ROBINHOOD_DATA_DIR")
+                .ok()
+                .filter(|dir| !dir.is_empty())
+        });
     if let Some(data_dir) = data_dir {
         tracing::info!("using primary datadir {}", data_dir);
         let status = SbFile::set_primary_path(&data_dir);
@@ -113,26 +192,26 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
                 "Unable to install datadir {data_dir}: SBFile error {status}"
             ));
         }
-    } else if !Path::new("Data").is_dir()
-        && let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
-    {
-        tracing::info!(
-            "Using executable directory as primary datadir: {}",
-            parent.display()
-        );
-        let status = SbFile::set_primary_path(&parent.to_string_lossy());
-        if status != SBFILE_NO_ERROR {
-            return Err(format!(
-                "Unable to install executable directory {}: SBFile error {status}",
-                parent.display()
-            ));
-        }
     } else {
-        let status = SbFile::set_primary_path(".");
+        // No override and no env var: reuse the remembered datadir, or
+        // auto-detect (working directory, executable directory, well-known
+        // CD/GOG/Steam install locations — validated via Data/robinhood.bks)
+        // and confirm with the player through the native dialog / folder
+        // picker. See `datadir_locator::resolve_datadir`.
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf));
+        // Fall back to the working directory when nothing was found or the
+        // player cancelled the picker; a loose unmarked `Data/` there keeps
+        // working, anything else hits the descriptive error below.
+        let chosen = crate::datadir_locator::resolve_datadir(exe_dir.as_deref())
+            .unwrap_or_else(|| PathBuf::from("."));
+        tracing::info!("using primary datadir {}", chosen.display());
+        let status = SbFile::set_primary_path(&chosen.to_string_lossy());
         if status != SBFILE_NO_ERROR {
             return Err(format!(
-                "Unable to install current directory as datadir: SBFile error {status}"
+                "Unable to install datadir {}: SBFile error {status}",
+                chosen.display()
             ));
         }
     }
@@ -145,8 +224,11 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
         return Err(format!(
             "ERROR: 'Data' directory not found in {}\n\
              Set ROBINHOOD_DATA_DIR=/path/to/game to the directory that\n\
-             contains the game's Data/ folder.",
-            cwd
+             contains the game's Data/ folder (with Data/robinhood.bks).\n\
+             If you do not own the game, I recommend buying it on GOG:\n\
+             {}",
+            cwd,
+            crate::datadir_locator::GOG_STORE_URL
         ));
     }
 
@@ -164,7 +246,11 @@ fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
 fn setup_data_dir(data_dir_override: Option<&Path>) -> Result<(), String> {
     let data_dir = data_dir_override
         .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| std::env::var("ROBINHOOD_DATA_DIR").ok());
+        .or_else(|| {
+            std::env::var("ROBINHOOD_DATA_DIR")
+                .ok()
+                .filter(|dir| !dir.is_empty())
+        });
     if let Some(data_dir) = data_dir {
         tracing::info!("changing working directory to datadir {}", data_dir);
         std::env::set_current_dir(&data_dir)

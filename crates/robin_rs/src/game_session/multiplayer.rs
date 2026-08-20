@@ -699,22 +699,16 @@ pub(super) async fn setup_multiplayer_session(
         args.mp_nickname.clone()
     };
 
-    if let Some(addr) = args.server.as_deref() {
+    if args.server {
         #[cfg(target_arch = "wasm32")]
-        return Err(format!(
-            "multiplayer: browser builds cannot host on {addr}; connect to a native host"
-        ));
+        return Err(
+            "multiplayer: browser builds cannot host; connect to a native host".to_string(),
+        );
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let bind_addr = if addr.starts_with(':') {
-                format!("0.0.0.0{addr}")
-            } else {
-                addr.to_string()
-            };
             let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
             match start_server(
-                &bind_addr,
                 nickname.clone(),
                 authoritative_mission_id.to_string(),
                 authoritative_rng_seed,
@@ -727,10 +721,11 @@ pub(super) async fn setup_multiplayer_session(
             ) {
                 Ok(handle) => {
                     tracing::info!(
-                        bind = %bind_addr,
+                        endpoint_id = %handle.endpoint_id(),
                         nickname = %nickname,
                         seed = authoritative_rng_seed,
-                        "multiplayer: hosting on {bind_addr}"
+                        "multiplayer: hosting on iroh endpoint {}",
+                        handle.endpoint_id()
                     );
                     host.transport.local_seat = handle.local_seat;
                     channels.attach_runtime(handle);
@@ -740,9 +735,7 @@ pub(super) async fn setup_multiplayer_session(
                     host.transport.mission_id = Some(authoritative_mission_id.to_string());
                 }
                 Err(e) => {
-                    return Err(format!(
-                        "multiplayer: failed to start server on {bind_addr}: {e}"
-                    ));
+                    return Err(format!("multiplayer: failed to start server: {e}"));
                 }
             }
         }
@@ -827,7 +820,7 @@ pub(super) async fn setup_multiplayer_session(
 }
 
 fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
-    let multiplayer = args.server.is_some() || args.connect.is_some();
+    let multiplayer = args.server || args.connect.is_some();
     let replay = args.replay.is_some() || args.replay_data.is_some();
     if multiplayer && replay {
         return Err(

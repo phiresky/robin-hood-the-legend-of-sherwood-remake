@@ -1340,8 +1340,26 @@ impl PathFinderRuntime {
         self.current_motion_area = (layer as usize, right_area);
 
         self.current_half_diagonal_idx = half_diagonal_idx;
-        self.current_half_diagonal =
-            self.graph.static_data.half_diagonals[half_diagonal_idx as usize];
+        self.current_half_diagonal = self
+            .graph
+            .static_data
+            .half_diagonals
+            .get(half_diagonal_idx as usize)
+            .copied()
+            // Hackable JSON levels do not carry the legacy unit-size
+            // table. Their actors are initialized with this same minimal
+            // footprint fallback in PositionInterface.
+            .unwrap_or(MoveBoxHalfDiagonal::new(1.0, 1.0));
+
+        let has_authored_graph_nodes = self
+            .graph
+            .layers
+            .get(layer as usize)
+            .and_then(|areas| areas.get(right_area))
+            .is_some_and(|obstacles| obstacles.iter().any(|nodes| !nodes.is_empty()));
+        if !has_authored_graph_nodes {
+            return self.find_path_visibility_fallback(grid, source, goal, use_first_point);
+        }
 
         self.reset_graph();
 
@@ -1431,6 +1449,131 @@ impl PathFinderRuntime {
         } else {
             None
         }
+    }
+
+    /// Route graph-less hackable levels around their authored motion
+    /// obstacles using a deterministic visibility graph.
+    ///
+    /// Original levels carry a precomputed corner graph in MOTION. Editable
+    /// JSON overlays intentionally do not encode that legacy binary slab, so
+    /// derive an equivalent small graph from active obstacle corners at query
+    /// time. This is also a useful non-fake failure mode for incomplete custom
+    /// levels: an unreachable goal returns `None` instead of walking through a
+    /// wall or pretending no route exists merely because bytes were omitted.
+    fn find_path_visibility_fallback(
+        &self,
+        grid: &FastFindGrid,
+        source: MapPoint,
+        goal: MapPoint,
+        use_first_point: bool,
+    ) -> Option<Vec<MapPoint>> {
+        if !self.object_position_authorized(grid, goal) {
+            return None;
+        }
+        if self.is_reachable_fast(source, goal) && self.is_reachable_grid(grid, source, goal) {
+            return Some(if use_first_point {
+                vec![goal]
+            } else {
+                vec![source, goal]
+            });
+        }
+
+        let (layer, area) = self.current_motion_area;
+        let motion_area = self
+            .graph
+            .static_data
+            .move_layers
+            .get(layer)
+            .and_then(|areas| areas.get(area))
+            .unwrap_or_else(|| panic!("visibility fallback has no motion area {layer}:{area}"));
+        let clearance = self
+            .current_half_diagonal
+            .x
+            .max(self.current_half_diagonal.y)
+            + 6.0;
+        let mut points = vec![source, goal];
+        for obstacle in motion_area
+            .motion_obstacles
+            .iter()
+            .filter(|obstacle| obstacle.active)
+        {
+            for &corner in &obstacle.polygon {
+                for (dx, dy) in [
+                    (-clearance, -clearance),
+                    (clearance, -clearance),
+                    (clearance, clearance),
+                    (-clearance, clearance),
+                ] {
+                    let candidate = MapPoint::new(corner.x + dx, corner.y + dy);
+                    if self.object_position_authorized(grid, candidate)
+                        && !points.iter().any(|point| {
+                            (point.x - candidate.x).abs() < 0.5
+                                && (point.y - candidate.y).abs() < 0.5
+                        })
+                    {
+                        points.push(candidate);
+                    }
+                }
+            }
+        }
+
+        // O(n^2) Dijkstra is intentionally used here: authored architectural
+        // levels have tens of corner candidates, and stable index-order tie
+        // breaking keeps rollback/replay behavior deterministic.
+        let mut distance = vec![f32::INFINITY; points.len()];
+        let mut previous = vec![None; points.len()];
+        let mut visited = vec![false; points.len()];
+        distance[0] = 0.0;
+        for _ in 0..points.len() {
+            let Some(current) = (0..points.len())
+                .filter(|&index| !visited[index])
+                .min_by(|&a, &b| distance[a].total_cmp(&distance[b]).then(a.cmp(&b)))
+            else {
+                break;
+            };
+            if !distance[current].is_finite() {
+                break;
+            }
+            if current == 1 {
+                break;
+            }
+            visited[current] = true;
+            for next in 0..points.len() {
+                if next == current || visited[next] {
+                    continue;
+                }
+                if !self.is_reachable_fast(points[current], points[next])
+                    || !self.is_reachable_grid(grid, points[current], points[next])
+                {
+                    continue;
+                }
+                let edge = MapVec::new(
+                    points[next].x - points[current].x,
+                    points[next].y - points[current].y,
+                )
+                .length();
+                let candidate = distance[current] + edge;
+                if candidate < distance[next] {
+                    distance[next] = candidate;
+                    previous[next] = Some(current);
+                }
+            }
+        }
+        if !distance[1].is_finite() {
+            return None;
+        }
+        let mut indices = vec![1usize];
+        let mut current = 1usize;
+        while current != 0 {
+            current = previous[current]?;
+            indices.push(current);
+        }
+        indices.reverse();
+        let mut path: Vec<MapPoint> = indices.into_iter().map(|index| points[index]).collect();
+        if use_first_point && path.first() == Some(&source) {
+            path.remove(0);
+        }
+        Some(path)
     }
 
     /// A* search on graph nodes. Returns the last node of the best path found.

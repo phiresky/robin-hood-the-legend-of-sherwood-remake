@@ -70,21 +70,11 @@ fn ttf_search_dirs(sbf_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     push_unique_dir(&mut dirs, sbf_dir.map(Path::to_path_buf));
     push_unique_dir(&mut dirs, Some(PathBuf::from(".")));
-    push_unique_dir(&mut dirs, Some(PathBuf::from("assets")));
 
     if let Ok(exe) = std::env::current_exe()
         && let Some(exe_dir) = exe.parent()
     {
         push_unique_dir(&mut dirs, Some(exe_dir.to_path_buf()));
-        push_unique_dir(&mut dirs, Some(exe_dir.join("assets")));
-        push_unique_dir(&mut dirs, exe_dir.parent().map(|p| p.join("assets")));
-        push_unique_dir(
-            &mut dirs,
-            exe_dir
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|p| p.join("assets")),
-        );
     }
 
     dirs
@@ -251,7 +241,8 @@ impl TrueTypeFont {
     /// so missing variants are logged and fall back to the upright face.
     fn find_and_load_ttf(&mut self, sbf_dir: Option<&Path>) -> u32 {
         let raw = self.truetype_name_str().to_owned();
-        let base = if raw.to_ascii_lowercase().ends_with(".ttf") {
+        let lower = raw.to_ascii_lowercase();
+        let base = if lower.ends_with(".ttf") || lower.ends_with(".ttc") {
             raw[..raw.len() - 4].to_string()
         } else {
             raw
@@ -282,39 +273,61 @@ impl TrueTypeFont {
         }
         candidates.push(("", 0));
 
+        // `.ttc` TrueType collections load through the same parser (face
+        // index 0); the international release ships e.g. `simsun.ttc`.
         for (suffix, resolved) in candidates {
-            let name = format!("{}{}.ttf", base, suffix);
-            for dir in &dirs {
-                if let Some(path) = find_case_insensitive(dir, &name)
-                    && let Ok(data) = std::fs::read(&path)
-                {
-                    match FontArc::try_from_vec(data) {
-                        Ok(f) => {
-                            self.font = Some(f);
-                            if resolved != 0 {
-                                tracing::debug!(
-                                    "robin_rs font: '{}' resolved style \
-                                     variant {:#x} via '{}'",
-                                    self.name_str(),
-                                    resolved,
+            for ext in ["ttf", "ttc"] {
+                let name = format!("{base}{suffix}.{ext}");
+                for dir in &dirs {
+                    if let Some(path) = find_case_insensitive(dir, &name)
+                        && let Ok(data) = std::fs::read(&path)
+                    {
+                        match FontArc::try_from_vec(data) {
+                            Ok(f) => {
+                                self.font = Some(f);
+                                if resolved != 0 {
+                                    tracing::debug!(
+                                        "robin_rs font: '{}' resolved style \
+                                         variant {:#x} via '{}'",
+                                        self.name_str(),
+                                        resolved,
+                                        path.display(),
+                                    );
+                                }
+                                return resolved;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "robin_rs font: failed to parse '{}': {}",
                                     path.display(),
+                                    e
                                 );
                             }
-                            return resolved;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "robin_rs font: failed to parse '{}': {}",
-                                path.display(),
-                                e
-                            );
+                    }
+                }
+                // Also consult the game's virtual filesystem so faces shipped
+                // in the datadir or an overlay resolve regardless of the
+                // working directory: the core overlay ships arial.ttf under
+                // Data/Interface/Fonts/, and the original Linux port shipped
+                // it at the datadir root.
+                for vfs_path in [format!("Data/Interface/Fonts/{name}"), name.clone()] {
+                    if let Ok(data) = robin_engine::sbfile::SbFile::read_all(&vfs_path) {
+                        match FontArc::try_from_vec(data) {
+                            Ok(f) => {
+                                self.font = Some(f);
+                                return resolved;
+                            }
+                            Err(e) => {
+                                tracing::warn!("robin_rs font: failed to parse '{vfs_path}': {e}");
+                            }
                         }
                     }
                 }
             }
         }
         tracing::warn!(
-            "robin_rs font: could not find TTF '{}.ttf' for metrics",
+            "robin_rs font: could not find TrueType face '{}.ttf'/'.ttc' for metrics",
             base
         );
         0
@@ -557,7 +570,10 @@ mod tests {
 
     /// Helper: locate arial.ttf relative to the workspace root.
     fn find_arial() -> PathBuf {
-        for candidate in ["assets/arial.ttf", "../../assets/arial.ttf"] {
+        for candidate in [
+            "assets/core-datadir/Data/Interface/Fonts/arial.ttf",
+            "../../assets/core-datadir/Data/Interface/Fonts/arial.ttf",
+        ] {
             let p = PathBuf::from(candidate);
             if p.exists() {
                 return p;

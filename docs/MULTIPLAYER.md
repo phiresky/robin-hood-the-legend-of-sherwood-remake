@@ -1,6 +1,6 @@
 # Multiplayer architecture
 
-Updated 2026-07-22. Multiplayer uses a server-ordered input stream with a
+Updated 2026-08-19. Multiplayer uses a server-ordered input stream with a
 small scheduling delay, predictive simulation, rollback for late inputs,
 periodic state-hash verification, and authoritative snapshots for joins. The
 wire protocol is version 15; older protocol compatibility is unsupported.
@@ -20,11 +20,42 @@ wire protocol is version 15; older protocol compatibility is unsupported.
 Local input must use `PlayerInput::new(local_seat, command)`. The host-only
 constructor is for single-player and explicitly host-owned paths.
 
+## Transport
+
+All game-session traffic runs over iroh (peer-to-peer QUIC with relay
+fallback and hole punching). Peers are addressed by iroh endpoint id — the
+public half of a persistent per-install key stored next to the save data
+(`multiplayer_identity.key`). Because the id is derived from the stored key,
+a host's connect address is known before its endpoint is even bound, which is
+how matchmaking can advertise a game ahead of mission launch. There is no
+bind address, port forwarding, or NAT configuration anywhere. Endpoint ids
+resolve through two layered address-lookup systems: the n0 DNS/pkarr default
+and publish/resolve on the BitTorrent Mainline DHT
+(`iroh-mainline-address-lookup`), so lookups keep working even without any
+hosted discovery infrastructure. Each session uses one bidirectional QUIC
+stream per peer carrying length-prefixed frames.
+
+## Matchmaking
+
+Matchmaking is fully serverless. Every player who opens the multiplayer menu
+joins one well-known iroh-gossip topic; peers for the topic are found through
+the Mainline DHT (`distributed-topic-tracker`), so there is no broker, no
+master server, and nothing to configure. Hosts periodically announce their
+game as soft state (listings expire when the announcements stop); joiners
+broadcast their join intent and the host counts them; Start is broadcast with
+the synchronized `start_at_epoch_ms` (and repeated, with the started-state
+announce as a fallback path, since gossip is fire-and-forget). The game id
+doubles as the host's game endpoint id, which joiners then pass to the normal
+`--connect` path. Announcements are currently unauthenticated soft state —
+signing them with the game identity key is a known TODO.
+
 ## Ownership and platform split
 
 `robin_engine::multiplayer` contains platform-neutral protocol types,
-`NetChannels`, the shared frame cursor and the snapshot handoff. Native and
-browser WebSocket transports live in `robin_rs::multiplayer::{native, wasm}`.
+`NetChannels`, the shared frame cursor and the snapshot handoff. The native
+iroh transport and identity live in
+`robin_rs::multiplayer::{native, identity}`; `robin_rs::multiplayer::wasm` is
+currently a stub (browser multiplayer is pending iroh wasm support).
 Mission-loop admission, input scheduling, rollback, hash comparison and modal
 synchronization live in `robin_rs::game_session::multiplayer`. The graphical
 and true-headless drivers use the same network drain and timeline admission
@@ -40,8 +71,9 @@ host viewport policy.
 
 ## Protocol 15
 
-Messages are bitcode-encoded binary WebSocket frames. The handshake rejects a
-different protocol version.
+Messages are bitcode-encoded binary frames, length-prefixed on a single
+bidirectional QUIC stream per peer. The handshake rejects a different
+protocol version.
 
 | Direction | Message | Purpose |
 | --- | --- | --- |
@@ -105,8 +137,8 @@ must not be repaired by silently adopting a new default Engine.
   state; simulation and headless HTTP timeline steps remain held until the
   replacement snapshot and `BeginSim` are accepted. Inputs queued only in the
   disconnected process are not guaranteed to survive transport loss.
-- Browser clients use `web_sys::WebSocket`; browsers can join a native server
-  but cannot host a listening server.
+- Browser clients are currently unsupported: the transport is iroh-only and
+  iroh's wasm (relay-over-WebSocket) support has not been wired in yet.
 
 ## Blocking modals
 
@@ -117,23 +149,27 @@ types must define their network/replay ordering explicitly.
 
 ## CLI
 
-- `--server HOST:PORT` hosts a game transport.
-- `--connect HOST:PORT` joins one.
+- `--server` hosts a game transport on the install's persistent iroh
+  identity; the endpoint id to share is logged at startup.
+- `--connect ENDPOINT_ID` joins a host by its endpoint id.
 - `--mp-expected-players N` configures the start barrier for direct launches.
 - `--mp-nickname NAME` supplies the stable reconnect identity/overlay label.
-- `--lobby-server HOST:PORT` runs only the lobby service.
+
+The in-game multiplayer menu needs no flags or environment: it joins the
+serverless matchmaking swarm automatically (see **Matchmaking** above).
 
 ## Deterministic smoke test
 
-Build first, then run host and client separately:
+Build first, then run host and client separately (the host logs
+`multiplayer: hosting on iroh endpoint <ID>` — pass that id to the client):
 
 ```bash
 cargo build --bin robin
 
-target/debug/robin --server 127.0.0.1:7878 --mp-expected-players 2 \
+target/debug/robin --server --mp-expected-players 2 \
   --mp-nickname host --start-paused --fast-forward --http-server 7780
 
-target/debug/robin --connect 127.0.0.1:7878 --mp-nickname alice \
+target/debug/robin --connect <HOST_ENDPOINT_ID> --mp-nickname alice \
   --start-paused --fast-forward --http-server 7781
 ```
 

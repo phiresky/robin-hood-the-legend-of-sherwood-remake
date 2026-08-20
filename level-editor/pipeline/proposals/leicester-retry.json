@@ -1,0 +1,78 @@
+{
+  "map": "Leicester",
+  "proposals": [
+    {
+      "name": "church",
+      "id": "leicester-church",
+      "bbox": [1000, 200, 470, 750],
+      "prompt": "church",
+      "alt_prompts": ["large stone building with steep roof", "cathedral"],
+      "tags": ["church", "building", "castle"]
+    },
+    {
+      "name": "beehive",
+      "id": "leicester-beehive",
+      "bbox": [255, 505, 130, 65],
+      "prompt": "beehive",
+      "alt_prompts": ["woven straw basket", "haystack"],
+      "tags": ["prop", "beehive"],
+      "pick": "all",
+      "max_masks": 4,
+      "min_area": 300,
+      "min_score": 0.4,
+      "variant_group": "leicester-beehive",
+      "scale_class": "variant",
+      "pad": 40
+    },
+    {
+      "name": "castle well",
+      "id": "leicester-castle-well",
+      "bbox": [1220, 20, 90, 90],
+      "prompt": "well",
+      "alt_prompts": ["stone structure", "gallows"],
+      "tags": ["prop", "well"],
+      "min_area": 400,
+      "pad": 48
+    },
+    {
+      "name": "courtyard well",
+      "id": "leicester-courtyard-well",
+      "bbox": [1220, 1000, 85, 80],
+      "prompt": "well",
+      "alt_prompts": ["stone well", "small stone structure"],
+      "tags": ["prop", "well"],
+      "min_area": 400,
+      "pad": 48
+    },
+    {
+      "name": "orchard tree",
+      "id": "leicester-orchard-tree",
+      "bbox": [1760, 270, 270, 190],
+      "prompt": "tree",
+      "alt_prompts": ["bush"],
+      "tags": ["tree", "vegetation"],
+      "pick": "all",
+      "max_masks": 6,
+      "min_area": 800,
+      "variant_group": "leicester-orchard-tree",
+      "scale_class": "variant"
+    },
+    {
+      "name": "gatehouse",
+      "id": "leicester-gatehouse",
+      "bbox": [660, 1100, 260, 330],
+      "prompt": "gatehouse",
+      "alt_prompts": ["stone tower with archway", "castle gate"],
+      "tags": ["castle", "gate", "building"]
+    },
+    {
+      "name": "wall walkway",
+      "id": "leicester-wall-walkway",
+      "bbox": [390, 390, 350, 160],
+      "prompt": "castle wall",
+      "alt_prompts": ["stone wall with battlements", "fortress rampart"],
+      "tags": ["wall", "castle", "crenellated"],
+      "scale_class": "spline-segment"
+    }
+  ]
+}

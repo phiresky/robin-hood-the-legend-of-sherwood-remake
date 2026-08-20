@@ -237,6 +237,9 @@ Logging verbosity is controlled by `RUST_LOG` (`info`, `debug`,
 - `--record <file.rhrec.jsonl>` — record a replay of this session
 - `--replay <file.rhrec.jsonl>` — replay a previously recorded session
 - `--mission <name> [--proto <map>]` — launch a mission directly
+- `--mission <name>` also launches hackable JSON levels
+  (`Data/Levels/<name>.level.json` in a `mods/<mod>/` overlay), e.g. the
+  bundled `--mission Dover`
 - `--custom-mission <zip>` — mount a vanilla custom-mission archive for a
   direct `--mission` launch
 - `--view-cones` — render every NPC's view cone continuously

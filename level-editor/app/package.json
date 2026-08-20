@@ -1,0 +1,22 @@
+{
+  "name": "app",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rle/shared": "workspace:*",
+    "@solidjs/web": "2.0.0-rc.0",
+    "idb-keyval": "^6.2.2",
+    "solid-js": "2.0.0-rc.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vite": "^7.1.2",
+    "vite-plugin-solid": "3.0.0-next.27"
+  }
+}

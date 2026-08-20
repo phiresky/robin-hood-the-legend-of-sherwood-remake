@@ -44,6 +44,14 @@ pub struct ModDetails {
     pub images: Vec<String>,
     #[serde(default)]
     pub versions: Vec<ModVersion>,
+    /// When set, this mod is a hackable JSON level shipped as an
+    /// always-mounted overlay datadir (see [`crate::main_entry`]'s
+    /// `MODS_DIR`) rather than a downloadable zip: the value is the
+    /// `<mission>` of a `Data/Levels/<mission>.level.json` descriptor.
+    /// Such mods need no `versions` — the picker launches them through
+    /// the hackable-level path instead of mounting a zip.
+    #[serde(default)]
+    pub hackable_mission: Option<String>,
 }
 
 /// One uploaded version of the mod. Each version is mirrored as a separate
@@ -196,8 +204,13 @@ pub struct MissionEntry {
     pub rhm_zip_entry: String,
 
     /// Bare basename (no extension) — what the engine uses to address
-    /// the mission via `Data/Levels/<basename>.rhm`.
+    /// the mission via `Data/Levels/<basename>.rhm`.  For hackable rows
+    /// this is the hackable mission filename instead.
     pub rhm_basename: String,
+
+    /// True for hackable JSON levels (`ModDetails::hackable_mission`):
+    /// launched through the hackable-level path with no zip mount.
+    pub hackable: bool,
 
     /// Resolved status: `Ok` rows are launchable; `Broken` rows are
     /// shown greyed-out with the reason as a tooltip / status string.
@@ -239,6 +252,37 @@ pub fn enumerate_missions(mods: &[DiscoveredMod]) -> Vec<MissionEntry> {
     let mut out = Vec::new();
     for m in mods {
         let preview = m.preview_image_path();
+        if let Some(mission) = &m.details.hackable_mission {
+            // Hackable JSON level: no zip to enumerate. Launchable iff
+            // the descriptor resolves through the mounted overlays.
+            let status = if robin_engine::level_data::hackable_level_exists(mission) {
+                MissionStatus::Ok {
+                    map_filename: mission.clone(),
+                }
+            } else {
+                MissionStatus::Broken {
+                    reason: format!(
+                        "Data/Levels/{mission}.level.json not found in any overlay datadir"
+                    ),
+                }
+            };
+            out.push(MissionEntry {
+                mod_slug: m.details.slug.clone(),
+                mod_title: m.details.title.clone(),
+                author: m.details.author.clone(),
+                description: m.details.description.clone(),
+                map: m.details.map.clone(),
+                requires_spellforge: m.details.requires_spellforge(),
+                version_label: "overlay".to_string(),
+                version_zip: PathBuf::new(),
+                rhm_zip_entry: String::new(),
+                rhm_basename: mission.clone(),
+                hackable: true,
+                status,
+                preview_image: preview,
+            });
+            continue;
+        }
         if m.details.versions.is_empty() {
             out.push(broken_entry(
                 m,
@@ -301,6 +345,7 @@ pub fn enumerate_missions(mods: &[DiscoveredMod]) -> Vec<MissionEntry> {
                     version_zip: zip_path.clone(),
                     rhm_zip_entry,
                     rhm_basename: basename,
+                    hackable: false,
                     status,
                     preview_image: preview.clone(),
                 });
@@ -327,6 +372,7 @@ fn broken_entry(
         version_zip: version.map(|v| m.version_zip_path(v)).unwrap_or_default(),
         rhm_zip_entry: String::new(),
         rhm_basename: String::new(),
+        hackable: false,
         status: MissionStatus::Broken {
             reason: reason.to_string(),
         },

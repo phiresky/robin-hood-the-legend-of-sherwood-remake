@@ -1,0 +1,8 @@
+{
+  "name": "robin-level-editor-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter app dev",
+    "build": "pnpm --filter app build"
+  }
+}
