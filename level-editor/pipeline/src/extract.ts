@@ -26,8 +26,12 @@ interface Args {
   tags: string[];
   pad: number;
   maxMasks: number;
-  pick: number | "best";
+  /** "best" = highest score; "all" = one asset per mask (-1, -2, … suffixes) */
+  pick: number | "best" | "all";
   scaleClass: "unique" | "variant" | "spline-segment";
+  variantGroup?: string;
+  /** drop masks below this score in --pick all mode */
+  minScore: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -51,8 +55,15 @@ function parseArgs(argv: string[]): Args {
     tags: get("tags")?.split(",") ?? [],
     pad: Number(get("pad") ?? 48),
     maxMasks: Number(get("max-masks") ?? 8),
-    pick: get("pick") === undefined ? "best" : Number(get("pick")),
+    pick:
+      get("pick") === undefined
+        ? "best"
+        : get("pick") === "all"
+          ? "all"
+          : Number(get("pick")),
     scaleClass: (get("scale-class") as Args["scaleClass"]) ?? "unique",
+    variantGroup: get("variant-group"),
+    minScore: Number(get("min-score") ?? 0.5),
   };
 }
 
@@ -130,104 +141,117 @@ async function main() {
     `got ${masks.length} mask(s), scores: ${masks.map((m) => m.score?.toFixed(3) ?? "?").join(", ")}`,
   );
 
-  const chosen: SamMask =
-    args.pick === "best"
-      ? masks.reduce((a, b) => ((b.score ?? 0) > (a.score ?? 0) ? b : a))
-      : masks[args.pick] ??
-        (() => {
-          throw new Error(`--pick ${args.pick} out of range (${masks.length} masks)`);
-        })();
-
-  // resize mask to crop resolution
-  // note: sharp's resize() promotes 1-channel raw input to 3 channels;
-  // extractChannel(0) forces it back to a single channel
-  const maskResized = await sharp(Buffer.from(chosen.data), {
-    raw: { width: chosen.width, height: chosen.height, channels: 1 },
-  })
-    .resize(cw, ch, { kernel: "nearest" })
-    .extractChannel(0)
-    .raw()
-    .toBuffer();
-  const cropMask = { data: new Uint8Array(maskResized), width: cw, height: ch };
-
-  // tighten to mask bounds (asset bbox in map coords)
-  const b = maskBounds(cropMask);
-  const ax = cx + b.minX;
-  const ay = cy + b.minY;
-  const aw = b.maxX - b.minX + 1;
-  const ah = b.maxY - b.minY + 1;
-  console.log(`asset bbox: ${ax},${ay} ${aw}x${ah}`);
-
-  const maskCropPng = await sharp(Buffer.from(cropMask.data), {
-    raw: { width: cw, height: ch, channels: 1 },
-  })
-    .extract({ left: b.minX, top: b.minY, width: aw, height: ah })
-    .png()
-    .toBuffer();
-  const maskAlpha = await sharp(maskCropPng).extractChannel(0).raw().toBuffer();
-
-  // cut each available ambiance with the same mask
-  const images: Record<string, Buffer> = { "mask.png": maskCropPng };
-  const cutouts: Partial<Record<"day" | "fog" | "night", string>> = {};
-  for (const amb of ["Day", "Fog", "Night"] as const) {
-    const mapPath = amb === "Day" ? dayPath : await findMapPng(levelsDir, amb, args.map);
-    if (!mapPath) continue;
-    const rgb = await sharp(mapPath)
-      .extract({ left: ax, top: ay, width: aw, height: ah })
-      .removeAlpha()
-      .raw()
-      .toBuffer();
-    const rgba = Buffer.alloc(aw * ah * 4);
-    for (let i = 0; i < aw * ah; i++) {
-      rgba[i * 4] = rgb[i * 3]!;
-      rgba[i * 4 + 1] = rgb[i * 3 + 1]!;
-      rgba[i * 4 + 2] = rgb[i * 3 + 2]!;
-      rgba[i * 4 + 3] = maskAlpha[i]!;
-    }
-    const key = amb.toLowerCase() as "day" | "fog" | "night";
-    const file = `${key}.png`;
-    images[file] = await sharp(rgba, { raw: { width: aw, height: ah, channels: 4 } })
-      .png()
-      .toBuffer();
-    cutouts[key] = file;
-  }
-
-  // clip level metadata to the asset region
   const level: ProtoLevel = JSON.parse(
     await fs.readFile(path.join(levelsDir, `${args.map}.rhp.json`), "utf8"),
   );
-  const clipped = clipLevel(level, [ax, ay, aw, ah]);
 
-  const desc: AssetDescriptor = {
-    id,
-    name: args.name,
-    tags: args.tags,
-    scale_class: args.scaleClass,
-    source: {
-      map: args.map,
-      ambiance: "Day",
-      bbox: [ax, ay, aw, ah],
-      extraction: {
-        tool: "fal-ai/sam-3/image-rle",
-        prompt: args.prompt,
-        score: chosen.score ?? undefined,
+  async function writeAssetForMask(mask: SamMask, assetId: string, assetName: string) {
+    // resize mask to crop resolution
+    // note: sharp's resize() promotes 1-channel raw input to 3 channels;
+    // extractChannel(0) forces it back to a single channel
+    const maskResized = await sharp(Buffer.from(mask.data), {
+      raw: { width: mask.width, height: mask.height, channels: 1 },
+    })
+      .resize(cw, ch, { kernel: "nearest" })
+      .extractChannel(0)
+      .raw()
+      .toBuffer();
+    const cropMask = { data: new Uint8Array(maskResized), width: cw, height: ch };
+
+    // tighten to mask bounds (asset bbox in map coords)
+    const b = maskBounds(cropMask);
+    const ax = cx + b.minX;
+    const ay = cy + b.minY;
+    const aw = b.maxX - b.minX + 1;
+    const ah = b.maxY - b.minY + 1;
+    console.log(`${assetId}: bbox ${ax},${ay} ${aw}x${ah}`);
+
+    const maskCropPng = await sharp(Buffer.from(cropMask.data), {
+      raw: { width: cw, height: ch, channels: 1 },
+    })
+      .extract({ left: b.minX, top: b.minY, width: aw, height: ah })
+      .png()
+      .toBuffer();
+    const maskAlpha = await sharp(maskCropPng).extractChannel(0).raw().toBuffer();
+
+    // cut each available ambiance with the same mask
+    const images: Record<string, Buffer> = { "mask.png": maskCropPng };
+    const cutouts: Partial<Record<"day" | "fog" | "night", string>> = {};
+    for (const amb of ["Day", "Fog", "Night"] as const) {
+      const mapPath = amb === "Day" ? dayPath : await findMapPng(levelsDir, amb, args.map);
+      if (!mapPath) continue;
+      const rgb = await sharp(mapPath)
+        .extract({ left: ax, top: ay, width: aw, height: ah })
+        .removeAlpha()
+        .raw()
+        .toBuffer();
+      const rgba = Buffer.alloc(aw * ah * 4);
+      for (let i = 0; i < aw * ah; i++) {
+        rgba[i * 4] = rgb[i * 3]!;
+        rgba[i * 4 + 1] = rgb[i * 3 + 1]!;
+        rgba[i * 4 + 2] = rgb[i * 3 + 2]!;
+        rgba[i * 4 + 3] = maskAlpha[i]!;
+      }
+      const key = amb.toLowerCase() as "day" | "fog" | "night";
+      const file = `${key}.png`;
+      images[file] = await sharp(rgba, { raw: { width: aw, height: ah, channels: 4 } })
+        .png()
+        .toBuffer();
+      cutouts[key] = file;
+    }
+
+    const clipped = clipLevel(level, [ax, ay, aw, ah]);
+
+    const desc: AssetDescriptor = {
+      id: assetId,
+      name: assetName,
+      tags: args.tags,
+      scale_class: args.scaleClass,
+      variant_group: args.variantGroup,
+      source: {
+        map: args.map,
+        ambiance: "Day",
+        bbox: [ax, ay, aw, ah],
+        extraction: {
+          tool: "fal-ai/sam-3/image-rle",
+          prompt: args.prompt,
+          score: mask.score ?? undefined,
+        },
       },
-    },
-    origin: [ax, ay],
-    // default anchor: bottom-center of the mask (ground contact line)
-    anchor: [Math.round(aw / 2), ah - 1],
-    images: { day: cutouts.day!, mask: "mask.png", fog: cutouts.fog, night: cutouts.night },
-    volumes: clipped.volumes,
-    motion: clipped.motion,
-    jump_zones: clipped.jump_zones,
-    jump_line_pairs: clipped.jump_line_pairs,
-    lifts: clipped.lifts,
-    material_sectors: clipped.material_sectors,
-    occlusion_masks: clipped.occlusion_masks,
-  };
+      origin: [ax, ay],
+      // default anchor: bottom-center of the mask (ground contact line)
+      anchor: [Math.round(aw / 2), ah - 1],
+      images: { day: cutouts.day!, mask: "mask.png", fog: cutouts.fog, night: cutouts.night },
+      volumes: clipped.volumes,
+      motion: clipped.motion,
+      jump_zones: clipped.jump_zones,
+      jump_line_pairs: clipped.jump_line_pairs,
+      lifts: clipped.lifts,
+      material_sectors: clipped.material_sectors,
+      occlusion_masks: clipped.occlusion_masks,
+    };
 
-  const dir = await writeAsset(desc, images);
-  console.log(`wrote ${dir}`);
+    const dir = await writeAsset(desc, images);
+    console.log(`wrote ${dir}`);
+  }
+
+  let chosen: SamMask | null = null;
+  if (args.pick === "all") {
+    const kept = masks.filter((m) => (m.score ?? 0) >= args.minScore);
+    console.log(`writing ${kept.length}/${masks.length} masks (min score ${args.minScore})`);
+    for (let i = 0; i < kept.length; i++) {
+      await writeAssetForMask(kept[i]!, `${id}-${i + 1}`, `${args.name} ${i + 1}`);
+    }
+  } else {
+    chosen =
+      args.pick === "best"
+        ? masks.reduce((a, b) => ((b.score ?? 0) > (a.score ?? 0) ? b : a))
+        : (masks[args.pick] ??
+          (() => {
+            throw new Error(`--pick ${args.pick} out of range (${masks.length} masks)`);
+          })());
+    await writeAssetForMask(chosen, id, args.name);
+  }
 
   // review sheet: crop + all candidate masks side by side
   const reviewDir = path.join(workDir, id);
@@ -256,10 +280,8 @@ async function main() {
       ])
       .png()
       .toBuffer();
-    await fs.writeFile(
-      path.join(reviewDir, `mask-${i}${i === masks.indexOf(chosen) ? "-CHOSEN" : ""}.png`),
-      sheet,
-    );
+    const tag = chosen !== null && i === masks.indexOf(chosen) ? "-CHOSEN" : "";
+    await fs.writeFile(path.join(reviewDir, `mask-${i}${tag}.png`), sheet);
   }
   console.log(`review sheets in ${reviewDir}`);
 }
