@@ -82,6 +82,37 @@ fn bow_aim_height_command(
     }
 }
 
+/// `orient_action_at` parity commands are emitted inside Original's
+/// `PerformOrientation`, after its action-state, animation, and shoot-list
+/// predicates have all succeeded.  Replaying such a command must not test
+/// those predicates a second time: a nested refresh can advance the actor
+/// between Original's frame entry and the point where the command is
+/// recorded, while Rust applies recorded input at the frame boundary.
+#[inline]
+fn bow_orientation_gate_passes(
+    gate_was_recorded_passed: bool,
+    action_state: crate::element::ActionState,
+    current_animation: Option<crate::order::OrderType>,
+    shoot_pending: bool,
+) -> bool {
+    use crate::element::ActionState;
+    use crate::order::OrderType;
+
+    gate_was_recorded_passed
+        || (matches!(
+            action_state,
+            ActionState::AimingWithBow | ActionState::AimingWithBowUp
+        ) && matches!(
+            current_animation,
+            Some(
+                OrderType::AimingWithBow
+                    | OrderType::AimingWithBowUp
+                    | OrderType::AimingWithBowAnonymous
+                    | OrderType::AimingWithBowUpAnonymous
+            )
+        ) && !shoot_pending)
+}
+
 /// Output of `compute_trajectory_preview*`. Host applies this to its
 /// own `valid_trajectory` / `trajectory_preview_*` fields after the
 /// readonly computation returns. See `Host` in `robin_rs::game` for
@@ -2689,7 +2720,7 @@ impl EngineInner {
         target_3d: crate::coordinates::WorldPoint3D,
     ) {
         for pc_id in self.players.seats[0].selection.clone() {
-            self.turn_pc_in_bow_aim(assets, pc_id, target_3d);
+            self.turn_pc_in_bow_aim(assets, pc_id, target_3d, false);
         }
     }
 
@@ -2698,9 +2729,9 @@ impl EngineInner {
         assets: &LevelAssets,
         pc_id: EntityId,
         target_3d: crate::coordinates::WorldPoint3D,
+        gate_was_recorded_passed: bool,
     ) {
-        use crate::element::{ActionState, Command};
-        use crate::order::OrderType;
+        use crate::element::Command;
         use crate::position_interface::vector_to_sector_0_to_15_iso;
 
         let ground_pt = GroundPoint {
@@ -2717,19 +2748,6 @@ impl EngineInner {
             .actor_data()
             .unwrap_or_else(|| panic!("resolved orientation owner {pc_id:?} is not an actor"));
         let action_state = actor.action_state;
-        if !matches!(
-            action_state,
-            ActionState::AimingWithBow | ActionState::AimingWithBowUp
-        ) {
-            tracing::trace!(
-                ?pc_id,
-                ?action_state,
-                ?target_3d,
-                "resolved bow aim skipped outside aiming state"
-            );
-            return;
-        }
-
         let current_anim = self
             .orders
             .sequence_manager
@@ -2739,16 +2757,12 @@ impl EngineInner {
             .orders
             .sequence_manager
             .element_is_about_to_be_launched(pc_id, Command::ShootBow);
-        if !matches!(
+        if !bow_orientation_gate_passes(
+            gate_was_recorded_passed,
+            action_state,
             current_anim,
-            Some(
-                OrderType::AimingWithBow
-                    | OrderType::AimingWithBowUp
-                    | OrderType::AimingWithBowAnonymous
-                    | OrderType::AimingWithBowUpAnonymous
-            )
-        ) || shoot_pending
-        {
+            shoot_pending,
+        ) {
             tracing::trace!(
                 ?pc_id,
                 ?action_state,
@@ -2945,7 +2959,10 @@ impl EngineInner {
         use crate::profiles::Action;
 
         match action {
-            Action::Bow => self.turn_pc_in_bow_aim(assets, pc_id, target),
+            // Original records this command only after the live orientation
+            // gates succeed. Apply the recorded post-gate operation even if
+            // Rust is still on the pre-nested-refresh animation this frame.
+            Action::Bow => self.turn_pc_in_bow_aim(assets, pc_id, target, true),
             Action::Apple | Action::Stone | Action::Net | Action::WaspNest | Action::Purse => {
                 self.turn_pc_throw(
                     pc_id,
@@ -3020,6 +3037,22 @@ mod tests {
             ),
             Some(Command::RaiseBow)
         );
+    }
+
+    #[test]
+    fn recorded_bow_orientation_does_not_repeat_live_animation_gate() {
+        assert!(!bow_orientation_gate_passes(
+            false,
+            ActionState::AimingWithBowUp,
+            None,
+            false,
+        ));
+        assert!(bow_orientation_gate_passes(
+            true,
+            ActionState::AimingWithBowUp,
+            None,
+            false,
+        ));
     }
 
     #[test]
