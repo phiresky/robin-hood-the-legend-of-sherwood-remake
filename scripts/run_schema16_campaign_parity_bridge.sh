@@ -28,8 +28,8 @@ if [[ ! -r "$ssh_config" ]]; then
     printf 'error: SSH config is not readable: %s\n' "$ssh_config" >&2
     exit 2
 fi
-if [[ ! "$local_concurrency" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'error: SCHEMA16_BRIDGE_LOCAL_CONCURRENCY must be positive\n' >&2
+if [[ ! "$local_concurrency" =~ ^[0-9]+$ ]]; then
+    printf 'error: SCHEMA16_BRIDGE_LOCAL_CONCURRENCY must be a non-negative integer\n' >&2
     exit 2
 fi
 if [[ ! "$poll_seconds" =~ ^[1-9][0-9]*$ ]]; then
@@ -161,9 +161,17 @@ run_remote_sync() {
         # Remote workers create the log before cache construction and replay
         # finish.  Re-sync existing files so a prefix copied mid-run converges
         # to the completed diagnostic instead of remaining permanently stale.
-        rsync -a --ignore-existing -e "ssh -F $ssh_config" \
-            "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
-            || printf 'warning: could not pull remote statuses\n' >&2
+        if (( local_concurrency == 0 )); then
+            # With remote-only validation these files are authoritative and
+            # may repair an older audit artifact created by a prior overlap.
+            rsync -a -e "ssh -F $ssh_config" \
+                "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
+                || printf 'warning: could not pull remote statuses\n' >&2
+        else
+            rsync -a --ignore-existing -e "ssh -F $ssh_config" \
+                "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
+                || printf 'warning: could not pull remote statuses\n' >&2
+        fi
         rsync -a -e "ssh -F $ssh_config" \
             "$remote_host:$remote_audit/logs/" "$audit_dir/logs/" \
             || printf 'warning: could not pull remote logs\n' >&2
@@ -182,9 +190,15 @@ trap cleanup EXIT INT TERM
 
 printf 'schema16 campaign bridge started: audit=%s remote=%s:%s\n' \
     "$audit_dir" "$remote_host" "$remote_audit"
-run_local_watch &
-local_watch_pid=$!
+if (( local_concurrency > 0 )); then
+    run_local_watch &
+    local_watch_pid=$!
+else
+    printf 'local parity validation disabled; remote audit is authoritative\n'
+fi
 run_remote_sync
-wait "$local_watch_pid" 2>/dev/null || true
+if [[ -n "$local_watch_pid" ]]; then
+    wait "$local_watch_pid" 2>/dev/null || true
+fi
 local_watch_pid=
 printf 'schema16 campaign bridge stopped with ladder tmux %s\n' "$ladder_session"
