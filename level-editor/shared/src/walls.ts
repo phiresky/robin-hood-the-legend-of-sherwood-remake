@@ -86,6 +86,7 @@ export function expandWallRunDirectional(
     const pux = pdx / plen;
     const puy = pdy / plen;
     let progress = 0;
+    const steep = Math.abs(normDeg(artDeg)) > 55;
     while (progress < plen) {
       stamps.push({
         asset: best.id,
@@ -95,6 +96,16 @@ export function expandWallRunDirectional(
       cx += ux * step;
       cy += uy * step;
       progress = (cx - points[i]![0]) * pux + (cy - points[i]![1]) * puy;
+      // bounded drift correction toward the guide line, perpendicular to the
+      // butt-joint axis (y for shallow art, x for steep) so joints stay exact
+      const gx = points[i]![0] + pux * progress;
+      const gy = points[i]![1] + puy * progress;
+      const cap = 3;
+      if (steep) {
+        cx += Math.max(-cap, Math.min(cap, gx - cx));
+      } else {
+        cy += Math.max(-cap, Math.min(cap, gy - cy));
+      }
     }
   }
   // closing stamp at the chain's end

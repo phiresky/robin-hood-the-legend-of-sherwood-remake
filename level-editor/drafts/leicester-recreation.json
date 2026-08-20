@@ -498,6 +498,13 @@
       ]
     },
     {
+      "asset": "leicester-north-wall-slice-flip",
+      "pos": [
+        479,
+        458
+      ]
+    },
+    {
       "asset": "leicester-orchard-tree-1",
       "pos": [
         1834,
@@ -743,6 +750,13 @@
       ]
     },
     {
+      "asset": "leicester-wall-seg-ne-slice-flip",
+      "pos": [
+        1376,
+        1228
+      ]
+    },
+    {
       "asset": "leicester-wall-seg-se",
       "pos": [
         869,
@@ -765,6 +779,13 @@
     },
     {
       "asset": "leicester-wall-walkway-slice",
+      "pos": [
+        530,
+        400
+      ]
+    },
+    {
+      "asset": "leicester-wall-walkway-slice-flip",
       "pos": [
         530,
         400
@@ -812,8 +833,7 @@
       "segment_set": [
         "leicester-wall-seg-se-slice",
         "leicester-wall-seg-ne-slice",
-        "leicester-north-wall-slice",
-        "leicester-wall-walkway-slice"
+        "leicester-wall-seg-ne-slice-flip"
       ]
     },
     {
@@ -835,8 +855,7 @@
       "segment_set": [
         "leicester-wall-seg-se-slice",
         "leicester-wall-seg-ne-slice",
-        "leicester-north-wall-slice",
-        "leicester-wall-walkway-slice"
+        "leicester-wall-seg-ne-slice-flip"
       ]
     },
     {
@@ -858,8 +877,7 @@
       "segment_set": [
         "leicester-wall-seg-se-slice",
         "leicester-wall-seg-ne-slice",
-        "leicester-north-wall-slice",
-        "leicester-wall-walkway-slice"
+        "leicester-wall-seg-ne-slice-flip"
       ]
     }
   ],
@@ -1362,5 +1380,5 @@
       "water": "leicester-moat-water-swatch"
     }
   },
-  "notes": "Auto-generated litmus test: all 112 Leicester library assets at their source positions."
+  "notes": "Auto-generated litmus test: all 115 Leicester library assets at their source positions."
 }

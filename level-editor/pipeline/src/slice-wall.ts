@@ -60,6 +60,29 @@ async function main() {
       .toBuffer();
   }
 
+  // measure the art's true slope from the mask baseline (per-column bottom
+  // fg row, least-squares fit) — hand-guessed directions cause joint gaps
+  const sliceMask = await sharp(images["mask.png"]!).extractChannel(0).raw().toBuffer();
+  const cols: { x: number; b: number }[] = [];
+  for (let x = 0; x < sliceW; x++) {
+    for (let y = h - 1; y >= 0; y--) {
+      if (sliceMask[y * sliceW + x]! > 127) {
+        cols.push({ x, b: y });
+        break;
+      }
+    }
+  }
+  let directionDeg = desc.wall_direction_deg ?? 0;
+  if (cols.length >= 8) {
+    const n = cols.length;
+    const mx = cols.reduce((s, c) => s + c.x, 0) / n;
+    const mb = cols.reduce((s, c) => s + c.b, 0) / n;
+    const num = cols.reduce((s, c) => s + (c.x - mx) * (c.b - mb), 0);
+    const den = cols.reduce((s, c) => s + (c.x - mx) ** 2, 0);
+    const slope = den === 0 ? 0 : num / den;
+    directionDeg = Math.round((Math.atan2(slope, 1) * 180) / Math.PI * 10) / 10;
+  }
+
   const sliceId = `${id}-slice`;
   const sliceDesc: AssetDescriptor = {
     ...desc,
@@ -73,6 +96,7 @@ async function main() {
     },
     origin: [desc.origin[0] + x0, desc.origin[1] + top],
     anchor: [Math.round(sliceW / 2), h - 1],
+    wall_direction_deg: directionDeg,
     images: {
       day: "day.png",
       mask: "mask.png",
@@ -89,7 +113,9 @@ async function main() {
     occlusion_masks: [],
   };
   const dir = await writeAsset(sliceDesc, images);
-  console.log(`wrote ${dir} (${sliceW}x${h}, direction ${desc.wall_direction_deg}°)`);
+  console.log(
+    `wrote ${dir} (${sliceW}x${h}, measured direction ${directionDeg}° [was ${desc.wall_direction_deg}°])`,
+  );
 }
 
 main().catch((e) => {

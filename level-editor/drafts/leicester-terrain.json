@@ -509,8 +509,7 @@
    "segment_set": [
     "leicester-wall-seg-se-slice",
     "leicester-wall-seg-ne-slice",
-    "leicester-north-wall-slice",
-    "leicester-wall-walkway-slice"
+    "leicester-wall-seg-ne-slice-flip"
    ]
   },
   {
@@ -532,8 +531,7 @@
    "segment_set": [
     "leicester-wall-seg-se-slice",
     "leicester-wall-seg-ne-slice",
-    "leicester-north-wall-slice",
-    "leicester-wall-walkway-slice"
+    "leicester-wall-seg-ne-slice-flip"
    ]
   },
   {
@@ -555,8 +553,7 @@
    "segment_set": [
     "leicester-wall-seg-se-slice",
     "leicester-wall-seg-ne-slice",
-    "leicester-north-wall-slice",
-    "leicester-wall-walkway-slice"
+    "leicester-wall-seg-ne-slice-flip"
    ]
   }
  ]
