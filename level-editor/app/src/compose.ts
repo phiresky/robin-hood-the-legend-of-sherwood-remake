@@ -108,10 +108,21 @@ export function anchorY(p: Placement, asset: LibraryAsset | null): number {
   return p.pos[1] + (asset ? asset.descriptor.anchor[1] * s : 0);
 }
 
-/** placement indices in draw order (ascending world anchor Y) */
+/**
+ * Placement indices in draw order: static assets first, then FX/patch assets
+ * (descriptor `fx` set) on top — in-game, patch roofs draw over the
+ * background/buildings — each group ascending by world anchor Y.
+ */
 export function drawOrder(draft: MapDraft, lib: LibraryIndex | null): number[] {
-  const keys = draft.placements.map((p) => anchorY(p, assetById(lib, p.asset)));
-  return [...draft.placements.keys()].sort((a, b) => keys[a]! - keys[b]!);
+  const keys = draft.placements.map((p) => {
+    const asset = assetById(lib, p.asset);
+    return [asset?.descriptor.fx ? 1 : 0, anchorY(p, asset)] as const;
+  });
+  return [...draft.placements.keys()].sort((a, b) => {
+    const ka = keys[a]!;
+    const kb = keys[b]!;
+    return ka[0] - kb[0] || ka[1] - kb[1];
+  });
 }
 
 // --- image cache -----------------------------------------------------------
