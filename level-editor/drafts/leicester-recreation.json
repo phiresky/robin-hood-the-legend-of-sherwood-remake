@@ -64,13 +64,6 @@
       ]
     },
     {
-      "asset": "leicester-east-wall",
-      "pos": [
-        1212,
-        1202
-      ]
-    },
-    {
       "asset": "leicester-footbridge",
       "pos": [
         572,
@@ -498,6 +491,13 @@
       ]
     },
     {
+      "asset": "leicester-north-wall-slice",
+      "pos": [
+        479,
+        458
+      ]
+    },
+    {
       "asset": "leicester-orchard-tree-1",
       "pos": [
         1834,
@@ -736,10 +736,24 @@
       ]
     },
     {
+      "asset": "leicester-wall-seg-ne-slice",
+      "pos": [
+        1376,
+        1228
+      ]
+    },
+    {
       "asset": "leicester-wall-seg-se",
       "pos": [
         869,
         1257
+      ]
+    },
+    {
+      "asset": "leicester-wall-seg-se-slice",
+      "pos": [
+        963,
+        1268
       ]
     },
     {
@@ -750,17 +764,17 @@
       ]
     },
     {
+      "asset": "leicester-wall-walkway-slice",
+      "pos": [
+        530,
+        400
+      ]
+    },
+    {
       "asset": "leicester-watermill",
       "pos": [
         2323,
         680
-      ]
-    },
-    {
-      "asset": "leicester-west-wall",
-      "pos": [
-        157,
-        1002
       ]
     },
     {
@@ -781,7 +795,6 @@
   "walls": [
     {
       "asset": "leicester-castle-wall-south",
-      "spacing": 0.5,
       "points": [
         [
           320,
@@ -797,15 +810,14 @@
         ]
       ],
       "segment_set": [
-        "leicester-wall-seg-se",
-        "leicester-wall-seg-ne",
-        "leicester-north-wall",
-        "leicester-wall-walkway"
+        "leicester-wall-seg-se-slice",
+        "leicester-wall-seg-ne-slice",
+        "leicester-north-wall-slice",
+        "leicester-wall-walkway-slice"
       ]
     },
     {
       "asset": "leicester-castle-wall-south",
-      "spacing": 0.5,
       "points": [
         [
           860,
@@ -821,15 +833,14 @@
         ]
       ],
       "segment_set": [
-        "leicester-wall-seg-se",
-        "leicester-wall-seg-ne",
-        "leicester-north-wall",
-        "leicester-wall-walkway"
+        "leicester-wall-seg-se-slice",
+        "leicester-wall-seg-ne-slice",
+        "leicester-north-wall-slice",
+        "leicester-wall-walkway-slice"
       ]
     },
     {
       "asset": "leicester-castle-wall-south",
-      "spacing": 0.5,
       "points": [
         [
           1350,
@@ -845,10 +856,10 @@
         ]
       ],
       "segment_set": [
-        "leicester-wall-seg-se",
-        "leicester-wall-seg-ne",
-        "leicester-north-wall",
-        "leicester-wall-walkway"
+        "leicester-wall-seg-se-slice",
+        "leicester-wall-seg-ne-slice",
+        "leicester-north-wall-slice",
+        "leicester-wall-walkway-slice"
       ]
     }
   ],
@@ -1351,5 +1362,5 @@
       "water": "leicester-moat-water-swatch"
     }
   },
-  "notes": "Auto-generated litmus test: all 110 Leicester library assets at their source positions."
+  "notes": "Auto-generated litmus test: all 112 Leicester library assets at their source positions."
 }

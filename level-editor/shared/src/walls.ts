@@ -49,38 +49,65 @@ const angularDist = (a: number, b: number) => {
 export function expandWallRunDirectional(
   points: readonly [number, number][],
   segments: readonly WallSegmentSpec[],
-  spacingFraction = 0.55,
+  spacingFraction = 1,
 ): DirectionalStamp[] {
   const stamps: DirectionalStamp[] = [];
   if (points.length < 2 || segments.length === 0) return stamps;
 
+  // The drawn polyline is a guide: each stretch snaps to the closest
+  // art direction and the wall walks in that direction with exact butt-joint
+  // steps (slice extent in screen X, or Y for steep art), chaining from the
+  // previous stamp so joints stay seamless even when the path slope differs
+  // from the art slope.
+  let cx = points[0]![0];
+  let cy = points[0]![1];
   for (let i = 0; i + 1 < points.length; i++) {
-    const [x1, y1] = points[i]!;
-    const [x2, y2] = points[i + 1]!;
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len = Math.hypot(dx, dy);
-    if (len === 0) continue;
-    const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const [tx, ty] = points[i + 1]!;
+    const pdx = tx - cx;
+    const pdy = ty - cy;
+    const plen = Math.hypot(pdx, pdy);
+    if (plen < 4) continue;
+    const angle = (Math.atan2(pdy, pdx) * 180) / Math.PI;
     let best = segments[0]!;
     for (const s of segments) {
       if (angularDist(s.directionDeg, angle) < angularDist(best.directionDeg, angle)) best = s;
     }
-    // step by the segment's extent along the path direction
-    const rad = (Math.abs(normDeg(angle)) * Math.PI) / 180;
-    const along = Math.max(
-      24,
-      (best.size[0] * Math.cos(rad) + best.size[1] * Math.sin(rad)) * spacingFraction,
-    );
-    for (let t = 0; t <= len; t += along) {
-      const px = x1 + (dx / len) * t;
-      const py = y1 + (dy / len) * t;
+    // art direction, flipped if needed to point along the path heading
+    let artDeg = best.directionDeg;
+    if (Math.cos(((artDeg - angle) * Math.PI) / 180) < 0) artDeg += 180;
+    const artRad = (artDeg * Math.PI) / 180;
+    const ux = Math.cos(artRad);
+    const uy = Math.sin(artRad);
+    const step =
+      (Math.abs(normDeg(artDeg)) <= 55
+        ? best.size[0] / Math.max(0.35, Math.abs(ux))
+        : best.size[1] / Math.max(0.35, Math.abs(uy))) * spacingFraction;
+    // walk in art direction until progress along the path stretch is covered
+    const pux = pdx / plen;
+    const puy = pdy / plen;
+    let progress = 0;
+    while (progress < plen) {
       stamps.push({
         asset: best.id,
-        pos: [Math.round(px - best.anchor[0]), Math.round(py - best.anchor[1])],
-        sortY: py,
+        pos: [Math.round(cx - best.anchor[0]), Math.round(cy - best.anchor[1])],
+        sortY: cy,
       });
+      cx += ux * step;
+      cy += uy * step;
+      progress = (cx - points[i]![0]) * pux + (cy - points[i]![1]) * puy;
     }
+  }
+  // closing stamp at the chain's end
+  const lastSeg = segments[0];
+  if (lastSeg) {
+    stamps.push({
+      asset: stamps.length ? stamps[stamps.length - 1]!.asset : lastSeg.id,
+      pos: [
+        Math.round(cx - (segments.find((s) => s.id === stamps.at(-1)?.asset) ?? lastSeg).anchor[0]),
+        Math.round(cy - (segments.find((s) => s.id === stamps.at(-1)?.asset) ?? lastSeg).anchor[1]),
+      ],
+      sortY: cy,
+    });
   }
   stamps.sort((a, b) => a.sortY - b.sortY);
   return stamps;
