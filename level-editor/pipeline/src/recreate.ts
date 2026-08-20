@@ -61,7 +61,9 @@ async function main() {
     name: `${map} recreation`,
     size: [W, H],
     background_color: "#2a3324",
-    placements: assets.map((a) => ({ asset: a.id, pos: a.origin })),
+    placements: assets
+      .filter((a) => a.scale_class !== "texture" && a.scale_class !== "spline-segment")
+      .map((a) => ({ asset: a.id, pos: a.origin })),
     walls: spec.walls,
     terrain: {
       ...spec,
@@ -92,8 +94,9 @@ async function main() {
     sortY: number;
   }
   const byId = new Map(assets.map((a) => [a.id, a]));
+  // spline-segments are stitching material for wall runs, not scene objects
   const statics: Item[] = assets
-    .filter((a) => !a.fx && a.scale_class !== "texture")
+    .filter((a) => !a.fx && a.scale_class !== "texture" && a.scale_class !== "spline-segment")
     .map((a) => ({
       input: path.join(libraryDir, a.id, a.images.day),
       left: a.origin[0],

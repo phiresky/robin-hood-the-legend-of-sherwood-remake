@@ -507,9 +507,11 @@
     ]
    ],
    "segment_set": [
-    "leicester-wall-seg-se-slice",
-    "leicester-wall-seg-ne-slice",
-    "leicester-wall-seg-ne-slice-flip"
+    "leicester-castle-wall-south-slice-shp0",
+    "leicester-castle-wall-south-slice-shp35",
+    "leicester-castle-wall-south-slice-shp50",
+    "leicester-castle-wall-south-slice-flip-shm35",
+    "leicester-castle-wall-south-slice-flip-shm50"
    ]
   },
   {
@@ -529,9 +531,11 @@
     ]
    ],
    "segment_set": [
-    "leicester-wall-seg-se-slice",
-    "leicester-wall-seg-ne-slice",
-    "leicester-wall-seg-ne-slice-flip"
+    "leicester-castle-wall-south-slice-shp0",
+    "leicester-castle-wall-south-slice-shp35",
+    "leicester-castle-wall-south-slice-shp50",
+    "leicester-castle-wall-south-slice-flip-shm35",
+    "leicester-castle-wall-south-slice-flip-shm50"
    ]
   },
   {
@@ -542,18 +546,16 @@
      1290
     ],
     [
-     1440,
-     1140
-    ],
-    [
-     1470,
-     1000
+     1490,
+     1150
     ]
    ],
    "segment_set": [
-    "leicester-wall-seg-se-slice",
-    "leicester-wall-seg-ne-slice",
-    "leicester-wall-seg-ne-slice-flip"
+    "leicester-castle-wall-south-slice-shp0",
+    "leicester-castle-wall-south-slice-shp35",
+    "leicester-castle-wall-south-slice-shp50",
+    "leicester-castle-wall-south-slice-flip-shm35",
+    "leicester-castle-wall-south-slice-flip-shm50"
    ]
   }
  ]

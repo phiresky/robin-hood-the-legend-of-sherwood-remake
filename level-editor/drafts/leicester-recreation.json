@@ -29,24 +29,10 @@
       ]
     },
     {
-      "asset": "leicester-castle-wall-south",
-      "pos": [
-        1165,
-        1327
-      ]
-    },
-    {
       "asset": "leicester-church",
       "pos": [
         952,
         200
-      ]
-    },
-    {
-      "asset": "leicester-courtyard-dirt-swatch",
-      "pos": [
-        600,
-        560
       ]
     },
     {
@@ -57,24 +43,10 @@
       ]
     },
     {
-      "asset": "leicester-dirt-road-swatch",
-      "pos": [
-        1065,
-        1005
-      ]
-    },
-    {
       "asset": "leicester-footbridge",
       "pos": [
         572,
         1417
-      ]
-    },
-    {
-      "asset": "leicester-forest-canopy-swatch",
-      "pos": [
-        200,
-        0
       ]
     },
     {
@@ -421,13 +393,6 @@
       ]
     },
     {
-      "asset": "leicester-grass-swatch",
-      "pos": [
-        245,
-        415
-      ]
-    },
-    {
       "asset": "leicester-great-hall",
       "pos": [
         592,
@@ -474,34 +439,6 @@
       "pos": [
         1517,
         431
-      ]
-    },
-    {
-      "asset": "leicester-moat-water-swatch",
-      "pos": [
-        1720,
-        880
-      ]
-    },
-    {
-      "asset": "leicester-north-wall",
-      "pos": [
-        427,
-        408
-      ]
-    },
-    {
-      "asset": "leicester-north-wall-slice",
-      "pos": [
-        479,
-        458
-      ]
-    },
-    {
-      "asset": "leicester-north-wall-slice-flip",
-      "pos": [
-        479,
-        458
       ]
     },
     {
@@ -607,20 +544,6 @@
       "pos": [
         710,
         1213
-      ]
-    },
-    {
-      "asset": "leicester-ploughed-field",
-      "pos": [
-        182,
-        1723
-      ]
-    },
-    {
-      "asset": "leicester-rail-fence",
-      "pos": [
-        2386,
-        1555
       ]
     },
     {
@@ -736,62 +659,6 @@
       ]
     },
     {
-      "asset": "leicester-wall-seg-ne",
-      "pos": [
-        1295,
-        1201
-      ]
-    },
-    {
-      "asset": "leicester-wall-seg-ne-slice",
-      "pos": [
-        1376,
-        1228
-      ]
-    },
-    {
-      "asset": "leicester-wall-seg-ne-slice-flip",
-      "pos": [
-        1376,
-        1228
-      ]
-    },
-    {
-      "asset": "leicester-wall-seg-se",
-      "pos": [
-        869,
-        1257
-      ]
-    },
-    {
-      "asset": "leicester-wall-seg-se-slice",
-      "pos": [
-        963,
-        1268
-      ]
-    },
-    {
-      "asset": "leicester-wall-walkway",
-      "pos": [
-        427,
-        347
-      ]
-    },
-    {
-      "asset": "leicester-wall-walkway-slice",
-      "pos": [
-        530,
-        400
-      ]
-    },
-    {
-      "asset": "leicester-wall-walkway-slice-flip",
-      "pos": [
-        530,
-        400
-      ]
-    },
-    {
       "asset": "leicester-watermill",
       "pos": [
         2323,
@@ -831,9 +698,11 @@
         ]
       ],
       "segment_set": [
-        "leicester-wall-seg-se-slice",
-        "leicester-wall-seg-ne-slice",
-        "leicester-wall-seg-ne-slice-flip"
+        "leicester-castle-wall-south-slice-shp0",
+        "leicester-castle-wall-south-slice-shp35",
+        "leicester-castle-wall-south-slice-shp50",
+        "leicester-castle-wall-south-slice-flip-shm35",
+        "leicester-castle-wall-south-slice-flip-shm50"
       ]
     },
     {
@@ -853,9 +722,11 @@
         ]
       ],
       "segment_set": [
-        "leicester-wall-seg-se-slice",
-        "leicester-wall-seg-ne-slice",
-        "leicester-wall-seg-ne-slice-flip"
+        "leicester-castle-wall-south-slice-shp0",
+        "leicester-castle-wall-south-slice-shp35",
+        "leicester-castle-wall-south-slice-shp50",
+        "leicester-castle-wall-south-slice-flip-shm35",
+        "leicester-castle-wall-south-slice-flip-shm50"
       ]
     },
     {
@@ -866,18 +737,16 @@
           1290
         ],
         [
-          1440,
-          1140
-        ],
-        [
-          1470,
-          1000
+          1490,
+          1150
         ]
       ],
       "segment_set": [
-        "leicester-wall-seg-se-slice",
-        "leicester-wall-seg-ne-slice",
-        "leicester-wall-seg-ne-slice-flip"
+        "leicester-castle-wall-south-slice-shp0",
+        "leicester-castle-wall-south-slice-shp35",
+        "leicester-castle-wall-south-slice-shp50",
+        "leicester-castle-wall-south-slice-flip-shm35",
+        "leicester-castle-wall-south-slice-flip-shm50"
       ]
     }
   ],
@@ -1380,5 +1249,5 @@
       "water": "leicester-moat-water-swatch"
     }
   },
-  "notes": "Auto-generated litmus test: all 115 Leicester library assets at their source positions."
+  "notes": "Auto-generated litmus test: all 126 Leicester library assets at their source positions."
 }

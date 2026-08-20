@@ -1,0 +1,17 @@
+{
+  "map": "Leicester",
+  "proposals": [
+    {
+      "name": "wall segment NE tall",
+      "id": "leicester-wall-seg-ne2",
+      "bbox": [1230, 1150, 220, 280],
+      "prompt": "crenellated stone castle wall",
+      "alt_prompts": ["stone wall with battlements", "castle wall"],
+      "apply_patches": true,
+      "fill_holes": true,
+      "dedupe_iou": 0.95,
+      "tags": ["wall", "castle", "crenellated", "straight"],
+      "scale_class": "spline-segment"
+    }
+  ]
+}

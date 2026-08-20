@@ -7,12 +7,11 @@ import { expandWallRunDirectional, type WallSegmentSpec } from "@rle/shared";
 import { libraryDir, workDir } from "./env";
 
 const SEGS = [
-  "leicester-wall-seg-se-slice",
-  "leicester-wall-seg-ne-slice",
-  "leicester-north-wall-slice",
-  "leicester-wall-walkway-slice",
-  "leicester-wall-walkway-slice-flip",
-  "leicester-north-wall-slice-flip",
+  "leicester-castle-wall-south-slice-shp0",
+  "leicester-castle-wall-south-slice-shp35",
+  "leicester-castle-wall-south-slice-shm35",
+  "leicester-castle-wall-south-slice-shp50",
+  "leicester-castle-wall-south-slice-shm50",
 ];
 
 async function main() {

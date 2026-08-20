@@ -78,10 +78,13 @@ export function expandWallRunDirectional(
     const artRad = (artDeg * Math.PI) / 180;
     const ux = Math.cos(artRad);
     const uy = Math.sin(artRad);
+    // slight overlap bias hides 1px rounding gaps at butt joints
     const step =
       (Math.abs(normDeg(artDeg)) <= 55
         ? best.size[0] / Math.max(0.35, Math.abs(ux))
-        : best.size[1] / Math.max(0.35, Math.abs(uy))) * spacingFraction;
+        : best.size[1] / Math.max(0.35, Math.abs(uy))) *
+      spacingFraction *
+      0.985;
     // walk in art direction until progress along the path stretch is covered
     const pux = pdx / plen;
     const puy = pdy / plen;

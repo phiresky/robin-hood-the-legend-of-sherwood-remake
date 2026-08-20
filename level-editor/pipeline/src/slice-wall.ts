@@ -22,7 +22,8 @@ async function main() {
   const day = sharp(path.join(srcDir, desc.images.day));
   const { width: W, height: H } = await day.metadata();
   const sliceW = Number(process.argv[3] ?? Math.round(W! / 3));
-  const x0 = Math.round((W! - sliceW) / 2);
+  // optional 4th arg: left edge of the slice (px); default centered
+  const x0 = process.argv[4] !== undefined ? Number(process.argv[4]) : Math.round((W! - sliceW) / 2);
 
   const images: Record<string, Buffer> = {};
   for (const key of ["day", "fog", "night"] as const) {
