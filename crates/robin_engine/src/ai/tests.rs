@@ -901,6 +901,7 @@ fn goto_replayed_near_flags_finish_inside_stored_tolerance() {
             sector: SectorHandle::new(77),
             level: 1,
         },
+        self_layer: 1,
         // The Original GOTO_NEAR gate is not restricted to idle
         // animations, unlike the ordinary five-pixel GoTo shortcut.
         self_animation: crate::order::OrderType::StrikingRightSmalltalk,

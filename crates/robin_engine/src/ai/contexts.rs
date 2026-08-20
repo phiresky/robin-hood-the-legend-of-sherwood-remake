@@ -160,6 +160,12 @@ pub struct AiContext {
     /// `ForbidRemark(..., THIS_GUY)` identity checks.
     pub original_creation_order: Option<u32>,
     pub position: Position,
+    /// Live `RHElement::GetLayer()` for the evaluating actor.  This can
+    /// differ from [`Self::position`]'s level while `Position(actor)` snaps a
+    /// door-passing actor to the committed gate side.  Original GoNear uses
+    /// the snapped point for its distance but the live actor layer for its
+    /// same-layer gate.
+    pub self_layer: u16,
     /// Live `RHElement::GetPosition()` body point for the evaluating actor.
     /// Unlike [`Self::position`], this never snaps a door-passing actor to a
     /// gate endpoint. Direct element-distance tests must use this point.

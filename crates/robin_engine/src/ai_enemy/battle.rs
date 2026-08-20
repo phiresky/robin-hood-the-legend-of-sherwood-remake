@@ -3197,27 +3197,26 @@ impl EnemyAi {
         };
 
         self.base.couldnt_reachpoint = false;
-        self.go_near(
-            AiState::Attacking,
-            Substate::AttackingRunToAvengerOnRoof,
-            wait_pos,
-            50,
-            GotoFlags::RUN,
-            ctx,
-        );
+        self.set_state(AiState::Attacking, Substate::AttackingRunToAvengerOnRoof);
+        let pending_orders_before = self.base.outbox.actor.orders.len();
+        self.base.go_near(wait_pos, 50, GotoFlags::RUN, ctx);
         // When the failed approach replaced a live MoveWaiting, Original still
         // observes that command in this recursive GoTo's final
         // `IsComputingPath()` check. It launches the roof sequence and then
         // Halt removes it from the manager FIFO before instruction. A failure
         // constructed from an ordinary Wait skips that tail Halt and the roof
         // sequence starts this frame.
-        self.base
-            .outbox
-            .actor
-            .orders
-            .last_mut()
-            .expect("avenger-on-roof fallback GoNear did not emit an order")
-            .halt_after_launch_for_path_waiter = halt_roof_fallback_after_launch;
+        // GoNear can succeed synchronously without launching a sequence when
+        // the actor is already within the 50-unit tolerance. Original leaves
+        // mbAlreadyOnPoint set for the enclosing EndThink in that case, then
+        // recursively enters EVENT_REACHPOINT in the roof-run substate. Only
+        // an actually launched replacement sequence can inherit the
+        // path-waiter's trailing Halt.
+        if self.base.outbox.actor.orders.len() > pending_orders_before
+            && let Some(order) = self.base.outbox.actor.orders.last_mut()
+        {
+            order.halt_after_launch_for_path_waiter = halt_roof_fallback_after_launch;
+        }
         // The wait position is only the reachable staging point. Original
         // keeps the actual avenger position for the later face/wait behavior.
         self.base.seek_position = target_position;
@@ -5176,6 +5175,57 @@ mod tests {
         assert!(
             !order.defer_instruction,
             "an ordinary synchronous route failure instructs its roof fallback this frame"
+        );
+    }
+
+    #[test]
+    fn close_avenger_roof_wait_position_completes_without_an_order() {
+        let mut ai = EnemyAi::new(205);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.primary_target = 298;
+        ai.base.couldnt_reachpoint = true;
+        ai.base.think_recursion_depth = 1;
+        ai.base
+            .outbox
+            .reentrant
+            .reconsider_approach_replaced_path_waiter = true;
+        let target_position = Position {
+            x: 264.0,
+            y: 1358.0,
+            ..Position::default()
+        };
+        let wait_position = Position {
+            x: 250.0,
+            y: 1200.0,
+            sector: crate::position_interface::SectorHandle::new(64),
+            level: 1,
+        };
+        let ctx = AiContext {
+            position: wait_position,
+            self_layer: wait_position.level,
+            ..AiContext::default()
+        };
+
+        ai.resume_reconsider_enemy_approach_after_go_near(
+            target_position,
+            Some(wait_position),
+            &ctx,
+        );
+
+        assert!(!ai.base.couldnt_reachpoint);
+        assert!(ai.base.already_on_point);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunToAvengerOnRoof
+        );
+        assert_eq!(ai.base.seek_position, target_position);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .reconsider_approach_replaced_path_waiter
         );
     }
 

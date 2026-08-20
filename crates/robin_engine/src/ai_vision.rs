@@ -968,7 +968,12 @@ pub fn distance_sharpness(sqr_distance: f32, view_radius: f32) -> f32 {
             - (DETECTION_CURVE_Y_2 - DETECTION_CURVE_Y_3) * (rel_dist - DETECTION_CURVE_X_2)
                 / (1.0 - DETECTION_CURVE_X_2)
     };
-    sharpness.max(0.0)
+    // Preserve unordered values exactly as Original's explicit comparison
+    // does. `f32::max(0.0)` selects 0 for NaN, but the C++ code only clamps
+    // when `fDistanceSharpness < 0`; an unordered result therefore survives
+    // into RHDetectable::mfLastVisibility. This is observable when an actor's
+    // unchecked zero-length movement has made its eye point NaN.
+    if sharpness < 0.0 { 0.0 } else { sharpness }
 }
 
 // ─── compute_view_radius (night/fog) ────────────────────────────
@@ -2321,6 +2326,19 @@ mod tests {
         q.target_world = WorldPoint3D::new(0.0, 0.0, 145.0);
 
         assert_eq!(compute_visibility(&q), 1.0);
+    }
+
+    /// Original `ComputeVisibility(SBGeoVector3D&)` clamps with an explicit
+    /// `if (fDistanceSharpness < 0)`, so an unordered distance is not replaced
+    /// by zero. Seed-2M Continue replay-006 reaches this after Soldier187's
+    /// zero-length combat movement makes its eye point the x86 qNaN value.
+    #[test]
+    fn distance_sharpness_preserves_unordered_result() {
+        let unordered = f32::from_bits(0xffc0_0000);
+        assert_eq!(
+            distance_sharpness(unordered, DEFAULT_VIEW_RADIUS as f32).to_bits(),
+            unordered.to_bits()
+        );
     }
 
     #[test]

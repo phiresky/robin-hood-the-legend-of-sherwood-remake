@@ -2364,11 +2364,25 @@ impl EngineInner {
                 // Original FallingLadderWall::Execute calls
                 // AddConcussionOfTheBrain here. Its threshold transition
                 // synchronously closes QuitSwordFight (including reciprocal
-                // DeleteOpponent / EVENT_QUIT_SWORDFIGHT) before Execute sets
-                // the landing posture and returns Terminated. The ordinary
-                // per-frame concussion drain has already run by this actor
-                // slot, so close this newly-created knockout boundary now.
+                // DeleteOpponent / EVENT_QUIT_SWORDFIGHT), then NPC
+                // SetConcussionOfTheBrain synchronously calls
+                // Think(EVENT_LOSE_CONSCIOUSNESS). That StartThink arm calls
+                // SetViewStatus(EYES_DIE_OR_GET_UNCONSCIOUS) before Execute
+                // sets the landing posture and returns Terminated
+                // (`original-code/RHelementactorhuman.cpp` and
+                // `RHartificialintelligence.cpp`). The ordinary per-frame
+                // concussion drain has already run by this actor slot, so
+                // close every part of this newly-created knockout boundary
+                // now. Drain the existing FIFO as well: earlier synchronous
+                // calls represented by Rust's borrow-boundary queue precede
+                // the just-appended lose-consciousness event.
                 self.drain_pending_concussion_side_effects(sim, assets);
+                if matches!(victim_id, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+                    self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                        sim, victim_id, assets, None, None,
+                    );
+                    self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
+                }
             }
 
             if let Some(entity) = self.get_entity_mut(victim_id) {
@@ -4150,6 +4164,21 @@ mod tests {
         let entity = engine.get_entity(victim).unwrap();
         assert_eq!(entity.element_data().layer(), 3);
         assert_eq!(entity.element_data().sector(), SectorHandle::new(4));
+        assert_eq!(
+            entity.npc_data().unwrap().eye_status,
+            crate::element::EyeStatus::DieOrGetUnconscious,
+            "the ladder landing's synchronous lose-consciousness Think must close its eye write"
+        );
+        assert_eq!(
+            entity
+                .ai_controller()
+                .unwrap()
+                .outbox
+                .recovery
+                .set_eye_status,
+            None,
+            "the ladder landing must not leave SetViewStatus deferred past its actor slot"
+        );
         assert_eq!(
             entity.position_iface().layer_goal(),
             crate::position_interface::Layer::ZERO,

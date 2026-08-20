@@ -3761,7 +3761,7 @@ impl AiController {
             0.0
         };
         if flags.contains(GotoFlags::NEAR)
-            && destination.level == ctx.position.level
+            && destination.level == ctx.self_layer
             && self.check_already_near(&destination, near_tolerance, ctx)
         {
             self.finish_already_on_point();
@@ -4079,7 +4079,11 @@ impl AiController {
             return;
         }
 
-        let same_layer = destination.level == ctx.position.level;
+        // `Position(mpMe)` can snap a door-passing actor to the committed
+        // gate side, including that side's level. Original nevertheless
+        // compares the requested level with `mpMe->GetLayer()` here, so use
+        // the live actor layer rather than the snapped Position level.
+        let same_layer = destination.level == ctx.self_layer;
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
             self.finish_already_on_point();
             if debug_decision_path {
@@ -5796,6 +5800,38 @@ impl ConsiderationAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn go_near_uses_live_actor_layer_while_door_position_is_snapped() {
+        let mut ai = AiController::new(183);
+        ai.think_recursion_depth = 1;
+        let destination = Position {
+            x: 296.64883,
+            y: 1408.1284,
+            sector: crate::position_interface::SectorHandle::new(99),
+            level: 3,
+        };
+        let ctx = AiContext {
+            // `RHArtificialIntelligence::Position(mpMe)` has already snapped
+            // across the door and is within the 30-unit tolerance.
+            position: Position {
+                x: 320.92307,
+                y: 1423.2,
+                sector: crate::position_interface::SectorHandle::new(99),
+                level: 3,
+            },
+            // The actor itself is still physically on layer 2. Original's
+            // separate `location.uwLevel == mpMe->GetLayer()` gate fails.
+            self_layer: 2,
+            ..AiContext::default()
+        };
+
+        ai.go_near(destination, 30, GotoFlags::RUN, &ctx);
+
+        assert!(!ai.already_on_point);
+        assert_eq!(ai.outbox.actor.orders.len(), 1);
+        assert_eq!(ai.outbox.actor.orders[0].target_layer, Some(3));
+    }
 
     /// Original `EndThink` dispatches its completion `Think(EVENT_*)` before
     /// decrementing `mubThinkMethodRecursionDepth`, so a same-frame

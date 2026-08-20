@@ -22,6 +22,37 @@ pub enum AlertSoldierFailureContinuation {
     ReturnToDuty,
 }
 
+/// Geometry for `RHElementActorNPC::IsDetecting360Degrees(human)` as used by
+/// `RHArtificialBonhomie::AlertSoldier`.
+///
+/// Both original endpoints start from the actors' literal `GetPosition()`
+/// values.  In particular, `RHArtificialIntelligence::Position(actor)` may
+/// already report a committed gate-side point while the actor's sprite is
+/// still interpolating through a door, so the AI planning position is not a
+/// valid substitute here.
+fn alert_soldier_360_geometry(
+    ctx: &AiContext,
+    target: &crate::ai_entity_view::AiEntityView,
+) -> (
+    crate::coordinates::WorldPoint3D,
+    crate::coordinates::WorldPoint3D,
+    f32,
+) {
+    let mut viewer_eye = ctx.self_body_position_world;
+    viewer_eye.z +=
+        crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, ctx.self_is_rider);
+    let target_detection = crate::stealth::detection_point_world(
+        target.detection_position_world,
+        target.posture,
+        target.direction as i16,
+        target.is_rider,
+    );
+    let dx = target_detection.x - viewer_eye.x;
+    let dy = (target_detection.y - viewer_eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let dz = target_detection.z - viewer_eye.z;
+    (viewer_eye, target_detection, dx * dx + dy * dy + dz * dz)
+}
+
 // ---------------------------------------------------------------------------
 // Civilian-specific constants
 // ---------------------------------------------------------------------------
@@ -2076,45 +2107,13 @@ impl FriendlyAi {
                     if ctx.in_building || view.in_building {
                         continue;
                     }
-                    let viewer_eye_z = ctx.elevation
-                        + crate::stealth::eye_z_for_posture(
-                            crate::element::Posture::Upright,
-                            ctx.self_is_rider,
-                        );
-                    let viewer_eye_xy = crate::stealth::eye_point_xy(
-                        crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
-                        crate::element::Posture::Upright,
-                        ctx.direction as i16,
-                        false,
-                    );
-                    let target_detection_xy = crate::stealth::detection_point_xy(
-                        crate::coordinates::MapPoint::new(view.position.x, view.position.y),
-                        view.posture,
-                        view.direction as i16,
-                    );
-                    let target_eye_z = view.elevation
-                        + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
-                    let viewer_eye_ground = crate::coordinates::GroundPoint::from_map_and_z(
-                        viewer_eye_xy,
-                        ctx.elevation,
-                    );
-                    let target_detection_ground = crate::coordinates::GroundPoint::from_map_and_z(
-                        target_detection_xy,
-                        view.elevation,
-                    );
-                    let dx = target_detection_ground.x - viewer_eye_ground.x;
-                    let dy = (target_detection_ground.y - viewer_eye_ground.y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let dz = target_eye_z - viewer_eye_z;
-                    if dx * dx + dy * dy + dz * dz <= sq_view_radius
+                    let (viewer_eye, target_detection, square_distance) =
+                        alert_soldier_360_geometry(ctx, view);
+                    if square_distance <= sq_view_radius
                         && crate::sight_obstacle::is_reachable_3d(
                             ctx.obstacle_list(),
-                            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
-                            [
-                                target_detection_ground.x,
-                                target_detection_ground.y,
-                                target_eye_z,
-                            ],
+                            [viewer_eye.x, viewer_eye.y, viewer_eye.z],
+                            [target_detection.x, target_detection.y, target_detection.z],
                             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                         )
                     {
@@ -3558,6 +3557,53 @@ mod tests {
         );
         // State must not have switched to seeking.
         assert_eq!(ai.base.current_state, AiState::Default);
+    }
+
+    #[test]
+    fn alert_soldier_360_geometry_uses_raw_body_during_door_pass() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{Camp, Posture};
+
+        let planning_position = Position {
+            x: 805.0,
+            y: 930.0,
+            sector: None,
+            level: 0,
+        };
+        let mut target =
+            make_soldier_view(planning_position, Camp::Lacklandists, AiState::Attacking);
+        // Door transit has committed Position(target) to the gate endpoint,
+        // while GetPosition() still exposes this interpolating sprite point.
+        target.detection_position_world =
+            WorldPoint3D::new(800.7526245117188, 1158.9752197265625, 177.90757751464844);
+        target.elevation = 177.90757751464844;
+        target.posture = Posture::Upright;
+
+        let ctx = AiContext {
+            position: Position {
+                x: 900.0,
+                y: 900.0,
+                ..Position::default()
+            },
+            self_body_position_world: WorldPoint3D::new(
+                859.0,
+                1138.7349853515625,
+                241.73492431640625,
+            ),
+            ..AiContext::default()
+        };
+
+        let (viewer, detection, _) = alert_soldier_360_geometry(&ctx, &target);
+        assert_eq!(
+            viewer,
+            WorldPoint3D::new(859.0, 1138.7349853515625, 286.73492431640625)
+        );
+        assert_eq!(
+            detection,
+            WorldPoint3D::new(800.7526245117188, 1158.9752197265625, 222.90757751464844)
+        );
+        assert_ne!(detection.x, planning_position.x);
+        assert_ne!(detection.y, planning_position.y + target.elevation + 45.0);
     }
 
     #[test]
