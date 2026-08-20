@@ -1,0 +1,15 @@
+{
+  "map": "Leicester",
+  "proposals": [
+    {
+      "name": "castle west wing",
+      "id": "leicester-west-wing",
+      "bbox": [495, 375, 255, 245],
+      "prompt": "stone building with tiled roof",
+      "alt_prompts": ["building"],
+      "apply_patches": true,
+      "dedupe_iou": 0.85,
+      "tags": ["building", "castle"]
+    }
+  ]
+}

@@ -16,6 +16,7 @@ import {
 } from "./extract-core";
 
 interface Proposal {
+  dedupe_iou?: number;
   bbox: Bbox;
   prompt?: string;
   /** fallback prompts tried in order when the previous one finds no masks */
@@ -75,7 +76,7 @@ async function main() {
           variantGroup: p.variant_group,
           minScore: p.min_score ?? EXTRACT_DEFAULTS.minScore,
           minArea: p.min_area ?? EXTRACT_DEFAULTS.minArea,
-          dedupeIou: EXTRACT_DEFAULTS.dedupeIou,
+          dedupeIou: p.dedupe_iou ?? EXTRACT_DEFAULTS.dedupeIou,
         });
         if (summary.written.length > 0) break;
         console.log(`no assets from "${prompt}", trying next prompt if any`);

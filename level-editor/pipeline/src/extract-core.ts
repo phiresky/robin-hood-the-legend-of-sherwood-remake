@@ -212,7 +212,11 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
     };
   }
 
-  const existing = (await loadLibraryIndex()).filter((e) => e.source_map === opts.map);
+  // fx/patch sprites legitimately overlap building cutouts — never dedupe
+  // against them
+  const existing = (await loadLibraryIndex()).filter(
+    (e) => e.source_map === opts.map && !e.tags.includes("fx") && !e.tags.includes("patch"),
+  );
 
   const summary: ExtractSummary = {
     written: [],
