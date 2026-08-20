@@ -98,12 +98,22 @@ prepare_remote() {
 }
 
 capture_shard() {
-    local campaign=$1 shard=$2 shards=$3 jobs=$4 root binary seed replays
+    local campaign=$1 shard=$2 shards=$3 jobs=$4 root binary seed replays loader library_dir
     root=${SCHEMA16_DISTRIBUTED_WORKSPACE:-$workspace}
     [[ "$campaign" == /* ]] || campaign="$root/$campaign"
     seed=$(campaign_value "$campaign" PARITY_INPUT_SEED_BASE)
     replays=$(campaign_value "$campaign" PARITY_RANDOM_REPLAYS)
     binary="$root/$recorder_rel"
+    loader=${SCHEMA16_DISTRIBUTED_LOADER:-}
+    if [[ -n "$loader" ]]; then
+        library_dir=${SCHEMA16_DISTRIBUTED_LIBRARY_DIR:-$root/original-code/runtime-i386}
+    else
+        # The local host has the matching contemporary i386 glibc.  Mixing
+        # its loader with the checked-in legacy libc produces GLIBC_PRIVATE
+        # symbol failures; the bundled runtime is only paired with its
+        # explicit loader on workers that need it.
+        library_dir=${SCHEMA16_DISTRIBUTED_LIBRARY_DIR:-/lib/i386-linux-gnu}
+    fi
     env \
         PARITY_TRACE_SCHEMA=16 PARITY_RANDOM_REPLAYS="$replays" PARITY_FRAMES=1500 \
         PARITY_INPUT_SEED_BASE="$seed" PARITY_SEED=1 \
@@ -111,8 +121,7 @@ capture_shard() {
         SHARD_COUNT="$shards" SHARD_INDEX="$shard" CAPTURE_JOBS="$jobs" \
         COMPRESS=1 ZSTD_THREADS=1 ZSTD_LEVEL=16 HEADFUL=0 SKIP_BUILD=1 \
         WATCHDOG_SECONDS=2700 ROBIN_BINARY="$binary" \
-        ROBIN_LOADER="${SCHEMA16_DISTRIBUTED_LOADER:-}" \
-        ROBIN_LIBRARY_DIR="$root/original-code/runtime-i386" \
+        ROBIN_LOADER="$loader" ROBIN_LIBRARY_DIR="$library_dir" \
         ROBINHOOD_DATA_DIR="$root/datadirs/fullgame_linux" \
         "$root/original-code/scripts/capture_parity_save_replays.sh" \
         "$root/reference-saves" "$campaign" "$root/datadirs/fullgame_linux"
