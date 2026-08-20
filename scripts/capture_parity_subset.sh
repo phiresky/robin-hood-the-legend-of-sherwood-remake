@@ -18,7 +18,7 @@ set -euo pipefail
 #   SAVE_DIR=./reference-saves      ROBINHOOD_DATA_DIR=./datadirs/fullgame_linux
 #   ROBIN_BINARY=./original-code/build/native-full/robin
 #   PARITY_FRAMES=1500  PARITY_SEED=1  WATCHDOG_SECONDS=2700
-#   CAPTURE_JOBS=10  ZSTD_THREADS=1  ZSTD_LEVEL=10  COMPRESS=1  HEADFUL=0  FORCE=0
+#   CAPTURE_JOBS=10  ZSTD_THREADS=1  ZSTD_LEVEL=16  COMPRESS=1  HEADFUL=0  FORCE=0
 
 manifest="${1:?usage: capture_parity_subset.sh <manifest> <output-dir>}"
 output_dir="${2:?usage: capture_parity_subset.sh <manifest> <output-dir>}"
@@ -32,9 +32,9 @@ watchdog_seconds="${WATCHDOG_SECONDS:-2700}"
 capture_jobs="${CAPTURE_JOBS:-10}"
 zstd_threads="${ZSTD_THREADS:-1}"
 # Compression level only affects how long a capture takes and how big the
-# result is; a level-6 and a level-10 trace decompress to identical bytes, so a
+# result is; traces compressed at different levels decompress to identical bytes, so a
 # corpus may mix them.
-zstd_level="${ZSTD_LEVEL:-10}"
+zstd_level="${ZSTD_LEVEL:-16}"
 compress="${COMPRESS:-1}"
 headful="${HEADFUL:-0}"
 

@@ -18,6 +18,7 @@ replays_per_save=${SCHEMA16_LADDER_REPLAYS_PER_SAVE:-40}
 expected_saves=${SCHEMA16_LADDER_EXPECTED_SAVES:-243}
 poll_seconds=${SCHEMA16_LADDER_POLL_SECONDS:-300}
 capture_jobs=${SCHEMA16_LADDER_CAPTURE_JOBS:-8}
+zstd_level=${SCHEMA16_LADDER_ZSTD_LEVEL:-16}
 initial_recorder_session=${SCHEMA16_LADDER_INITIAL_RECORDER_SESSION:-seed2m-recorder-10k}
 stop_file=${SCHEMA16_LADDER_STOP_FILE:-$corpus_root/.schema16-corpus-ladder.stop}
 expected_replays=$((replays_per_save * expected_saves))
@@ -32,6 +33,10 @@ if [[ ! "$poll_seconds" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if [[ ! "$capture_jobs" =~ ^[1-9][0-9]*$ || "$capture_jobs" -gt 10 ]]; then
     printf 'error: SCHEMA16_LADDER_CAPTURE_JOBS must be from 1 through 10\n' >&2
+    exit 2
+fi
+if [[ ! "$zstd_level" =~ ^([1-9]|1[0-9]|2[0-2])$ ]]; then
+    printf 'error: SCHEMA16_LADDER_ZSTD_LEVEL must be from 1 through 22\n' >&2
     exit 2
 fi
 if [[ ! -x "$recorder" ]]; then
@@ -82,6 +87,7 @@ create_campaign() {
         printf 'SHARD_COUNT=1\n'
         printf 'CAPTURE_JOBS=%s\n' "$capture_jobs"
         printf 'GLOBAL_ORIGINAL_PROCESS_LIMIT=%s\n' "$capture_jobs"
+        printf 'ZSTD_LEVEL=%s\n' "$zstd_level"
         printf 'EXPECTED_SELECTED_SAVES=%s\n' "$expected_saves"
         printf 'EXPECTED_LOGICAL_REPLAYS=%s\n' "$expected_replays"
         printf 'EXPECTED_FRAMES_PER_REPLAY=1500\n'
@@ -112,6 +118,7 @@ run_capture() {
         CAPTURE_JOBS="$capture_jobs" \
         COMPRESS=1 \
         ZSTD_THREADS=1 \
+        ZSTD_LEVEL="$zstd_level" \
         HEADFUL=0 \
         SKIP_BUILD=1 \
         WATCHDOG_SECONDS=2700 \
