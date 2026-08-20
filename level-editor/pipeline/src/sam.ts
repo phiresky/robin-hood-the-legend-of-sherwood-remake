@@ -106,7 +106,19 @@ async function cachedSubscribe(
 
   const file = new Blob([new Uint8Array(imagePng)], { type: "image/png" });
   input.image_url = await fal.storage.upload(file as unknown as File);
-  const result = await fal.subscribe("fal-ai/sam-3/image-rle", { input, logs: false });
+  let result;
+  try {
+    result = await fal.subscribe("fal-ai/sam-3/image-rle", { input, logs: false });
+  } catch (e) {
+    const err = e as { status?: number; body?: { detail?: unknown } };
+    const detail = String(err.body?.detail ?? "");
+    // the endpoint 422s when the concept prompt matches nothing — that's a
+    // legitimate "found none" result, not an error
+    if (err.status === 422 && detail.includes("No masks generated")) {
+      return { rle: [] } as unknown as SAM3RLEOutput;
+    }
+    throw new Error(`fal ${err.status ?? "?"}: ${detail || String(e)}`);
+  }
 
   await fs.writeFile(path.join(cacheDir, `${key}.input.png`), imagePng);
   await fs.writeFile(
@@ -153,10 +165,9 @@ export async function segment(req: SamRequest): Promise<SamMask[]> {
     }));
 
   const data = await cachedSubscribe(input, req.imagePng);
-  const rles = Array.isArray(data.rle) ? data.rle : [data.rle];
-  if (rles.length === 0 || rles[0] === undefined) {
-    throw new Error(`SAM 3 RLE returned no masks; keys: ${Object.keys(data).join(", ")}`);
-  }
+  const rles = (Array.isArray(data.rle) ? data.rle : [data.rle]).filter(
+    (r): r is string => r !== undefined,
+  );
 
   return rles.map((rleStr, i) => ({
     ...decodeRle(rleStr, req.width, req.height),
