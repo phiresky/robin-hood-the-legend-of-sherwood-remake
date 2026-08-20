@@ -164,14 +164,25 @@ section.library h2.collapsible {
   transform: rotate(90deg);
 }
 
+.search-row {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.search-row .refresh {
+  flex: none;
+  padding: 5px 8px;
+}
+
 input.search {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   background: #333;
   color: #ddd;
   border: 1px solid #444;
   border-radius: 4px;
   padding: 5px 8px;
-  margin-bottom: 8px;
 }
 
 input.search::placeholder {
@@ -235,6 +246,11 @@ input.search::placeholder {
   text-overflow: ellipsis;
 }
 
+.thumb-map {
+  font-size: 10px;
+  color: #777;
+}
+
 .thumb-meta {
   display: flex;
   flex-wrap: wrap;
@@ -290,6 +306,11 @@ input.search::placeholder {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+}
+
+.detail-map {
+  font-size: 11px;
+  color: #8ab4f8;
 }
 
 .detail-head .close {

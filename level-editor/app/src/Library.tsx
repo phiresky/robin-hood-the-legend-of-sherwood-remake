@@ -13,6 +13,7 @@ export interface LibrarySectionProps {
   needsReconnect: () => boolean;
   onPick: () => void;
   onReconnect: () => void;
+  onRefresh: () => void;
   selected: () => LibraryAsset | null;
   onSelect: (asset: LibraryAsset | null) => void;
 }
@@ -50,13 +51,18 @@ export function LibrarySection(props: LibrarySectionProps) {
             </div>
           }
         >
-          <input
-            class="search"
-            type="search"
-            placeholder="filter by name or tag…"
-            value={query()}
-            onInput={(e) => setQuery(e.currentTarget.value)}
-          />
+          <div class="search-row">
+            <input
+              class="search"
+              type="search"
+              placeholder="filter by name or tag…"
+              value={query()}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+            />
+            <button class="refresh" onClick={props.onRefresh} title="rescan library">
+              ⟳
+            </button>
+          </div>
           <div class="gallery">
             <For each={groups()}>
               {([group, assets]) => (
@@ -74,6 +80,7 @@ export function LibrarySection(props: LibrarySectionProps) {
                         >
                           <img src={asset.dayUrl} alt={asset.descriptor.name} loading="lazy" />
                           <div class="thumb-name">{asset.descriptor.name}</div>
+                          <div class="thumb-map">{asset.descriptor.source.map}</div>
                           <div class="thumb-meta">
                             <span class="scale-class">{asset.descriptor.scale_class}</span>
                             <For each={asset.descriptor.tags}>
@@ -187,7 +194,10 @@ export function AssetDetail(props: AssetDetailProps) {
   return (
     <aside class="detail">
       <div class="detail-head">
-        <h2>{d().name}</h2>
+        <div>
+          <h2>{d().name}</h2>
+          <div class="detail-map">{d().source.map}</div>
+        </div>
         <button class="close" onClick={props.onClose} title="close">
           ×
         </button>
@@ -231,7 +241,13 @@ export function AssetDetail(props: AssetDetailProps) {
         <div class="meta-row">
           <span class="meta-key">source</span>
           <span>
-            {d().source.map} ({d().source.ambiance}) @ {d().source.bbox.join(", ")}
+            {d().source.map} ({d().source.ambiance})
+          </span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key">bbox</span>
+          <span>
+            {d().source.bbox[0]},{d().source.bbox[1]} {d().source.bbox[2]}×{d().source.bbox[3]}
           </span>
         </div>
         <div class="meta-row">

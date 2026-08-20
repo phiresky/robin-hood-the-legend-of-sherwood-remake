@@ -290,6 +290,10 @@ export default function App() {
           needsReconnect={libraryNeedsReconnect}
           onPick={onPickLibrary}
           onReconnect={onReconnectLibrary}
+          onRefresh={() => {
+            const lib = library();
+            if (lib) void openLibrary(lib.root);
+          }}
           selected={selectedAsset}
           onSelect={setSelectedAsset}
         />
