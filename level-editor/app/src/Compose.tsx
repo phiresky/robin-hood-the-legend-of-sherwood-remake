@@ -1,6 +1,6 @@
 // Compose mode: canvas viewer for editing a MapDraft (place / select / move /
 // delete library assets, draw wall runs) plus the placements list panel.
-import { For, Show, createEffect, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { MapDraft } from "@rle/shared";
 import type { LibraryAsset, LibraryIndex } from "./library";
 import {
@@ -14,7 +14,13 @@ import {
   previewWallStamps,
   selectionEquals,
   type DraftSelection,
+  type TerrainTool,
 } from "./compose";
+import {
+  MATERIAL_COLORS,
+  renderTerrainPreview,
+  type TerrainLayer,
+} from "./terrain";
 
 export interface ComposeViewerProps {
   draft: () => MapDraft | null;
@@ -36,8 +42,22 @@ export interface ComposeViewerProps {
   onMoveWallPoint: (wall: number, pt: number, pos: [number, number]) => void;
   onInsertWallPoint: (wall: number, after: number, pos: [number, number]) => void;
   onRemoveWallPoint: (wall: number, pt: number) => void;
+  /** terrain-draw mode: clicks add region-polygon / road-polyline points */
+  terrainTool: () => TerrainTool | null;
+  onCommitTerrain: (points: [number, number][]) => void;
+  onCancelTerrain: () => void;
+  onMoveTerrainPoint: (sel: TerrainShapeSel, pt: number, pos: [number, number]) => void;
+  onInsertTerrainPoint: (sel: TerrainShapeSel, after: number, pos: [number, number]) => void;
+  onRemoveTerrainPoint: (sel: TerrainShapeSel, pt: number) => void;
   onCursor?: (x: number, y: number) => void;
 }
+
+export type TerrainShapeSel =
+  | { kind: "region"; idx: number }
+  | { kind: "road"; idx: number };
+
+/** any selection with an editable point path (wall run or terrain shape) */
+type ShapeSel = { kind: "wall"; idx: number } | TerrainShapeSel;
 
 interface View {
   x: number; // world coord at canvas left
@@ -56,12 +76,21 @@ export function ComposeViewer(props: ComposeViewerProps) {
   // pointer interaction state
   let panning = false;
   let moving: { idx: number; dx: number; dy: number } | null = null;
-  let draggingPoint: { wall: number; pt: number } | null = null;
+  let draggingPoint: { sel: ShapeSel; pt: number } | null = null;
   let lastX = 0;
   let lastY = 0;
   let ghost: [number, number] | null = null; // cursor world pos while placing/drawing
   // in-progress wall run control points (world coords), not yet in the draft
   let wallPoints: [number, number][] = [];
+  // in-progress terrain region/road points (world coords)
+  let terrainPoints: [number, number][] = [];
+  // rendered terrain preview, cached until the terrain spec or bounds change
+  let terrainLayer: TerrainLayer | null = null;
+  let terrainKey = "";
+  let terrainLib: LibraryIndex | null = null;
+  let terrainTimer = 0;
+  let terrainJob = 0;
+  const [terrainPending, setTerrainPending] = createSignal(false);
 
   const scheduleDraw = () => {
     if (!raf) raf = requestAnimationFrame(draw);
@@ -101,6 +130,16 @@ export function ComposeViewer(props: ComposeViewerProps) {
 
     const lib = props.library();
 
+    // synthesized terrain preview, beneath placements/walls (rendered at 1/4
+    // resolution, scaled up with smoothing)
+    if (terrainLayer) {
+      const [tx, ty, tw, th] = terrainLayer.rect;
+      const smooth = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(terrainLayer.canvas, tx, ty, tw, th);
+      ctx.imageSmoothingEnabled = smooth;
+    }
+
     // boundary guide: what save would write (content bounds + margin), or the
     // stored size for an opened draft without placements — never clamps
     const guide = guideRect(draft, lib);
@@ -139,6 +178,17 @@ export function ComposeViewer(props: ComposeViewerProps) {
     } else if (sel?.kind === "wall") {
       const run = draft.walls?.[sel.idx];
       if (run) drawWallHandles(ctx, run.points);
+    } else if (sel?.kind === "region" || sel?.kind === "road") {
+      const pts = shapePoints(sel);
+      if (pts) {
+        const color =
+          sel.kind === "region"
+            ? (MATERIAL_COLORS[draft.terrain?.regions?.[sel.idx]?.material ?? ""] ??
+              "#60a5fa")
+            : MATERIAL_COLORS.road!;
+        if (sel.kind === "region") fillShape(ctx, pts, color);
+        drawWallHandles(ctx, pts, color, sel.kind === "region");
+      }
     }
 
     const placing = props.placing();
@@ -166,12 +216,39 @@ export function ComposeViewer(props: ComposeViewerProps) {
       }
       drawWallHandles(ctx, pts, "#facc15");
     }
+
+    // live preview of the in-progress terrain region/road: points + cursor
+    const tool = props.terrainTool();
+    if (tool && (terrainPoints.length > 0 || ghost)) {
+      const pts = ghost ? [...terrainPoints, ghost] : terrainPoints;
+      const color =
+        tool.kind === "region" ? MATERIAL_COLORS[tool.material]! : MATERIAL_COLORS.road!;
+      if (tool.kind === "region" && pts.length >= 3) fillShape(ctx, pts, color);
+      drawWallHandles(ctx, pts, color, tool.kind === "region");
+    }
+  };
+
+  const fillShape = (
+    ctx: CanvasRenderingContext2D,
+    points: readonly [number, number][],
+    color: string,
+  ) => {
+    if (points.length < 3) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0]![0], points[0]![1]);
+    for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
+    ctx.closePath();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 1;
   };
 
   const drawWallHandles = (
     ctx: CanvasRenderingContext2D,
     points: readonly [number, number][],
     color = "#60a5fa",
+    closed = false,
   ) => {
     if (points.length === 0) return;
     ctx.strokeStyle = color;
@@ -180,6 +257,7 @@ export function ComposeViewer(props: ComposeViewerProps) {
       ctx.beginPath();
       ctx.moveTo(points[0]![0], points[0]![1]);
       for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
+      if (closed && points.length > 2) ctx.closePath();
       ctx.stroke();
     }
     const r = HANDLE_R / view.zoom;
@@ -251,53 +329,101 @@ export function ComposeViewer(props: ComposeViewerProps) {
     return null;
   };
 
-  /** control-point index of the selected wall near the world point, if any */
-  const hitWallHandle = (wx: number, wy: number): { wall: number; pt: number } | null => {
+  /** point path of a wall/region/road selection, if it exists */
+  const shapePoints = (sel: DraftSelection): readonly [number, number][] | null => {
+    const draft = props.draft();
+    if (!draft || !sel) return null;
+    if (sel.kind === "wall") return draft.walls?.[sel.idx]?.points ?? null;
+    if (sel.kind === "region") return draft.terrain?.regions?.[sel.idx]?.polygon ?? null;
+    if (sel.kind === "road") return draft.terrain?.roads?.[sel.idx]?.points ?? null;
+    return null;
+  };
+
+  /** minimum control points a shape must keep (polygon: 3, polyline: 2) */
+  const shapeMinPoints = (sel: ShapeSel) => (sel.kind === "region" ? 3 : 2);
+
+  const moveShapePoint = (sel: ShapeSel, pt: number, pos: [number, number]) =>
+    sel.kind === "wall"
+      ? props.onMoveWallPoint(sel.idx, pt, pos)
+      : props.onMoveTerrainPoint(sel, pt, pos);
+
+  const insertShapePoint = (sel: ShapeSel, after: number, pos: [number, number]) =>
+    sel.kind === "wall"
+      ? props.onInsertWallPoint(sel.idx, after, pos)
+      : props.onInsertTerrainPoint(sel, after, pos);
+
+  const removeShapePoint = (sel: ShapeSel, pt: number) =>
+    sel.kind === "wall"
+      ? props.onRemoveWallPoint(sel.idx, pt)
+      : props.onRemoveTerrainPoint(sel, pt);
+
+  /** the selected shape (wall/region/road), when one is selected */
+  const selectedShape = (): ShapeSel | null => {
     const sel = props.selected();
-    if (sel?.kind !== "wall") return null;
-    const run = props.draft()?.walls?.[sel.idx];
-    if (!run) return null;
+    return sel && sel.kind !== "placement" ? sel : null;
+  };
+
+  /** control-point index of the selected shape near the world point, if any */
+  const hitShapeHandle = (wx: number, wy: number): { sel: ShapeSel; pt: number } | null => {
+    const sel = selectedShape();
+    const pts = sel && shapePoints(sel);
+    if (!sel || !pts) return null;
     const r = HANDLE_R / view.zoom;
-    for (let i = 0; i < run.points.length; i++) {
-      const [x, y] = run.points[i]!;
-      if (Math.abs(wx - x) <= r && Math.abs(wy - y) <= r) return { wall: sel.idx, pt: i };
+    for (let i = 0; i < pts.length; i++) {
+      const [x, y] = pts[i]!;
+      if (Math.abs(wx - x) <= r && Math.abs(wy - y) <= r) return { sel, pt: i };
     }
     return null;
   };
 
-  /** segment index of the selected wall whose midpoint is near the world point */
-  const hitWallMidpoint = (
+  /** segment index of the selected shape whose midpoint is near the world point */
+  const hitShapeMidpoint = (
     wx: number,
     wy: number,
-  ): { wall: number; after: number; pos: [number, number] } | null => {
-    const sel = props.selected();
-    if (sel?.kind !== "wall") return null;
-    const run = props.draft()?.walls?.[sel.idx];
-    if (!run) return null;
+  ): { sel: ShapeSel; after: number; pos: [number, number] } | null => {
+    const sel = selectedShape();
+    const pts = sel && shapePoints(sel);
+    if (!sel || !pts) return null;
     const r = (HANDLE_R * 2) / view.zoom;
-    for (let i = 0; i + 1 < run.points.length; i++) {
-      const [x1, y1] = run.points[i]!;
-      const [x2, y2] = run.points[i + 1]!;
+    // regions are closed: the segment back to the first point counts too
+    const segs = sel.kind === "region" && pts.length > 2 ? pts.length : pts.length - 1;
+    for (let i = 0; i < segs; i++) {
+      const [x1, y1] = pts[i]!;
+      const [x2, y2] = pts[(i + 1) % pts.length]!;
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
       if (Math.abs(wx - mx) <= r && Math.abs(wy - my) <= r)
-        return { wall: sel.idx, after: i, pos: [Math.round(mx), Math.round(my)] };
+        return { sel, after: i, pos: [Math.round(mx), Math.round(my)] };
     }
     return null;
+  };
+
+  // drop consecutive near-duplicate points (double-click adds the last one twice)
+  const dedupePoints = (points: [number, number][]) => {
+    const pts: [number, number][] = [];
+    for (const p of points) {
+      const prev = pts[pts.length - 1];
+      if (prev && Math.hypot(p[0] - prev[0], p[1] - prev[1]) < 3) continue;
+      pts.push(p);
+    }
+    return pts;
   };
 
   const commitWall = () => {
     const asset = props.wallAsset();
     if (!asset) return;
-    // drop consecutive near-duplicate points (double-click adds the last one twice)
-    const pts: [number, number][] = [];
-    for (const p of wallPoints) {
-      const prev = pts[pts.length - 1];
-      if (prev && Math.hypot(p[0] - prev[0], p[1] - prev[1]) < 3) continue;
-      pts.push(p);
-    }
+    const pts = dedupePoints(wallPoints);
     wallPoints = [];
     if (pts.length >= 2) props.onCommitWall(asset, pts);
+    scheduleDraw();
+  };
+
+  const commitTerrain = () => {
+    const tool = props.terrainTool();
+    if (!tool) return;
+    const pts = dedupePoints(terrainPoints);
+    terrainPoints = [];
+    if (pts.length >= (tool.kind === "region" ? 3 : 2)) props.onCommitTerrain(pts);
     scheduleDraw();
   };
 
@@ -321,6 +447,13 @@ export function ComposeViewer(props: ComposeViewerProps) {
       return;
     }
     const [wx, wy] = toWorld(e.clientX, e.clientY);
+    if (props.terrainTool()) {
+      if (e.button === 0) {
+        terrainPoints.push([Math.round(wx), Math.round(wy)]);
+        scheduleDraw();
+      }
+      return;
+    }
     if (props.wallAsset()) {
       if (e.button === 0) {
         wallPoints.push([Math.round(wx), Math.round(wy)]);
@@ -328,13 +461,13 @@ export function ComposeViewer(props: ComposeViewerProps) {
       }
       return;
     }
-    // Alt-click / right-click a segment midpoint of the selected wall inserts
+    // Alt-click / right-click a segment midpoint of the selected shape inserts
     // a control point there
     if (e.button === 2 || (e.button === 0 && e.altKey)) {
-      const mid = hitWallMidpoint(wx, wy);
+      const mid = hitShapeMidpoint(wx, wy);
       if (mid) {
-        props.onInsertWallPoint(mid.wall, mid.after, mid.pos);
-        draggingPoint = { wall: mid.wall, pt: mid.after + 1 };
+        insertShapePoint(mid.sel, mid.after, mid.pos);
+        draggingPoint = { sel: mid.sel, pt: mid.after + 1 };
       }
       return;
     }
@@ -344,7 +477,7 @@ export function ComposeViewer(props: ComposeViewerProps) {
       props.onPlace(placing, ghostPos(placing, [wx, wy]));
       return;
     }
-    const handle = hitWallHandle(wx, wy);
+    const handle = hitShapeHandle(wx, wy);
     if (handle) {
       draggingPoint = handle;
       return;
@@ -362,12 +495,12 @@ export function ComposeViewer(props: ComposeViewerProps) {
   const onPointerMove = (e: PointerEvent) => {
     const [wx, wy] = toWorld(e.clientX, e.clientY);
     props.onCursor?.(wx, wy);
-    if (props.placing() || props.wallAsset()) {
+    if (props.placing() || props.wallAsset() || props.terrainTool()) {
       ghost = [wx, wy];
       scheduleDraw();
     }
     if (draggingPoint) {
-      props.onMoveWallPoint(draggingPoint.wall, draggingPoint.pt, [
+      moveShapePoint(draggingPoint.sel, draggingPoint.pt, [
         Math.round(wx),
         Math.round(wy),
       ]);
@@ -399,22 +532,38 @@ export function ComposeViewer(props: ComposeViewerProps) {
   };
 
   const onDblClick = (e: MouseEvent) => {
+    if (props.terrainTool()) {
+      commitTerrain();
+      return;
+    }
     if (props.wallAsset()) {
       commitWall();
       return;
     }
-    // double-click a handle of the selected wall removes that point (min 2)
+    // double-click a handle of the selected shape removes that point
     const [wx, wy] = toWorld(e.clientX, e.clientY);
-    const handle = hitWallHandle(wx, wy);
+    const handle = hitShapeHandle(wx, wy);
     if (handle) {
-      const run = props.draft()?.walls?.[handle.wall];
-      if (run && run.points.length > 2) props.onRemoveWallPoint(handle.wall, handle.pt);
+      const pts = shapePoints(handle.sel);
+      if (pts && pts.length > shapeMinPoints(handle.sel))
+        removeShapePoint(handle.sel, handle.pt);
     }
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
+    if (props.terrainTool()) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commitTerrain();
+      } else if (e.key === "Escape") {
+        terrainPoints = [];
+        props.onCancelTerrain();
+        scheduleDraw();
+      }
+      return;
+    }
     if (props.wallAsset()) {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -452,11 +601,9 @@ export function ComposeViewer(props: ComposeViewerProps) {
       const p = props.draft()?.placements[sel.idx];
       if (p) props.onMove(sel.idx, [p.pos[0] + d[0], p.pos[1] + d[1]]);
     } else {
-      const run = props.draft()?.walls?.[sel.idx];
-      if (run)
-        run.points.forEach((pt, i) =>
-          props.onMoveWallPoint(sel.idx, i, [pt[0] + d[0], pt[1] + d[1]]),
-        );
+      const pts = shapePoints(sel);
+      if (pts)
+        pts.forEach((pt, i) => moveShapePoint(sel, i, [pt[0] + d[0], pt[1] + d[1]]));
     }
   };
 
@@ -482,6 +629,7 @@ export function ComposeViewer(props: ComposeViewerProps) {
       const draft = props.draft(); // untracked read — edits must not refit
       if (!draft) return;
       wallPoints = [];
+      terrainPoints = [];
       const w = container.clientWidth || 1;
       const h = container.clientHeight || 1;
       const guide = guideRect(draft, props.library());
@@ -510,6 +658,79 @@ export function ComposeViewer(props: ComposeViewerProps) {
     },
   );
 
+  // leaving terrain-draw mode drops in-progress points
+  createEffect(
+    () => props.terrainTool(),
+    (tool) => {
+      if (!tool && terrainPoints.length > 0) {
+        terrainPoints = [];
+        scheduleDraw();
+      }
+    },
+  );
+
+  const runTerrainRender = (
+    draft: MapDraft,
+    lib: LibraryIndex,
+    rect: [number, number, number, number],
+    key: string,
+  ) => {
+    const job = ++terrainJob;
+    void renderTerrainPreview(draft, lib, rect)
+      .then((layer) => {
+        if (job !== terrainJob || key !== terrainKey) return; // stale
+        terrainLayer = layer;
+        setTerrainPending(false);
+        scheduleDraw();
+      })
+      .catch((e) => {
+        console.warn("terrain preview failed:", e);
+        if (job === terrainJob) setTerrainPending(false);
+      });
+  };
+
+  // debounced terrain preview: re-render 400ms after the terrain spec or the
+  // save-bounds rect last changed, keeping the previous layer until then
+  createEffect(
+    () => {
+      const draft = props.draft();
+      const lib = props.library();
+      const g = draft?.terrain && lib ? guideRect(draft, lib) : null;
+      if (!draft || !lib || !g) return null;
+      const rect: [number, number, number, number] = [
+        Math.floor(g[0]),
+        Math.floor(g[1]),
+        Math.ceil(g[2]),
+        Math.ceil(g[3]),
+      ];
+      return { draft, lib, rect, key: JSON.stringify([draft.terrain, rect]) };
+    },
+    (cur) => {
+      if (!cur) {
+        window.clearTimeout(terrainTimer);
+        terrainKey = "";
+        terrainLib = null;
+        setTerrainPending(false);
+        if (terrainLayer) {
+          terrainLayer = null;
+          scheduleDraw();
+        }
+        return;
+      }
+      if (cur.key === terrainKey && cur.lib === terrainLib) return;
+      window.clearTimeout(terrainTimer);
+      terrainKey = cur.key;
+      terrainLib = cur.lib;
+      setTerrainPending(true);
+      terrainTimer = window.setTimeout(
+        () => runTerrainRender(cur.draft, cur.lib, cur.rect, cur.key),
+        400,
+      );
+    },
+  );
+
+  onCleanup(() => window.clearTimeout(terrainTimer));
+
   // redraw on any data change
   createEffect(
     () => [
@@ -518,6 +739,7 @@ export function ComposeViewer(props: ComposeViewerProps) {
       props.selected(),
       props.placing(),
       props.wallAsset(),
+      props.terrainTool(),
     ],
     () => scheduleDraw(),
   );
@@ -533,6 +755,9 @@ export function ComposeViewer(props: ComposeViewerProps) {
         onDblClick={onDblClick}
         onContextMenu={(e) => e.preventDefault()}
       />
+      <Show when={terrainPending()}>
+        <div class="terrain-pending">rendering terrain…</div>
+      </Show>
     </div>
   );
 }

@@ -5,14 +5,26 @@ import type {
   DirectionalStamp,
   MapDraft,
   Placement,
+  Point,
+  TerrainRegion,
   WallRun,
   WallSegmentSpec,
 } from "@rle/shared";
 import { expandWallRun, expandWallRunDirectional } from "@rle/shared";
 import { loadAssetImage, type LibraryAsset, type LibraryIndex } from "./library";
 
-/** what is selected in compose mode: a placement or a whole wall run */
-export type DraftSelection = { kind: "placement" | "wall"; idx: number } | null;
+/** what is selected in compose mode: a placement, wall run, or terrain shape */
+export type DraftSelection =
+  | { kind: "placement"; idx: number }
+  | { kind: "wall"; idx: number }
+  | { kind: "region"; idx: number }
+  | { kind: "road"; idx: number }
+  | null;
+
+/** active terrain drawing tool */
+export type TerrainTool =
+  | { kind: "region"; material: TerrainRegion["material"] }
+  | { kind: "road"; width: number };
 
 export function selectionEquals(a: DraftSelection, b: DraftSelection): boolean {
   if (a === null || b === null) return a === b;
@@ -200,6 +212,25 @@ export function finalizeDraft(draft: MapDraft, lib: LibraryIndex | null): MapDra
         ([x, y]) => [Math.round(x + dx), Math.round(y + dy)] as [number, number],
       ),
     })),
+    ...(draft.terrain
+      ? {
+          terrain: {
+            ...draft.terrain,
+            regions: (draft.terrain.regions ?? []).map((rg) => ({
+              ...rg,
+              polygon: rg.polygon.map(
+                ([x, y]) => [Math.round(x + dx), Math.round(y + dy)] as Point,
+              ),
+            })),
+            roads: (draft.terrain.roads ?? []).map((rd) => ({
+              ...rd,
+              points: rd.points.map(
+                ([x, y]) => [Math.round(x + dx), Math.round(y + dy)] as Point,
+              ),
+            })),
+          },
+        }
+      : {}),
   };
 }
 

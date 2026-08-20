@@ -30,8 +30,15 @@ import {
   saveDraftFile,
   wallSegmentSet,
   type DraftSelection,
+  type TerrainTool,
 } from "./compose";
-import type { MapDraft } from "@rle/shared";
+import { TERRAIN_ROLES } from "./terrain";
+import type {
+  MapDraft,
+  SwatchRole,
+  TerrainRegion,
+  TerrainSpec,
+} from "@rle/shared";
 
 type Mode = "inspect" | "compose";
 
@@ -60,6 +67,10 @@ export default function App() {
   const [dirty, setDirty] = createSignal(false);
   const [selection, setSelection] = createSignal<DraftSelection>(null);
   const [wallDraw, setWallDraw] = createSignal(false);
+  const [terrainDraw, setTerrainDraw] = createSignal<"region" | "road" | null>(null);
+  const [regionMaterial, setRegionMaterial] =
+    createSignal<TerrainRegion["material"]>("grass");
+  const [roadWidth, setRoadWidth] = createSignal(56);
 
   const [toggles, setToggles] = createSignal<OverlayToggles>({ ...DEFAULT_TOGGLES });
   const [layerFilter, setLayerFilter] = createSignal<number | null>(null);
@@ -194,6 +205,7 @@ export default function App() {
     setDirty(false);
     setSelection(null);
     setWallDraw(false);
+    setTerrainDraw(null);
     setDraftDocId((n) => n + 1);
   }
 
@@ -292,16 +304,123 @@ export default function App() {
   const removeWallPoint = (wall: number, pt: number) =>
     editWallRun(wall, (pts) => (pts.length > 2 ? pts.filter((_, j) => j !== pt) : pts));
 
+  // --- terrain editing ---
+
+  const updateTerrain = (fn: (t: TerrainSpec) => TerrainSpec) =>
+    updateDraft((d) => (d.terrain ? { ...d, terrain: fn(d.terrain) } : d));
+
+  const textureAssets = () =>
+    library()?.assets.filter((a) => a.descriptor.scale_class === "texture") ?? [];
+
+  /** create an empty terrain spec, pre-binding texture assets by role-in-id match */
+  function addTerrain() {
+    const swatches: Partial<Record<SwatchRole, string>> = {};
+    for (const role of TERRAIN_ROLES) {
+      const match = textureAssets().find((a) => a.descriptor.id.includes(role));
+      if (match) swatches[role] = match.descriptor.id;
+    }
+    updateDraft((d) => ({ ...d, terrain: { regions: [], roads: [], swatches } }));
+  }
+
+  const setSwatch = (role: SwatchRole, id: string) =>
+    updateTerrain((t) => {
+      const swatches = { ...t.swatches };
+      if (id) swatches[role] = id;
+      else delete swatches[role];
+      return { ...t, swatches };
+    });
+
+  // active terrain tool: material/width inputs feed it live
+  const terrainTool = (): TerrainTool | null => {
+    if (!draft()?.terrain) return null;
+    const t = terrainDraw();
+    if (t === "region") return { kind: "region", material: regionMaterial() };
+    if (t === "road") return { kind: "road", width: roadWidth() };
+    return null;
+  };
+
+  const toggleTerrainDraw = (kind: "region" | "road") => {
+    setTerrainDraw((cur) => (cur === kind ? null : kind));
+    setWallDraw(false);
+  };
+
+  const commitTerrainShape = (points: [number, number][]) => {
+    const tool = terrainTool();
+    if (!tool) return;
+    if (tool.kind === "region")
+      updateTerrain((t) => ({
+        ...t,
+        regions: [...(t.regions ?? []), { material: tool.material, polygon: points }],
+      }));
+    else
+      updateTerrain((t) => ({
+        ...t,
+        roads: [...(t.roads ?? []), { points, width: tool.width }],
+      }));
+  };
+
+  const editTerrainPoints = (
+    sel: { kind: "region" | "road"; idx: number },
+    fn: (pts: [number, number][]) => [number, number][],
+  ) =>
+    updateTerrain((t) =>
+      sel.kind === "region"
+        ? {
+            ...t,
+            regions: (t.regions ?? []).map((r, i) =>
+              i === sel.idx ? { ...r, polygon: fn(r.polygon) } : r,
+            ),
+          }
+        : {
+            ...t,
+            roads: (t.roads ?? []).map((r, i) =>
+              i === sel.idx ? { ...r, points: fn(r.points) } : r,
+            ),
+          },
+    );
+
+  const moveTerrainPoint = (
+    sel: { kind: "region" | "road"; idx: number },
+    pt: number,
+    pos: [number, number],
+  ) => editTerrainPoints(sel, (pts) => pts.map((p, j) => (j === pt ? pos : p)));
+
+  const insertTerrainPoint = (
+    sel: { kind: "region" | "road"; idx: number },
+    after: number,
+    pos: [number, number],
+  ) =>
+    editTerrainPoints(sel, (pts) => [
+      ...pts.slice(0, after + 1),
+      pos,
+      ...pts.slice(after + 1),
+    ]);
+
+  const removeTerrainPoint = (sel: { kind: "region" | "road"; idx: number }, pt: number) =>
+    editTerrainPoints(sel, (pts) =>
+      pts.length > (sel.kind === "region" ? 3 : 2) ? pts.filter((_, j) => j !== pt) : pts,
+    );
+
   const deleteSelection = (sel: NonNullable<DraftSelection>) => {
     if (sel.kind === "placement")
       updateDraft((d) => ({
         ...d,
         placements: d.placements.filter((_, i) => i !== sel.idx),
       }));
-    else
+    else if (sel.kind === "wall")
       updateDraft((d) => ({
         ...d,
         walls: (d.walls ?? []).filter((_, i) => i !== sel.idx),
+      }));
+    else if (sel.kind === "region")
+      updateTerrain((t) => ({
+        ...t,
+        regions: (t.regions ?? []).filter((_, i) => i !== sel.idx),
+      }));
+    else
+      updateTerrain((t) => ({
+        ...t,
+        roads: (t.roads ?? []).filter((_, i) => i !== sel.idx),
       }));
     setSelection((s) =>
       s === null || s.kind !== sel.kind
@@ -323,6 +442,8 @@ export default function App() {
   const selectAsset = (asset: LibraryAsset | null) => {
     setSelectedAsset(asset);
     if (asset?.descriptor.scale_class !== "spline-segment") setWallDraw(false);
+    // picking an asset means placing it — leave terrain-draw mode
+    if (asset) setTerrainDraw(null);
   };
 
   const toggle = (key: keyof OverlayToggles) =>
@@ -396,7 +517,10 @@ export default function App() {
                       <div class="row">
                         <button
                           class={wallDraw() ? "selected" : ""}
-                          onClick={() => setWallDraw(!wallDraw())}
+                          onClick={() => {
+                            setWallDraw(!wallDraw());
+                            setTerrainDraw(null);
+                          }}
                         >
                           Draw wall
                         </button>
@@ -423,6 +547,157 @@ export default function App() {
               </Show>
             </Show>
           </section>
+          <Show when={draft()}>
+            {(d) => (
+              <section>
+                <h2>Terrain</h2>
+                <Show
+                  when={d().terrain}
+                  fallback={
+                    <button onClick={addTerrain}>Add terrain</button>
+                  }
+                >
+                  {(t) => (
+                    <>
+                      <div class="row">
+                        <select
+                          class="material-select"
+                          value={regionMaterial()}
+                          onChange={(e) =>
+                            setRegionMaterial(
+                              e.currentTarget.value as TerrainRegion["material"],
+                            )
+                          }
+                        >
+                          <For each={["grass", "dirt", "canopy", "water"]}>
+                            {(m) => <option value={m}>{m}</option>}
+                          </For>
+                        </select>
+                        <button
+                          class={terrainDraw() === "region" ? "selected" : ""}
+                          onClick={() => toggleTerrainDraw("region")}
+                        >
+                          Draw region
+                        </button>
+                      </div>
+                      <div class="row">
+                        <input
+                          class="num"
+                          type="number"
+                          min="8"
+                          title="road width (world px)"
+                          value={roadWidth()}
+                          onChange={(e) =>
+                            setRoadWidth(
+                              Math.max(8, Number(e.currentTarget.value) || 56),
+                            )
+                          }
+                        />
+                        <button
+                          class={terrainDraw() === "road" ? "selected" : ""}
+                          onClick={() => toggleTerrainDraw("road")}
+                        >
+                          Draw road
+                        </button>
+                      </div>
+                      <Show when={terrainTool()}>
+                        <p class="hint">
+                          click the canvas to add points — Enter or double-click to
+                          finish, Esc to cancel
+                        </p>
+                      </Show>
+                      <div class="swatch-binds">
+                        <For each={TERRAIN_ROLES}>
+                          {(role) => (
+                            <label class="swatch-bind">
+                              <span>{role}</span>
+                              <select
+                                value={t().swatches?.[role] ?? ""}
+                                onChange={(e) => setSwatch(role, e.currentTarget.value)}
+                              >
+                                <option value="">— none —</option>
+                                <For each={textureAssets()}>
+                                  {(a) => (
+                                    <option value={a.descriptor.id}>
+                                      {a.descriptor.name}
+                                    </option>
+                                  )}
+                                </For>
+                              </select>
+                            </label>
+                          )}
+                        </For>
+                      </div>
+                      <div class="terrain-list">
+                        <For each={t().regions ?? []}>
+                          {(rg, idx) => (
+                            <div
+                              class={`placement-row ${
+                                selection()?.kind === "region" &&
+                                selection()!.idx === idx()
+                                  ? "selected"
+                                  : ""
+                              }`}
+                              onClick={() =>
+                                setSelection({ kind: "region", idx: idx() })
+                              }
+                            >
+                              <span class="placement-name">{rg.material}</span>
+                              <span class="placement-pos">
+                                {rg.polygon.length} pts
+                              </span>
+                              <button
+                                class="row-delete"
+                                title="delete region"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteSelection({ kind: "region", idx: idx() });
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          )}
+                        </For>
+                        <For each={t().roads ?? []}>
+                          {(rd, idx) => (
+                            <div
+                              class={`placement-row ${
+                                selection()?.kind === "road" &&
+                                selection()!.idx === idx()
+                                  ? "selected"
+                                  : ""
+                              }`}
+                              onClick={() => setSelection({ kind: "road", idx: idx() })}
+                            >
+                              <span class="placement-name">road w={rd.width}</span>
+                              <span class="placement-pos">{rd.points.length} pts</span>
+                              <button
+                                class="row-delete"
+                                title="delete road"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteSelection({ kind: "road", idx: idx() });
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          )}
+                        </For>
+                        <Show when={(t().regions?.length ?? 0) + (t().roads?.length ?? 0) === 0}>
+                          <p class="hint">
+                            No regions or roads yet. Pick a material or road width and
+                            draw on the canvas.
+                          </p>
+                        </Show>
+                      </div>
+                    </>
+                  )}
+                </Show>
+              </section>
+            )}
+          </Show>
         </Show>
         <Show when={mode() === "inspect"}>
         <Show
@@ -566,7 +841,7 @@ export default function App() {
           draft={draft}
           docId={draftDocId}
           library={library}
-          placing={() => (wallAsset() ? null : selectedAsset())}
+          placing={() => (wallAsset() || terrainTool() ? null : selectedAsset())}
           onCancelPlace={() => selectAsset(null)}
           wallAsset={wallAsset}
           onCommitWall={commitWall}
@@ -579,6 +854,12 @@ export default function App() {
           onMoveWallPoint={moveWallPoint}
           onInsertWallPoint={insertWallPoint}
           onRemoveWallPoint={removeWallPoint}
+          terrainTool={terrainTool}
+          onCommitTerrain={commitTerrainShape}
+          onCancelTerrain={() => setTerrainDraw(null)}
+          onMoveTerrainPoint={moveTerrainPoint}
+          onInsertTerrainPoint={insertTerrainPoint}
+          onRemoveTerrainPoint={removeTerrainPoint}
           onCursor={(x, y) => setCursor([x, y])}
         />
       </Show>

@@ -455,3 +455,66 @@ label.check.inline {
 .placement-row .row-delete:hover {
   color: #f66;
 }
+
+/* --- terrain --- */
+
+.terrain-pending {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: 12px;
+  color: #fc6;
+  background: rgba(24, 24, 24, 0.75);
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 2px 8px;
+  pointer-events: none;
+}
+
+.material-select {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+input.num {
+  width: 64px;
+  background: #333;
+  color: #ddd;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px 8px;
+}
+
+.swatch-binds {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.swatch-bind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.swatch-bind span {
+  flex: none;
+  width: 52px;
+  color: #888;
+}
+
+.swatch-bind select {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.terrain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
