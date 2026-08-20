@@ -76,6 +76,11 @@ export interface AssetDescriptor {
   sound_sources?: unknown[];
   /** legacy occlusion masks intersecting the region (polylines only for now) */
   occlusion_masks?: Pick<Mask, "layer" | "character_polyline" | "projectile_polyline">[];
+  /**
+   * for spline-segment wall pieces: screen-space direction the art runs,
+   * degrees in (-90, 90], 0 = horizontal, negative = ascending left→right
+   */
+  wall_direction_deg?: number;
   /** set for assets imported from .rhs.d sprite banks (animated FX / patches) */
   fx?: {
     /** sprite bank name, e.g. "Leifx" (Data/Animations/<Ambiance>/<bank>.rhs.d) */

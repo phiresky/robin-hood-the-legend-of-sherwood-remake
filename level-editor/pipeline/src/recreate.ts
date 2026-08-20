@@ -11,7 +11,7 @@ import sharp from "sharp";
 import type { AssetDescriptor, LibraryIndexEntry, MapDraft, ProtoLevel } from "@rle/shared";
 import { datadirPath, editorRoot, libraryDir, workDir } from "./env";
 import { renderTerrain, type TerrainSpec } from "./terrain";
-import { expandWallRun } from "@rle/shared";
+import { expandWallRun, expandWallRunDirectional, type WallSegmentSpec } from "@rle/shared";
 
 
 async function main() {
@@ -89,6 +89,32 @@ async function main() {
       sortY: a.origin[1] + a.anchor[1],
     }));
   for (const run of spec.walls ?? []) {
+    if (run.segment_set?.length) {
+      const segs: WallSegmentSpec[] = [];
+      for (const id of run.segment_set) {
+        const a = byId.get(id);
+        if (!a) {
+          console.warn(`wall segment set references unknown asset ${id}`);
+          continue;
+        }
+        segs.push({
+          id,
+          size: [a.source.bbox[2], a.source.bbox[3]],
+          anchor: a.anchor,
+          directionDeg: a.wall_direction_deg ?? 0,
+        });
+      }
+      for (const s of expandWallRunDirectional(run.points, segs, run.spacing)) {
+        const a = byId.get(s.asset)!;
+        statics.push({
+          input: path.join(libraryDir, a.id, a.images.day),
+          left: s.pos[0],
+          top: s.pos[1],
+          sortY: s.sortY,
+        });
+      }
+      continue;
+    }
     const wa = byId.get(run.asset);
     if (!wa) {
       console.warn(`wall run references unknown asset ${run.asset}`);

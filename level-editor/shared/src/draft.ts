@@ -18,8 +18,13 @@ export interface Placement {
 }
 
 export interface WallRun {
-  /** library asset id of a spline-segment wall piece */
+  /** library asset id of a spline-segment wall piece (fallback / single-segment mode) */
   asset: string;
+  /**
+   * direction-aware mode: asset ids of a wall segment set; each path segment
+   * stitches with the member whose `wall_direction_deg` best matches its angle
+   */
+  segment_set?: string[];
   /** spline control points in world coords (piecewise linear for now) */
   points: [number, number][];
   /** stamp spacing as a fraction of the segment width, default 0.55 */

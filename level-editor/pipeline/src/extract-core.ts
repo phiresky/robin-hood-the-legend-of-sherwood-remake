@@ -31,6 +31,8 @@ export interface ExtractOptions {
   applyPatches?: boolean;
   /** "crop" = no segmentation: rectangular cut of bbox with a full mask (terrain swatches) */
   mode?: "sam" | "crop";
+  /** fill enclosed background pockets in the mask (window holes etc.) */
+  fillHoles?: boolean;
   name: string;
   id: string;
   tags: string[];
@@ -99,6 +101,38 @@ function maskBounds(mask: { data: Uint8Array; width: number; height: number }) {
   }
   if (maxX < 0) return null;
   return { minX, minY, maxX, maxY };
+}
+
+/** fill background pockets fully enclosed by mask foreground (flood from border) */
+function fillMaskHoles(mask: { data: Uint8Array; width: number; height: number }) {
+  const { data, width: w, height: h } = mask;
+  const outside = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const push = (i: number) => {
+    if (!outside[i] && !data[i]) {
+      outside[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    push(x);
+    push((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    push(y * w);
+    push(y * w + w - 1);
+  }
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % w;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (i >= w) push(i - w);
+    if (i < w * (h - 1)) push(i + w);
+  }
+  for (let i = 0; i < data.length; i++) {
+    if (!data[i] && !outside[i]) data[i] = 255;
+  }
 }
 
 function bboxIou(a: Bbox, b: Bbox): number {
@@ -235,6 +269,7 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
       .raw()
       .toBuffer();
     const cropMask = { data: new Uint8Array(maskResized), width: cw, height: ch };
+    if (opts.fillHoles) fillMaskHoles(cropMask);
 
     const b = maskBounds(cropMask);
     if (!b) return { skip: "empty mask" };

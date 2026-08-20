@@ -29,6 +29,8 @@ interface Proposal {
   apply_patches?: boolean;
   /** "crop" = rectangular swatch without segmentation */
   mode?: "sam" | "crop";
+  /** fill enclosed background pockets in the mask (window holes etc.) */
+  fill_holes?: boolean;
   name: string;
   id?: string;
   tags?: string[];
@@ -66,6 +68,7 @@ async function main() {
           points: p.points,
           applyPatches: p.apply_patches,
           mode: p.mode,
+          fillHoles: p.fill_holes,
           name: p.name,
           id,
           tags: p.tags ?? [],

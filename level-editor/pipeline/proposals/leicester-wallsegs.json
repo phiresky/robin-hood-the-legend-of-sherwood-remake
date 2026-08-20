@@ -1,0 +1,55 @@
+{
+  "map": "Leicester",
+  "proposals": [
+    {
+      "name": "wall segment SE",
+      "id": "leicester-wall-seg-se",
+      "bbox": [
+        880,
+        1280,
+        320,
+        160
+      ],
+      "prompt": "crenellated stone wall",
+      "alt_prompts": [
+        "stone wall with battlements",
+        "castle wall"
+      ],
+      "apply_patches": true,
+      "dedupe_iou": 0.9,
+      "tags": [
+        "wall",
+        "castle",
+        "crenellated",
+        "straight"
+      ],
+      "scale_class": "spline-segment",
+      "fill_holes": true
+    },
+    {
+      "name": "wall segment NE",
+      "id": "leicester-wall-seg-ne",
+      "bbox": [
+        1310,
+        1080,
+        180,
+        220
+      ],
+      "prompt": "crenellated stone wall",
+      "alt_prompts": [
+        "stone wall with battlements",
+        "castle wall"
+      ],
+      "apply_patches": true,
+      "dedupe_iou": 0.9,
+      "tags": [
+        "wall",
+        "castle",
+        "crenellated",
+        "straight"
+      ],
+      "scale_class": "spline-segment",
+      "fill_holes": true
+    }
+  ]
+}

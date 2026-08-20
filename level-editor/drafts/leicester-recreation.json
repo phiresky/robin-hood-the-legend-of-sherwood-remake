@@ -729,6 +729,20 @@
       ]
     },
     {
+      "asset": "leicester-wall-seg-ne",
+      "pos": [
+        1295,
+        1201
+      ]
+    },
+    {
+      "asset": "leicester-wall-seg-se",
+      "pos": [
+        869,
+        1257
+      ]
+    },
+    {
       "asset": "leicester-wall-walkway",
       "pos": [
         427,
@@ -767,7 +781,7 @@
   "walls": [
     {
       "asset": "leicester-castle-wall-south",
-      "spacing": 0.4,
+      "spacing": 0.5,
       "points": [
         [
           320,
@@ -781,11 +795,17 @@
           640,
           1300
         ]
+      ],
+      "segment_set": [
+        "leicester-wall-seg-se",
+        "leicester-wall-seg-ne",
+        "leicester-north-wall",
+        "leicester-wall-walkway"
       ]
     },
     {
       "asset": "leicester-castle-wall-south",
-      "spacing": 0.4,
+      "spacing": 0.5,
       "points": [
         [
           860,
@@ -799,11 +819,17 @@
           1220,
           1360
         ]
+      ],
+      "segment_set": [
+        "leicester-wall-seg-se",
+        "leicester-wall-seg-ne",
+        "leicester-north-wall",
+        "leicester-wall-walkway"
       ]
     },
     {
       "asset": "leicester-castle-wall-south",
-      "spacing": 0.4,
+      "spacing": 0.5,
       "points": [
         [
           1350,
@@ -817,8 +843,14 @@
           1470,
           1000
         ]
+      ],
+      "segment_set": [
+        "leicester-wall-seg-se",
+        "leicester-wall-seg-ne",
+        "leicester-north-wall",
+        "leicester-wall-walkway"
       ]
     }
   ],
-  "notes": "Auto-generated litmus test: all 108 Leicester library assets at their source positions."
+  "notes": "Auto-generated litmus test: all 110 Leicester library assets at their source positions."
 }
