@@ -6830,6 +6830,7 @@ impl EngineInner {
             execute_sides,
         } = outcomes;
         let super::animation::ExecuteSideOutcomes {
+            rejected_dead_idle_posture_requests,
             waiting_upright,
             waiting_alerted,
             drop_ale_done,
@@ -6868,6 +6869,9 @@ impl EngineInner {
         self.drain_next_jump_step(assets, next_jump_step);
         self.drain_select_hulk(select_hulk);
         self.drain_resume_door_pass(sim, assets, resume_door_pass);
+        for entity_id in rejected_dead_idle_posture_requests {
+            self.process_rejected_nonlying_posture_request_for(entity_id);
+        }
         self.drain_waiting_upright(waiting_upright);
         self.drain_waiting_alerted(sim, assets, waiting_alerted);
         // Soldier `Execute` cross-entity side effects, collected by the

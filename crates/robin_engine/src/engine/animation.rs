@@ -603,6 +603,7 @@ mod tests {
         let actor = engine.add_entity(weak_soldier_at_action_done(0));
         {
             let entity = engine.get_entity_mut(actor).expect("dead actor exists");
+            entity.element_data_mut().kind = ElementKind::ActorSoldier;
             entity
                 .npc_data_mut()
                 .expect("soldier has NPC data")
@@ -644,13 +645,18 @@ mod tests {
             .sequence_manager
             .element_in_progress(sequence, 0);
 
-        let (_, _, result) = engine.tick_actor_animation_for(
+        let (_, outcomes, result) = engine.tick_actor_animation_for(
             &crate::sim_rng::test_context(),
             &crate::engine::types::LevelAssets::new(),
             actor,
         );
 
         assert_eq!(result.map(|result| result.motion), Some(MotionState::Start));
+        assert_eq!(
+            outcomes.execute_sides.rejected_dead_idle_posture_requests,
+            vec![actor],
+            "the production Execute START boundary must preserve the rejected Upright request"
+        );
         let entity = engine.get_entity(actor).expect("dead actor remains live");
         assert_eq!(
             entity.element_data().sprite.last_action,
@@ -2005,6 +2011,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dead_random_bored_start_reports_rejected_nonlying_posture_request() {
+        let mut entity = weak_soldier_at_action_done(0);
+        entity.element_data_mut().kind = ElementKind::ActorSoldier;
+        entity.set_posture(Posture::DeadBack);
+
+        assert!(rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUprightBoredRandom,
+            MotionState::Start,
+        ));
+        assert!(rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUpright,
+            MotionState::Start,
+        ));
+        assert!(rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUprightBored,
+            MotionState::Start,
+        ));
+        assert!(!rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUprightBoredRandom,
+            MotionState::InProgress,
+        ));
+
+        apply_active_animation_start_state_side_effect(
+            &mut entity,
+            OrderType::WaitingUprightBoredRandom,
+            MotionState::Start,
+        );
+        assert_eq!(
+            entity.element_data().posture,
+            Posture::DeadBack,
+            "the callback is driven by the rejected Upright request, not an actual posture change"
+        );
+    }
+
     fn sequence_with_order(
         order_type: OrderType,
     ) -> (
@@ -2244,6 +2289,11 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
 /// etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct ExecuteSideOutcomes {
+    /// Dead/DeadBack humans whose idle START requested Upright. Original's
+    /// base `RHElement::SetPosture` rejects the write, but the human override
+    /// still fires the lying-to-nonlying corpse callback from the requested
+    /// posture.
+    pub rejected_dead_idle_posture_requests: Vec<EntityId>,
     /// Soldiers executing WAITING_UPRIGHT. Original's
     /// `RHElementActorSoldier::Execute` arm (`RHelementactorsoldier.cpp:753-759`)
     /// launches ENTER_ATTENTIVE_MODE when the requested attentive state is
@@ -3202,6 +3252,25 @@ fn apply_active_animation_start_state_side_effect(
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = action_state;
     }
+}
+
+fn rejected_dead_idle_posture_callback_required(
+    entity: &Entity,
+    anim_type: OrderType,
+    motion: MotionState,
+) -> bool {
+    entity.is_human()
+        && motion == MotionState::Start
+        && matches!(
+            anim_type,
+            OrderType::WaitingUpright
+                | OrderType::WaitingUprightBored
+                | OrderType::WaitingUprightBoredRandom
+        )
+        && matches!(
+            entity.element_data().posture,
+            Posture::Dead | Posture::DeadBack
+        )
 }
 
 /// PC `Taking` / `TakingCrouched` Done handler — fires when a PC finishes the generic
@@ -6039,11 +6108,23 @@ impl EngineInner {
                         apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
                         super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
                         // Universal handlers (run for any actor type).
+                        let rejected_dead_idle_posture_request =
+                            rejected_dead_idle_posture_callback_required(
+                                entity,
+                                anim_type,
+                                motion_state,
+                            );
                         apply_active_animation_start_state_side_effect(
                             entity,
                             anim_type,
                             motion_state,
                         );
+                        if rejected_dead_idle_posture_request {
+                            completion_outcomes
+                                .execute_sides
+                                .rejected_dead_idle_posture_requests
+                                .push(entity_id);
+                        }
                         if forwards_pc_bow_action_on_start(
                             entity,
                             anim_type,
