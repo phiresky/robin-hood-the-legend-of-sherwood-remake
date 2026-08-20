@@ -19,6 +19,7 @@ expected_saves=${SCHEMA16_LADDER_EXPECTED_SAVES:-243}
 poll_seconds=${SCHEMA16_LADDER_POLL_SECONDS:-300}
 capture_jobs=${SCHEMA16_LADDER_CAPTURE_JOBS:-8}
 zstd_level=${SCHEMA16_LADDER_ZSTD_LEVEL:-16}
+capture_externally=${SCHEMA16_LADDER_CAPTURE_EXTERNALLY:-0}
 initial_recorder_session=${SCHEMA16_LADDER_INITIAL_RECORDER_SESSION:-seed2m-recorder-10k}
 stop_file=${SCHEMA16_LADDER_STOP_FILE:-$corpus_root/.schema16-corpus-ladder.stop}
 expected_replays=$((replays_per_save * expected_saves))
@@ -37,6 +38,10 @@ if [[ ! "$capture_jobs" =~ ^[1-9][0-9]*$ || "$capture_jobs" -gt 10 ]]; then
 fi
 if [[ ! "$zstd_level" =~ ^([1-9]|1[0-9]|2[0-2])$ ]]; then
     printf 'error: SCHEMA16_LADDER_ZSTD_LEVEL must be from 1 through 22\n' >&2
+    exit 2
+fi
+if [[ "$capture_externally" != 0 && "$capture_externally" != 1 ]]; then
+    printf 'error: SCHEMA16_LADDER_CAPTURE_EXTERNALLY must be 0 or 1\n' >&2
     exit 2
 fi
 if [[ ! -x "$recorder" ]]; then
@@ -191,6 +196,12 @@ while [[ ! -e "$stop_file" ]]; do
 
     complete=$(completed_replays "$campaign")
     if (( complete < expected_replays )); then
+        if [[ "$capture_externally" == 1 ]]; then
+            printf '%s seed=%s external capture=%s/%s; waiting\n' \
+                "$(date -Is)" "$seed_base" "$complete" "$expected_replays"
+            sleep "$poll_seconds"
+            continue
+        fi
         if [[ "$seed_base" == "$first_seed_base" ]] \
             && tmux has-session -t "$initial_recorder_session" 2>/dev/null
         then
