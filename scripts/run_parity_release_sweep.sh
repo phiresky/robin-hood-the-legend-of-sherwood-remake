@@ -109,20 +109,37 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         continue
     fi
 
+    # Keep the in-flight output private.  A distributed sweep may mirror a
+    # completed log for the same trace into this audit while this runner is
+    # active.  If the runner writes directly to the published pathname, that
+    # atomic rsync replacement makes the EOF check inspect the mirrored file
+    # instead of the inode this runner actually wrote, producing a false
+    # integrity-eof-marker result.
+    if ! run_log=$(mktemp "${log}.tmp.XXXXXX"); then
+        printf 'error: unable to create private parity log for: %s\n' "$log" >&2
+        exec {trace_lock_fd}>&-
+        continue
+    fi
+
     acquire_runner_slot
     if timeout --signal=TERM --kill-after=10s 900s \
         env ROBINHOOD_DATA_DIR="$workspace/datadirs/fullgame_linux" \
-        "$runner" --no-auto-dump "$trace" > "$log" 2>&1
+        "$runner" --no-auto-dump "$trace" > "$run_log" 2>&1
     then
-        marker_count=$(grep -Fxc -- "$exact_eof_marker" "$log" || true)
+        marker_count=$(grep -Fxc -- "$exact_eof_marker" "$run_log" || true)
         if [[ "$marker_count" == 1 ]]; then
-            write_status "$status" 0
+            runner_status=0
         else
-            write_status "$status" "$integrity_status"
+            runner_status=$integrity_status
         fi
     else
         runner_status=$?
+    fi
+    if mv -f -- "$run_log" "$log"; then
         write_status "$status" "$runner_status"
+    else
+        printf 'error: unable to publish parity log: %s\n' "$log" >&2
+        rm -f -- "$run_log"
     fi
     exec {runner_slot_fd}>&-
     exec {trace_lock_fd}>&-
