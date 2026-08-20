@@ -1,0 +1,155 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  background: #181818;
+  color: #ddd;
+  font-size: 14px;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+.sidebar {
+  width: 260px;
+  flex: none;
+  background: #222;
+  border-right: 1px solid #333;
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sidebar h1 {
+  font-size: 16px;
+}
+
+.sidebar h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.connect {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hint {
+  color: #888;
+  font-size: 12px;
+}
+
+button {
+  background: #333;
+  color: #ddd;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #3c3c3c;
+}
+
+button.selected {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+select {
+  width: 100%;
+  background: #333;
+  color: #ddd;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+ul.maps {
+  list-style: none;
+}
+
+ul.maps li {
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+ul.maps li:hover {
+  background: #2c2c2c;
+}
+
+ul.maps li.selected {
+  background: #2563eb;
+  color: #fff;
+}
+
+label.check {
+  display: block;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+label.check input {
+  margin-right: 7px;
+}
+
+.statusbar {
+  margin-top: auto;
+  padding-top: 10px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.statusbar .busy {
+  color: #fc6;
+}
+
+.statusbar .error {
+  color: #f66;
+  word-break: break-all;
+}
+
+.statusbar .coords {
+  color: #777;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.viewer canvas {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}

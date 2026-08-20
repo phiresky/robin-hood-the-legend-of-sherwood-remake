@@ -1,0 +1,7 @@
+packages:
+  - app
+  - pipeline
+  - shared
+allowBuilds:
+  esbuild: true
+  sharp: true

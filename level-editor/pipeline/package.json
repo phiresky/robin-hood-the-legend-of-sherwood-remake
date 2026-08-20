@@ -1,0 +1,22 @@
+{
+  "name": "pipeline",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "extract": "tsx src/extract.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fal-ai/client": "^1.10.1",
+    "@rle/shared": "workspace:*",
+    "dotenv": "^17.2.1",
+    "polygon-clipping": "^0.15.7",
+    "sharp": "^0.34.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.4",
+    "typescript": "^5.9.2"
+  }
+}
