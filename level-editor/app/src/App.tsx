@@ -22,7 +22,7 @@ import { DEFAULT_TOGGLES, TOGGLE_LABELS, type OverlayToggles } from "./overlays"
 import { releaseLibrary, scanLibrary, type LibraryAsset, type LibraryIndex } from "./library";
 import { AssetDetail, LibrarySection } from "./Library";
 import { ComposeViewer, PlacementsPanel } from "./Compose";
-import { DEFAULT_DRAFT_SIZE, newDraft, openDraftFile, saveDraftFile } from "./compose";
+import { finalizeDraft, guideRect, newDraft, openDraftFile, saveDraftFile } from "./compose";
 import type { MapDraft } from "@rle/shared";
 
 type Mode = "inspect" | "compose";
@@ -190,14 +190,7 @@ export default function App() {
   function onNewDraft() {
     const name = window.prompt("Draft name", "untitled");
     if (name === null) return;
-    const sizeStr = window.prompt(
-      "Map size (width x height)",
-      `${DEFAULT_DRAFT_SIZE[0]}x${DEFAULT_DRAFT_SIZE[1]}`,
-    );
-    if (sizeStr === null) return;
-    const m = sizeStr.match(/^\s*(\d+)\s*[x×,]\s*(\d+)\s*$/);
-    if (!m) return setError(`invalid size: ${sizeStr}`);
-    loadDraftDoc(newDraft(name || "untitled", [Number(m[1]), Number(m[2])]), null);
+    loadDraftDoc(newDraft(name || "untitled"), null);
   }
 
   async function onOpenDraft() {
@@ -212,8 +205,23 @@ export default function App() {
   async function onSaveDraft() {
     const d = draft();
     if (!d) return;
+    // size is determined here: content bounds + margin, placements normalized
+    // to a (0,0) origin in the written file (the in-memory draft keeps its
+    // coords so the view doesn't jump)
+    let final = finalizeDraft(d, library());
+    if (!draftHandle()) {
+      // first save: let the user override the computed size
+      const s = window.prompt(
+        "Map size (width x height)",
+        `${final.size[0]}x${final.size[1]}`,
+      );
+      if (s === null) return;
+      const m = s.match(/^\s*(\d+)\s*[x×,]\s*(\d+)\s*$/);
+      if (!m) return setError(`invalid size: ${s}`);
+      final = { ...final, size: [Number(m[1]), Number(m[2])] };
+    }
     try {
-      setDraftHandle(await saveDraftFile(d, draftHandle()));
+      setDraftHandle(await saveDraftFile(final, draftHandle()));
       setDirty(false);
     } catch (e) {
       if ((e as DOMException).name !== "AbortError") setError(String(e));
@@ -305,7 +313,11 @@ export default function App() {
                       </Show>
                     </div>
                     <div class="hint">
-                      {d().size[0]}×{d().size[1]} · {d().placements.length} placement
+                      {(() => {
+                        const g = guideRect(d(), library());
+                        return g ? `${Math.ceil(g[2])}×${Math.ceil(g[3])}` : "empty";
+                      })()}{" "}
+                      · {d().placements.length} placement
                       {d().placements.length === 1 ? "" : "s"}
                     </div>
                     <Show when={selectedAsset()}>

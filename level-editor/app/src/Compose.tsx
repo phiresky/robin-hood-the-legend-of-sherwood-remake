@@ -3,7 +3,15 @@
 import { For, Show, createEffect, onCleanup } from "solid-js";
 import type { MapDraft } from "@rle/shared";
 import type { LibraryAsset, LibraryIndex } from "./library";
-import { assetBitmap, assetById, drawOrder, hitAlpha } from "./compose";
+import {
+  DEFAULT_BACKGROUND,
+  SAVE_MARGIN,
+  assetBitmap,
+  assetById,
+  drawOrder,
+  guideRect,
+  hitAlpha,
+} from "./compose";
 
 export interface ComposeViewerProps {
   draft: () => MapDraft | null;
@@ -61,21 +69,27 @@ export function ComposeViewer(props: ComposeViewerProps) {
       canvas.style.height = `${h}px`;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#181818";
-    ctx.fillRect(0, 0, w, h);
     const draft = props.draft();
+    // infinite canvas: the background fill covers the whole viewport
+    ctx.fillStyle = draft ? (draft.background_color ?? DEFAULT_BACKGROUND) : "#181818";
+    ctx.fillRect(0, 0, w, h);
     if (!draft) return;
     ctx.scale(view.zoom, view.zoom);
     ctx.translate(-view.x, -view.y);
     ctx.imageSmoothingEnabled = view.zoom < 1;
 
-    ctx.fillStyle = draft.background_color ?? "#2a3324";
-    ctx.fillRect(0, 0, draft.size[0], draft.size[1]);
-    ctx.strokeStyle = "#555";
-    ctx.lineWidth = 1 / view.zoom;
-    ctx.strokeRect(0, 0, draft.size[0], draft.size[1]);
-
     const lib = props.library();
+
+    // boundary guide: what save would write (content bounds + margin), or the
+    // stored size for an opened draft without placements — never clamps
+    const guide = guideRect(draft, lib);
+    if (guide) {
+      ctx.strokeStyle = "#555";
+      ctx.lineWidth = 1 / view.zoom;
+      ctx.setLineDash([6 / view.zoom, 4 / view.zoom]);
+      ctx.strokeRect(guide[0], guide[1], guide[2], guide[3]);
+      ctx.setLineDash([]);
+    }
     for (const idx of drawOrder(draft, lib)) {
       const p = draft.placements[idx]!;
       const bmp = placementBitmap(p.asset);
@@ -280,9 +294,17 @@ export function ComposeViewer(props: ComposeViewerProps) {
       if (!draft) return;
       const w = container.clientWidth || 1;
       const h = container.clientHeight || 1;
-      view.zoom = Math.min(w / draft.size[0], h / draft.size[1]) * 0.95;
-      view.x = -(w / view.zoom - draft.size[0]) / 2;
-      view.y = -(h / view.zoom - draft.size[1]) / 2;
+      const guide = guideRect(draft, props.library());
+      if (guide) {
+        view.zoom = Math.min(8, Math.min(w / guide[2], h / guide[3]) * 0.95);
+        view.x = guide[0] - (w / view.zoom - guide[2]) / 2;
+        view.y = guide[1] - (h / view.zoom - guide[3]) / 2;
+      } else {
+        // empty draft: center the world origin
+        view.zoom = 0.5;
+        view.x = -w / view.zoom / 2;
+        view.y = -h / view.zoom / 2;
+      }
       scheduleDraw();
     },
   );
