@@ -783,15 +783,18 @@ pub(super) struct CategorySpeechRejectionFinalization {
     reason_after_callback: Option<u16>,
 }
 
-/// Build a snapshot of every live human in the engine.  Called once at
+/// Build a snapshot of every authored human in the engine. Called once at
 /// the start of [`EngineInner::init_ai`] and handed to every per-NPC init
 /// pass.
 pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
     for (id, entity) in engine.world.entities.humans() {
-        if !entity.element_data().active {
-            continue;
-        }
+        // Original InitOneAI walks the complete engine element array and
+        // tests only IsHuman/IsPC/camp; it does not gate this bootstrap list
+        // on RHElement::IsActive (RHartificialmalignity.cpp:10121-10138 and
+        // RHartificialbonhomie.cpp:1429-1445). Authored rescue PCs commonly
+        // begin inactive but must already occur in every applicable Enemy
+        // detectable list so activation does not alter list identity/order.
         match entity {
             Entity::Pc(_) => {
                 out.push(PotentialDetectable {
@@ -908,6 +911,27 @@ fn patrol_member_admitted(
     detected && ai_state == crate::ai::AiState::Default && (is_civilian || is_able_to_fight)
 }
 
+/// Preserve `InitializePatrol`'s insertion-loop comparison exactly.
+///
+/// Original advances past an existing member only while
+/// `new_distance > existing_distance`.  Spelling the stopping condition as
+/// `new_distance <= existing_distance` is not equivalent for unordered IEEE
+/// values: a NaN distance stops the C++ loop immediately and is inserted at
+/// that position.
+fn patrol_distance_inserts_before(new_distance: f32, existing_distance: f32) -> bool {
+    !(new_distance > existing_distance)
+}
+
+/// Preserve `HeyFolksLookThere`'s positive, strict range admission.
+///
+/// Original sends `CALL_LOOKTHERE` only when `SquareNorm() < radius²`.
+/// Rewriting this as an early rejection with `distance² >= radius²` is not
+/// equivalent for unordered IEEE values: a soldier with a NaN position must
+/// not receive the call.
+fn look_there_target_is_inside_radius(distance_squared: f32, radius_squared: f32) -> bool {
+    distance_squared < radius_squared
+}
+
 /// Original `InitializePatrol` uses AI `Position(actor)` for sorting and
 /// formation, but its admission ray calls the actor overload of
 /// `IsDetecting360Degrees`. That overload builds both endpoints from the
@@ -1001,6 +1025,69 @@ fn end_suspended_tower_guard_alert_think(ai: &mut crate::ai::AiController) {
 #[cfg(test)]
 mod parity_tests {
     use super::*;
+
+    #[test]
+    fn potential_detectables_include_inactive_authored_pcs() {
+        let mut engine = EngineInner::new();
+        let add_pc = |engine: &mut EngineInner, active| {
+            engine.add_entity(Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorPc,
+                    active,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: Default::default(),
+            }))
+        };
+        let inactive = add_pc(&mut engine, false);
+        let active = add_pc(&mut engine, true);
+
+        let ids = build_potential_detectables(&engine)
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![inactive, active]);
+    }
+
+    #[test]
+    fn patrol_distance_insertion_preserves_cpp_unordered_and_tie_semantics() {
+        assert!(patrol_distance_inserts_before(4.0, 4.0));
+        assert!(patrol_distance_inserts_before(f32::NAN, 4.0));
+        assert!(patrol_distance_inserts_before(4.0, f32::NAN));
+        assert!(!patrol_distance_inserts_before(5.0, 4.0));
+
+        let mut sorted = vec![1.0, 3.0];
+        for distance in [2.0, f32::NAN] {
+            let insert_at = sorted
+                .iter()
+                .position(|&existing| patrol_distance_inserts_before(distance, existing))
+                .unwrap_or(sorted.len());
+            sorted.insert(insert_at, distance);
+        }
+        assert!(sorted[0].is_nan());
+        assert_eq!(&sorted[1..], &[1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn look_there_range_admission_preserves_cpp_nan_and_boundary_semantics() {
+        let radius_squared = 100.0;
+
+        assert!(!look_there_target_is_inside_radius(
+            f32::NAN,
+            radius_squared
+        ));
+        assert!(!look_there_target_is_inside_radius(
+            radius_squared,
+            radius_squared
+        ));
+        assert!(look_there_target_is_inside_radius(
+            radius_squared - 1.0,
+            radius_squared
+        ));
+    }
 
     #[test]
     fn suspended_look_there_tail_surfaces_engine_deferred_route_rejection() {
@@ -2392,6 +2479,7 @@ pub(super) fn build_ai_context_from_entity(
         difficulty,
         original_creation_order,
         position: self_position,
+        self_layer: elem.layer(),
         self_body_position_world: elem.position(),
         frame,
         direction: elem.direction() as u16,
@@ -5737,7 +5825,9 @@ impl EngineInner {
                 let distance = patrol_distance(member);
                 let insert_at = sorted_patrol
                     .iter()
-                    .position(|&existing| distance <= patrol_distance(existing))
+                    .position(|&existing| {
+                        patrol_distance_inserts_before(distance, patrol_distance(existing))
+                    })
                     .unwrap_or(sorted_patrol.len());
                 sorted_patrol.insert(insert_at, member);
             }
@@ -11806,7 +11896,9 @@ impl EngineInner {
                     let distance = patrol_distance(member);
                     let insert_at = sorted_patrol
                         .iter()
-                        .position(|&existing| distance <= patrol_distance(existing))
+                        .position(|&existing| {
+                            patrol_distance_inserts_before(distance, patrol_distance(existing))
+                        })
                         .unwrap_or(sorted_patrol.len());
                     sorted_patrol.insert(insert_at, member);
                 }
@@ -14120,7 +14212,7 @@ impl EngineInner {
             let dx = target_position.x - caller_position.x;
             let dy = target_position.y - caller_position.y;
             let dz = target_position.z - caller_position.z;
-            if dx * dx + dy * dy + dz * dz >= radius_sq {
+            if !look_there_target_is_inside_radius(dx * dx + dy * dy + dz * dz, radius_sq) {
                 continue;
             }
 
@@ -16092,7 +16184,9 @@ impl EngineInner {
             let distance = square_distance(entry.1);
             let insert_at = sorted
                 .iter()
-                .position(|existing| distance <= square_distance(existing.1))
+                .position(|existing| {
+                    patrol_distance_inserts_before(distance, square_distance(existing.1))
+                })
                 .unwrap_or(sorted.len());
             sorted.insert(insert_at, entry);
         }

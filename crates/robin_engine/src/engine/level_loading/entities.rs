@@ -1082,6 +1082,17 @@ impl EngineInner {
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
+            // RHElementBonus::ReadFromMissionLevel computes the placed 3D
+            // position, then copies both current coordinates into the old
+            // coordinates before the element enters its first Hourglass
+            // (original-code/RHElementBonus.cpp:484-487). Without this the
+            // first parity frame reports every bonus as moving from zero.
+            let current_position = sprite.position_iface.get_position();
+            let current_map_position = sprite.position_iface.map_position();
+            sprite.position_iface.set_old_position(current_position);
+            sprite
+                .position_iface
+                .set_old_map_position(current_map_position);
             let entity = Entity::Bonus(crate::element::ElementBonus {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ObjectBonus,
@@ -1190,6 +1201,15 @@ impl EngineInner {
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
+            // RHElementScroll::ReadFromMissionLevel performs the same
+            // current-to-old settlement immediately after ComputePositionAll
+            // (original-code/RHElementScroll.cpp:259-262).
+            let current_position = sprite.position_iface.get_position();
+            let current_map_position = sprite.position_iface.map_position();
+            sprite.position_iface.set_old_position(current_position);
+            sprite
+                .position_iface
+                .set_old_map_position(current_map_position);
             let entity = Entity::Scroll(crate::element::ElementScroll {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ObjectScroll,
