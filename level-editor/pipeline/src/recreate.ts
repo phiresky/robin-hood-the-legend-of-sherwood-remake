@@ -8,97 +8,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type {
-  AssetDescriptor,
-  LibraryIndexEntry,
-  MapDraft,
-  Point,
-  ProtoLevel,
-} from "@rle/shared";
+import type { AssetDescriptor, LibraryIndexEntry, MapDraft, ProtoLevel } from "@rle/shared";
 import { datadirPath, editorRoot, libraryDir, workDir } from "./env";
+import { renderTerrain, type TerrainSpec } from "./terrain";
 
-interface Swatch {
-  data: Buffer; // raw RGB
-  width: number;
-  height: number;
-}
-
-async function loadSwatch(id: string): Promise<Swatch | null> {
-  try {
-    const p = path.join(libraryDir, id, "day.png");
-    const img = sharp(p).removeAlpha();
-    const { width, height } = await img.metadata();
-    return { data: await img.raw().toBuffer(), width: width!, height: height! };
-  } catch {
-    return null;
-  }
-}
-
-function fillTiled(canvas: Buffer, W: number, sw: Swatch, x0: number, x1: number, y: number) {
-  const sy = ((y % sw.height) + sw.height) % sw.height;
-  for (let x = x0; x < x1; x++) {
-    const sx = ((x % sw.width) + sw.width) % sw.width;
-    const si = (sy * sw.width + sx) * 3;
-    const di = (y * W + x) * 3;
-    canvas[di] = sw.data[si]!;
-    canvas[di + 1] = sw.data[si + 1]!;
-    canvas[di + 2] = sw.data[si + 2]!;
-  }
-}
-
-/** scanline fill of a polygon with a tiled swatch (even-odd rule) */
-function fillPolygon(canvas: Buffer, W: number, H: number, poly: Point[], sw: Swatch) {
-  if (poly.length < 3) return;
-  let minY = Infinity,
-    maxY = -Infinity;
-  for (const [, y] of poly) {
-    minY = Math.min(minY, y);
-    maxY = Math.max(maxY, y);
-  }
-  for (let y = Math.max(0, Math.ceil(minY)); y <= Math.min(H - 1, Math.floor(maxY)); y++) {
-    const xs: number[] = [];
-    for (let i = 0; i < poly.length; i++) {
-      const [x1, y1] = poly[i]!;
-      const [x2, y2] = poly[(i + 1) % poly.length]!;
-      if (y1 === y2) continue;
-      if ((y >= y1 && y < y2) || (y >= y2 && y < y1)) {
-        xs.push(x1 + ((y - y1) / (y2 - y1)) * (x2 - x1));
-      }
-    }
-    xs.sort((a, b) => a - b);
-    for (let k = 0; k + 1 < xs.length; k += 2) {
-      const x0 = Math.max(0, Math.ceil(xs[k]!));
-      const x1 = Math.min(W, Math.floor(xs[k + 1]!) + 1);
-      if (x1 > x0) fillTiled(canvas, W, sw, x0, x1, y);
-    }
-  }
-}
-
-/** grass base + material-sector polygons filled with texture swatches */
-async function renderTerrain(level: ProtoLevel, W: number, H: number): Promise<Buffer | null> {
-  const grass = await loadSwatch("leicester-grass-swatch");
-  if (!grass) return null;
-  const byMaterial: Record<number, Swatch | null> = {
-    0: await loadSwatch("leicester-courtyard-dirt-swatch"), // Ground
-    2: await loadSwatch("leicester-courtyard-dirt-swatch"), // Stone (no swatch yet)
-    3: grass, // Grass
-    4: await loadSwatch("leicester-forest-canopy-swatch"), // Leaves
-    5: await loadSwatch("leicester-moat-water-swatch"), // Water
-  };
-  const canvas = Buffer.alloc(W * H * 3);
-  for (let y = 0; y < H; y++) fillTiled(canvas, W, grass, 0, W, y);
-  // water last so grass sectors can't overdraw the moat
-  const sectors = [...level.material_sectors].sort(
-    (a, b) => Number(a.material === 5) - Number(b.material === 5),
-  );
-  for (const ms of sectors) {
-    const sw = byMaterial[ms.material];
-    if (sw) fillPolygon(canvas, W, H, ms.polygon.points, sw);
-  }
-  return sharp(canvas, { raw: { width: W, height: H, channels: 3 } })
-    .png()
-    .toBuffer();
-}
 
 async function main() {
   const map = process.argv[2];
@@ -162,13 +75,52 @@ async function main() {
   const level: ProtoLevel = JSON.parse(
     await fs.readFile(path.join(levelsDir, `${map}.rhp.json`), "utf8"),
   );
-  const terrain = await renderTerrain(level, W, H);
+  let spec: TerrainSpec = {};
+  try {
+    spec = JSON.parse(
+      await fs.readFile(
+        path.join(editorRoot, "drafts", `${map.toLowerCase()}-terrain.json`),
+        "utf8",
+      ),
+    );
+  } catch {
+    // no authored terrain spec for this map yet
+  }
+  const prefix = map.toLowerCase();
+  const terrain = await renderTerrain(level, W, H, spec, {
+    grass: `${prefix}-grass-swatch`,
+    dirt: `${prefix}-courtyard-dirt-swatch`,
+    road: `${prefix}-dirt-road-swatch`,
+    canopy: `${prefix}-forest-canopy-swatch`,
+    water: `${prefix}-moat-water-swatch`,
+  });
+
+  // tree scatter along forest edges, behind everything else
+  const scatter: { input: Buffer; left: number; top: number }[] = [];
+  if (terrain) {
+    try {
+      const treePng = await sharp(path.join(libraryDir, `${prefix}-orchard-tree-1`, "day.png"))
+        .resize({ width: 96 })
+        .png()
+        .toBuffer();
+      const tm = await sharp(treePng).metadata();
+      for (const [x, y] of terrain.scatterPoints) {
+        const left = Math.round(x - tm.width! / 2);
+        const top = Math.round(y - tm.height! + 8);
+        if (left < 0 || top < 0 || left + tm.width! > W || top + tm.height! > H) continue;
+        scatter.push({ input: treePng, left, top });
+      }
+    } catch {
+      // no tree asset to scatter
+    }
+  }
+
   const base = terrain
-    ? sharp(terrain)
+    ? sharp(terrain.png)
     : sharp({
         create: { width: W, height: H, channels: 3, background: { r: 42, g: 51, b: 36 } },
       });
-  const recreated = await base.composite(composite).png().toBuffer();
+  const recreated = await base.composite([...scatter, ...composite]).png().toBuffer();
   const outPath = path.join(workDir, `${map.toLowerCase()}-recreated.png`);
   await fs.writeFile(outPath, recreated);
 

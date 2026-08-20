@@ -36,17 +36,17 @@
       ]
     },
     {
-      "asset": "leicester-castle-well",
-      "pos": [
-        1230,
-        30
-      ]
-    },
-    {
       "asset": "leicester-church",
       "pos": [
         952,
         200
+      ]
+    },
+    {
+      "asset": "leicester-courtyard-dirt-swatch",
+      "pos": [
+        600,
+        560
       ]
     },
     {
@@ -59,15 +59,15 @@
     {
       "asset": "leicester-dirt-road-swatch",
       "pos": [
-        2300,
-        120
+        1065,
+        1005
       ]
     },
     {
       "asset": "leicester-east-wall",
       "pos": [
-        1285,
-        1188
+        1212,
+        1202
       ]
     },
     {
@@ -87,8 +87,8 @@
     {
       "asset": "leicester-forest-tower",
       "pos": [
-        671,
-        53
+        673,
+        23
       ]
     },
     {
@@ -430,15 +430,15 @@
     {
       "asset": "leicester-grass-swatch",
       "pos": [
-        2250,
-        200
+        245,
+        415
       ]
     },
     {
       "asset": "leicester-great-hall",
       "pos": [
-        684,
-        260
+        592,
+        192
       ]
     },
     {
@@ -451,8 +451,8 @@
     {
       "asset": "leicester-keep",
       "pos": [
-        468,
-        768
+        392,
+        662
       ]
     },
     {
@@ -472,36 +472,29 @@
     {
       "asset": "leicester-moat-tower-east",
       "pos": [
-        1850,
-        456
+        1827,
+        402
       ]
     },
     {
       "asset": "leicester-moat-tower-west",
       "pos": [
         1517,
-        533
+        431
       ]
     },
     {
       "asset": "leicester-moat-water-swatch",
       "pos": [
-        140,
-        1490
+        1720,
+        880
       ]
     },
     {
       "asset": "leicester-north-wall",
       "pos": [
-        268,
-        402
-      ]
-    },
-    {
-      "asset": "leicester-nw-tower",
-      "pos": [
-        86,
-        415
+        427,
+        408
       ]
     },
     {
@@ -624,17 +617,10 @@
       ]
     },
     {
-      "asset": "leicester-round-tower-1",
-      "pos": [
-        674,
-        22
-      ]
-    },
-    {
       "asset": "leicester-small-turret",
       "pos": [
-        1048,
-        300
+        1058,
+        306
       ]
     },
     {
@@ -642,13 +628,6 @@
       "pos": [
         2847,
         740
-      ]
-    },
-    {
-      "asset": "leicester-sw-tower",
-      "pos": [
-        85,
-        720
       ]
     },
     {
@@ -661,8 +640,8 @@
     {
       "asset": "leicester-tower-bridge",
       "pos": [
-        1673,
-        499
+        1699,
+        574
       ]
     },
     {
@@ -766,15 +745,15 @@
     {
       "asset": "leicester-west-wall",
       "pos": [
-        247,
-        1084
+        157,
+        1002
       ]
     },
     {
       "asset": "leicester-west-wing",
       "pos": [
-        508,
-        398
+        447,
+        328
       ]
     },
     {
@@ -785,5 +764,5 @@
       ]
     }
   ],
-  "notes": "Auto-generated litmus test: all 111 Leicester library assets at their source positions."
+  "notes": "Auto-generated litmus test: all 108 Leicester library assets at their source positions."
 }
