@@ -28,6 +28,7 @@ import {
   newDraft,
   openDraftFile,
   saveDraftFile,
+  wallSegmentSet,
   type DraftSelection,
 } from "./compose";
 import type { MapDraft } from "@rle/shared";
@@ -254,11 +255,22 @@ export default function App() {
       placements: d.placements.map((p, i) => (i === idx ? { ...p, pos } : p)),
     }));
 
-  const commitWall = (asset: LibraryAsset, points: [number, number][]) =>
+  const commitWall = (asset: LibraryAsset, points: [number, number][]) => {
+    // direction-aware set: all directional wall pieces from the same source
+    // map; absent when the started asset has no direction (single-segment run)
+    const set = wallSegmentSet(asset, library());
     updateDraft((d) => ({
       ...d,
-      walls: [...(d.walls ?? []), { asset: asset.descriptor.id, points }],
+      walls: [
+        ...(d.walls ?? []),
+        {
+          asset: asset.descriptor.id,
+          ...(set.length > 0 ? { segment_set: set } : {}),
+          points,
+        },
+      ],
     }));
+  };
 
   const editWallRun = (
     wall: number,

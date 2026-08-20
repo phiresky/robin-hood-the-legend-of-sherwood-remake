@@ -1,8 +1,14 @@
 // Compose mode: MapDraft documents plus the per-asset image caches used for
 // canvas drawing and alpha hit-testing. Drafts only exist via explicit
 // open/save through the File System Access API pickers.
-import type { MapDraft, Placement, WallRun, WallStamp } from "@rle/shared";
-import { expandWallRun } from "@rle/shared";
+import type {
+  DirectionalStamp,
+  MapDraft,
+  Placement,
+  WallRun,
+  WallSegmentSpec,
+} from "@rle/shared";
+import { expandWallRun, expandWallRunDirectional } from "@rle/shared";
 import { loadAssetImage, type LibraryAsset, type LibraryIndex } from "./library";
 
 /** what is selected in compose mode: a placement or a whole wall run */
@@ -35,19 +41,77 @@ export function newDraft(name: string): MapDraft {
 
 // --- wall runs -------------------------------------------------------------
 
-// Stamp expansion cached per WallRun object; edits replace the run object
-// (immutable updates), so identity keying auto-invalidates.
-const stampCache = new WeakMap<WallRun, { assetId: string; stamps: WallStamp[] }>();
+function segmentSpec(asset: LibraryAsset): WallSegmentSpec | null {
+  const d = asset.descriptor;
+  if (d.wall_direction_deg === undefined) return null;
+  const [, , w, h] = d.source.bbox;
+  return { id: d.id, size: [w, h], anchor: d.anchor, directionDeg: d.wall_direction_deg };
+}
 
-/** stamp positions for a wall run, via the shared expandWallRun (cached) */
-export function wallStamps(run: WallRun, asset: LibraryAsset | null): WallStamp[] {
+/**
+ * Direction-aware segment set for a wall started from `asset`: every library
+ * asset with `wall_direction_deg` set that shares the source map. Empty when
+ * the started asset itself has no direction (single-segment mode).
+ */
+export function wallSegmentSet(asset: LibraryAsset, lib: LibraryIndex | null): string[] {
+  if (!lib || asset.descriptor.wall_direction_deg === undefined) return [];
+  return lib.assets
+    .filter(
+      (a) =>
+        a.descriptor.wall_direction_deg !== undefined &&
+        a.descriptor.source.map === asset.descriptor.source.map,
+    )
+    .map((a) => a.descriptor.id);
+}
+
+/** expand a point path with the run's segment set (or single-asset fallback) */
+function expandRun(
+  points: readonly [number, number][],
+  assetId: string,
+  segmentSet: string[] | undefined,
+  spacing: number | undefined,
+  lib: LibraryIndex | null,
+): DirectionalStamp[] {
+  const specs = (segmentSet ?? [])
+    .map((id) => {
+      const a = assetById(lib, id);
+      return a ? segmentSpec(a) : null;
+    })
+    .filter((s): s is WallSegmentSpec => s !== null);
+  if (specs.length > 0) return expandWallRunDirectional(points, specs, spacing);
+  const asset = assetById(lib, assetId);
   if (!asset) return [];
-  const cached = stampCache.get(run);
-  if (cached && cached.assetId === asset.descriptor.id) return cached.stamps;
   const [, , w, h] = asset.descriptor.source.bbox;
-  const stamps = expandWallRun(run.points, [w, h], asset.descriptor.anchor, run.spacing);
-  stampCache.set(run, { assetId: asset.descriptor.id, stamps });
+  return expandWallRun(points, [w, h], asset.descriptor.anchor, spacing).map((s) => ({
+    ...s,
+    asset: assetId,
+  }));
+}
+
+// Stamp expansion cached per WallRun object; edits replace the run object
+// (immutable updates), so identity keying auto-invalidates. A library rescan
+// replaces the LibraryIndex object, invalidating too.
+const stampCache = new WeakMap<
+  WallRun,
+  { lib: LibraryIndex | null; stamps: DirectionalStamp[] }
+>();
+
+/** stamp positions for a wall run, via the shared stitching helpers (cached) */
+export function wallStamps(run: WallRun, lib: LibraryIndex | null): DirectionalStamp[] {
+  const cached = stampCache.get(run);
+  if (cached && cached.lib === lib) return cached.stamps;
+  const stamps = expandRun(run.points, run.asset, run.segment_set, run.spacing, lib);
+  stampCache.set(run, { lib, stamps });
   return stamps;
+}
+
+/** live preview stamps for an in-progress run started from `asset` (uncached) */
+export function previewWallStamps(
+  points: readonly [number, number][],
+  asset: LibraryAsset,
+  lib: LibraryIndex | null,
+): DirectionalStamp[] {
+  return expandRun(points, asset.descriptor.id, wallSegmentSet(asset, lib), undefined, lib);
 }
 
 /** world-space rect [x, y, w, h] covered by a placement's image */
@@ -81,10 +145,12 @@ export function contentBounds(
     if (r) extend(...r);
   }
   for (const run of draft.walls ?? []) {
-    const asset = assetById(lib, run.asset);
-    if (!asset) continue;
-    const [, , w, h] = asset.descriptor.source.bbox;
-    for (const s of wallStamps(run, asset)) extend(s.pos[0], s.pos[1], w, h);
+    for (const s of wallStamps(run, lib)) {
+      const asset = assetById(lib, s.asset);
+      if (!asset) continue;
+      const [, , w, h] = asset.descriptor.source.bbox;
+      extend(s.pos[0], s.pos[1], w, h);
+    }
   }
   return bounds;
 }
@@ -150,7 +216,7 @@ export function anchorY(p: Placement, asset: LibraryAsset | null): number {
 
 export type DrawItem =
   | { kind: "placement"; idx: number }
-  | { kind: "stamp"; wall: number; pos: [number, number] };
+  | { kind: "stamp"; wall: number; asset: string; pos: [number, number] };
 
 /**
  * Draw list: static content first (placements + wall stamps interleaved by
@@ -168,9 +234,12 @@ export function drawItems(draft: MapDraft, lib: LibraryIndex | null): DrawItem[]
     });
   });
   (draft.walls ?? []).forEach((run, wall) => {
-    const asset = assetById(lib, run.asset);
-    for (const s of wallStamps(run, asset))
-      keyed.push({ item: { kind: "stamp", wall, pos: s.pos }, fx: 0, sortY: s.sortY });
+    for (const s of wallStamps(run, lib))
+      keyed.push({
+        item: { kind: "stamp", wall, asset: s.asset, pos: s.pos },
+        fx: 0,
+        sortY: s.sortY,
+      });
   });
   keyed.sort((a, b) => a.fx - b.fx || a.sortY - b.sortY);
   return keyed.map((k) => k.item);

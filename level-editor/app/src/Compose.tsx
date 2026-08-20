@@ -2,7 +2,6 @@
 // delete library assets, draw wall runs) plus the placements list panel.
 import { For, Show, createEffect, onCleanup } from "solid-js";
 import type { MapDraft } from "@rle/shared";
-import { expandWallRun } from "@rle/shared";
 import type { LibraryAsset, LibraryIndex } from "./library";
 import {
   DEFAULT_BACKGROUND,
@@ -12,8 +11,8 @@ import {
   drawItems,
   guideRect,
   hitAlpha,
+  previewWallStamps,
   selectionEquals,
-  wallStamps,
   type DraftSelection,
 } from "./compose";
 
@@ -119,8 +118,7 @@ export function ComposeViewer(props: ComposeViewerProps) {
         if (!bmp) continue; // still loading, or asset missing from the library
         drawPlacementImage(ctx, bmp, p.pos, p.scale ?? 1, p.flip_x ?? false);
       } else {
-        const run = draft.walls![item.wall]!;
-        const bmp = placementBitmap(run.asset);
+        const bmp = placementBitmap(item.asset);
         if (!bmp) continue;
         drawPlacementImage(ctx, bmp, item.pos, 1, false);
       }
@@ -158,13 +156,11 @@ export function ComposeViewer(props: ComposeViewerProps) {
     const wallAsset = props.wallAsset();
     if (wallAsset && (wallPoints.length > 0 || ghost)) {
       const pts = ghost ? [...wallPoints, ghost] : wallPoints;
-      const bmp = assetBitmap(wallAsset, scheduleDraw);
-      if (bmp && pts.length >= 2) {
-        const d = wallAsset.descriptor;
-        const [, , aw, ah] = d.source.bbox;
+      if (pts.length >= 2) {
         ctx.globalAlpha = 0.6;
-        for (const s of expandWallRun(pts, [aw, ah], d.anchor)) {
-          drawPlacementImage(ctx, bmp, s.pos, 1, false);
+        for (const s of previewWallStamps(pts, wallAsset, lib)) {
+          const bmp = placementBitmap(s.asset);
+          if (bmp) drawPlacementImage(ctx, bmp, s.pos, 1, false);
         }
         ctx.globalAlpha = 1;
       }
@@ -244,13 +240,12 @@ export function ComposeViewer(props: ComposeViewerProps) {
         if (p.flip_x) lx = bmp.width - 1 - lx;
         if (hitAlpha(p.asset, bmp, lx, ly)) return { kind: "placement", idx: item.idx };
       } else {
-        const run = draft.walls![item.wall]!;
-        const bmp = placementBitmap(run.asset);
+        const bmp = placementBitmap(item.asset);
         if (!bmp) continue;
         const lx = wx - item.pos[0];
         const ly = wy - item.pos[1];
         if (lx < 0 || ly < 0 || lx >= bmp.width || ly >= bmp.height) continue;
-        if (hitAlpha(run.asset, bmp, lx, ly)) return { kind: "wall", idx: item.wall };
+        if (hitAlpha(item.asset, bmp, lx, ly)) return { kind: "wall", idx: item.wall };
       }
     }
     return null;
