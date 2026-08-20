@@ -13229,6 +13229,14 @@ impl EngineInner {
         );
         ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
 
+        // StartThink applies SetViewStatus synchronously for
+        // LOSE_CONSCIOUSNESS, WASP, and NET. FITAGAIN can publish its
+        // resurrection work at this same boundary. The typed AI records
+        // those engine-owned writes while its controller is borrowed; commit
+        // them immediately after Think returns, before waypoint callbacks or
+        // any other pending/re-entrant work can observe stale NPC state.
+        self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
+
         // `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
         // waypoint VM directly from the active Think handler. Close that
         // authored callback before the generic post-Think effect drain:
@@ -15413,6 +15421,13 @@ impl EngineInner {
                 let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
                 self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
             }
+
+            // This path deliberately uses the raw filtered dispatch to avoid
+            // recursively entering the outer fixed-point drain. Preserve the
+            // same immediate StartThink boundary as the top-level wrapper:
+            // publish eye/resurrection writes before waypoint or sibling
+            // self-stimulus work continues.
+            self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
 
             // A recursive Think can itself reach an authored waypoint. The
             // Original runs ReachPoint on this same call stack, before the
