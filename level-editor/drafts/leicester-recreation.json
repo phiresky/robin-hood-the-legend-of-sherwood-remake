@@ -1,0 +1,236 @@
+{
+  "version": 1,
+  "name": "Leicester recreation",
+  "size": [
+    3136,
+    1984
+  ],
+  "background_color": "#2a3324",
+  "placements": [
+    {
+      "asset": "leicester-beehive-1",
+      "pos": [
+        359,
+        512
+      ]
+    },
+    {
+      "asset": "leicester-beehive-2",
+      "pos": [
+        308,
+        535
+      ]
+    },
+    {
+      "asset": "leicester-beehive-3",
+      "pos": [
+        271,
+        509
+      ]
+    },
+    {
+      "asset": "leicester-castle-wall-south",
+      "pos": [
+        1165,
+        1327
+      ]
+    },
+    {
+      "asset": "leicester-church",
+      "pos": [
+        952,
+        200
+      ]
+    },
+    {
+      "asset": "leicester-courtyard-well",
+      "pos": [
+        1212,
+        1008
+      ]
+    },
+    {
+      "asset": "leicester-footbridge",
+      "pos": [
+        572,
+        1417
+      ]
+    },
+    {
+      "asset": "leicester-gatehouse",
+      "pos": [
+        673,
+        1071
+      ]
+    },
+    {
+      "asset": "leicester-handcart",
+      "pos": [
+        2786,
+        423
+      ]
+    },
+    {
+      "asset": "leicester-lone-tree",
+      "pos": [
+        2011,
+        1062
+      ]
+    },
+    {
+      "asset": "leicester-moat-tower",
+      "pos": [
+        86,
+        561
+      ]
+    },
+    {
+      "asset": "leicester-orchard-tree-1",
+      "pos": [
+        1834,
+        272
+      ]
+    },
+    {
+      "asset": "leicester-ploughed-field",
+      "pos": [
+        182,
+        1723
+      ]
+    },
+    {
+      "asset": "leicester-rail-fence",
+      "pos": [
+        2386,
+        1555
+      ]
+    },
+    {
+      "asset": "leicester-round-tower-1",
+      "pos": [
+        674,
+        22
+      ]
+    },
+    {
+      "asset": "leicester-stone-bridge",
+      "pos": [
+        2847,
+        740
+      ]
+    },
+    {
+      "asset": "leicester-tall-shed",
+      "pos": [
+        1894,
+        1593
+      ]
+    },
+    {
+      "asset": "leicester-village-house-1",
+      "pos": [
+        2403,
+        679
+      ]
+    },
+    {
+      "asset": "leicester-village-house-10",
+      "pos": [
+        2607,
+        544
+      ]
+    },
+    {
+      "asset": "leicester-village-house-11",
+      "pos": [
+        2801,
+        578
+      ]
+    },
+    {
+      "asset": "leicester-village-house-13",
+      "pos": [
+        2607,
+        544
+      ]
+    },
+    {
+      "asset": "leicester-village-house-14",
+      "pos": [
+        2902,
+        1030
+      ]
+    },
+    {
+      "asset": "leicester-village-house-2",
+      "pos": [
+        2692,
+        1010
+      ]
+    },
+    {
+      "asset": "leicester-village-house-4",
+      "pos": [
+        3055,
+        583
+      ]
+    },
+    {
+      "asset": "leicester-village-house-5",
+      "pos": [
+        2831,
+        376
+      ]
+    },
+    {
+      "asset": "leicester-village-house-6",
+      "pos": [
+        2295,
+        403
+      ]
+    },
+    {
+      "asset": "leicester-village-house-7",
+      "pos": [
+        3004,
+        795
+      ]
+    },
+    {
+      "asset": "leicester-village-house-8",
+      "pos": [
+        2197,
+        526
+      ]
+    },
+    {
+      "asset": "leicester-village-house-9",
+      "pos": [
+        2321,
+        813
+      ]
+    },
+    {
+      "asset": "leicester-wall-walkway",
+      "pos": [
+        427,
+        347
+      ]
+    },
+    {
+      "asset": "leicester-watermill",
+      "pos": [
+        2323,
+        680
+      ]
+    },
+    {
+      "asset": "leicester-wooden-cottage",
+      "pos": [
+        2699,
+        1349
+      ]
+    }
+  ],
+  "notes": "Auto-generated litmus test: all 32 Leicester library assets at their source positions."
+}

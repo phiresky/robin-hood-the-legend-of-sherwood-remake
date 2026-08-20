@@ -1,0 +1,29 @@
+// Draft map document — the editor's own working format (not yet a game
+// format; game export comes later via the .level.json path).
+//
+// A draft references library assets by id and places them in world/map pixel
+// space. `pos` is where the asset's local pixel (0,0) lands, so recreating a
+// source map means pos = asset.origin. Draw order is by world anchor Y
+// (pos.y + anchor.y), matching the game's projected-Y sprite sort.
+
+export interface Placement {
+  /** library asset id */
+  asset: string;
+  /** world position of the asset's local (0,0) pixel */
+  pos: [number, number];
+  /** uniform scale factor, default 1 */
+  scale?: number;
+  /** horizontal mirror, default false */
+  flip_x?: boolean;
+}
+
+export interface MapDraft {
+  version: 1;
+  name: string;
+  /** map dimensions in pixels */
+  size: [number, number];
+  /** solid background fill until terrain painting exists */
+  background_color?: string;
+  placements: Placement[];
+  notes?: string;
+}
