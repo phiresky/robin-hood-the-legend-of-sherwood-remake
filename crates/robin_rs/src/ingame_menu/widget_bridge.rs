@@ -594,6 +594,8 @@ pub fn attach_alpha_masks(
             | Widget::MultiPicture(_) => match resource_id {
                 resource_ids::RHID_OK => resources.ok_button_surface(BTN_STATE_NORMAL),
                 resource_ids::RHID_CANCEL => resources.cancel_button_surface(BTN_STATE_NORMAL),
+                resource_ids::RHID_RESTART => resources.restart_button_surface(BTN_STATE_NORMAL),
+                resource_ids::RHID_LOAD => resources.load_button_surface(BTN_STATE_NORMAL),
                 resource_ids::RHID_MENU_BUTTON => resources.button_surface(BTN_STATE_NORMAL),
                 _ => None,
             },
@@ -658,6 +660,8 @@ pub fn draw_widget_button(
     let sprite = match resource_id {
         resource_ids::RHID_OK => resources.ok_button_surface(state_idx),
         resource_ids::RHID_CANCEL => resources.cancel_button_surface(state_idx),
+        resource_ids::RHID_RESTART => resources.restart_button_surface(state_idx),
+        resource_ids::RHID_LOAD => resources.load_button_surface(state_idx),
         resource_ids::RHID_RADIO => {
             let selected = matches!(
                 widget,

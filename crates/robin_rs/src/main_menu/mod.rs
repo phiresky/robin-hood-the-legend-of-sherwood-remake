@@ -419,7 +419,19 @@ pub(crate) async fn show_main_menu(
 
         if exit_requested {
             let msg = menu_resources.menu_text.get(MT_MSG_RETURN_TO_WINDOWS);
-            if show_yesno(&mut *window, &mut renderer, &menu_resources, None, &msg).await {
+            if show_yesno(
+                &mut *window,
+                &mut renderer,
+                &menu_resources,
+                Some(ModalCursor::new(
+                    &mut cursor_renderer,
+                    MOUSE_OPACITY_DEFAULT,
+                    0,
+                )),
+                &msg,
+            )
+            .await
+            {
                 // Persist the profile manager right before closing so
                 // unsaved profile-level changes (active selection,
                 // renames, etc.) survive the exit.

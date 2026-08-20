@@ -844,6 +844,16 @@ pub struct IngameMenuResources {
     pub cancel_button_surfaces: Vec<Option<u32>>,
     pub cancel_button_w: i32,
     pub cancel_button_h: i32,
+    /// `RHID_RESTART` — the small round "restart" seal used by the
+    /// debriefing window next to the OK seal.
+    pub restart_button_surfaces: Vec<Option<u32>>,
+    pub restart_button_w: i32,
+    pub restart_button_h: i32,
+    /// `RHID_LOAD` — the small round "load" seal used by the
+    /// debriefing window next to the OK seal.
+    pub load_button_surfaces: Vec<Option<u32>>,
+    pub load_button_w: i32,
+    pub load_button_h: i32,
     pub parchment_huge: Option<MenuSurface>,
     pub menu_bg_small: Option<MenuSurface>,
     pub menu_bg: [Option<MenuSurface>; 4],
@@ -921,6 +931,10 @@ impl IngameMenuResources {
             load_sprite_pack(&mut res, renderer, resource_ids::RHID_CANCEL);
         let (radio_w, radio_h, radio_surfaces) =
             load_sprite_pack(&mut res, renderer, resource_ids::RHID_RADIO);
+        let (restart_button_w, restart_button_h, restart_button_surfaces) =
+            load_sprite_pack(&mut res, renderer, resource_ids::RHID_RESTART);
+        let (load_button_w, load_button_h, load_button_surfaces) =
+            load_sprite_pack(&mut res, renderer, resource_ids::RHID_LOAD);
 
         // Menu-button packs render with a 50% shadow intensity
         // (`MENU_BUTTON_SHADOW_ALPHA`).  Override the per-surface
@@ -931,6 +945,8 @@ impl IngameMenuResources {
             &button_surfaces,
             &ok_button_surfaces,
             &cancel_button_surfaces,
+            &restart_button_surfaces,
+            &load_button_surfaces,
             &radio_surfaces,
         ] {
             for id in pack.iter().flatten() {
@@ -1002,6 +1018,12 @@ impl IngameMenuResources {
             cancel_button_surfaces,
             cancel_button_w,
             cancel_button_h,
+            restart_button_surfaces,
+            restart_button_w,
+            restart_button_h,
+            load_button_surfaces,
+            load_button_w,
+            load_button_h,
             parchment_huge,
             menu_bg_small,
             menu_bg,
@@ -1090,6 +1112,44 @@ impl IngameMenuResources {
             .copied()
             .flatten()
             .or_else(|| self.cancel_button_surfaces.first().copied().flatten())
+            .or_else(|| self.ok_button_surface(state))
+    }
+
+    pub fn restart_button_dimensions(&self) -> (i32, i32) {
+        if self.restart_button_w > 0 && self.restart_button_h > 0 {
+            (self.restart_button_w, self.restart_button_h)
+        } else {
+            self.ok_button_dimensions()
+        }
+    }
+
+    /// Sprite for a given state of the `RHID_RESTART` seal button.
+    /// Falls back through `RHID_OK` then the rectangular menu button.
+    pub fn restart_button_surface(&self, state: usize) -> Option<u32> {
+        self.restart_button_surfaces
+            .get(state)
+            .copied()
+            .flatten()
+            .or_else(|| self.restart_button_surfaces.first().copied().flatten())
+            .or_else(|| self.ok_button_surface(state))
+    }
+
+    pub fn load_button_dimensions(&self) -> (i32, i32) {
+        if self.load_button_w > 0 && self.load_button_h > 0 {
+            (self.load_button_w, self.load_button_h)
+        } else {
+            self.ok_button_dimensions()
+        }
+    }
+
+    /// Sprite for a given state of the `RHID_LOAD` seal button.  Falls
+    /// back through `RHID_OK` then the rectangular menu button.
+    pub fn load_button_surface(&self, state: usize) -> Option<u32> {
+        self.load_button_surfaces
+            .get(state)
+            .copied()
+            .flatten()
+            .or_else(|| self.load_button_surfaces.first().copied().flatten())
             .or_else(|| self.ok_button_surface(state))
     }
 
@@ -1299,6 +1359,12 @@ impl IngameMenuResources {
             cancel_button_surfaces: Vec::new(),
             cancel_button_w: 0,
             cancel_button_h: 0,
+            restart_button_surfaces: Vec::new(),
+            restart_button_w: 0,
+            restart_button_h: 0,
+            load_button_surfaces: Vec::new(),
+            load_button_w: 0,
+            load_button_h: 0,
             parchment_huge: None,
             menu_bg_small: None,
             menu_bg: [None, None, None, None],

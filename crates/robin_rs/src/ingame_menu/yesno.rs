@@ -1,9 +1,10 @@
 //! Modal Yes/No confirmation dialog.
 //!
 //! A 400x200 window using `RHID_MENU_BACKGROUND_SMALL` with the message
-//! inside a `(25,50)..(375,120)` label, the Yes / No buttons centred
-//! horizontally at y=130 with 18px spacing, and shortcuts binding
-//! Return / Numpad Enter → Yes and Escape → No.
+//! word-wrapped inside a `(25,50)..(375,120)` label, the round Yes / No
+//! wax-seal buttons (`RHID_OK` / `RHID_CANCEL`) centred horizontally at
+//! y=130 with 18px spacing, and shortcuts binding Return / Numpad Enter
+//! → Yes and Escape → No.
 //!
 //! Buttons are driven by the [`crate::widget`] system: a [`FrameWnd`]
 //! holds two [`WidgetButton`]s whose state machines handle hover, push
@@ -24,9 +25,7 @@ use super::layout::{
     MenuTransform, TextAlign, TooltipState, VAlign, dim_screen, draw_background,
     enter_modal_gpu_phase, render_text_in_box_aligned,
 };
-use super::resources::{
-    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_INFOBULLE_BUTTON_NO, MT_INFOBULLE_BUTTON_YES,
-};
+use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_NO, MT_INFOBULLE_BUTTON_YES};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
 /// Virtual window geometry.
@@ -96,27 +95,47 @@ impl YesNoModalState {
         let sh = renderer.screen_height() as i32;
         let transform = MenuTransform::centered(sw, sh);
 
-        let (btn_w, btn_h) = resources.button_dimensions();
         let win_x = (super::layout::MENU_W - WIN_W) / 2;
         let win_y = (super::layout::MENU_H - WIN_H) / 2;
-        let yes_label = resources.menu_text.get(MT_BTN_OK);
-        let no_label = resources.menu_text.get(MT_BTN_CANCEL);
+        // Yes / No are the round wax-seal sprites (`RHID_OK` /
+        // `RHID_CANCEL`) with no label, like the original dialog.  Both
+        // get the max intrinsic size so they render at native
+        // dimensions when centred as a pair.
+        let (ok_w, ok_h) = resources.ok_button_dimensions();
+        let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
+        let btn_w = ok_w.max(cancel_w);
+        let btn_h = ok_h.max(cancel_h);
         let n = 2i32;
         let total_w = n * btn_w + (n - 1) * BUTTON_GAP;
         let start_x = win_x + (WIN_W - total_w) / 2;
         let btn_y = win_y + 130;
 
-        let mut frame = widget_bridge::make_button_frame(&[
-            (ID_YES, &yes_label, start_x, btn_y, btn_w, btn_h),
-            (
-                ID_NO,
-                &no_label,
-                start_x + btn_w + BUTTON_GAP,
-                btn_y,
-                btn_w,
-                btn_h,
-            ),
-        ]);
+        let mut frame = crate::widget::FrameWnd::default();
+        frame.enabled = true;
+        frame.input_enabled = true;
+        frame.add_widget_absolute(widget_bridge::make_button_with_resource(
+            ID_YES,
+            "",
+            true,
+            robin_engine::resource_ids::RHID_OK,
+            start_x,
+            btn_y,
+            btn_w,
+            btn_h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button_with_resource(
+            ID_NO,
+            "",
+            true,
+            robin_engine::resource_ids::RHID_CANCEL,
+            start_x + btn_w + BUTTON_GAP,
+            btn_y,
+            btn_w,
+            btn_h,
+        ));
+        // Per-pixel hit masks so the transparent corners around each
+        // round seal don't capture clicks.
+        widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
         let yes_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_YES);
         let no_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_NO);
@@ -277,7 +296,10 @@ impl YesNoModalState {
                 MSG_W,
                 MSG_H,
                 TextAlign::Center,
-                VAlign::Center,
+                // Top-origin with word-wrap: the original renders the
+                // message with `SBSimpleTextRenderer::Centered` inside
+                // the box, wrapping lines from the box top.
+                VAlign::Top,
             );
         }
 
