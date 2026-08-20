@@ -1988,6 +1988,10 @@ mod tests {
         // the element kind unset, so stamp the real soldier kind.
         entity.element_data_mut().kind = crate::element::ElementKind::ActorSoldier;
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+        entity
+            .human_data_mut()
+            .unwrap()
+            .last_is_lying_for_corpse_intersection = Some(false);
 
         // The knock-out hold START states are owned by the human-level
         // dispatcher (they apply to PCs and soldiers alike), not the
@@ -2002,6 +2006,18 @@ mod tests {
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
+        );
+        assert_eq!(
+            entity
+                .human_data()
+                .unwrap()
+                .last_is_lying_for_corpse_intersection,
+            Some(true),
+            "base SetStates must align the tracker without scheduling the human SetPosture callback"
+        );
+        assert!(
+            !entity.human_data().unwrap().small_repulsive_radius,
+            "the statically dispatched base posture setter does not update intersecting corpses"
         );
     }
 
@@ -2934,21 +2950,21 @@ fn apply_active_animation_start_state_side_effect(
         // let a knocked-out PC keep whatever action state it carried
         // into the blow (typically MovingSword or Bored).
         (OrderType::BeingUnconsciousSword, MotionState::Start) if entity.is_human() => {
-            entity.set_posture(Posture::Lying);
+            set_states_posture_without_corpse_callback(entity, Posture::Lying);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::WaitingSword;
             }
             return;
         }
         (OrderType::BeingUnconsciousBow, MotionState::Start) if entity.is_human() => {
-            entity.set_posture(Posture::Lying);
+            set_states_posture_without_corpse_callback(entity, Posture::Lying);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::AimingWithBow;
             }
             return;
         }
         (OrderType::BeingUnconscious, MotionState::Start) if entity.is_human() => {
-            entity.set_posture(Posture::Lying);
+            set_states_posture_without_corpse_callback(entity, Posture::Lying);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::Waiting;
             }
@@ -3202,6 +3218,23 @@ fn apply_active_animation_start_state_side_effect(
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = action_state;
     }
+}
+
+/// Apply the posture half of `RHElementActor::SetStates`.
+///
+/// `SetStates` is implemented on `RHElementActor`, where its unqualified
+/// `SetPosture` call binds to the non-virtual `RHPositionInterface` setter.
+/// It therefore bypasses `RHElementActorHuman::SetPosture` and must not run
+/// `UpdateIntersectingCorpses`.  Keep the Rust transition tracker aligned so
+/// the end-of-frame reconciliation does not invent that callback.
+fn set_states_posture_without_corpse_callback(entity: &mut Entity, posture: Posture) {
+    entity.set_posture(posture);
+    if let Some(human) = entity.human_data_mut() {
+        human.last_is_lying_for_corpse_intersection = Some(posture.is_lying());
+    }
+    // TODO(parity): audit the remaining translated `SetStates` posture writes
+    // and route them through this helper when their Original call site has the
+    // same static `RHElementActor` dispatch.
 }
 
 /// PC `Taking` / `TakingCrouched` Done handler — fires when a PC finishes the generic
