@@ -1,8 +1,17 @@
 // Compose mode: MapDraft documents plus the per-asset image caches used for
 // canvas drawing and alpha hit-testing. Drafts only exist via explicit
 // open/save through the File System Access API pickers.
-import type { MapDraft, Placement } from "@rle/shared";
+import type { MapDraft, Placement, WallRun, WallStamp } from "@rle/shared";
+import { expandWallRun } from "@rle/shared";
 import { loadAssetImage, type LibraryAsset, type LibraryIndex } from "./library";
+
+/** what is selected in compose mode: a placement or a whole wall run */
+export type DraftSelection = { kind: "placement" | "wall"; idx: number } | null;
+
+export function selectionEquals(a: DraftSelection, b: DraftSelection): boolean {
+  if (a === null || b === null) return a === b;
+  return a.kind === b.kind && a.idx === b.idx;
+}
 
 export const DEFAULT_BACKGROUND = "#2a3324";
 
@@ -20,7 +29,25 @@ export function newDraft(name: string): MapDraft {
     size: [0, 0],
     background_color: DEFAULT_BACKGROUND,
     placements: [],
+    walls: [],
   };
+}
+
+// --- wall runs -------------------------------------------------------------
+
+// Stamp expansion cached per WallRun object; edits replace the run object
+// (immutable updates), so identity keying auto-invalidates.
+const stampCache = new WeakMap<WallRun, { assetId: string; stamps: WallStamp[] }>();
+
+/** stamp positions for a wall run, via the shared expandWallRun (cached) */
+export function wallStamps(run: WallRun, asset: LibraryAsset | null): WallStamp[] {
+  if (!asset) return [];
+  const cached = stampCache.get(run);
+  if (cached && cached.assetId === asset.descriptor.id) return cached.stamps;
+  const [, , w, h] = asset.descriptor.source.bbox;
+  const stamps = expandWallRun(run.points, [w, h], asset.descriptor.anchor, run.spacing);
+  stampCache.set(run, { assetId: asset.descriptor.id, stamps });
+  return stamps;
 }
 
 /** world-space rect [x, y, w, h] covered by a placement's image */
@@ -40,10 +67,7 @@ export function contentBounds(
   lib: LibraryIndex | null,
 ): [number, number, number, number] | null {
   let bounds: [number, number, number, number] | null = null;
-  for (const p of draft.placements) {
-    const r = placementRect(p, assetById(lib, p.asset));
-    if (!r) continue;
-    const [x, y, w, h] = r;
+  const extend = (x: number, y: number, w: number, h: number) => {
     if (!bounds) bounds = [x, y, x + w, y + h];
     else {
       bounds[0] = Math.min(bounds[0], x);
@@ -51,6 +75,16 @@ export function contentBounds(
       bounds[2] = Math.max(bounds[2], x + w);
       bounds[3] = Math.max(bounds[3], y + h);
     }
+  };
+  for (const p of draft.placements) {
+    const r = placementRect(p, assetById(lib, p.asset));
+    if (r) extend(...r);
+  }
+  for (const run of draft.walls ?? []) {
+    const asset = assetById(lib, run.asset);
+    if (!asset) continue;
+    const [, , w, h] = asset.descriptor.source.bbox;
+    for (const s of wallStamps(run, asset)) extend(s.pos[0], s.pos[1], w, h);
   }
   return bounds;
 }
@@ -94,6 +128,12 @@ export function finalizeDraft(draft: MapDraft, lib: LibraryIndex | null): MapDra
       ...p,
       pos: [Math.round(p.pos[0] + dx), Math.round(p.pos[1] + dy)],
     })),
+    walls: (draft.walls ?? []).map((r) => ({
+      ...r,
+      points: r.points.map(
+        ([x, y]) => [Math.round(x + dx), Math.round(y + dy)] as [number, number],
+      ),
+    })),
   };
 }
 
@@ -108,21 +148,32 @@ export function anchorY(p: Placement, asset: LibraryAsset | null): number {
   return p.pos[1] + (asset ? asset.descriptor.anchor[1] * s : 0);
 }
 
+export type DrawItem =
+  | { kind: "placement"; idx: number }
+  | { kind: "stamp"; wall: number; pos: [number, number] };
+
 /**
- * Placement indices in draw order: static assets first, then FX/patch assets
- * (descriptor `fx` set) on top — in-game, patch roofs draw over the
- * background/buildings — each group ascending by world anchor Y.
+ * Draw list: static content first (placements + wall stamps interleaved by
+ * world anchor Y), then FX/patch assets (descriptor `fx` set) on top —
+ * in-game, patch roofs draw over the background/buildings.
  */
-export function drawOrder(draft: MapDraft, lib: LibraryIndex | null): number[] {
-  const keys = draft.placements.map((p) => {
+export function drawItems(draft: MapDraft, lib: LibraryIndex | null): DrawItem[] {
+  const keyed: { item: DrawItem; fx: number; sortY: number }[] = [];
+  draft.placements.forEach((p, idx) => {
     const asset = assetById(lib, p.asset);
-    return [asset?.descriptor.fx ? 1 : 0, anchorY(p, asset)] as const;
+    keyed.push({
+      item: { kind: "placement", idx },
+      fx: asset?.descriptor.fx ? 1 : 0,
+      sortY: anchorY(p, asset),
+    });
   });
-  return [...draft.placements.keys()].sort((a, b) => {
-    const ka = keys[a]!;
-    const kb = keys[b]!;
-    return ka[0] - kb[0] || ka[1] - kb[1];
+  (draft.walls ?? []).forEach((run, wall) => {
+    const asset = assetById(lib, run.asset);
+    for (const s of wallStamps(run, asset))
+      keyed.push({ item: { kind: "stamp", wall, pos: s.pos }, fx: 0, sortY: s.sortY });
   });
+  keyed.sort((a, b) => a.fx - b.fx || a.sortY - b.sortY);
+  return keyed.map((k) => k.item);
 }
 
 // --- image cache -----------------------------------------------------------

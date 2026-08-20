@@ -22,7 +22,14 @@ import { DEFAULT_TOGGLES, TOGGLE_LABELS, type OverlayToggles } from "./overlays"
 import { releaseLibrary, scanLibrary, type LibraryAsset, type LibraryIndex } from "./library";
 import { AssetDetail, LibrarySection } from "./Library";
 import { ComposeViewer, PlacementsPanel } from "./Compose";
-import { finalizeDraft, guideRect, newDraft, openDraftFile, saveDraftFile } from "./compose";
+import {
+  finalizeDraft,
+  guideRect,
+  newDraft,
+  openDraftFile,
+  saveDraftFile,
+  type DraftSelection,
+} from "./compose";
 import type { MapDraft } from "@rle/shared";
 
 type Mode = "inspect" | "compose";
@@ -50,7 +57,8 @@ export default function App() {
   const [draftDocId, setDraftDocId] = createSignal(0);
   const [draftHandle, setDraftHandle] = createSignal<FileSystemFileHandle | null>(null);
   const [dirty, setDirty] = createSignal(false);
-  const [selectedPlacement, setSelectedPlacement] = createSignal<number | null>(null);
+  const [selection, setSelection] = createSignal<DraftSelection>(null);
+  const [wallDraw, setWallDraw] = createSignal(false);
 
   const [toggles, setToggles] = createSignal<OverlayToggles>({ ...DEFAULT_TOGGLES });
   const [layerFilter, setLayerFilter] = createSignal<number | null>(null);
@@ -183,7 +191,8 @@ export default function App() {
     setDraft(d);
     setDraftHandle(handle);
     setDirty(false);
-    setSelectedPlacement(null);
+    setSelection(null);
+    setWallDraw(false);
     setDraftDocId((n) => n + 1);
   }
 
@@ -245,12 +254,63 @@ export default function App() {
       placements: d.placements.map((p, i) => (i === idx ? { ...p, pos } : p)),
     }));
 
-  const deletePlacement = (idx: number) => {
+  const commitWall = (asset: LibraryAsset, points: [number, number][]) =>
     updateDraft((d) => ({
       ...d,
-      placements: d.placements.filter((_, i) => i !== idx),
+      walls: [...(d.walls ?? []), { asset: asset.descriptor.id, points }],
     }));
-    setSelectedPlacement((s) => (s === null || s === idx ? null : s > idx ? s - 1 : s));
+
+  const editWallRun = (
+    wall: number,
+    fn: (points: [number, number][]) => [number, number][],
+  ) =>
+    updateDraft((d) => ({
+      ...d,
+      walls: (d.walls ?? []).map((r, i) =>
+        i === wall ? { ...r, points: fn(r.points) } : r,
+      ),
+    }));
+
+  const moveWallPoint = (wall: number, pt: number, pos: [number, number]) =>
+    editWallRun(wall, (pts) => pts.map((p, j) => (j === pt ? pos : p)));
+
+  const insertWallPoint = (wall: number, after: number, pos: [number, number]) =>
+    editWallRun(wall, (pts) => [...pts.slice(0, after + 1), pos, ...pts.slice(after + 1)]);
+
+  const removeWallPoint = (wall: number, pt: number) =>
+    editWallRun(wall, (pts) => (pts.length > 2 ? pts.filter((_, j) => j !== pt) : pts));
+
+  const deleteSelection = (sel: NonNullable<DraftSelection>) => {
+    if (sel.kind === "placement")
+      updateDraft((d) => ({
+        ...d,
+        placements: d.placements.filter((_, i) => i !== sel.idx),
+      }));
+    else
+      updateDraft((d) => ({
+        ...d,
+        walls: (d.walls ?? []).filter((_, i) => i !== sel.idx),
+      }));
+    setSelection((s) =>
+      s === null || s.kind !== sel.kind
+        ? s
+        : s.idx === sel.idx
+          ? null
+          : s.idx > sel.idx
+            ? { kind: s.kind, idx: s.idx - 1 }
+            : s,
+    );
+  };
+
+  // wall-draw mode only applies while a spline-segment asset is selected
+  const wallAsset = () => {
+    const a = selectedAsset();
+    return wallDraw() && a?.descriptor.scale_class === "spline-segment" ? a : null;
+  };
+
+  const selectAsset = (asset: LibraryAsset | null) => {
+    setSelectedAsset(asset);
+    if (asset?.descriptor.scale_class !== "spline-segment") setWallDraw(false);
   };
 
   const toggle = (key: keyof OverlayToggles) =>
@@ -320,7 +380,25 @@ export default function App() {
                       · {d().placements.length} placement
                       {d().placements.length === 1 ? "" : "s"}
                     </div>
-                    <Show when={selectedAsset()}>
+                    <Show when={selectedAsset()?.descriptor.scale_class === "spline-segment"}>
+                      <div class="row">
+                        <button
+                          class={wallDraw() ? "selected" : ""}
+                          onClick={() => setWallDraw(!wallDraw())}
+                        >
+                          Draw wall
+                        </button>
+                      </div>
+                    </Show>
+                    <Show when={wallAsset()}>
+                      {(a) => (
+                        <p class="hint">
+                          drawing wall of <b>{a().descriptor.name}</b> — click to add
+                          points, Enter or double-click to finish, Esc to cancel
+                        </p>
+                      )}
+                    </Show>
+                    <Show when={!wallAsset() && selectedAsset()}>
                       {(a) => (
                         <p class="hint">
                           placing <b>{a().descriptor.name}</b> — click the canvas to
@@ -448,7 +526,7 @@ export default function App() {
             if (lib) void openLibrary(lib.root);
           }}
           selected={selectedAsset}
-          onSelect={setSelectedAsset}
+          onSelect={selectAsset}
         />
         <div class="statusbar">
           <Show when={busy()}>{(b) => <span class="busy">{b()}</span>}</Show>
@@ -476,13 +554,19 @@ export default function App() {
           draft={draft}
           docId={draftDocId}
           library={library}
-          placing={selectedAsset}
-          onCancelPlace={() => setSelectedAsset(null)}
-          selected={selectedPlacement}
-          onSelect={setSelectedPlacement}
+          placing={() => (wallAsset() ? null : selectedAsset())}
+          onCancelPlace={() => selectAsset(null)}
+          wallAsset={wallAsset}
+          onCommitWall={commitWall}
+          onCancelWall={() => setWallDraw(false)}
+          selected={selection}
+          onSelect={setSelection}
           onPlace={placeAsset}
           onMove={movePlacement}
-          onDelete={deletePlacement}
+          onDelete={deleteSelection}
+          onMoveWallPoint={moveWallPoint}
+          onInsertWallPoint={insertWallPoint}
+          onRemoveWallPoint={removeWallPoint}
           onCursor={(x, y) => setCursor([x, y])}
         />
       </Show>
@@ -494,9 +578,9 @@ export default function App() {
           <PlacementsPanel
             draft={d}
             library={library}
-            selected={selectedPlacement}
-            onSelect={setSelectedPlacement}
-            onDelete={deletePlacement}
+            selected={selection}
+            onSelect={setSelection}
+            onDelete={deleteSelection}
           />
         )}
       </Show>

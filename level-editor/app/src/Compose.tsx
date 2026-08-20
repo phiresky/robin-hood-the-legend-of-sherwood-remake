@@ -1,16 +1,20 @@
 // Compose mode: canvas viewer for editing a MapDraft (place / select / move /
-// delete library assets) plus the placements list panel.
+// delete library assets, draw wall runs) plus the placements list panel.
 import { For, Show, createEffect, onCleanup } from "solid-js";
 import type { MapDraft } from "@rle/shared";
+import { expandWallRun } from "@rle/shared";
 import type { LibraryAsset, LibraryIndex } from "./library";
 import {
   DEFAULT_BACKGROUND,
   SAVE_MARGIN,
   assetBitmap,
   assetById,
-  drawOrder,
+  drawItems,
   guideRect,
   hitAlpha,
+  selectionEquals,
+  wallStamps,
+  type DraftSelection,
 } from "./compose";
 
 export interface ComposeViewerProps {
@@ -21,11 +25,18 @@ export interface ComposeViewerProps {
   /** asset being placed — ghost follows the cursor, click drops a placement */
   placing: () => LibraryAsset | null;
   onCancelPlace: () => void;
-  selected: () => number | null;
-  onSelect: (idx: number | null) => void;
+  /** wall-draw mode: clicks add control points for a run of this asset */
+  wallAsset: () => LibraryAsset | null;
+  onCommitWall: (asset: LibraryAsset, points: [number, number][]) => void;
+  onCancelWall: () => void;
+  selected: () => DraftSelection;
+  onSelect: (sel: DraftSelection) => void;
   onPlace: (asset: LibraryAsset, pos: [number, number]) => void;
   onMove: (idx: number, pos: [number, number]) => void;
-  onDelete: (idx: number) => void;
+  onDelete: (sel: NonNullable<DraftSelection>) => void;
+  onMoveWallPoint: (wall: number, pt: number, pos: [number, number]) => void;
+  onInsertWallPoint: (wall: number, after: number, pos: [number, number]) => void;
+  onRemoveWallPoint: (wall: number, pt: number) => void;
   onCursor?: (x: number, y: number) => void;
 }
 
@@ -35,6 +46,9 @@ interface View {
   zoom: number;
 }
 
+/** screen-pixel radius for grabbing wall control-point handles */
+const HANDLE_R = 7;
+
 export function ComposeViewer(props: ComposeViewerProps) {
   let canvas!: HTMLCanvasElement;
   let container!: HTMLDivElement;
@@ -43,9 +57,12 @@ export function ComposeViewer(props: ComposeViewerProps) {
   // pointer interaction state
   let panning = false;
   let moving: { idx: number; dx: number; dy: number } | null = null;
+  let draggingPoint: { wall: number; pt: number } | null = null;
   let lastX = 0;
   let lastY = 0;
-  let ghost: [number, number] | null = null; // cursor world pos while placing
+  let ghost: [number, number] | null = null; // cursor world pos while placing/drawing
+  // in-progress wall run control points (world coords), not yet in the draft
+  let wallPoints: [number, number][] = [];
 
   const scheduleDraw = () => {
     if (!raf) raf = requestAnimationFrame(draw);
@@ -54,6 +71,11 @@ export function ComposeViewer(props: ComposeViewerProps) {
   const placementBitmap = (assetId: string) => {
     const asset = assetById(props.library(), assetId);
     return asset ? assetBitmap(asset, scheduleDraw) : null;
+  };
+
+  const wallRunAsset = (wall: number): LibraryAsset | null => {
+    const run = props.draft()?.walls?.[wall];
+    return run ? assetById(props.library(), run.asset) : null;
   };
 
   const draw = () => {
@@ -90,16 +112,23 @@ export function ComposeViewer(props: ComposeViewerProps) {
       ctx.strokeRect(guide[0], guide[1], guide[2], guide[3]);
       ctx.setLineDash([]);
     }
-    for (const idx of drawOrder(draft, lib)) {
-      const p = draft.placements[idx]!;
-      const bmp = placementBitmap(p.asset);
-      if (!bmp) continue; // still loading, or asset missing from the library
-      drawPlacementImage(ctx, bmp, p.pos, p.scale ?? 1, p.flip_x ?? false);
+    for (const item of drawItems(draft, lib)) {
+      if (item.kind === "placement") {
+        const p = draft.placements[item.idx]!;
+        const bmp = placementBitmap(p.asset);
+        if (!bmp) continue; // still loading, or asset missing from the library
+        drawPlacementImage(ctx, bmp, p.pos, p.scale ?? 1, p.flip_x ?? false);
+      } else {
+        const run = draft.walls![item.wall]!;
+        const bmp = placementBitmap(run.asset);
+        if (!bmp) continue;
+        drawPlacementImage(ctx, bmp, item.pos, 1, false);
+      }
     }
 
     const sel = props.selected();
-    if (sel !== null) {
-      const p = draft.placements[sel];
+    if (sel?.kind === "placement") {
+      const p = draft.placements[sel.idx];
       const bmp = p ? placementBitmap(p.asset) : null;
       if (p && bmp) {
         const s = p.scale ?? 1;
@@ -109,6 +138,9 @@ export function ComposeViewer(props: ComposeViewerProps) {
         ctx.strokeRect(p.pos[0], p.pos[1], bmp.width * s, bmp.height * s);
         ctx.setLineDash([]);
       }
+    } else if (sel?.kind === "wall") {
+      const run = draft.walls?.[sel.idx];
+      if (run) drawWallHandles(ctx, run.points);
     }
 
     const placing = props.placing();
@@ -120,6 +152,45 @@ export function ComposeViewer(props: ComposeViewerProps) {
         drawPlacementImage(ctx, bmp, pos, 1, false);
         ctx.globalAlpha = 1;
       }
+    }
+
+    // live preview of the in-progress wall run: committed points + cursor
+    const wallAsset = props.wallAsset();
+    if (wallAsset && (wallPoints.length > 0 || ghost)) {
+      const pts = ghost ? [...wallPoints, ghost] : wallPoints;
+      const bmp = assetBitmap(wallAsset, scheduleDraw);
+      if (bmp && pts.length >= 2) {
+        const d = wallAsset.descriptor;
+        const [, , aw, ah] = d.source.bbox;
+        ctx.globalAlpha = 0.6;
+        for (const s of expandWallRun(pts, [aw, ah], d.anchor)) {
+          drawPlacementImage(ctx, bmp, s.pos, 1, false);
+        }
+        ctx.globalAlpha = 1;
+      }
+      drawWallHandles(ctx, pts, "#facc15");
+    }
+  };
+
+  const drawWallHandles = (
+    ctx: CanvasRenderingContext2D,
+    points: readonly [number, number][],
+    color = "#60a5fa",
+  ) => {
+    if (points.length === 0) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5 / view.zoom;
+    if (points.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(points[0]![0], points[0]![1]);
+      for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+    const r = HANDLE_R / view.zoom;
+    ctx.fillStyle = "#1e2a44";
+    for (const [x, y] of points) {
+      ctx.fillRect(x - r / 2, y - r / 2, r, r);
+      ctx.strokeRect(x - r / 2, y - r / 2, r, r);
     }
   };
 
@@ -155,24 +226,84 @@ export function ComposeViewer(props: ComposeViewerProps) {
     ];
   };
 
-  /** topmost placement under the world point, by draw order, alpha-aware */
-  const hitTest = (wx: number, wy: number): number | null => {
+  /** topmost placement or wall stamp under the world point, alpha-aware */
+  const hitTest = (wx: number, wy: number): DraftSelection => {
     const draft = props.draft();
     if (!draft) return null;
-    const order = drawOrder(draft, props.library());
-    for (let i = order.length - 1; i >= 0; i--) {
-      const idx = order[i]!;
-      const p = draft.placements[idx]!;
-      const bmp = placementBitmap(p.asset);
-      if (!bmp) continue;
-      const s = p.scale ?? 1;
-      let lx = (wx - p.pos[0]) / s;
-      const ly = (wy - p.pos[1]) / s;
-      if (lx < 0 || ly < 0 || lx >= bmp.width || ly >= bmp.height) continue;
-      if (p.flip_x) lx = bmp.width - 1 - lx;
-      if (hitAlpha(p.asset, bmp, lx, ly)) return idx;
+    const items = drawItems(draft, props.library());
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i]!;
+      if (item.kind === "placement") {
+        const p = draft.placements[item.idx]!;
+        const bmp = placementBitmap(p.asset);
+        if (!bmp) continue;
+        const s = p.scale ?? 1;
+        let lx = (wx - p.pos[0]) / s;
+        const ly = (wy - p.pos[1]) / s;
+        if (lx < 0 || ly < 0 || lx >= bmp.width || ly >= bmp.height) continue;
+        if (p.flip_x) lx = bmp.width - 1 - lx;
+        if (hitAlpha(p.asset, bmp, lx, ly)) return { kind: "placement", idx: item.idx };
+      } else {
+        const run = draft.walls![item.wall]!;
+        const bmp = placementBitmap(run.asset);
+        if (!bmp) continue;
+        const lx = wx - item.pos[0];
+        const ly = wy - item.pos[1];
+        if (lx < 0 || ly < 0 || lx >= bmp.width || ly >= bmp.height) continue;
+        if (hitAlpha(run.asset, bmp, lx, ly)) return { kind: "wall", idx: item.wall };
+      }
     }
     return null;
+  };
+
+  /** control-point index of the selected wall near the world point, if any */
+  const hitWallHandle = (wx: number, wy: number): { wall: number; pt: number } | null => {
+    const sel = props.selected();
+    if (sel?.kind !== "wall") return null;
+    const run = props.draft()?.walls?.[sel.idx];
+    if (!run) return null;
+    const r = HANDLE_R / view.zoom;
+    for (let i = 0; i < run.points.length; i++) {
+      const [x, y] = run.points[i]!;
+      if (Math.abs(wx - x) <= r && Math.abs(wy - y) <= r) return { wall: sel.idx, pt: i };
+    }
+    return null;
+  };
+
+  /** segment index of the selected wall whose midpoint is near the world point */
+  const hitWallMidpoint = (
+    wx: number,
+    wy: number,
+  ): { wall: number; after: number; pos: [number, number] } | null => {
+    const sel = props.selected();
+    if (sel?.kind !== "wall") return null;
+    const run = props.draft()?.walls?.[sel.idx];
+    if (!run) return null;
+    const r = (HANDLE_R * 2) / view.zoom;
+    for (let i = 0; i + 1 < run.points.length; i++) {
+      const [x1, y1] = run.points[i]!;
+      const [x2, y2] = run.points[i + 1]!;
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      if (Math.abs(wx - mx) <= r && Math.abs(wy - my) <= r)
+        return { wall: sel.idx, after: i, pos: [Math.round(mx), Math.round(my)] };
+    }
+    return null;
+  };
+
+  const commitWall = () => {
+    const asset = props.wallAsset();
+    if (!asset) return;
+    // drop consecutive near-duplicate points (double-click adds the last one twice)
+    const pts: [number, number][] = [];
+    for (const p of wallPoints) {
+      const prev = pts[pts.length - 1];
+      if (prev && Math.hypot(p[0] - prev[0], p[1] - prev[1]) < 3) continue;
+      pts.push(p);
+    }
+    wallPoints = [];
+    if (pts.length >= 2) props.onCommitWall(asset, pts);
+    scheduleDraw();
   };
 
   const onWheel = (e: WheelEvent) => {
@@ -194,19 +325,41 @@ export function ComposeViewer(props: ComposeViewerProps) {
       panning = true;
       return;
     }
-    if (e.button !== 0) return;
     const [wx, wy] = toWorld(e.clientX, e.clientY);
+    if (props.wallAsset()) {
+      if (e.button === 0) {
+        wallPoints.push([Math.round(wx), Math.round(wy)]);
+        scheduleDraw();
+      }
+      return;
+    }
+    // Alt-click / right-click a segment midpoint of the selected wall inserts
+    // a control point there
+    if (e.button === 2 || (e.button === 0 && e.altKey)) {
+      const mid = hitWallMidpoint(wx, wy);
+      if (mid) {
+        props.onInsertWallPoint(mid.wall, mid.after, mid.pos);
+        draggingPoint = { wall: mid.wall, pt: mid.after + 1 };
+      }
+      return;
+    }
+    if (e.button !== 0) return;
     const placing = props.placing();
     if (placing) {
       props.onPlace(placing, ghostPos(placing, [wx, wy]));
       return;
     }
+    const handle = hitWallHandle(wx, wy);
+    if (handle) {
+      draggingPoint = handle;
+      return;
+    }
     const hit = hitTest(wx, wy);
-    props.onSelect(hit);
-    if (hit !== null) {
-      const p = props.draft()!.placements[hit]!;
-      moving = { idx: hit, dx: wx - p.pos[0], dy: wy - p.pos[1] };
-    } else {
+    if (!selectionEquals(hit, props.selected())) props.onSelect(hit);
+    if (hit?.kind === "placement") {
+      const p = props.draft()!.placements[hit.idx]!;
+      moving = { idx: hit.idx, dx: wx - p.pos[0], dy: wy - p.pos[1] };
+    } else if (hit === null) {
       panning = true;
     }
   };
@@ -214,9 +367,16 @@ export function ComposeViewer(props: ComposeViewerProps) {
   const onPointerMove = (e: PointerEvent) => {
     const [wx, wy] = toWorld(e.clientX, e.clientY);
     props.onCursor?.(wx, wy);
-    if (props.placing()) {
+    if (props.placing() || props.wallAsset()) {
       ghost = [wx, wy];
       scheduleDraw();
+    }
+    if (draggingPoint) {
+      props.onMoveWallPoint(draggingPoint.wall, draggingPoint.pt, [
+        Math.round(wx),
+        Math.round(wy),
+      ]);
+      return;
     }
     if (moving) {
       props.onMove(moving.idx, [Math.round(wx - moving.dx), Math.round(wy - moving.dy)]);
@@ -233,6 +393,7 @@ export function ComposeViewer(props: ComposeViewerProps) {
   const onPointerUp = () => {
     panning = false;
     moving = null;
+    draggingPoint = null;
   };
 
   const onPointerLeave = () => {
@@ -242,9 +403,34 @@ export function ComposeViewer(props: ComposeViewerProps) {
     }
   };
 
+  const onDblClick = (e: MouseEvent) => {
+    if (props.wallAsset()) {
+      commitWall();
+      return;
+    }
+    // double-click a handle of the selected wall removes that point (min 2)
+    const [wx, wy] = toWorld(e.clientX, e.clientY);
+    const handle = hitWallHandle(wx, wy);
+    if (handle) {
+      const run = props.draft()?.walls?.[handle.wall];
+      if (run && run.points.length > 2) props.onRemoveWallPoint(handle.wall, handle.pt);
+    }
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
+    if (props.wallAsset()) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commitWall();
+      } else if (e.key === "Escape") {
+        wallPoints = [];
+        props.onCancelWall();
+        scheduleDraw();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       if (props.placing()) props.onCancelPlace();
       else props.onSelect(null);
@@ -267,8 +453,16 @@ export function ComposeViewer(props: ComposeViewerProps) {
     const d = nudge[e.key];
     if (!d) return;
     e.preventDefault();
-    const p = props.draft()?.placements[sel];
-    if (p) props.onMove(sel, [p.pos[0] + d[0], p.pos[1] + d[1]]);
+    if (sel.kind === "placement") {
+      const p = props.draft()?.placements[sel.idx];
+      if (p) props.onMove(sel.idx, [p.pos[0] + d[0], p.pos[1] + d[1]]);
+    } else {
+      const run = props.draft()?.walls?.[sel.idx];
+      if (run)
+        run.points.forEach((pt, i) =>
+          props.onMoveWallPoint(sel.idx, i, [pt[0] + d[0], pt[1] + d[1]]),
+        );
+    }
   };
 
   // one-shot setup after mount
@@ -292,6 +486,7 @@ export function ComposeViewer(props: ComposeViewerProps) {
     () => {
       const draft = props.draft(); // untracked read — edits must not refit
       if (!draft) return;
+      wallPoints = [];
       const w = container.clientWidth || 1;
       const h = container.clientHeight || 1;
       const guide = guideRect(draft, props.library());
@@ -309,9 +504,26 @@ export function ComposeViewer(props: ComposeViewerProps) {
     },
   );
 
+  // leaving wall-draw mode (toggle off, asset change) drops in-progress points
+  createEffect(
+    () => props.wallAsset(),
+    (asset) => {
+      if (!asset && wallPoints.length > 0) {
+        wallPoints = [];
+        scheduleDraw();
+      }
+    },
+  );
+
   // redraw on any data change
   createEffect(
-    () => [props.draft(), props.library(), props.selected(), props.placing()],
+    () => [
+      props.draft(),
+      props.library(),
+      props.selected(),
+      props.placing(),
+      props.wallAsset(),
+    ],
     () => scheduleDraw(),
   );
 
@@ -323,6 +535,8 @@ export function ComposeViewer(props: ComposeViewerProps) {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerLeave}
+        onDblClick={onDblClick}
+        onContextMenu={(e) => e.preventDefault()}
       />
     </div>
   );
@@ -331,27 +545,35 @@ export function ComposeViewer(props: ComposeViewerProps) {
 export interface PlacementsPanelProps {
   draft: () => MapDraft;
   library: () => LibraryIndex | null;
-  selected: () => number | null;
-  onSelect: (idx: number | null) => void;
-  onDelete: (idx: number) => void;
+  selected: () => DraftSelection;
+  onSelect: (sel: DraftSelection) => void;
+  onDelete: (sel: NonNullable<DraftSelection>) => void;
 }
 
 export function PlacementsPanel(props: PlacementsPanelProps) {
   let list!: HTMLDivElement;
 
+  const selKey = () => {
+    const sel = props.selected();
+    return sel ? `${sel.kind}-${sel.idx}` : null;
+  };
+
   // keep the selected row visible when selection comes from the canvas
   createEffect(
-    () => props.selected(),
-    (sel) => {
-      if (sel === null) return;
-      list.querySelector(`[data-idx="${sel}"]`)?.scrollIntoView({ block: "nearest" });
+    () => selKey(),
+    (key) => {
+      if (key === null) return;
+      list.querySelector(`[data-key="${key}"]`)?.scrollIntoView({ block: "nearest" });
     },
   );
+
+  const count = () =>
+    props.draft().placements.length + (props.draft().walls?.length ?? 0);
 
   return (
     <aside class="detail placements">
       <div class="detail-head">
-        <h2>Placements ({props.draft().placements.length})</h2>
+        <h2>Placements ({count()})</h2>
       </div>
       <div class="placement-list" ref={list}>
         <For each={props.draft().placements}>
@@ -359,9 +581,9 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
             const asset = () => assetById(props.library(), p.asset);
             return (
               <div
-                class={`placement-row ${props.selected() === idx() ? "selected" : ""}`}
-                data-idx={idx()}
-                onClick={() => props.onSelect(idx())}
+                class={`placement-row ${selKey() === `placement-${idx()}` ? "selected" : ""}`}
+                data-key={`placement-${idx()}`}
+                onClick={() => props.onSelect({ kind: "placement", idx: idx() })}
               >
                 <span class={`placement-name ${asset() ? "" : "missing"}`}>
                   {asset()?.descriptor.name ?? `${p.asset} (missing)`}
@@ -374,7 +596,7 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
                   title="delete placement"
                   onClick={(e) => {
                     e.stopPropagation();
-                    props.onDelete(idx());
+                    props.onDelete({ kind: "placement", idx: idx() });
                   }}
                 >
                   ×
@@ -383,7 +605,34 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
             );
           }}
         </For>
-        <Show when={props.draft().placements.length === 0}>
+        <For each={props.draft().walls ?? []}>
+          {(run, idx) => {
+            const asset = () => assetById(props.library(), run.asset);
+            return (
+              <div
+                class={`placement-row ${selKey() === `wall-${idx()}` ? "selected" : ""}`}
+                data-key={`wall-${idx()}`}
+                onClick={() => props.onSelect({ kind: "wall", idx: idx() })}
+              >
+                <span class={`placement-name ${asset() ? "" : "missing"}`}>
+                  wall: {asset()?.descriptor.name ?? `${run.asset} (missing)`}
+                </span>
+                <span class="placement-pos">{run.points.length} pts</span>
+                <button
+                  class="row-delete"
+                  title="delete wall"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onDelete({ kind: "wall", idx: idx() });
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          }}
+        </For>
+        <Show when={count() === 0}>
           <p class="hint">
             No placements yet. Select a library asset, then click on the canvas to
             place it.
