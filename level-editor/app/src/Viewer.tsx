@@ -1,6 +1,11 @@
 import { createEffect, onCleanup } from "solid-js";
 import type { Mission, ProtoLevel } from "@rle/shared";
-import { drawMissionOverlays, drawProtoOverlays, type OverlayToggles } from "./overlays";
+import {
+  drawMissionOverlays,
+  drawProtoOverlays,
+  drawSelectionBbox,
+  type OverlayToggles,
+} from "./overlays";
 
 export interface ViewerProps {
   image: () => ImageBitmap | null;
@@ -8,6 +13,8 @@ export interface ViewerProps {
   mission: () => Mission | null;
   toggles: () => OverlayToggles;
   layerFilter: () => number | null;
+  /** source bbox of the selected library asset, when it lies on the loaded map */
+  selection: () => readonly [number, number, number, number] | null;
   onCursor?: (x: number, y: number) => void;
 }
 
@@ -57,6 +64,8 @@ export default function Viewer(props: ViewerProps) {
     if (level) drawProtoOverlays(ctx, level, props.toggles(), view.zoom, props.layerFilter());
     const mission = props.mission();
     if (mission) drawMissionOverlays(ctx, mission, props.toggles(), view.zoom);
+    const sel = props.selection();
+    if (sel) drawSelectionBbox(ctx, sel, view.zoom);
   };
 
   const toWorld = (clientX: number, clientY: number): [number, number] => {
@@ -126,7 +135,13 @@ export default function Viewer(props: ViewerProps) {
 
   // redraw on any overlay/data change
   createEffect(
-    () => [props.level(), props.mission(), props.layerFilter(), { ...props.toggles() }],
+    () => [
+      props.level(),
+      props.mission(),
+      props.layerFilter(),
+      props.selection(),
+      { ...props.toggles() },
+    ],
     () => scheduleDraw(),
   );
 

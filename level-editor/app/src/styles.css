@@ -148,6 +148,202 @@ label.check input {
   position: relative;
 }
 
+/* --- asset library --- */
+
+section.library h2.collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+.chev {
+  display: inline-block;
+  transition: transform 0.1s;
+}
+
+.chev.open {
+  transform: rotate(90deg);
+}
+
+input.search {
+  width: 100%;
+  background: #333;
+  color: #ddd;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin-bottom: 8px;
+}
+
+input.search::placeholder {
+  color: #777;
+}
+
+.gallery {
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.asset-group .group-name {
+  font-size: 11px;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.thumbs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.thumb {
+  background: #2a2a2a;
+  border: 1px solid #383838;
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.thumb:hover {
+  background: #313131;
+}
+
+.thumb.selected {
+  border-color: #2563eb;
+  background: #1e2a44;
+}
+
+.thumb img {
+  width: 100%;
+  height: 64px;
+  object-fit: contain;
+  display: block;
+  background: #181818;
+  border-radius: 2px;
+}
+
+.thumb-name {
+  font-size: 11px;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thumb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.scale-class {
+  font-size: 10px;
+  color: #8ab4f8;
+  background: #1e2a44;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.tag {
+  font-size: 10px;
+  color: #aaa;
+  background: #333;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 3px;
+}
+
+/* --- asset detail panel --- */
+
+.detail {
+  width: 300px;
+  flex: none;
+  background: #222;
+  border-left: 1px solid #333;
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail h2 {
+  font-size: 13px;
+}
+
+.detail section h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detail-head .close {
+  padding: 0 8px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+canvas.preview {
+  width: 100%;
+  background:
+    repeating-conic-gradient(#202020 0% 25%, #262626 0% 50%) 0 0 / 16px 16px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  image-rendering: auto;
+}
+
+.detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.meta-row {
+  display: flex;
+  gap: 8px;
+}
+
+.meta-row.zero {
+  color: #666;
+}
+
+.meta-key {
+  flex: none;
+  width: 118px;
+  color: #888;
+}
+
+.prompt {
+  color: #bbb;
+  font-style: italic;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+label.check.inline {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  margin-left: auto;
+  font-size: 12px;
+}
+
 .viewer canvas {
   position: absolute;
   inset: 0;

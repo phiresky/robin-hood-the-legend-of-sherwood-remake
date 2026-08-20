@@ -262,6 +262,22 @@ export function drawProtoOverlays(
   }
 }
 
+/** highlight rectangle for a selected library asset's source region */
+export function drawSelectionBbox(
+  ctx: CanvasRenderingContext2D,
+  bbox: readonly [number, number, number, number],
+  zoom: number,
+) {
+  const [x, y, w, h] = bbox;
+  ctx.fillStyle = "rgba(37, 99, 235, 0.12)";
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = "#60a5fa";
+  ctx.lineWidth = 2 / zoom;
+  ctx.setLineDash([8 / zoom, 5 / zoom]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+}
+
 function entityDot(
   ctx: CanvasRenderingContext2D,
   x: number,

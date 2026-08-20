@@ -2,9 +2,12 @@ import { For, Show, createEffect, createSignal } from "solid-js";
 import type { Mission, ProtoLevel } from "@rle/shared";
 import {
   getStoredDatadirHandle,
+  getStoredLibraryHandle,
   pickDatadir,
+  pickLibrary,
   requestDatadirPermission,
   restoreDatadir,
+  restoreLibrary,
 } from "./fs";
 import {
   loadMapImage,
@@ -16,6 +19,8 @@ import {
 } from "./datadir";
 import Viewer from "./Viewer";
 import { DEFAULT_TOGGLES, TOGGLE_LABELS, type OverlayToggles } from "./overlays";
+import { releaseLibrary, scanLibrary, type LibraryAsset, type LibraryIndex } from "./library";
+import { AssetDetail, LibrarySection } from "./Library";
 
 export default function App() {
   const [index, setIndex] = createSignal<DatadirIndex | null>(null);
@@ -30,6 +35,10 @@ export default function App() {
   const [image, setImage] = createSignal<ImageBitmap | null>(null);
   const [level, setLevel] = createSignal<ProtoLevel | null>(null);
   const [mission, setMission] = createSignal<Mission | null>(null);
+
+  const [library, setLibrary] = createSignal<LibraryIndex | null>(null);
+  const [libraryNeedsReconnect, setLibraryNeedsReconnect] = createSignal(false);
+  const [selectedAsset, setSelectedAsset] = createSignal<LibraryAsset | null>(null);
 
   const [toggles, setToggles] = createSignal<OverlayToggles>({ ...DEFAULT_TOGGLES });
   const [layerFilter, setLayerFilter] = createSignal<number | null>(null);
@@ -48,17 +57,49 @@ export default function App() {
     }
   }
 
-  // one-shot startup: restore a previously granted datadir handle
+  async function openLibrary(handle: FileSystemDirectoryHandle) {
+    setBusy("scanning library…");
+    setError(null);
+    try {
+      const prev = library();
+      setSelectedAsset(null);
+      setLibrary(await scanLibrary(handle));
+      if (prev) releaseLibrary(prev);
+      setLibraryNeedsReconnect(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // one-shot startup: restore previously granted datadir/library handles
   createEffect(
     () => undefined,
     () => {
       void (async () => {
         const restored = await restoreDatadir();
-        if (restored) return openRoot(restored);
-        if (await getStoredDatadirHandle()) setNeedsReconnect(true);
+        if (restored) await openRoot(restored);
+        else if (await getStoredDatadirHandle()) setNeedsReconnect(true);
+        const lib = await restoreLibrary();
+        if (lib) await openLibrary(lib);
+        else if (await getStoredLibraryHandle()) setLibraryNeedsReconnect(true);
       })();
     },
   );
+
+  async function onPickLibrary() {
+    try {
+      await openLibrary(await pickLibrary());
+    } catch (e) {
+      if ((e as DOMException).name !== "AbortError") setError(String(e));
+    }
+  }
+
+  async function onReconnectLibrary() {
+    const handle = await getStoredLibraryHandle();
+    if (handle && (await requestDatadirPermission(handle))) await openLibrary(handle);
+  }
 
   async function onPick() {
     try {
@@ -128,6 +169,15 @@ export default function App() {
     setToggles((t) => ({ ...t, [key]: !t[key] }));
 
   const layerCount = () => level()?.motion_data.layers.length ?? 0;
+
+  // highlight the asset's source region when its source map is the loaded map
+  const selectionBbox = () => {
+    const asset = selectedAsset();
+    const map = mapName();
+    if (!asset || !map) return null;
+    if (asset.descriptor.source.map.toLowerCase() !== map.toLowerCase()) return null;
+    return asset.descriptor.source.bbox;
+  };
 
   return (
     <div class="app">
@@ -235,6 +285,14 @@ export default function App() {
             </>
           )}
         </Show>
+        <LibrarySection
+          library={library}
+          needsReconnect={libraryNeedsReconnect}
+          onPick={onPickLibrary}
+          onReconnect={onReconnectLibrary}
+          selected={selectedAsset}
+          onSelect={setSelectedAsset}
+        />
         <div class="statusbar">
           <Show when={busy()}>{(b) => <span class="busy">{b()}</span>}</Show>
           <Show when={error()}>{(e) => <span class="error">{e()}</span>}</Show>
@@ -249,8 +307,12 @@ export default function App() {
         mission={mission}
         toggles={toggles}
         layerFilter={layerFilter}
+        selection={selectionBbox}
         onCursor={(x, y) => setCursor([x, y])}
       />
+      <Show when={selectedAsset()}>
+        {(asset) => <AssetDetail asset={asset} onClose={() => setSelectedAsset(null)} />}
+      </Show>
     </div>
   );
 }
