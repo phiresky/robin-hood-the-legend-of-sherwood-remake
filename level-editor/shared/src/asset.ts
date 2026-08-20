@@ -19,7 +19,7 @@ import type {
   Mask,
 } from "./level";
 
-export type ScaleClass = "unique" | "variant" | "spline-segment";
+export type ScaleClass = "unique" | "variant" | "spline-segment" | "texture";
 
 export interface AssetSource {
   /** map name as in the datadir, e.g. "Leicester" */
@@ -76,6 +76,18 @@ export interface AssetDescriptor {
   sound_sources?: unknown[];
   /** legacy occlusion masks intersecting the region (polylines only for now) */
   occlusion_masks?: Pick<Mask, "layer" | "character_polyline" | "projectile_polyline">[];
+  /** set for assets imported from .rhs.d sprite banks (animated FX / patches) */
+  fx?: {
+    /** sprite bank name, e.g. "Leifx" (Data/Animations/<Ambiance>/<bank>.rhs.d) */
+    bank: string;
+    profile: string;
+    action: string;
+    frame_count: number;
+    /** original world draw position + elevation from the proto level */
+    position: Point;
+    elevation: number;
+    hotspot: Point;
+  };
   notes?: string;
 }
 

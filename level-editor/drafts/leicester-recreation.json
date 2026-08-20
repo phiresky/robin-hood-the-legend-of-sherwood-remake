@@ -36,6 +36,13 @@
       ]
     },
     {
+      "asset": "leicester-castle-well",
+      "pos": [
+        1230,
+        30
+      ]
+    },
+    {
       "asset": "leicester-church",
       "pos": [
         952,
@@ -50,10 +57,367 @@
       ]
     },
     {
+      "asset": "leicester-dirt-road-swatch",
+      "pos": [
+        2300,
+        120
+      ]
+    },
+    {
+      "asset": "leicester-east-wall",
+      "pos": [
+        1285,
+        1188
+      ]
+    },
+    {
       "asset": "leicester-footbridge",
       "pos": [
         572,
         1417
+      ]
+    },
+    {
+      "asset": "leicester-forest-canopy-swatch",
+      "pos": [
+        200,
+        0
+      ]
+    },
+    {
+      "asset": "leicester-forest-tower",
+      "pos": [
+        671,
+        53
+      ]
+    },
+    {
+      "asset": "leicester-fx-bougie01",
+      "pos": [
+        665,
+        925
+      ]
+    },
+    {
+      "asset": "leicester-fx-bougie03",
+      "pos": [
+        704,
+        505
+      ]
+    },
+    {
+      "asset": "leicester-fx-bougie04",
+      "pos": [
+        871,
+        522
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles01",
+      "pos": [
+        974,
+        1571
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles02",
+      "pos": [
+        824,
+        1502
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles03",
+      "pos": [
+        909,
+        1572
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles04",
+      "pos": [
+        1198,
+        1610
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles05",
+      "pos": [
+        1514,
+        1596
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles06",
+      "pos": [
+        1586,
+        1531
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles07",
+      "pos": [
+        1967,
+        1061
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles09",
+      "pos": [
+        1826,
+        851
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles10",
+      "pos": [
+        382,
+        692
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles11",
+      "pos": [
+        416,
+        1314
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles12",
+      "pos": [
+        355,
+        1259
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles13",
+      "pos": [
+        416,
+        1212
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles14",
+      "pos": [
+        308,
+        1204
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles15",
+      "pos": [
+        215,
+        1166
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles16",
+      "pos": [
+        138,
+        1192
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles17",
+      "pos": [
+        338,
+        755
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles18",
+      "pos": [
+        1661,
+        150
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles19",
+      "pos": [
+        1784,
+        143
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles20",
+      "pos": [
+        1892,
+        52
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles21",
+      "pos": [
+        1955,
+        165
+      ]
+    },
+    {
+      "asset": "leicester-fx-bulles22",
+      "pos": [
+        2044,
+        126
+      ]
+    },
+    {
+      "asset": "leicester-fx-canard01",
+      "pos": [
+        2104,
+        35
+      ]
+    },
+    {
+      "asset": "leicester-fx-cochon01",
+      "pos": [
+        3078,
+        1176
+      ]
+    },
+    {
+      "asset": "leicester-fx-drapeau01",
+      "pos": [
+        204,
+        566
+      ]
+    },
+    {
+      "asset": "leicester-fx-drapeau02",
+      "pos": [
+        1520,
+        1025
+      ]
+    },
+    {
+      "asset": "leicester-fx-feu-cheminee01",
+      "pos": [
+        943,
+        397
+      ]
+    },
+    {
+      "asset": "leicester-fx-fumee01",
+      "pos": [
+        462,
+        632
+      ]
+    },
+    {
+      "asset": "leicester-fx-fumee02",
+      "pos": [
+        501,
+        789
+      ]
+    },
+    {
+      "asset": "leicester-fx-fumee03",
+      "pos": [
+        1563,
+        1021
+      ]
+    },
+    {
+      "asset": "leicester-fx-fumee04",
+      "pos": [
+        2626,
+        492
+      ]
+    },
+    {
+      "asset": "leicester-fx-fumee05",
+      "pos": [
+        2897,
+        1358
+      ]
+    },
+    {
+      "asset": "leicester-fx-grenouille01",
+      "pos": [
+        1778,
+        1055
+      ]
+    },
+    {
+      "asset": "leicester-fx-mouches01",
+      "pos": [
+        2820,
+        260
+      ]
+    },
+    {
+      "asset": "leicester-fx-moulin",
+      "pos": [
+        1788,
+        1491
+      ]
+    },
+    {
+      "asset": "leicester-fx-papillon01",
+      "pos": [
+        1433,
+        1685
+      ]
+    },
+    {
+      "asset": "leicester-fx-papillon02",
+      "pos": [
+        1374,
+        1664
+      ]
+    },
+    {
+      "asset": "leicester-fx-papillon03",
+      "pos": [
+        1433,
+        1687
+      ]
+    },
+    {
+      "asset": "leicester-fx-poussiere",
+      "pos": [
+        294,
+        947
+      ]
+    },
+    {
+      "asset": "leicester-fx-riviere-b1",
+      "pos": [
+        2974,
+        494
+      ]
+    },
+    {
+      "asset": "leicester-fx-riviere-b2",
+      "pos": [
+        2739,
+        797
+      ]
+    },
+    {
+      "asset": "leicester-fx-riviere-b3",
+      "pos": [
+        2421,
+        861
+      ]
+    },
+    {
+      "asset": "leicester-fx-riviere-b4",
+      "pos": [
+        2173,
+        949
+      ]
+    },
+    {
+      "asset": "leicester-fx-riviere-b5",
+      "pos": [
+        2604,
+        964
+      ]
+    },
+    {
+      "asset": "leicester-fx-vache01",
+      "pos": [
+        2817,
+        226
       ]
     },
     {
@@ -64,10 +428,31 @@
       ]
     },
     {
+      "asset": "leicester-grass-swatch",
+      "pos": [
+        2250,
+        200
+      ]
+    },
+    {
+      "asset": "leicester-great-hall",
+      "pos": [
+        684,
+        260
+      ]
+    },
+    {
       "asset": "leicester-handcart",
       "pos": [
         2786,
         423
+      ]
+    },
+    {
+      "asset": "leicester-keep",
+      "pos": [
+        468,
+        768
       ]
     },
     {
@@ -85,10 +470,143 @@
       ]
     },
     {
+      "asset": "leicester-moat-tower-east",
+      "pos": [
+        1850,
+        456
+      ]
+    },
+    {
+      "asset": "leicester-moat-tower-west",
+      "pos": [
+        1517,
+        533
+      ]
+    },
+    {
+      "asset": "leicester-moat-water-swatch",
+      "pos": [
+        140,
+        1490
+      ]
+    },
+    {
+      "asset": "leicester-north-wall",
+      "pos": [
+        268,
+        402
+      ]
+    },
+    {
+      "asset": "leicester-nw-tower",
+      "pos": [
+        86,
+        415
+      ]
+    },
+    {
       "asset": "leicester-orchard-tree-1",
       "pos": [
         1834,
         272
+      ]
+    },
+    {
+      "asset": "leicester-patch-mecanisme01",
+      "pos": [
+        1966,
+        722
+      ]
+    },
+    {
+      "asset": "leicester-patch-mecanisme02",
+      "pos": [
+        1564,
+        879
+      ]
+    },
+    {
+      "asset": "leicester-patch-mecanisme03",
+      "pos": [
+        719,
+        1087
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch01",
+      "pos": [
+        691,
+        1105
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch02",
+      "pos": [
+        1521,
+        519
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch03",
+      "pos": [
+        399,
+        876
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch04",
+      "pos": [
+        97,
+        709
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch05",
+      "pos": [
+        120,
+        927
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch06",
+      "pos": [
+        579,
+        465
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch07",
+      "pos": [
+        685,
+        91
+      ]
+    },
+    {
+      "asset": "leicester-patch-patch08",
+      "pos": [
+        720,
+        328
+      ]
+    },
+    {
+      "asset": "leicester-patch-pontlevis01",
+      "pos": [
+        2041,
+        834
+      ]
+    },
+    {
+      "asset": "leicester-patch-pontlevis02",
+      "pos": [
+        1708,
+        883
+      ]
+    },
+    {
+      "asset": "leicester-patch-pontlevis03",
+      "pos": [
+        710,
+        1213
       ]
     },
     {
@@ -113,6 +631,13 @@
       ]
     },
     {
+      "asset": "leicester-small-turret",
+      "pos": [
+        1048,
+        300
+      ]
+    },
+    {
       "asset": "leicester-stone-bridge",
       "pos": [
         2847,
@@ -120,10 +645,24 @@
       ]
     },
     {
+      "asset": "leicester-sw-tower",
+      "pos": [
+        85,
+        720
+      ]
+    },
+    {
       "asset": "leicester-tall-shed",
       "pos": [
         1894,
         1593
+      ]
+    },
+    {
+      "asset": "leicester-tower-bridge",
+      "pos": [
+        1673,
+        499
       ]
     },
     {
@@ -225,6 +764,20 @@
       ]
     },
     {
+      "asset": "leicester-west-wall",
+      "pos": [
+        247,
+        1084
+      ]
+    },
+    {
+      "asset": "leicester-west-wing",
+      "pos": [
+        508,
+        398
+      ]
+    },
+    {
       "asset": "leicester-wooden-cottage",
       "pos": [
         2699,
@@ -232,5 +785,5 @@
       ]
     }
   ],
-  "notes": "Auto-generated litmus test: all 32 Leicester library assets at their source positions."
+  "notes": "Auto-generated litmus test: all 111 Leicester library assets at their source positions."
 }

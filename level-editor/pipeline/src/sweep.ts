@@ -17,9 +17,17 @@ import {
 
 interface Proposal {
   bbox: Bbox;
-  prompt: string;
+  prompt?: string;
   /** fallback prompts tried in order when the previous one finds no masks */
   alt_prompts?: string[];
+  /** box prompts in world coords [x, y, w, h] */
+  boxes?: Bbox[];
+  /** point prompts in world coords; label 1 = foreground, 0 = background */
+  points?: { x: number; y: number; label: 0 | 1 }[];
+  /** composite roof-closing patch sprites onto the map first */
+  apply_patches?: boolean;
+  /** "crop" = rectangular swatch without segmentation */
+  mode?: "sam" | "crop";
   name: string;
   id?: string;
   tags?: string[];
@@ -53,6 +61,10 @@ async function main() {
           map: sweep.map,
           bbox: p.bbox,
           prompt,
+          boxes: p.boxes,
+          points: p.points,
+          applyPatches: p.apply_patches,
+          mode: p.mode,
           name: p.name,
           id,
           tags: p.tags ?? [],

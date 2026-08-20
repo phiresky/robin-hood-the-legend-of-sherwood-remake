@@ -13,11 +13,24 @@ import { datadirPath, libraryDir, workDir } from "./env";
 import { segment, type SamMask } from "./sam";
 import { clipLevel, type Bbox } from "./clip";
 import { writeAsset } from "./library";
+import { fxTopLeft, loadFxSprite, loadKeyedFxPng } from "./fx";
 
 export interface ExtractOptions {
   map: string;
   bbox: Bbox;
-  prompt: string;
+  /** concept prompt; optional when boxes/points drive the segmentation */
+  prompt?: string;
+  /** box prompts in WORLD coordinates [x, y, w, h] */
+  boxes?: Bbox[];
+  /** point prompts in WORLD coordinates */
+  points?: { x: number; y: number; label: 0 | 1 }[];
+  /**
+   * composite the map's non-integrated patch sprites (roof closers for
+   * cutaway buildings) onto the map before cropping and cutting
+   */
+  applyPatches?: boolean;
+  /** "crop" = no segmentation: rectangular cut of bbox with a full mask (terrain swatches) */
+  mode?: "sam" | "crop";
   name: string;
   id: string;
   tags: string[];
@@ -103,6 +116,38 @@ async function loadLibraryIndex(): Promise<LibraryIndexEntry[]> {
   }
 }
 
+// full-map images with the non-integrated patch sprites (roof closers)
+// composited on, cached per map+ambiance for the run
+const patchedMapCache = new Map<string, Buffer>();
+
+async function patchedMapImage(
+  levelsDir: string,
+  map: string,
+  ambiance: string,
+  mapPath: string,
+  level: ProtoLevel,
+): Promise<Buffer> {
+  const key = `${map}/${ambiance}`;
+  const cached = patchedMapCache.get(key);
+  if (cached) return cached;
+  const composites: { input: Buffer; left: number; top: number }[] = [];
+  for (const p of level.patches) {
+    const s = p.element_fx.sprite;
+    if (s.frame_profile_name === "pixel_vert") continue;
+    if (p.integrate_in_background) continue; // drawbridges etc., not roof closers
+    // night/fog banks may not exist; fall back to the Day sprite
+    const fx =
+      (await loadFxSprite(ambiance, s.frame_profile_name, s.profile_name)) ??
+      (await loadFxSprite("Day", s.frame_profile_name, s.profile_name));
+    if (!fx) continue;
+    const [left, top] = fxTopLeft(fx, s.position_x, s.position_y, s.elevation);
+    composites.push({ input: await loadKeyedFxPng(fx.framePath), left, top });
+  }
+  const img = await sharp(mapPath).composite(composites).png().toBuffer();
+  patchedMapCache.set(key, img);
+  return img;
+}
+
 export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummary> {
   const levelsDir = path.join(datadirPath(), "Data", "Levels");
 
@@ -113,6 +158,13 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
   const mapW = meta.width!;
   const mapH = meta.height!;
 
+  const level: ProtoLevel = JSON.parse(
+    await fs.readFile(path.join(levelsDir, `${opts.map}.rhp.json`), "utf8"),
+  );
+  const daySrc: string | Buffer = opts.applyPatches
+    ? await patchedMapImage(levelsDir, opts.map, "Day", dayPath, level)
+    : dayPath;
+
   // padded crop around the requested bbox, clamped to the map
   const [bx, by, bw, bh] = opts.bbox;
   const cx = Math.max(0, Math.floor(bx - opts.pad));
@@ -120,22 +172,38 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
   const cw = Math.min(mapW - cx, Math.ceil(bw + 2 * opts.pad));
   const ch = Math.min(mapH - cy, Math.ceil(bh + 2 * opts.pad));
 
-  const cropPng = await sharp(dayPath)
+  const cropPng = await sharp(daySrc)
     .extract({ left: cx, top: cy, width: cw, height: ch })
     .png()
     .toBuffer();
 
-  console.log(`SAM 3: "${opts.prompt}" on ${cw}x${ch} crop of ${opts.map} @ ${cx},${cy}`);
-  const masks = await segment({
-    imagePng: cropPng,
-    width: cw,
-    height: ch,
-    prompt: opts.prompt,
-    maxMasks: opts.maxMasks,
-  });
-  console.log(
-    `got ${masks.length} mask(s), scores: ${masks.map((m) => m.score?.toFixed(3) ?? "?").join(", ")}`,
-  );
+  let masks: SamMask[];
+  if (opts.mode === "crop") {
+    // rectangular swatch: full-opaque mask over exactly the requested bbox
+    const data = new Uint8Array(cw * ch);
+    const rx = Math.floor(bx) - cx;
+    const ry = Math.floor(by) - cy;
+    for (let y = ry; y < Math.min(ch, ry + Math.ceil(bh)); y++) {
+      data.fill(255, y * cw + rx, y * cw + rx + Math.min(cw - rx, Math.ceil(bw)));
+    }
+    masks = [{ data, width: cw, height: ch, score: null, box: null }];
+  } else {
+    console.log(
+      `SAM 3: ${opts.prompt ? `"${opts.prompt}"` : "(geometric prompts)"} on ${cw}x${ch} crop of ${opts.map} @ ${cx},${cy}`,
+    );
+    masks = await segment({
+      imagePng: cropPng,
+      width: cw,
+      height: ch,
+      prompt: opts.prompt,
+      boxes: opts.boxes?.map(([x, y, w, h]) => [x - cx, y - cy, w, h]),
+      points: opts.points?.map((p) => ({ x: p.x - cx, y: p.y - cy, label: p.label })),
+      maxMasks: opts.maxMasks,
+    });
+    console.log(
+      `got ${masks.length} mask(s), scores: ${masks.map((m) => m.score?.toFixed(3) ?? "?").join(", ")}`,
+    );
+  }
   if (masks.length === 0) {
     return {
       written: [],
@@ -144,9 +212,6 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
     };
   }
 
-  const level: ProtoLevel = JSON.parse(
-    await fs.readFile(path.join(levelsDir, `${opts.map}.rhp.json`), "utf8"),
-  );
   const existing = (await loadLibraryIndex()).filter((e) => e.source_map === opts.map);
 
   const summary: ExtractSummary = {
@@ -206,7 +271,10 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
     for (const amb of ["Day", "Fog", "Night"] as const) {
       const mapPath = amb === "Day" ? dayPath : await findMapPng(levelsDir, amb, opts.map);
       if (!mapPath) continue;
-      const rgb = await sharp(mapPath)
+      const src: string | Buffer = opts.applyPatches
+        ? await patchedMapImage(levelsDir, opts.map, amb, mapPath, level)
+        : mapPath;
+      const rgb = await sharp(src)
         .extract({ left: ax, top: ay, width: aw, height: ah })
         .removeAlpha()
         .raw()
@@ -239,8 +307,10 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
         ambiance: "Day",
         bbox: assetBbox,
         extraction: {
-          tool: "fal-ai/sam-3/image-rle",
+          tool: opts.mode === "crop" ? "rect-crop" : "fal-ai/sam-3/image-rle",
           prompt: opts.prompt,
+          boxes: opts.boxes,
+          points: opts.points?.map((p) => [p.x, p.y] as [number, number]),
           score: mask.score ?? undefined,
         },
       },
