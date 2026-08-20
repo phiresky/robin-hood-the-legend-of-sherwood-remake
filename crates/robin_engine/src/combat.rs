@@ -1140,7 +1140,13 @@ fn is_victim_in_strike_arc(
         // end = facing + initial. L→R: begin = facing - initial,
         // end = facing + final.
         WeaponThrustKind::Lateral => {
-            if max_norm >= 150.0 || victim.distance < min_d || victim.distance > max_d {
+            // Original enters the collector only when `MaxNorm() < 150`,
+            // then admits the victim only when both inclusive range
+            // comparisons succeed.  Keep that positive formulation: a
+            // session-restored actor can carry NaN coordinates, for which
+            // all three Original comparisons are false.  Negating the
+            // rejection predicates instead let NaN actors into the arc.
+            if !(max_norm < 150.0 && victim.distance >= min_d && victim.distance <= max_d) {
                 return false;
             }
             let dir_angle = sector_to_angle(attacker_direction);
@@ -1186,7 +1192,10 @@ fn is_victim_in_strike_arc(
         // benign; L→R uses `-initial` and the 180° arc extends in the +π
         // direction from there.
         WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
-            if max_norm >= 150.0 || victim.distance < min_d || victim.distance > max_d {
+            // GetPossibleVictimsOfHalfCircleSwordStrike uses the same
+            // positive MaxNorm/range guards as the lateral collector, with
+            // the same unordered-NaN behavior.
+            if !(max_norm < 150.0 && victim.distance >= min_d && victim.distance <= max_d) {
                 return false;
             }
             let dir_angle = sector_to_angle(attacker_direction);
@@ -1890,6 +1899,61 @@ mod tests {
             (0, -1),
             "the lateral collector's broad active-human scan must still veto friendly corpses"
         );
+    }
+
+    #[test]
+    fn lateral_and_half_circle_collectors_reject_nan_positions() {
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::D as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Lateral,
+            direction: WeaponThrustDirection::RightToLeft,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            initial_angle: 45,
+            final_angle: 45,
+            ..Default::default()
+        };
+        profile.thrusts[SwordStrike::F as usize] = ThrustProfile {
+            kind: WeaponThrustKind::TrueHalfCircle,
+            direction: WeaponThrustDirection::RightToLeft,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            initial_angle: 45,
+            final_angle: 45,
+            ..Default::default()
+        };
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: f32::NAN,
+            dy_stretched: f32::NAN,
+            distance: f32::NAN,
+            direction_sector: 0,
+            camp: Camp::Lacklandists,
+            facing_direction: 0,
+            elevation: f32::NAN,
+            life_points: 100,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        // Both Original collectors are guarded by the positive expression
+        // `MaxNorm() < 150` followed by positive inclusive range checks.
+        // Every comparison with this restored qNaN position is false.
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::D,
+            0,
+            &victim,
+            true,
+        ));
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::F,
+            0,
+            &victim,
+            true,
+        ));
     }
 
     #[test]
