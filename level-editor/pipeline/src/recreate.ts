@@ -63,6 +63,18 @@ async function main() {
     background_color: "#2a3324",
     placements: assets.map((a) => ({ asset: a.id, pos: a.origin })),
     walls: spec.walls,
+    terrain: {
+      ...spec,
+      walls: undefined, // already lifted to draft.walls
+      swatches: {
+        grass: `${prefix}-grass-swatch`,
+        dirt: `${prefix}-courtyard-dirt-swatch`,
+        road: `${prefix}-dirt-road-swatch`,
+        canopy: `${prefix}-forest-canopy-swatch`,
+        water: `${prefix}-moat-water-swatch`,
+        ...spec.swatches,
+      },
+    },
     notes: `Auto-generated litmus test: all ${assets.length} ${map} library assets at their source positions.`,
   };
   const draftsDir = path.join(editorRoot, "drafts");
