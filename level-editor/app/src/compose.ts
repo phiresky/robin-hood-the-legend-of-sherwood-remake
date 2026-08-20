@@ -7,7 +7,7 @@ import { loadAssetImage, type LibraryAsset, type LibraryIndex } from "./library"
 export const DEFAULT_BACKGROUND = "#2a3324";
 
 /** margin added around the content bounding box when computing size at save */
-export const SAVE_MARGIN = 32;
+export const SAVE_MARGIN = 64;
 
 /**
  * Editing happens on an infinite canvas; `size` is only computed at save time
