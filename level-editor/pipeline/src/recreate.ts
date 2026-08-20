@@ -54,10 +54,15 @@ async function main() {
   await fs.writeFile(draftPath, JSON.stringify(draft, null, 2));
   console.log(`draft: ${draftPath} (${assets.length} placements)`);
 
-  // offline composite in draw order (ascending world anchor Y)
-  const ordered = [...assets].sort(
-    (a, b) => a.origin[1] + a.anchor[1] - (b.origin[1] + b.anchor[1]),
-  );
+  // offline composite in draw order: static cutouts first, then FX/patch
+  // sprites (in-game, patch roofs draw over the background/buildings), each
+  // group sorted ascending by world anchor Y
+  const byAnchorY = (a: AssetDescriptor, b: AssetDescriptor) =>
+    a.origin[1] + a.anchor[1] - (b.origin[1] + b.anchor[1]);
+  const ordered = [
+    ...assets.filter((a) => !a.fx).sort(byAnchorY),
+    ...assets.filter((a) => a.fx).sort(byAnchorY),
+  ];
   const composite = ordered.map((a) => ({
     input: path.join(libraryDir, a.id, a.images.day),
     left: a.origin[0],

@@ -20,7 +20,11 @@ export interface Placement {
 export interface MapDraft {
   version: 1;
   name: string;
-  /** map dimensions in pixels */
+  /**
+   * map dimensions in pixels. Editing happens on an infinite canvas; this is
+   * computed (content bounds + margin, user-overridable) when the draft is
+   * saved, and rendered only as a boundary guide when reopening.
+   */
   size: [number, number];
   /** solid background fill until terrain painting exists */
   background_color?: string;
