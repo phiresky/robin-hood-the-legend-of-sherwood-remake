@@ -7519,55 +7519,6 @@ impl EngineInner {
             return false;
         }
 
-        // A sword movement may have been postponed by an explicit
-        // QuitSwordfight and selected again only after the lowering animation
-        // changed the actor back to an ordinary action state. Original
-        // retranslates that surviving movement as upright work. Rust retains
-        // the already-built order across postponement, so perform the
-        // equivalent rewrite here before the orphan guard decides whether the
-        // actor still needs to quit.
-        let fight_already_lowered = self
-            .world
-            .entities
-            .get(owner)
-            .and_then(|entity| entity.actor_data())
-            .is_some_and(|actor| !actor.action_state.is_sword());
-        if fight_already_lowered {
-            let element = self
-                .orders
-                .sequence_manager
-                .get_element_mut(selected.seq_id, selected.elem_idx)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "lowered sword movement owner {owner:?} lost selected element \
-                         ({:?}, {})",
-                        selected.seq_id, selected.elem_idx
-                    )
-                });
-            let order = element.orders.front_mut().unwrap_or_else(|| {
-                panic!(
-                    "lowered sword movement owner {owner:?} has no selected order in \
-                     ({:?}, {})",
-                    selected.seq_id, selected.elem_idx
-                )
-            });
-            let upright_action = match order.order_type {
-                OrderType::WalkingWithSword => OrderType::WalkingUpright,
-                OrderType::RunningWithSword => OrderType::RunningUpright,
-                other => {
-                    panic!("lowered sword movement owner {owner:?} has unexpected order {other:?}")
-                }
-            };
-            order.order_type = upright_action;
-            let crate::sequence::SequenceElementData::Movement { action, .. } = &mut element.data
-            else {
-                unreachable!("selected sword movement changed data kind during upright rewrite")
-            };
-            *action = upright_action;
-            element.action_state_after_transition = crate::element::ActionState::Waiting;
-            return false;
-        }
-
         // Human::Execute calls the selected movement element's virtual
         // Stop(Injury) before registering QuitSwordfight. That exact-root
         // stop follows only the element's linked successor/postponed graph;
@@ -15482,6 +15433,89 @@ mod orphaned_sword_movement_tests {
         MapPoint,
     ) {
         install_sword_movement_for_kind(force, false)
+    }
+
+    #[test]
+    fn lowered_actor_still_aborts_unrewritten_resumed_sword_move() {
+        let (mut engine, owner, movement_sequence, order_id, _start) =
+            install_sword_movement(false);
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(movement_sequence, 0)
+            .unwrap();
+        movement.command = Command::MoveOk;
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::Waiting;
+
+        let aborted = engine.abort_orphaned_sword_movement(
+            &crate::sim_rng::test_context(),
+            &assets_with_test_pc_profile(),
+            owner,
+            MovementOwnerSelection {
+                seq_id: movement_sequence,
+                elem_idx: 0,
+                order_id,
+            },
+        );
+
+        assert!(
+            aborted,
+            "Human::Execute has no non-sword action-state exception for an unrewritten sword order"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible,
+            "the captured resumed MoveOk must be rejected after Execute returns ABORTED"
+        );
+    }
+
+    #[test]
+    fn evaluate_opponents_rewrite_survives_postpone_as_untranslated_upright_move() {
+        let (mut engine, owner, movement_sequence, _order_id, _start) =
+            install_sword_movement(false);
+        let sim = crate::sim_rng::test_context();
+        let assets = assets_with_test_pc_profile();
+
+        engine.evaluate_opponents(&sim, &assets, owner);
+
+        let quit_sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .find_map(|sequence| {
+                sequence.elements.first().and_then(|element| {
+                    (element.owner == Some(owner) && element.command == Command::QuitSwordfight)
+                        .then_some(sequence.id)
+                })
+            })
+            .expect("EvaluateOpponents must register QuitSwordfight");
+        engine.engine_postpone(quit_sequence, 0, movement_sequence, 0);
+
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .expect("rewritten movement must remain registered behind QuitSwordfight");
+        let SequenceElementData::Movement { action, .. } = movement.data else {
+            panic!("rewritten movement changed data kind")
+        };
+        assert_eq!(action, OrderType::WalkingUpright);
+        assert_eq!(movement.command, Command::Move);
+        assert_eq!(movement.state, SequenceState::Postponed);
+        assert!(
+            movement.orders.is_empty(),
+            "Original postponement deletes the old sword order so resume retranslates the rewritten upright action"
+        );
     }
 
     #[test]
