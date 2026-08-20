@@ -375,11 +375,36 @@ impl EngineInner {
         &mut self,
         resolutions: Vec<crate::sound::ResolvedExclamation>,
     ) {
+        self.queue_resolved_exclamations_with_origin(resolutions, false);
+    }
+
+    /// Queue resolutions recorded by the Original host sound manager.
+    ///
+    /// Unlike live host resolutions, these are authoritative replay inputs
+    /// and may describe Original-only speech for which Rust has no logical AI
+    /// request. The tick boundary preserves their completion timing without
+    /// synthesizing a Rust speech latch.
+    #[doc(hidden)]
+    pub fn queue_replay_resolved_exclamations(
+        &mut self,
+        resolutions: Vec<crate::sound::ResolvedExclamation>,
+    ) {
+        self.queue_resolved_exclamations_with_origin(resolutions, true);
+    }
+
+    fn queue_resolved_exclamations_with_origin(
+        &mut self,
+        resolutions: Vec<crate::sound::ResolvedExclamation>,
+        replay_injected: bool,
+    ) {
         assert!(
             self.feedback.sound_sim.resolved_exclamations.is_empty(),
             "resolved exclamations were not consumed before the next sound boundary"
         );
         self.feedback.sound_sim.resolved_exclamations = resolutions;
+        self.feedback
+            .sound_sim
+            .replay_injected_resolved_exclamations = replay_injected;
     }
 
     /// Cancel the first logical exclamation for an actor without calling
@@ -1396,6 +1421,16 @@ impl EngineInner {
         // seek-refresh copy is dormant during this command and must not mask
         // the timer that Actor::Hourglass just decremented.
         if self.actor_command(actor) == crate::element::Command::WaitTimer {
+            return data.wait_time;
+        }
+
+        // FallingLadderWall uses Original's `mulWaitTime` as its remaining
+        // constant-speed flight duration (RHelementactorhuman.cpp:4453).
+        // A fall can interrupt an entity Seek while its target and post-seek
+        // continuation remain attached to the actor; those pointers are
+        // dormant until the non-interruptible fall finishes and must not make
+        // the split seek-refresh copy appear to own the overloaded scalar.
+        if data.active_flight.is_some_and(|flight| flight.ladder_fall) {
             return data.wait_time;
         }
 

@@ -749,6 +749,88 @@ fn start_returns_one() {
 }
 
 #[test]
+fn recorded_direct_gate_route_retains_pass_door_direction() {
+    use crate::coordinates::MapPoint;
+    use crate::gate::Door;
+    use crate::sequence::{MoveFlags, RecordingSession, SequenceElementData};
+
+    // Seed-2M linux2/Profile_002/ExQuickSave/replay-001 reaches this path:
+    // script RecordMove builds a direct route from sector_out to sector_in.
+    // Its approach/exit geometry was correct, but the separately recorded
+    // PassDoor used SequenceElementData's default direction (indirect).
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
+    host.script_domains.interactables.doors.push(Door {
+        point_out: MapPoint::new(876.0, 879.0),
+        point_in: MapPoint::new(859.0, 897.0),
+        layer_out: 4,
+        layer_in: 3,
+        sector_out: crate::sector::SectorNumber::new(103),
+        sector_in: crate::sector::SectorNumber::new(98),
+        ..Door::default()
+    });
+    host.state.sequence_recorder.recording = Some(RecordingSession::new());
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+
+    {
+        let capabilities = NativeSessionCapabilities::new(
+            &host.simulation,
+            &mut host.entities,
+            &mut host.ai_global,
+            &mut host.fast_grid,
+        );
+        let mut context = NativeContext::with_bindings(
+            &mut host.host,
+            &mut host.state,
+            &mut host.script_domains,
+            &host.bindings,
+            &capabilities,
+        );
+        assert!(context.append_move_to_sequence(
+            actor,
+            crate::order::OrderType::WalkingUpright,
+            (876.0, 879.0),
+            103,
+            4,
+            (859.0, 897.0),
+            98,
+            3,
+            None,
+            0.0,
+            MoveFlags::CALLED_BY_SCRIPT,
+            1.0,
+        ));
+    }
+
+    let pass = host
+        .state
+        .sequence_recorder
+        .recording
+        .as_ref()
+        .expect("recording remains open")
+        .sequence
+        .elements
+        .iter()
+        .find(|element| element.command == crate::element::Command::PassDoor)
+        .expect("direct route records PassDoor");
+    let SequenceElementData::Movement {
+        destination,
+        gate_id,
+        direction,
+        ..
+    } = &pass.data
+    else {
+        panic!("recorded PassDoor must be movement data")
+    };
+    assert_eq!(*destination, MapPoint::new(859.0, 897.0));
+    assert_eq!(*gate_id, Some(crate::gate::DoorIndex(0)));
+    assert_eq!(
+        *direction, 1,
+        "SetGate copies direct RHGate::mbDirect into the selected movement element"
+    );
+}
+
+#[test]
 fn thanx_without_recording_returns_zero() {
     // Thanx with no active recording logs an error and returns false.
     assert_eq!(run_native(31, &[]), StopReason::ReturnedValue(0));
@@ -1204,6 +1286,87 @@ fn is_inside_zone_not_present() {
     let prog = call_native_return(97, &[actor, loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
+}
+
+fn geometric_is_inside_host(actor_sector: u16) -> BoundScriptEffects {
+    let mut actor = native_test_soldier();
+    let element = actor.element_data_mut();
+    element.set_position_map(crate::coordinates::MapPoint::new(5.0, 5.0));
+    element.set_layer(0);
+    element.set_sector(crate::position_interface::SectorHandle::new(actor_sector));
+
+    let points = vec![
+        crate::coordinates::MapPoint::new(0.0, 0.0),
+        crate::coordinates::MapPoint::new(10.0, 0.0),
+        crate::coordinates::MapPoint::new(10.0, 10.0),
+        crate::coordinates::MapPoint::new(0.0, 10.0),
+    ];
+    let mut bounding_box = crate::coordinates::MapBBox::new();
+    for &point in &points {
+        bounding_box.expand_point(point);
+    }
+
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(actor)]);
+    std::sync::Arc::make_mut(&mut host.fast_grid.level)
+        .sectors
+        .push(crate::fast_find_grid::GridSector {
+            points,
+            bounding_box,
+            sector_type: crate::sector::SectorType::SCRIPT,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(-1),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+    host.script_domains
+        .zones
+        .scripts
+        .push(crate::sector::ScriptSectorData {
+            owning_motion_sector: crate::sector::SectorNumber::new(7),
+            ..Default::default()
+        });
+    host.bindings = AttachedScriptBindings {
+        script_point_count: 1,
+        script_location_count: 2,
+        script_zone_grid_indices: std::sync::Arc::new(vec![0]),
+        ..Default::default()
+    };
+    host
+}
+
+#[test]
+fn is_inside_zone_geometry_requires_owning_motion_sector() {
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let zone = ScriptHandleCodec::location_handle_from_index(1);
+    let program = call_native_return(NativeFn::IsInside as u32, &[actor, zone]);
+
+    let matching_host = geometric_is_inside_host(7);
+    assert_eq!(
+        matching_host.fast_grid.level.sectors[0].sector_number,
+        crate::sector::SectorNumber::new(-1),
+        "script geometry must not claim the owning motion-sector identity"
+    );
+    assert_eq!(
+        matching_host.script_domains.zones.scripts[0].owning_motion_sector,
+        crate::sector::SectorNumber::new(7)
+    );
+    let mut matching = Vm::new().with_host(Box::new(matching_host));
+    assert_eq!(matching.run(&program), StopReason::ReturnedValue(1));
+
+    // The point is geometrically inside, but Original IsReallyInside rejects
+    // actors whose current motion sector differs from the script zone's.
+    let mut adjacent = Vm::new().with_host(Box::new(geometric_is_inside_host(8)));
+    assert_eq!(adjacent.run(&program), StopReason::ReturnedValue(0));
 }
 
 #[test]

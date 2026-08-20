@@ -713,6 +713,12 @@ pub struct AiOrderIntent {
     pub source_sector: Option<crate::position_interface::SectorHandle>,
     #[serde(default)]
     pub source_layer: Option<u16>,
+    /// Original compares `RHSector*` identity, not the public sector number,
+    /// when deciding whether GoTo must use AppendMoveToSequence. Distinct
+    /// motion sectors can share one number; this call-time bit preserves that
+    /// distinction after the AI intent is deferred.
+    #[serde(default)]
+    pub source_target_sector_identity_differs: bool,
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     pub defer_initial_turn_step: bool,
@@ -722,6 +728,18 @@ pub struct AiOrderIntent {
     /// later Hourglass pass.
     #[serde(default)]
     pub defer_instruction: bool,
+    /// This GoTo was reached through the tail of another GoTo while the actor
+    /// still reported `MOVE_WAITING`. Original launches the replacement and
+    /// then immediately executes GoTo's `IsComputingPath()` tail `Halt`, which
+    /// removes the just-registered movement before manager instruction.
+    #[serde(default)]
+    pub halt_after_launch_for_path_waiter: bool,
+    /// Earliest universal frame at which an engine-owned movement intent may
+    /// be promoted to a sequence. Runtime-authored intents normally leave
+    /// this unset; synchronous continuations use it to preserve a manager
+    /// boundary that has already passed in the current frame.
+    #[serde(default)]
+    pub not_before_frame: Option<u32>,
     /// This Face was authored after a same-call SetState changed attentive
     /// mode. The engine must apply that attentive transition before
     /// instructing the Turn.
@@ -808,10 +826,13 @@ impl AiOrderIntent {
             source_position: None,
             source_sector: None,
             source_layer: None,
+            source_target_sector_identity_differs: false,
             target_actor: None,
             compute_direction: true,
             defer_initial_turn_step: false,
             defer_instruction: false,
+            halt_after_launch_for_path_waiter: false,
+            not_before_frame: None,
             after_attentive_mode: false,
             fast_turn: false,
             explicit_direction: None,

@@ -2444,6 +2444,63 @@ impl FastFindGrid {
         result
     }
 
+    /// Collect active motion lines in the same order as Original's segment
+    /// `GetLines` overload: scan the segment's bounding cell range row-major,
+    /// but visit only cells intersected by the segment, then discard candidate
+    /// lines that do not intersect the segment itself.
+    fn get_active_motion_line_indices_for_segment(
+        &self,
+        layer: u16,
+        segment: geo::Line<f32>,
+    ) -> Vec<LineIndex> {
+        let mut bbox = MapBBox::new();
+        bbox.expand_point(MapPoint::new(segment.start.x, segment.start.y));
+        bbox.expand_point(MapPoint::new(segment.end.x, segment.end.y));
+        let Some(rect) = bbox.0 else {
+            return Vec::new();
+        };
+        let (x_min, y_min, x_max, y_max) =
+            rect_to_cell_range(&rect, self.level.grid_width, self.level.grid_height);
+
+        let query_line = GridLine::new(
+            MapPoint::new(segment.start.x, segment.start.y),
+            MapPoint::new(segment.end.x, segment.end.y),
+            false,
+        );
+        let mut visited = QueryVisited::new(self.level.lines.len());
+        let mut result = Vec::new();
+        for cy in y_min..=y_max {
+            for cx in x_min..=x_max {
+                let cell_min =
+                    MapPoint::new(cx as f32 * GRID_CELL_SIZE_F, cy as f32 * GRID_CELL_SIZE_F);
+                let cell = MapBBox::from_corners(
+                    cell_min,
+                    MapPoint::new(cell_min.x + GRID_CELL_SIZE_F, cell_min.y + GRID_CELL_SIZE_F),
+                );
+                if !query_line.intersects_bbox(&cell) {
+                    continue;
+                }
+
+                let block_idx = self.block_index_from_cell(cx, cy, layer);
+                if block_idx >= self.level.blocks.len() {
+                    continue;
+                }
+                for &line_idx in &self.level.blocks[block_idx].line_indices {
+                    let line = &self.level.lines[usize::from(line_idx)];
+                    if line.is_motion
+                        && self.is_line_active(line_idx)
+                        && visited.try_mark(usize::from(line_idx))
+                    {
+                        result.push(line_idx);
+                    }
+                }
+            }
+        }
+
+        result.retain(|&idx| self.level.lines[usize::from(idx)].intersects_segment(segment));
+        result
+    }
+
     fn visit_active_motion_line_indices(
         &self,
         layer: u16,
@@ -3807,20 +3864,10 @@ impl FastFindGrid {
         // Phase 1: push along segment (center → start)
         for _ in 0..50 {
             let center = bbox.center();
-            let seg_bbox = {
-                let mut b = MapBBox::new();
-                b.expand_point(center);
-                b.expand_point(start);
-                b
-            };
-            let line_indices = self.get_active_motion_line_indices(layer, &seg_bbox);
-            let intersecting: Vec<LineIndex> = line_indices
-                .into_iter()
-                .filter(|&idx| {
-                    self.level.lines[usize::from(idx)]
-                        .intersects_segment(geo2d::segment(center.to_geo(), start.to_geo()))
-                })
-                .collect();
+            let intersecting = self.get_active_motion_line_indices_for_segment(
+                layer,
+                geo2d::segment(center.to_geo(), start.to_geo()),
+            );
 
             if intersecting.is_empty() {
                 break;
@@ -4183,6 +4230,51 @@ mod tests {
         assert_eq!(
             grid.get_active_motion_line_indices(0, &expanded),
             vec![overlapping, outside]
+        );
+    }
+
+    #[test]
+    fn motion_line_segment_query_skips_off_segment_cells_before_deduplication() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+
+        // The descending query crosses row zero only in cell (2, 0). `later`
+        // also occupies the earlier off-segment cell (0, 0), but crosses the
+        // query in row one. A bounding-box cell scan therefore observes it
+        // before `first`; Original's segment GetLines skips that cell and
+        // preserves the source order `first`, then `later`.
+        let later = grid.add_line(
+            GridLine::new(MapPoint::new(20.0, 20.0), MapPoint::new(100.0, 100.0), true),
+            0,
+        );
+        let first = grid.add_line(
+            GridLine::new(MapPoint::new(160.0, 30.0), MapPoint::new(180.0, 10.0), true),
+            0,
+        );
+        // Keep the fixture focused on query ordering rather than the broader
+        // conservative block registration performed by `add_line`.
+        let level = std::sync::Arc::make_mut(&mut grid.level);
+        for block in &mut level.blocks {
+            block.line_indices.clear();
+        }
+        let width = usize::from(level.grid_width);
+        let height = usize::from(level.grid_height);
+        let block_index = |x: usize, y: usize, layer: usize| x + width * (y + layer * height);
+        let off_segment = block_index(0, 0, 0);
+        let first_segment_cell = block_index(2, 0, 0);
+        let later_segment_cell = block_index(1, 1, 0);
+        level.blocks[off_segment].line_indices.push(later);
+        level.blocks[first_segment_cell].line_indices.push(first);
+        level.blocks[later_segment_cell].line_indices.push(later);
+        let segment = geo2d::segment(
+            MapPoint::new(180.0, 10.0).to_geo(),
+            MapPoint::new(10.0, 180.0).to_geo(),
+        );
+
+        assert_eq!(
+            grid.get_active_motion_line_indices_for_segment(0, segment),
+            vec![first, later]
         );
     }
 

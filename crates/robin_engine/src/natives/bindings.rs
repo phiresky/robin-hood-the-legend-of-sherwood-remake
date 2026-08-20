@@ -100,6 +100,33 @@ mod tests {
             .expect_return("GetLocationScript is synchronous")
     }
 
+    fn get_location_index(bindings: &AttachedScriptBindings, handle: i32) -> i32 {
+        let mut host = ScriptEffects::new();
+        let mut entities = crate::entities::Entities::new();
+        let mut ai_global = crate::ai::AiGlobalState::default();
+        let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let sim = crate::sim_rng::test_context();
+        let capabilities = crate::natives::NativeSessionCapabilities::new(
+            &sim,
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
+        let mut state = ScriptState::default();
+        let mut script_domains = crate::engine::ScriptDomains::default();
+        let mut stack = NativeStack::default();
+        stack.push_i32(handle);
+        let mut context = NativeContext::with_bindings(
+            &mut host,
+            &mut state,
+            &mut script_domains,
+            bindings,
+            &capabilities,
+        );
+        HostFunctions::call(&mut context, NativeFn::GetLocationIndex as u32, &mut stack)
+            .expect_return("GetLocationIndex is synchronous")
+    }
+
     #[test]
     fn dispatch_bindings_are_isolated_between_engine_instances() {
         let first = AttachedScriptBindings {
@@ -113,5 +140,17 @@ mod tests {
 
         assert_ne!(get_location(&second, 1), 0);
         assert_eq!(get_location(&first, 1), 0);
+    }
+
+    #[test]
+    fn location_index_preserves_original_multiple_inheritance_pointer_bug() {
+        let bindings = AttachedScriptBindings {
+            script_location_count: 10,
+            ..Default::default()
+        };
+        let location = get_location(&bindings, 9);
+
+        assert_ne!(location, 0);
+        assert_eq!(get_location_index(&bindings, location), -1);
     }
 }

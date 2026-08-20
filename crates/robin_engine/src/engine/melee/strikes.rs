@@ -2288,14 +2288,41 @@ impl EngineInner {
             }
         }
 
-        // Landing-resolution second pass: apply the goal obstacle
-        // (and its plane + footstep material) via the shared helper.
-        // We keep the obstacle on the flight struct and apply it on
-        // landing — the per-frame integrator drives z explicitly via
-        // `increment_z`, so this is equivalent to applying it
-        // up-front for sloped goals.
+        // Landing-resolution second pass: apply the goal obstacle and
+        // footstep material. ReadyForTakeOff has already installed the goal
+        // obstacle before the flight starts. Original's terminal
+        // PerformFlight then publishes its authored 3D goal without
+        // reinstalling that same plane. Reinstalling it through Rust's eager
+        // `set_obstacle_and_material` reprojects Z from the rounded map-space
+        // Y and can move a sloped landing by several ULPs (seed-2M
+        // Savegame_023/replay-003). When the obstacle is already current,
+        // refresh only the material and preserve the exact flight goal.
         for &(flyer_id, obstacle) in &landings {
-            self.set_obstacle_and_material(assets, flyer_id, obstacle);
+            let current_obstacle = self
+                .get_entity(flyer_id)
+                .and_then(|entity| entity.element_data().obstacle_index())
+                .map(|handle| handle.get());
+            if current_obstacle == obstacle {
+                let material = match obstacle {
+                    Some(index) => self
+                        .sight_obstacles(assets)
+                        .get(index as usize)
+                        .map(|source| {
+                            crate::element::GameMaterial::from_u32(source.material as u32)
+                        }),
+                    None => self.get_entity(flyer_id).map(|entity| {
+                        assets.material_sectors.material_at_layer(
+                            entity.element_data().position_map(),
+                            entity.element_data().layer(),
+                        )
+                    }),
+                };
+                if let (Some(entity), Some(material)) = (self.get_entity_mut(flyer_id), material) {
+                    entity.element_data_mut().set_material(material);
+                }
+            } else {
+                self.set_obstacle_and_material(assets, flyer_id, obstacle);
+            }
         }
 
         // The Original calls UpdateScriptSectorsAfterFlight on the terminal
@@ -2941,6 +2968,8 @@ impl EngineInner {
                     self.world.original_creation_order(attack.target_id),
                 )
             });
+            let selected_opponent_time_limit =
+                self.opponent_sword_strike_time_limit_for_actor(attack.target_id);
             let opponent_time_limit: Option<i16> =
                 self.get_entity(attack.target_id).and_then(|e| {
                     let animation = self.live_actor_animation(attack.target_id)?;
@@ -2971,10 +3000,7 @@ impl EngineInner {
                             sprite.action_done_counter,
                         );
                     }
-                    Some(super::evaluate::opponent_sword_strike_time_limit(
-                        Some(animation),
-                        || sprite.frames_from_now_till_action_done(),
-                    ))
+                    selected_opponent_time_limit
                 });
 
             // Compute per-strike startup frames from attacker's
@@ -3883,6 +3909,76 @@ mod tests {
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
         assert!(victim.actor_data().unwrap().active_flight.is_none());
+    }
+
+    #[test]
+    fn completed_combat_flight_preserves_authored_z_on_an_installed_slope() {
+        let sim = crate::sim_rng::test_context();
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(1);
+        obstacle.top_plane_points = [
+            [0.0, 0.0, 1711.937_4],
+            [1.0, 0.0, 1712.386_2],
+            [0.0, 1.0, 1710.774_0],
+        ];
+        obstacle.material = 3;
+        let plane =
+            crate::position_interface::PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points);
+        let mut assets = LevelAssets::default();
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+
+        // Adding world Z to map Y and subtracting it again rounds the map
+        // coordinate. Reinstalling the already-current plane at landing would
+        // consequently derive a different elevation from that rounded map Y.
+        let goal_map = MapPoint::new(1833.458_984_375, 1617.051_635_742_187_5);
+        let goal_z = f32::from_bits(1_133_974_934);
+        let rounded_map_y = (goal_map.y + goal_z) - goal_z;
+        assert_ne!(rounded_map_y.to_bits(), goal_map.y.to_bits());
+        assert_ne!(
+            plane.compute_z(goal_map.x, rounded_map_y).to_bits(),
+            goal_z.to_bits()
+        );
+
+        let mut entity = falling_pushed_soldier(false);
+        entity.set_posture(Posture::Lying);
+        entity.element_data_mut().set_obstacle_index(
+            crate::position_interface::ObstacleHandle::new(0),
+            Some(plane),
+        );
+        entity.position_iface_mut().set_position(WorldPoint3D::new(
+            goal_map.x - 1.0,
+            goal_map.y + goal_z,
+            goal_z,
+        ));
+        let flight = entity
+            .actor_data_mut()
+            .unwrap()
+            .active_flight
+            .as_mut()
+            .unwrap();
+        flight.geometry = crate::element::FlightGeometry::World3d;
+        flight.frames_remaining = 0;
+        flight.increment_x = 0.0;
+        flight.increment_y = 0.0;
+        flight.increment_z = 0.0;
+        flight.goal_x = goal_map.x;
+        flight.goal_y = goal_map.y;
+        flight.goal_z = goal_z;
+        flight.obstacle = crate::position_interface::ObstacleHandle::new(0);
+
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(entity);
+        engine.tick_push_flight_terminal_landings(&sim, &assets);
+
+        let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(
+            victim.position_iface().get_elevation().to_bits(),
+            goal_z.to_bits()
+        );
+        assert_eq!(
+            victim.element_data().obstacle_index(),
+            crate::position_interface::ObstacleHandle::new(0)
+        );
+        assert_eq!(victim.element_data().material().as_u32(), 3);
     }
 
     #[test]

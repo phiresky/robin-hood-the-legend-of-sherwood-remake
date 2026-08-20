@@ -71,8 +71,10 @@ impl EnemyAi {
                     if already_reported {
                         return;
                     }
-                    self.base.outbox.actor.unalert_near_charly_seekers =
-                        Some(CharlySeekerTarget::Npc(charly));
+                    self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                        CharlySeekerTarget::Npc(charly),
+                        self.base.antagonist,
+                    );
 
                     // If pCharly is a rank-Soldier, acquire him and wait.
                     let charly_is_soldier = charly_view
@@ -136,12 +138,17 @@ impl EnemyAi {
                                     AiState::Seeking,
                                     Substate::SeekingSendCharlyToOfficer,
                                 );
-                                self.base.outbox.actor.unalert_near_charly_seekers =
-                                    Some(CharlySeekerTarget::Npc(charly));
+                                self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                                    CharlySeekerTarget::Npc(charly),
+                                    self.base.antagonist,
+                                );
                                 self.base
                                     .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
-                                self.base.friend_in_trouble = charly;
-                                self.base.face_entity(charly, ctx);
+                                self.base
+                                    .outbox
+                                    .reentrant
+                                    .owner_work
+                                    .push(AiOwnerWork::ResumeSendCharlyAfterSpeech { charly });
                                 return;
                             }
                         }
@@ -182,8 +189,10 @@ impl EnemyAi {
                 // SEEKING_DETECTED_CHARLY.
                 self.previous_state = self.base.current_state as i32;
                 self.previous_substate = self.base.current_substate as i32;
-                self.base.outbox.actor.unalert_near_charly_seekers =
-                    Some(CharlySeekerTarget::Npc(charly));
+                self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                    CharlySeekerTarget::Npc(charly),
+                    self.base.antagonist,
+                );
                 self.set_state(AiState::Seeking, Substate::SeekingDetectedCharly);
                 self.base
                     .launch_timer(parameters_ai::AI_CHARLY_LOOK_TIME as u32, ctx.frame);
@@ -260,7 +269,7 @@ impl EnemyAi {
                     (AiState::Seeking, Substate::SeekingCharly)
                 ) || self.seeking_charly;
                 if !already_seeking {
-                    self.search_charly(sim, ctx, tick);
+                    self.search_charly(sim, global, ctx, tick, grid);
                 }
                 return true;
             }
@@ -453,6 +462,80 @@ impl EnemyAi {
                     Substate::AttackingObserve => {
                         // Ignore.
                     }
+                    Substate::AttackingRunningToLadder
+                        if self.base.ai_log.iter().rev().any(|line| {
+                            line.frame == ctx.frame
+                                && line.line_type == LogLineType::BattleDecision
+                                && line.info == Decision::Fight as u16
+                        }) =>
+                    {
+                        // The lift-entry GoNear in ReconsiderEnemyApproach is
+                        // synchronous in Original. The shipped Linux binary
+                        // keeps its failed-route result inside that decision
+                        // and takes the avenger-on-roof recovery before an
+                        // overview changes the view mode. Rust learns the
+                        // route result at the owner boundary, after the
+                        // RunningToLadder state is visible, so resume that
+                        // source-local failure tail only for its same-frame
+                        // DECISION_FIGHT marker. An older ladder movement must
+                        // still use the generic emergency routine.
+                        let target_position = ctx
+                            .entity_view(self.base.primary_target)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "ladder route-failure target {} disappeared",
+                                    self.base.primary_target
+                                )
+                            })
+                            .position;
+                        self.base.couldnt_reachpoint = true;
+                        self.resume_reconsider_enemy_approach_after_go_near(
+                            target_position,
+                            tick.avenger_wait_position_for(self.base.primary_target),
+                            ctx,
+                        );
+                    }
+                    Substate::AttackingApproachToObserve
+                        if self.base.ai_log.iter().rev().any(|line| {
+                            line.frame == ctx.frame
+                                && line.line_type == LogLineType::BattleDecision
+                                && line.info == Decision::Observe as u16
+                        }) =>
+                    {
+                        // A same-frame failure here is the delayed result of
+                        // DECISION_OBSERVE's GoNear. Original constructs the
+                        // route inside that statement and tests
+                        // mbCouldntReachpoint immediately after SetState;
+                        // Rust can only discover a local Move failure after
+                        // the typed tail has entered ApproachToObserve.
+                        // Resume that source-local roof fallback instead of
+                        // letting the staging delay turn it into the generic
+                        // attacking emergency overview.
+                        if let Some(wait_position) =
+                            tick.avenger_wait_position_for(self.base.primary_target)
+                        {
+                            let target_position = ctx
+                                .entity_view(self.base.primary_target)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "observe route-failure target {} disappeared",
+                                        self.base.primary_target
+                                    )
+                                })
+                                .position;
+                            self.go_near(
+                                AiState::Attacking,
+                                Substate::AttackingRunToAvengerOnRoof,
+                                wait_position,
+                                50,
+                                GotoFlags::RUN,
+                                ctx,
+                            );
+                            self.base.seek_position = target_position;
+                        } else {
+                            self.couldnt_reachpoint_emergency_routine(sim, global, ctx, tick);
+                        }
+                    }
                     Substate::FleeingPanic => {
                         // Original routes a failed panic-run movement back
                         // through the shared FLEEING_PANIC state machine.
@@ -539,8 +622,10 @@ impl EnemyAi {
                     if !self.is_merry_man_forest(ctx) || !self.merry_man_forest_cassos(ctx, global)
                     {
                         self.set_state(AiState::Attacking, Substate::AttackingQuittingSwordfight);
-                        self.left_combat_neighbour = 0;
-                        self.right_combat_neighbour = 0;
+                        // EVENT_QUIT_SWORDFIGHT calls both reciprocal Update*
+                        // setters in Original (RHartificialmalignity.cpp:
+                        // 5618-5619).
+                        self.clear_combat_neighbours();
                         self.base.launch_timer(3, ctx.frame);
                     }
                 }
@@ -1413,7 +1498,13 @@ impl EnemyAi {
                                     self.reinitialize_them_list(ctx, tick);
                                     self.enemy_seen_below = enemy_is_below_me(
                                         ctx,
-                                        ctx.entity_view(enemy).map(|v| (v.position, v.elevation)),
+                                        tick.owner_live_position.or(Some(ctx.position)),
+                                        tick.enemy_detectable_live_world_position(enemy).or_else(
+                                            || {
+                                                ctx.entity_view(enemy)
+                                                    .map(|view| view.detection_position_world)
+                                            },
+                                        ),
                                     );
                                     self.battle_decisions(sim, global, ctx, tick, grid);
                                 }
@@ -1750,7 +1841,12 @@ impl EnemyAi {
                         self.base.outbox.actor.enter_swordfight =
                             Some(EnterSwordfightRequest::RaiseSword);
                         self.base.outbox.actor.enter_swordfight_jump_line = None;
-                        self.base.face_entity(attacker, ctx);
+                        // Original calls RHElement::SetDirection here, not
+                        // RHArtificialIntelligence::Face.  The hit animation
+                        // owns the gradual turn, so write only its direction
+                        // goal; launching a standalone Turn is both too late
+                        // and gets postponed behind RECEIVE_HIT_DAMAGE.
+                        self.base.set_direction_toward_entity(attacker, ctx);
                     }
                 } else {
                     // Generic effect-of-hit branch.
@@ -1954,8 +2050,12 @@ impl EnemyAi {
         self.base.frame_when_enemy_detected = ctx.frame;
         // Only meaningful for archers, who use the flag to switch to
         // bow-down posture.
-        self.enemy_seen_below =
-            enemy_is_below_me(ctx, enemy_view.map(|v| (v.position, v.elevation)));
+        self.enemy_seen_below = enemy_is_below_me(
+            ctx,
+            tick.owner_live_position.or(Some(ctx.position)),
+            tick.enemy_detectable_live_world_position(enemy)
+                .or_else(|| enemy_view.map(|view| view.detection_position_world)),
+        );
 
         // Forget old object of desire
         if self.base.object_of_desire != 0 {
@@ -2381,8 +2481,10 @@ impl EnemyAi {
                 if b_hey_this_is_charly {
                     // The body we're seeing is charly — broadcast the
                     // unalert.
-                    self.base.outbox.actor.unalert_near_charly_seekers =
-                        Some(CharlySeekerTarget::Npc(body));
+                    self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                        CharlySeekerTarget::Npc(body),
+                        self.base.antagonist,
+                    );
                 }
                 self.run_to_examine_body(body, ctx, tick, grid);
                 return;
@@ -2441,8 +2543,10 @@ impl EnemyAi {
         // non-mid-seek discoveries too. The body we just saw IS charly,
         // so the sweep target is the body handle.
         if b_hey_this_is_charly {
-            self.base.outbox.actor.unalert_near_charly_seekers =
-                Some(CharlySeekerTarget::Npc(body));
+            self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                CharlySeekerTarget::Npc(body),
+                self.base.antagonist,
+            );
         }
         self.react(
             parameters_ai::AI_MAX_DEADBODY_REACTIONTIME as u16,
@@ -2717,7 +2821,30 @@ impl EnemyAi {
 
         match self.get_rank() {
             ProfileRank::Soldier => {
-                self.alert_officer(sim, self.base.seek_position, 0, ctx, tick);
+                let returns_to_instructed_group =
+                    self.alert_officer_returns_to_instructed_group(tick);
+                let alerted = self.alert_officer(sim, self.base.seek_position, 0, ctx, tick);
+                if alerted && !returns_to_instructed_group {
+                    // Original AlertOfficer constructs the GoNear route and
+                    // consumes mbCouldntReachpoint before returning, even
+                    // though this caller ignores its bool result. Close the
+                    // actor prefix first, then clear only that route failure
+                    // at the typed owner tail.
+                    self.base.outbox.reentrant.owner_work.push(
+                        crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                            &mut self.base.outbox.actor,
+                        )),
+                    );
+                    self.base
+                        .outbox
+                        .reentrant
+                        .tower_guard_alert_officer_completion_pending = true;
+                    self.base
+                        .outbox
+                        .reentrant
+                        .owner_work
+                        .push(crate::ai::AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure);
+                }
                 self.current_task_priority = task_priority::ALERT_IGNORE_ENEMY;
             }
             ProfileRank::Officer => {
@@ -2920,6 +3047,7 @@ mod tests {
             active: true,
             is_unconscious: false,
             action_state: crate::element::ActionState::Waiting,
+            is_moving_map: false,
             passing_door: false,
             obstacle_idx: None,
             in_building: false,
@@ -3021,6 +3149,7 @@ mod tests {
                 level: 0,
             },
         ));
+        assert!(tick.enemy_detectable_live_world_positions.is_empty());
 
         ai.event_view_standard_procedure(
             &sim,
@@ -3032,6 +3161,10 @@ mod tests {
         );
 
         assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert!(
+            !ai.enemy_seen_below,
+            "non-optical dispatch must use the concrete entity-view geometry when no live detectable list was prepared"
+        );
         assert_eq!(
             ai.base.current_substate,
             Substate::AttackingReactiontimeTurning
@@ -3360,6 +3493,91 @@ mod tests {
     }
 
     #[test]
+    fn found_charly_assigns_friend_only_after_speech_returns() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.base.antagonist = 90;
+        ai.set_state(AiState::Seeking, Substate::SeekingGroupCalledByOfficer);
+        ai.base.outbox.reentrant.owner_work.clear();
+
+        let mut charly = object_view(ObjectType::None);
+        charly.kind = EntityKind::Soldier;
+        charly.rank = ProfileRank::Soldier;
+        charly.ai_state = AiState::Seeking;
+        charly.ai_substate = Substate::SeekingGroupCalledByOfficer;
+        let mut views = AiEntityViewMap::new();
+        views.insert(42, charly);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.event_sees_charly_standard_procedure(&sim, 42, &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.base.friend_in_trouble, 0);
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [
+                AiOwnerWork::StateChange(_),
+                AiOwnerWork::Speech(AiSpeechAttempt {
+                    remark: Remark::FoundCharly,
+                    ..
+                }),
+                AiOwnerWork::ResumeSendCharlyAfterSpeech { charly: 42 }
+            ]
+        ));
+    }
+
+    #[test]
+    fn sync_reunion_uses_enroute_partners_last_waypoint() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(89);
+        ai.set_state(AiState::Default, Substate::DefaultLookingSidewardsForCharly);
+        ai.base.synchronize_charly = 96;
+        ai.base.synchronize_index = 3;
+        ai.base.macro_in_progress = true;
+        ai.base.macro_command = vec![MacroOpcode::Wait as u8, 100, 0];
+        ai.base.macro_command_offset = 0;
+        ai.base.number_of_remaining_macro_bytes = 3;
+
+        // RHArtificialMalignity::InitializeFriendCheck checks *last* while an
+        // actor is still SUBSTATE_DEFAULT_ENROUTE.  Being stationary at the
+        // requested current waypoint is not enough: the actor has not yet
+        // crossed the reach-point boundary that updates the observable path
+        // state.
+        let mut partner = object_view(ObjectType::None);
+        partner.kind = EntityKind::Soldier;
+        partner.ai_state = AiState::Default;
+        partner.ai_substate = Substate::DefaultEnroute;
+        partner.macro_in_progress = false;
+        partner.path_current_waypoint_index = 3;
+        partner.path_last_waypoint_index = 2;
+        partner.is_moving_map = false;
+        let mut views = AiEntityViewMap::new();
+        views.insert(96, partner);
+        let ctx = AiContext {
+            frame: 1_072,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.event_sees_charly_standard_procedure(&sim, 96, &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultSynchronizing);
+        assert_eq!(ai.base.macro_command_offset, 0);
+        assert_eq!(ai.base.number_of_remaining_macro_bytes, 3);
+        assert!(!ai.base.macro_timer_is_running);
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [CrossNpcAction::RegisterSynchronizingActor {
+                target: 96,
+                actor: 89,
+            }]
+        ));
+    }
+
+    #[test]
     fn got_hit_uses_live_swordfight_relationship_not_stale_ai_substate() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);
@@ -3431,6 +3649,59 @@ mod tests {
             ai.base.outbox.actor.enter_swordfight,
             Some(EnterSwordfightRequest::Direct(2)),
             "Original calls EnterSwordFight directly from EVENT_GOTHIT"
+        );
+    }
+
+    #[test]
+    fn got_hit_while_menacing_sets_hit_animation_direction_goal_without_turn_order() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Menacing, Substate::MenacingPcInComa);
+
+        let mut attacker = object_view(ObjectType::None);
+        attacker.kind = EntityKind::Soldier;
+        attacker.position = Position {
+            x: 716.74176,
+            y: 252.32974,
+            sector: None,
+            level: 0,
+        };
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, attacker);
+        let ctx = AiContext {
+            position: Position {
+                x: 756.42523,
+                y: 205.49872,
+                sector: None,
+                level: 0,
+            },
+            direction: 15,
+            is_swordfighting: false,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.outbox.actor.set_direction,
+            Some(9),
+            "Original SetDirection faces the hitter while RECEIVE_HIT_DAMAGE remains installed"
+        );
+        assert!(
+            ai.base.outbox.actor.orders.is_empty(),
+            "direct SetDirection must not launch a standalone Turn sequence"
+        );
+        assert_eq!(
+            ai.base.outbox.actor.enter_swordfight,
+            Some(EnterSwordfightRequest::RaiseSword)
         );
     }
 
@@ -4036,6 +4307,132 @@ mod tests {
             ai.base.list_us,
             vec![1, 2],
             "GetBattleOverview must not rebuild the persistent friend list"
+        );
+    }
+
+    #[test]
+    fn same_frame_observe_move_failure_resumes_inline_roof_fallback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(64);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingApproachToObserve;
+        ai.base.primary_target = 183;
+        ai.base.ai_log.push(LogLine {
+            line_type: LogLineType::BattleDecision,
+            info: Decision::Observe as u16,
+            frame: 8_103,
+        });
+
+        let target_position = Position {
+            x: 2_788.0,
+            y: 1_029.0,
+            sector: crate::position_interface::SectorHandle::new(53),
+            level: 2,
+        };
+        let wait_position = Position {
+            x: 2_793.0,
+            y: 571.0,
+            sector: crate::position_interface::SectorHandle::new(53),
+            level: 2,
+        };
+        let mut target = object_view(ObjectType::None);
+        target.kind = EntityKind::Pc;
+        target.is_pc = true;
+        target.position = target_position;
+        let mut views = AiEntityViewMap::new();
+        views.insert(183, target);
+        let ctx = AiContext {
+            frame: 8_103,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.avenger_on_roof_wait_positions
+            .push((183, wait_position));
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunToAvengerOnRoof
+        );
+        assert_eq!(ai.base.seek_position, target_position);
+        assert_eq!(ai.base.last_goto_destination, wait_position);
+        assert!(ai.base.outbox.actor.look_sidewards.is_none());
+    }
+
+    #[test]
+    fn same_frame_fight_lift_failure_resumes_inline_roof_fallback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(64);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToLadder;
+        ai.base.primary_target = 183;
+        ai.base.ai_log.push(LogLine {
+            line_type: LogLineType::BattleDecision,
+            info: Decision::Fight as u16,
+            frame: 8_103,
+        });
+
+        let target_position = Position {
+            x: 2_788.0,
+            y: 1_029.0,
+            sector: crate::position_interface::SectorHandle::new(63),
+            level: 3,
+        };
+        let wait_position = Position {
+            x: 2_793.0,
+            y: 571.0,
+            sector: crate::position_interface::SectorHandle::new(53),
+            level: 2,
+        };
+        let mut target = object_view(ObjectType::None);
+        target.kind = EntityKind::Pc;
+        target.is_pc = true;
+        target.position = target_position;
+        let mut views = AiEntityViewMap::new();
+        views.insert(183, target);
+        let ctx = AiContext {
+            frame: 8_103,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.avenger_on_roof_wait_positions
+            .push((183, wait_position));
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunToAvengerOnRoof
+        );
+        assert_eq!(ai.base.seek_position, target_position);
+        assert_eq!(ai.base.last_goto_destination, wait_position);
+        assert!(!ai.base.couldnt_reachpoint);
+        assert!(ai.base.outbox.actor.look_sidewards.is_none());
+        assert!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .last()
+                .is_some_and(|order| !order.defer_instruction),
+            "the inline roof fallback must remain eligible for this frame's manager Hourglass"
         );
     }
 

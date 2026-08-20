@@ -119,6 +119,11 @@ pub struct AiEntityView {
     pub is_unconscious: bool,
     /// Raw actor action state used by normal visibility sharpness.
     pub action_state: crate::element::ActionState,
+    /// Raw map-motion latch. A later creation-order actor may already be at
+    /// its waypoint while its queued `EVENT_REACHPOINT` has not yet run.
+    /// Cross-NPC synchronization needs to distinguish that arrived boundary
+    /// from an actor still travelling toward the same current waypoint.
+    pub is_moving_map: bool,
     /// True while the actor is executing a door pass. The original only
     /// applies this gate when viewer and target share a building sector.
     pub passing_door: bool,
@@ -888,6 +893,7 @@ pub fn entity_view_from_entity(
         active,
         is_unconscious,
         action_state,
+        is_moving_map: entity.position_iface().is_moving_map(),
         passing_door,
         obstacle_idx,
         in_building,

@@ -1410,7 +1410,31 @@ impl EngineInner {
                 // `engine/melee.rs`).  Also clear the actor's
                 // `active_ability` so a stale Carry slot can't drive a
                 // bogus `CarryDone` after the element is gone.
+                //
+                // `DropCorpse(12, true)` immediately calls the body's
+                // priority-WAIT `Wait()`, so close only the synchronous
+                // launch/Instruct work created by the drop.  It does *not*
+                // call the body's Hourglass: `NewMove` and the first
+                // BeingTied/BeingUnconscious `Execute` remain owned by that
+                // body's next ordinary creation-order slot.  Eagerly running
+                // either here erases the pre-drop old position and makes a
+                // body whose slot already passed start its new sprite one
+                // frame early (RHelementactorpc.cpp:6502-6506;
+                // RHelementactor.cpp:1078-1085).
+                let preexisting_sequence_work = self
+                    .orders
+                    .sequence_manager
+                    .take_pending_synchronous_actions();
                 self.force_drop_carried_corpse_instant(owner);
+                self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "TakeCorpse condolation for {owner:?} failed to instruct dropped body {carried_id:?}: {error:?}"
+                        )
+                    });
+                self.orders
+                    .sequence_manager
+                    .restore_pending_synchronous_actions(preexisting_sequence_work);
                 if let Some(carrier) = self.world.entities.get_mut(owner)
                     && let Some(actor) = carrier.actor_data_mut()
                     && actor.active_ability.kind == Some(crate::movement::AbilityKind::Carry)

@@ -714,9 +714,7 @@ impl EngineInner {
         non_animations.sort_by(|a, b| {
             let da = depths.get(a).copied().unwrap_or(f32::MAX);
             let db = depths.get(b).copied().unwrap_or(f32::MAX);
-            da.partial_cmp(&db)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.index().cmp(&b.index()))
+            compare_display_depth(da, db, *a, *b)
         });
 
         // Sort animations by the minimum Y of their display polyline.
@@ -729,7 +727,7 @@ impl EngineInner {
                 .get(b)
                 .map(|e| y_min_polyline(e.display_polyline()))
                 .unwrap_or(f32::MAX);
-            ya.partial_cmp(&yb).unwrap_or(std::cmp::Ordering::Equal)
+            compare_display_depth(ya, yb, a, b)
         });
 
         // ── Phase 3: Merge animations into non-animations ────────
@@ -905,6 +903,37 @@ fn y_min_polyline(polyline: &[MapPoint]) -> f32 {
     polyline.iter().map(|p| p.y).fold(f32::MAX, f32::min)
 }
 
+/// Totalizes Original's display comparator only for a NaN depth.
+///
+/// `RHElement::operator<` compares the raw display-order floats and uses
+/// creation order only when `==`. A NaN therefore compares neither before nor
+/// after any finite value. That violates the ordering contract of both C++
+/// `std::sort` and Rust slice sorting; Original's unchecked zero-length combat
+/// step-back can nevertheless put precisely such an entity in the
+/// presentation array. Keep every ordinary comparison byte-for-byte
+/// equivalent, and place only the unordered NaN case after ordered depths.
+/// Creation order preserves deterministic input order between NaNs and equal
+/// finite depths.
+///
+/// TODO(parity): if presentation draw order becomes a recorded field, verify
+/// the exact shipped `std::sort` placement for multiple simultaneous NaNs.
+fn compare_display_depth(
+    left: f32,
+    right: f32,
+    left_id: EntityId,
+    right_id: EntityId,
+) -> std::cmp::Ordering {
+    match (left.is_nan(), right.is_nan()) {
+        (false, false) => left
+            .partial_cmp(&right)
+            .expect("non-NaN display depths must be ordered")
+            .then_with(|| left_id.index().cmp(&right_id.index())),
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        (true, true) => left_id.index().cmp(&right_id.index()),
+    }
+}
+
 /// Test whether an element is "behind" an FX animation's display polyline.
 ///
 /// The polyline divides the map into "in front" and "behind" regions.
@@ -1025,6 +1054,31 @@ mod display_order_tests {
         assert_eq!(
             engine.compute_display_order().ids,
             vec![interior_fire, closing_patch]
+        );
+    }
+
+    #[test]
+    fn nan_display_depth_is_totalized_after_finite_entities() {
+        let mut engine = EngineInner::new();
+        let far = engine.add_entity(fx_entity(
+            WorldPoint3D::new(10.0, 200.0, 10.0),
+            Vec::new(),
+            None,
+        ));
+        let unordered = engine.add_entity(fx_entity(
+            WorldPoint3D::new(f32::NAN, f32::NAN, f32::NAN),
+            Vec::new(),
+            None,
+        ));
+        let near = engine.add_entity(fx_entity(
+            WorldPoint3D::new(10.0, 100.0, 10.0),
+            Vec::new(),
+            None,
+        ));
+
+        assert_eq!(
+            engine.compute_display_order().ids,
+            vec![near, far, unordered]
         );
     }
 }

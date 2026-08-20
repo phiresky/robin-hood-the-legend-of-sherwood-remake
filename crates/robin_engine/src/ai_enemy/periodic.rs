@@ -84,7 +84,7 @@ impl EnemyAi {
 
         // RefreshArrowProtection(true) — every-16-frame sweep
         // that drives reactive shield-raising.
-        let _ = self.refresh_arrow_protection(true, ctx, tick, grid);
+        let refreshed_arrow_protection = self.refresh_arrow_protection(true, ctx, tick, grid);
 
         // Gate the rest on `frame_phase & 63`.
         if (frame_phase & 63) != 0 {
@@ -161,6 +161,13 @@ impl EnemyAi {
                 | Substate::FleeingRunForArrowReserves,
         );
 
+        // RefreshArrowProtection is synchronous in Original.  Its phalanx
+        // arm launches GoTo before the switch below reads GetCommand(), so a
+        // soldier that entered RunningToPhalanx in this very call is already
+        // on MOVE_OK and must not be counted as standing around.  Rust drains
+        // the queued actor order only after the AI borrow is released, hence
+        // the caller's command snapshot still says Wait here.
+        let stuck_command_active = stuck_command_active && !refreshed_arrow_protection;
         if in_reachpoint_arm && stuck_command_active {
             // A queued Null sequence element means a
             // transition is in-flight — don't bump the stuck counter.

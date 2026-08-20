@@ -2439,7 +2439,13 @@ impl EngineInner {
                     continue;
                 }
                 let gs = &self.world.fast_grid.level.sectors[grid_idx as usize];
-                if gs.layer == layer && gs.contains_point(pos) {
+                let owning_motion_sector = self.script_domains.zones.scripts[zone_idx]
+                    .owning_motion_sector
+                    .get();
+                if gs.layer == layer
+                    && ed.sector().map(i16::from) == Some(owning_motion_sector)
+                    && gs.contains_point(pos)
+                {
                     entries.push((zone_idx, entity_id, handle));
                 }
             }
@@ -2649,8 +2655,11 @@ impl EngineInner {
                 .get(grid_idx as usize)
                 .unwrap_or_else(|| panic!("script zone {zone_idx} references missing grid sector"));
             let was_inside = self.script_domains.zones.scripts[zone_idx].is_inside(entity_id);
+            let owning_motion_sector = self.script_domains.zones.scripts[zone_idx]
+                .owning_motion_sector
+                .get();
             let is_inside = grid_sector.layer == layer
-                && sector.map(i16::from) == Some(grid_sector.sector_number.get())
+                && sector.map(i16::from) == Some(owning_motion_sector)
                 && grid_sector.contains_point(position);
             if was_inside != is_inside {
                 self.dispatch_script_zone_crossing(sim, assets, zone_idx, entity_id, is_inside);
@@ -3621,6 +3630,61 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::ResumeCivilianReportAfterAlertOfficer { seek_position } => {
+                    // Original resumes the soldier report statement directly
+                    // after AlertOfficer's synchronous GoNear result.
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let tick =
+                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!("civilian-report owner {} disappeared", owner.index())
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let ai_global = &mut self.ai.global;
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!("civilian-report owner {} lost Enemy AI", owner.index())
+                        });
+                    enemy
+                        .base
+                        .outbox
+                        .reentrant
+                        .civilian_report_alert_officer_completion_pending = false;
+                    enemy.resume_civilian_report_after_alert_officer(
+                        sim,
+                        seek_position,
+                        ai_global,
+                        &ctx,
+                        &tick,
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::ResumeFriendlyAlertSoldierAfterGoNear {
                     center,
                     check_door_path,
@@ -3979,8 +4043,61 @@ impl EngineInner {
                         owner,
                         assets,
                         flags,
+                        false,
                         &owner_boundary_positions,
                     );
+                    // Original resumes ReturnToDutyCommonStuff on the same
+                    // call stack after InitializePatrol.  Its GoTo is
+                    // therefore translated (including any building-exit
+                    // route waits) before the owner boundary returns.
+                    self.drain_direct_ai_owner_boundary_mode(
+                        sim,
+                        owner,
+                        assets,
+                        owner_local_no_forecast,
+                        defer_turn_instruction,
+                    );
+                    continue;
+                }
+                crate::ai::AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
+                    flags,
+                    owner_boundary_positions,
+                } => {
+                    self.resume_return_to_duty_after_patrol_init_for_npc(
+                        sim,
+                        owner,
+                        assets,
+                        flags,
+                        true,
+                        &owner_boundary_positions,
+                    );
+                    self.drain_direct_ai_owner_boundary_mode(
+                        sim,
+                        owner,
+                        assets,
+                        owner_local_no_forecast,
+                        defer_turn_instruction,
+                    );
+                    continue;
+                }
+                crate::ai::AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure => {
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!("tower-guard call-me owner {} lost Enemy AI", owner.index())
+                        });
+                    enemy
+                        .base
+                        .outbox
+                        .reentrant
+                        .tower_guard_alert_officer_completion_pending = false;
+                    // RHArtificialMalignity::AlertOfficer clears this latch
+                    // before returning false. Its caller intentionally
+                    // ignores that result and continues with the alert task.
+                    enemy.base.couldnt_reachpoint = false;
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeMacroAfterPatrolInit {
@@ -4396,6 +4513,52 @@ impl EngineInner {
                     enemy.base.outbox.reentrant.owner_work.extend(later_work);
                     continue;
                 }
+                crate::ai::AiOwnerWork::ResumeSendCharlyAfterSpeech { charly } => {
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!(
+                                "send-charly continuation owner {} disappeared",
+                                owner.index()
+                            )
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let enemy = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "send-charly continuation owner {} lost Enemy AI",
+                                owner.index()
+                            )
+                        });
+                    enemy.base.friend_in_trouble = charly;
+                    enemy.base.face_entity(charly, &ctx);
+                    continue;
+                }
             };
 
             // Work produced by a FilterAIEvent callback belongs inside this
@@ -4518,7 +4681,7 @@ impl EngineInner {
                 // ordinary element is instructed until the later global
                 // sequence-manager Hourglass. Preserve that FIFO rather than
                 // making this owner boundary execute either element early.
-                self.drain_direct_ai_owner_boundary_mode(
+                self.drain_direct_ai_owner_prefix_boundary_mode(
                     sim,
                     owner,
                     assets,

@@ -112,6 +112,12 @@ pub struct AiReentrantOutbox {
     /// latch for the typed owner continuation instead of translating it into
     /// an independent `EVENT_COULDNT_REACHPOINT`.
     pub reconsider_approach_completion_pending: bool,
+    /// The approach being settled replaced a live `MoveWaiting` element.
+    /// Original's recursive roof fallback then reaches GoTo's still-true
+    /// `IsComputingPath()` tail and is halted after registration, before it
+    /// can be instructed.
+    #[serde(default)]
+    pub reconsider_approach_replaced_path_waiter: bool,
     /// `DECISION_OBSERVE` has issued its synchronous `GoNear`, but the
     /// following ApproachToObserve state write and avenger-on-roof fallback
     /// have not run yet. Retain a deferred route failure for that exact owner
@@ -136,6 +142,18 @@ pub struct AiReentrantOutbox {
     /// an independent `EVENT_COULDNT_REACHPOINT`.
     #[serde(default)]
     pub dead_body_alert_completion_pending: bool,
+    /// `CALL_TOWER_GUARD_CALLS_ME` ignores `AlertOfficer`'s return value, but
+    /// `AlertOfficer` itself still consumes a synchronous GoNear route
+    /// failure before returning. Rust constructs that route at the owner
+    /// boundary, so retain the latch until the matching no-result tail can
+    /// clear it instead of emitting an independent couldn't-reach event.
+    #[serde(default)]
+    pub tower_guard_alert_officer_completion_pending: bool,
+    /// The soldier-report timer called `AlertOfficer`, whose synchronous
+    /// `GoNear` result decides whether the same statement falls back to
+    /// `SeekArea` around the civilian's report position.
+    #[serde(default)]
+    pub civilian_report_alert_officer_completion_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -270,6 +288,32 @@ pub enum AiOwnerWork {
     /// test has to be taken from this position rather than inline.
     /// Appended to preserve existing serialized discriminants.
     TooProudOverviewFinallyFightRemark,
+    /// Continue `EventSeesCharlyStandardProcedure` after its inline
+    /// `Say(FOUND_CHARLY, MYTALK_1)` has returned. A rejected line invokes
+    /// MYTALK synchronously before the following `mpFriendInTrouble`
+    /// assignment and `Face` call in Original.
+    /// Appended to preserve existing serialized discriminants.
+    ResumeSendCharlyAfterSpeech {
+        charly: NpcHandle,
+    },
+    /// High-recursion counterpart of `ResumeReturnToDutyAfterPatrolInit`.
+    /// Appended separately to preserve the serialized layout of the older
+    /// continuation while retaining Original's inside-Think GoTo boundary.
+    ResumeHighRecursionReturnToDutyAfterPatrolInit {
+        flags: DutyFlags,
+        owner_boundary_positions: Vec<(u32, Position)>,
+    },
+    /// Finish the ignored-result `AlertOfficer` call made by
+    /// `CALL_TOWER_GUARD_CALLS_ME`. Appended to preserve serialized enum
+    /// discriminants; the only observable tail is consuming route failure.
+    ConsumeTowerGuardAlertOfficerRouteFailure,
+    /// Continue the soldier branch of
+    /// `SUBSTATE_SEEKING_GET_ALERTING_REPORT_FROM_CIVILIAN_LOOK` after
+    /// `AlertOfficer`'s synchronous route construction. Appended to preserve
+    /// existing serialized discriminants.
+    ResumeCivilianReportAfterAlertOfficer {
+        seek_position: Position,
+    },
 }
 
 #[derive(
@@ -436,6 +480,12 @@ pub struct AiActorOutbox {
     /// bottle that an NPC is considering picking up).
     pub focus: Option<ElementHandle>,
     pub unalert_near_charly_seekers: Option<CharlySeekerTarget>,
+    /// `mpAntagonist` as observed at the synchronous Original
+    /// `UnalertAllNearCharlySeekers` call boundary.  The sweep is drained
+    /// engine-side, so reading the owner again there is too late: intervening
+    /// re-entrant speech can run `ReturnToDuty` and clear the pointer.
+    #[serde(default)]
+    pub unalert_near_charly_seekers_antagonist: NpcHandle,
     pub refill_bow_ammo: bool,
     pub set_reported_to_officer: Vec<(NpcHandle, bool)>,
     pub unfocus: bool,
@@ -445,6 +495,12 @@ pub struct AiActorOutbox {
     pub set_direction: Option<i16>,
     pub set_direction_instantly: Option<i16>,
     pub set_attentive_mode: Option<AttentiveModeEffect>,
+    /// Opposite attentive targets authored later in the same synchronous AI
+    /// call. Original updates `mbWillBeAttentive` and launches each transition
+    /// immediately, so a `true -> false` pair must not collapse to only the
+    /// final request while Rust waits for the engine-side drain.
+    #[serde(default)]
+    pub additional_set_attentive_modes: Vec<AttentiveModeEffect>,
     pub set_guarded_pc: Option<GuardedPcEffect>,
     pub launch_commands: Vec<crate::element::Command>,
     pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
@@ -463,6 +519,23 @@ pub struct AiActorOutbox {
 }
 
 impl AiActorOutbox {
+    pub(crate) fn queue_unalert_near_charly_seekers(
+        &mut self,
+        target: CharlySeekerTarget,
+        antagonist: NpcHandle,
+    ) {
+        self.unalert_near_charly_seekers = Some(target);
+        self.unalert_near_charly_seekers_antagonist = antagonist;
+    }
+
+    pub(crate) fn take_unalert_near_charly_seekers(
+        &mut self,
+    ) -> Option<(CharlySeekerTarget, NpcHandle)> {
+        let target = self.unalert_near_charly_seekers.take()?;
+        let antagonist = std::mem::take(&mut self.unalert_near_charly_seekers_antagonist);
+        Some((target, antagonist))
+    }
+
     /// Queue an owner-local `SetAttentiveMode` call without replacing an
     /// earlier request for the same target state.
     ///
@@ -472,13 +545,41 @@ impl AiActorOutbox {
     /// officer-fast choice authoritative. Rust drains this outbox after the
     /// AI borrow is released, so preserve that ordering explicitly.
     pub fn queue_set_attentive_mode(&mut self, request: AttentiveModeEffect) {
-        if self
-            .set_attentive_mode
-            .is_some_and(|pending| pending.target == request.target)
-        {
+        let last = self
+            .additional_set_attentive_modes
+            .last()
+            .copied()
+            .or(self.set_attentive_mode);
+        if last.is_some_and(|pending| pending.target == request.target) {
             return;
         }
-        self.set_attentive_mode = Some(request);
+        if self.set_attentive_mode.is_none() {
+            self.set_attentive_mode = Some(request);
+        } else {
+            self.additional_set_attentive_modes.push(request);
+        }
+    }
+
+    pub(crate) fn has_pending_attentive_mode(&self) -> bool {
+        self.set_attentive_mode.is_some() || !self.additional_set_attentive_modes.is_empty()
+    }
+
+    pub(crate) fn last_pending_attentive_mode_mut(&mut self) -> Option<&mut AttentiveModeEffect> {
+        self.additional_set_attentive_modes
+            .last_mut()
+            .or(self.set_attentive_mode.as_mut())
+    }
+
+    pub(crate) fn take_attentive_modes(&mut self) -> Vec<AttentiveModeEffect> {
+        let mut requests = Vec::with_capacity(
+            usize::from(self.set_attentive_mode.is_some())
+                + self.additional_set_attentive_modes.len(),
+        );
+        if let Some(first) = self.set_attentive_mode.take() {
+            requests.push(first);
+        }
+        requests.append(&mut self.additional_set_attentive_modes);
+        requests
     }
 
     /// Queue one synchronous actor `Halt()` without losing multiplicity.
@@ -599,7 +700,7 @@ impl AiActorOutbox {
             || self.forget_nearby_coins.is_some()
             || self.set_direction.is_some()
             || self.set_direction_instantly.is_some()
-            || self.set_attentive_mode.is_some()
+            || self.has_pending_attentive_mode()
             || self.set_guarded_pc.is_some()
             || !self.launch_commands.is_empty()
             || !self.launch_on_target.is_empty()
@@ -702,6 +803,22 @@ mod tests {
             .expect("first attentive-mode request remains queued");
         assert!(!pending.target);
         assert!(pending.fast_officer_variant);
+        assert!(effects.additional_set_attentive_modes.is_empty());
+    }
+
+    #[test]
+    fn opposite_attentive_targets_preserve_synchronous_launch_order() {
+        let mut effects = AiActorOutbox::default();
+
+        effects.queue_set_attentive_mode(AttentiveModeEffect::new(true, false));
+        effects.queue_set_attentive_mode(AttentiveModeEffect::new(false, true));
+
+        let pending = effects.take_attentive_modes();
+        assert_eq!(pending.len(), 2);
+        assert!(pending[0].target);
+        assert!(!pending[1].target);
+        assert!(pending[1].fast_officer_variant);
+        assert!(!effects.has_pending_attentive_mode());
     }
 
     #[test]

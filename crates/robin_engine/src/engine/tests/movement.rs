@@ -2,6 +2,41 @@ use super::*;
 
 use crate::element_kinds::Command;
 
+fn minimal_movement_test_mission() -> crate::engine::MissionScript {
+    use crate::scb::{ClassEntry, Function, SCB_VERSION, ScbFile};
+    use crate::vm::{Opcode, Quad};
+
+    crate::engine::MissionScript::from_scb(ScbFile {
+        version: SCB_VERSION,
+        classes: vec![ClassEntry {
+            source_file: "movement_test.scs".into(),
+            class_name: "StartUp".into(),
+            size_of_member_variables: 0,
+            member_variables: Vec::new(),
+            functions: vec![Function {
+                name: "Initialize".into(),
+                address: 0,
+                num_parameters: 0,
+                size_of_return_value: 0,
+                size_of_parameters: 0,
+                size_of_volatile: 0,
+                size_of_temporary: 0,
+            }],
+            quads: vec![
+                Quad {
+                    operation: Opcode::BeginFunction as u8,
+                    operands: [0; 8],
+                },
+                Quad {
+                    operation: Opcode::Return as u8,
+                    operands: [0; 8],
+                },
+            ],
+        }],
+    })
+    .expect("minimal movement test mission")
+}
+
 fn tick_production_owner_coordinator(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
@@ -1018,6 +1053,41 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
     assert_eq!(sequence.elements[0].command_level, 1);
     assert_eq!(sequence.elements[1].command, Command::Move);
     assert_eq!(sequence.elements[1].command_level, 2);
+}
+
+#[test]
+fn pointer_distinct_same_number_ai_move_rejects_empty_gate_route() {
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(minimal_movement_test_mission());
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let sector = crate::position_interface::SectorHandle::new(18);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.element_data_mut().active = true;
+        entity.element_data_mut().set_sector(sector);
+        entity.element_data_mut().set_layer(0);
+    }
+
+    let mut intent =
+        crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 100.0, 200.0);
+    intent.target_sector = sector;
+    intent.target_layer = Some(0);
+    intent.source_target_sector_identity_differs = true;
+    engine.launch_ai_move(owner, &intent);
+
+    assert!(
+        engine
+            .drain_pending_move_requests_for_owner(&crate::sim_rng::test_context(), owner)
+            .is_empty(),
+        "Original rejects a cross-pointer FindPathGates result with no gates"
+    );
+    assert!(
+        engine
+            .get_entity(owner)
+            .and_then(crate::element::Entity::ai_controller)
+            .unwrap()
+            .couldnt_reachpoint
+    );
 }
 
 #[test]

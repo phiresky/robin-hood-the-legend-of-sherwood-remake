@@ -152,10 +152,10 @@ impl EnemyAi {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
-        _global: &mut AiGlobalState,
+        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
@@ -338,8 +338,7 @@ impl EnemyAi {
                         .saturating_add(self.base.delta_sorrow_level);
                     if self.base.sorrow_level > 1000 {
                         self.base.sorrow_level = 0;
-                        // search_charly(sim, ).
-                        self.search_charly(sim, ctx, tick);
+                        self.search_charly(sim, global, ctx, tick, grid);
                     }
                     self.base
                         .launch_timer(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32, ctx.frame);
@@ -2642,25 +2641,33 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         ctx: &AiContext,
-        tick: &AiPerTickData,
+        _tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             let do_not_investigate = match self.get_rank() {
                 ProfileRank::Officer => {
-                    let me = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(
-                        self.base.me,
-                    ));
-                    let has_patrol = tick
-                        .camp_soldiers
-                        .iter()
-                        .any(|cs| cs.patrol_chief == Some(me));
+                    // Original checks `mlistPatrol`, the officer's current
+                    // patrol, not whether any camp snapshot still names this
+                    // officer as chief. A separated member lives in
+                    // `mlistMissedPatrolMembers` and must not stop the officer
+                    // from investigating a nearby noise himself.
+                    let has_patrol = !self.base.patrol.is_empty();
                     let dx = (ctx.position.x - self.base.seek_position.x).abs();
                     let dy = (ctx.position.y - self.base.seek_position.y).abs();
                     const OFFICER_EXAMINE_NOISE_HIMSELF_DISTANCE: f32 = 100.0;
                     has_patrol || dx.max(dy) > OFFICER_EXAMINE_NOISE_HIMSELF_DISTANCE
                 }
                 // Soldier / knight: defer to ShallIFollowSteps.
-                _ => !self.answer_question(Question::ShallIFollowSteps, ctx),
+                ProfileRank::Soldier | ProfileRank::Knight => {
+                    !self.answer_question(Question::ShallIFollowSteps, ctx)
+                }
+                // Original's switch has no RANK_NONE arm and leaves its local
+                // `bDoNotInvestigateYourself` unchanged.  The shipped Linux
+                // v48 build's stable result is false here (observed for the
+                // same inactive rank-less soldier in Savegame_023 replays 004
+                // and 005), so make that binary behaviour defined instead of
+                // incorrectly folding RANK_NONE into the soldier question.
+                ProfileRank::None => false,
             };
             self.base.set_emoticon(EmoticonType::QuestionMark);
             if do_not_investigate {
@@ -3468,17 +3475,43 @@ impl EnemyAi {
                             ctx,
                             tick,
                         );
-                    } else if !self.alert_officer(sim, seek_pos, 0, ctx, tick) {
-                        self.seek_area(
-                            sim,
-                            seek_pos,
-                            parameters_ai::AI_HINT_SEEK_RADIUS as u16,
-                            SeekFlags::LOCATION_FIRST,
-                            UNDEFINED_DIRECTION,
-                            global,
-                            ctx,
-                            tick,
-                        );
+                    } else {
+                        let returns_to_instructed_group =
+                            self.alert_officer_returns_to_instructed_group(tick);
+                        let alerted = self.alert_officer(sim, seek_pos, 0, ctx, tick);
+                        if alerted && !returns_to_instructed_group {
+                            // Original constructs AlertOfficer's GoNear route
+                            // inline, then its returned bool controls this
+                            // statement's SeekArea fallback. Close the actor
+                            // prefix so the engine can construct that route,
+                            // and resume this exact tail before EndThink can
+                            // translate failure into an independent event.
+                            self.base.outbox.reentrant.owner_work.push(
+                                crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                    &mut self.base.outbox.actor,
+                                )),
+                            );
+                            self.base
+                                .outbox
+                                .reentrant
+                                .civilian_report_alert_officer_completion_pending = true;
+                            self.base.outbox.reentrant.owner_work.push(
+                                crate::ai::AiOwnerWork::ResumeCivilianReportAfterAlertOfficer {
+                                    seek_position: seek_pos,
+                                },
+                            );
+                        } else if !alerted {
+                            self.seek_area(
+                                sim,
+                                seek_pos,
+                                parameters_ai::AI_HINT_SEEK_RADIUS as u16,
+                                SeekFlags::LOCATION_FIRST,
+                                UNDEFINED_DIRECTION,
+                                global,
+                                ctx,
+                                tick,
+                            );
+                        }
                     }
                 }
                 ProfileRank::Knight => {
@@ -3497,6 +3530,34 @@ impl EnemyAi {
             }
         }
         false
+    }
+
+    /// Resume the statement after the soldier-report branch's synchronous
+    /// `AlertOfficer` call. A failed route is consumed by `AlertOfficer` and
+    /// makes the caller seek around the retained civilian report position.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resume_civilian_report_after_alert_officer(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        seek_position: Position,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        if !self.base.couldnt_reachpoint {
+            return;
+        }
+        self.base.couldnt_reachpoint = false;
+        self.seek_area(
+            sim,
+            seek_position,
+            parameters_ai::AI_HINT_SEEK_RADIUS as u16,
+            SeekFlags::LOCATION_FIRST,
+            UNDEFINED_DIRECTION,
+            global,
+            ctx,
+            tick,
+        );
     }
 
     // ============ OFFICER-SOLDIER COORDINATION ============
@@ -5274,74 +5335,7 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            // Inlined `missed_charly_alert()`: a ~40-line
-            // sequence of recon-report updates, rank branch
-            // (AlertOfficer/AlertSoldiers), and a SeekArea
-            // fallback.  The "set_reported_to_officer(false)"
-            // on `checkpoint_charly` writes to another NPC's
-            // field; queued via
-            // `pending_set_reported_to_officer` and drained
-            // by the engine after the think pass.
-            self.base.say(Remark::DidntFindCharly);
-            let my_pos = ctx.position;
-            self.base.seek_position = my_pos;
-            self.base
-                .my_reconnaissance_report
-                .update(ReportType::MissedCharly, my_pos);
-            self.base.my_reconnaissance_report.charly = self.base.checkpoint_charly;
-            self.base.frame_when_enemy_detected = ctx.frame;
-            // charly.set_reported_to_officer(false).
-            // Queued via `pending_set_reported_to_officer`;
-            // the engine drains these pairs after the think
-            // pass.
-            if self.base.checkpoint_charly != 0 {
-                self.base
-                    .outbox
-                    .actor
-                    .set_reported_to_officer
-                    .push((self.base.checkpoint_charly as NpcHandle, false));
-            }
-            let alert_handled = match self.get_rank() {
-                ProfileRank::Soldier => {
-                    self.alert_officer(sim, my_pos, SeekFlags::CHARLY_SEEK.bits(), ctx, tick)
-                }
-                ProfileRank::Officer => self.alert_soldiers(
-                    my_pos,
-                    SeekFlags::CHARLY_SEEK.bits(),
-                    global,
-                    grid,
-                    ctx,
-                    tick,
-                    AlertSoldiersFailureContinuation::SeekMissedCharly { center: my_pos },
-                ),
-                ProfileRank::Knight | ProfileRank::None => false,
-            };
-            if !alert_handled {
-                // Seek yourself fallback.  Uses the FIX radius
-                // if the checkpoint charly has no patrol path,
-                // else PATROL radius.
-                let charly_has_path = ctx
-                    .expect_entity_view(
-                        self.base.checkpoint_charly,
-                        "missed-charly checkpoint charly",
-                    )
-                    .has_patrol_path;
-                let radius = if charly_has_path {
-                    parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
-                } else {
-                    parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
-                };
-                self.seek_area(
-                    sim,
-                    my_pos,
-                    radius,
-                    SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
-                    UNDEFINED_DIRECTION,
-                    global,
-                    ctx,
-                    tick,
-                );
-            }
+            self.missed_charly_alert(sim, global, ctx, tick, grid);
         }
         false
     }
@@ -5466,7 +5460,10 @@ impl EnemyAi {
             // `pending_unalert_near_charly_seekers` — the
             // engine walks all soldiers and dispatches
             // CallCharlyIsBack to ones detecting me 180°.
-            self.base.outbox.actor.unalert_near_charly_seekers = Some(CharlySeekerTarget::SelfNpc);
+            self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                CharlySeekerTarget::SelfNpc,
+                self.base.antagonist,
+            );
             self.base.launch_timer(10, ctx.frame);
         }
         false
@@ -5498,8 +5495,10 @@ impl EnemyAi {
                     );
                 } else {
                     // unalert_all_near_charly_seekers(me).
-                    self.base.outbox.actor.unalert_near_charly_seekers =
-                        Some(CharlySeekerTarget::SelfNpc);
+                    self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                        CharlySeekerTarget::SelfNpc,
+                        self.base.antagonist,
+                    );
                     self.base.launch_timer(10, ctx.frame);
                 }
             }
@@ -5531,8 +5530,10 @@ impl EnemyAi {
                     == Substate::SeekingOfficerWaitForCharly;
                 if waits_for_charly {
                     // unalert_all_near_charly_seekers(me).
-                    self.base.outbox.actor.unalert_near_charly_seekers =
-                        Some(CharlySeekerTarget::SelfNpc);
+                    self.base.outbox.actor.queue_unalert_near_charly_seekers(
+                        CharlySeekerTarget::SelfNpc,
+                        self.base.antagonist,
+                    );
                     self.base.launch_timer(20, ctx.frame);
                 } else {
                     self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
@@ -7373,7 +7374,11 @@ impl EnemyAi {
                     self.set_state(AiState::Attacking, Substate::AttackingPhalanx);
                     let (target_pos, target_elevation) = self
                         .find_fighter(target, tick)
-                        .map(|f| (f.position, f.elevation as f32))
+                        // RHFIELD_SHIELD_DANGER_POINT stores the target
+                        // element's raw GetPosition().  The AI-facing
+                        // Position() may instead project an actor traversing
+                        // a door onto its gate endpoint.
+                        .map(|f| (f.raw_position, f.elevation as f32))
                         .unwrap_or((ctx.position, ctx.elevation));
                     self.base.raise_shield(target_pos, target_elevation);
                     // Original follows the RaiseShield launch with
@@ -7431,7 +7436,7 @@ impl EnemyAi {
                     // Reestablish shield state
                     let (target_pos, target_elevation) = self
                         .find_fighter(self.base.primary_target, tick)
-                        .map(|f| (f.position, f.elevation as f32))
+                        .map(|f| (f.raw_position, f.elevation as f32))
                         .unwrap_or((ctx.position, ctx.elevation));
                     self.base.raise_shield(target_pos, target_elevation);
                     self.base.launch_timer(20, ctx.frame);
@@ -8655,6 +8660,44 @@ mod tests {
     }
 
     #[test]
+    fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(243);
+        ai.base.couldnt_reachpoint = true;
+        let report_position = Position {
+            x: 1440.3243,
+            y: 1604.3259,
+            level: 0,
+            sector: crate::position_interface::SectorHandle::new(18),
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            frame: 44_683,
+            position: Position {
+                x: 1645.9982,
+                y: 1818.9901,
+                level: 0,
+                sector: crate::position_interface::SectorHandle::new(18),
+                ..Position::default()
+            },
+            ..AiContext::default()
+        };
+
+        ai.resume_civilian_report_after_alert_officer(
+            &sim,
+            report_position,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert!(!ai.base.couldnt_reachpoint);
+        assert_eq!(ai.seek_center, report_position);
+        assert_ne!(ai.seek_center, ctx.position);
+        assert!(ai.seek_flags.contains(SeekFlags::LOCATION_FIRST));
+    }
+
+    #[test]
     fn send_charly_speech_completion_faces_live_friend_before_waiting() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(93);
@@ -9344,6 +9387,72 @@ mod tests {
                 y: 2475.868_2,
                 z: 0.0,
             })
+        ));
+    }
+
+    #[test]
+    fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
+        // Schema-14 seed 1000000, SuN1Sh1nE Savegame_024 replay-004
+        // frame 1254. Soldier 46 is crossing a door: its AI Position() is
+        // gate point (1158, 1627), while RHElement::GetPosition() still uses
+        // the live actor point. Those points face different sectors from
+        // Soldier 95, so the shield command must retain the raw one.
+        use crate::sequence::{Field, FieldValue};
+
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(95);
+        ai.base.owner_entity_id = Some(crate::element::EntityId::Soldier(
+            crate::element::SoldierId(95),
+        ));
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingPhalanx;
+        ai.base.primary_target = 46;
+
+        let raw_target = Position {
+            x: 1_137.708_7,
+            y: 1_652.301,
+            ..Position::default()
+        };
+        let target_elevation = 150.001_f32;
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 95,
+                action_state: crate::element::ActionState::Waiting,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 46,
+                position: Position {
+                    x: 1_158.0,
+                    y: 1_627.0,
+                    ..Position::default()
+                },
+                raw_position: raw_target,
+                elevation: target_elevation,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+
+        ai.attacking_phalanx(
+            &sim,
+            StimulusType::EventTimer,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &tick,
+            None,
+        );
+
+        let element = ai.base.outbox.actor.launch_sequences[0]
+            .elements
+            .first()
+            .expect("RaiseShield sequence contains its command");
+        assert!(matches!(
+            element.get_property(Field::ShieldDangerPoint),
+            Some(FieldValue::Point3D { x, y, z })
+                if *x == raw_target.x
+                    && *y == raw_target.y + target_elevation
+                    && *z == target_elevation
         ));
     }
 
@@ -10843,6 +10952,103 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn rankless_heardsteps_pre_reaction_uses_linux_v48_investigate_result() {
+        let mut ai = EnemyAi::new(125);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
+        ai.soldier_profile_rank = ProfileRank::None;
+        ai.base.seek_position = Position {
+            x: 100.0,
+            y: 50.0,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            frame: 54_726,
+            self_is_active: false,
+            in_building: false,
+            ..AiContext::default()
+        };
+
+        ai.seeking_heardsteps_pre_reactiontime(
+            StimulusType::EventTimer,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingHeardstepsReactiontime
+        );
+        assert!(ai.base.timer_is_running);
+        assert_eq!(
+            ai.base.when_does_timer_ring,
+            ctx.frame + parameters_ai::AI_FIRST_LOOK_TIME as u32
+        );
+    }
+
+    #[test]
+    fn inactive_ranked_soldier_still_declines_to_follow_steps() {
+        let mut ai = EnemyAi::new(126);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.soldier_profile_duty = false;
+        let ctx = AiContext {
+            frame: 100,
+            self_is_active: false,
+            in_building: false,
+            ..AiContext::default()
+        };
+
+        ai.seeking_heardsteps_pre_reactiontime(
+            StimulusType::EventTimer,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingJustWatching);
+    }
+
+    #[test]
+    fn officer_ignores_missed_patrol_member_when_deciding_to_follow_nearby_steps() {
+        let mut ai = EnemyAi::new(125);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingHeardstepsPreReactiontime;
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        let missed_member = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(131));
+        ai.base.theoretical_patrol.push(missed_member);
+        ai.base.missed_patrol_members.push(missed_member);
+        ai.base.seek_position = Position {
+            x: 1569.0,
+            y: 705.0,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            frame: 54_703,
+            position: Position {
+                x: 1642.0,
+                y: 636.0,
+                ..Position::default()
+            },
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        let mut stale_member = alert_candidate(131, Position::default());
+        stale_member.patrol_chief = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(125),
+        ));
+        tick.camp_soldiers.push(stale_member);
+
+        ai.seeking_heardsteps_pre_reactiontime(StimulusType::EventTimer, &ctx, &tick);
+
+        assert!(ai.base.patrol.is_empty());
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingHeardstepsReactiontime
+        );
     }
 
     #[test]

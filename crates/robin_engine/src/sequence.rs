@@ -1410,6 +1410,10 @@ impl SequenceElement {
             }
             // Relabel this order to the transition.
             self.orders[i].order_type = animation_transition;
+            // Original RHSequenceElementMovement::InsertTransitionEnd relabels
+            // pOrder1 in place and deliberately leaves its existing
+            // fTolerance untouched (the assignment is commented out).  Only
+            // a newly inserted pOrder2 starts with RHOrder's zero tolerance.
             let point_x = self.orders[i].target_x;
             let point_y = self.orders[i].target_y;
 
@@ -1944,7 +1948,11 @@ pub struct StateChangeEffects {
     /// Whether `Sequence::element_ready()` should be called.
     pub signal_ready: bool,
     /// Whether to start a postponed element.
-    pub start_postponed: Option<usize>,
+    /// `(blocker_index, postponed_index)` released by Original's
+    /// `StartPostponedSequenceElement`.  Retaining the blocker lets the
+    /// manager clear its pointer at the exact restart boundary, after the
+    /// registration call (and, for Terminated, after Condolation + Ready).
+    pub start_postponed: Option<(usize, usize)>,
     /// Cross-sequence postponed successor to resume.  Set when an
     /// element with a non-empty `cross_postponed` link terminates or is
     /// interrupted — the sequence manager takes this (seq_id, elem_idx)
@@ -2035,7 +2043,7 @@ impl Sequence {
             SequenceState::Impossible => {
                 // Start postponed element if any
                 if let Some(postponed_idx) = self.elements[elem_idx].postponed_element_index {
-                    effects.start_postponed = Some(postponed_idx);
+                    effects.start_postponed = Some((elem_idx, postponed_idx));
                 }
                 // Release cross-sequence postponed successor, if any.
                 if let Some(cross) = self.elements[elem_idx].cross_postponed.take() {
@@ -2134,7 +2142,7 @@ impl Sequence {
                         // Start postponed if any
                         if let Some(postponed_idx) = self.elements[elem_idx].postponed_element_index
                         {
-                            effects.start_postponed = Some(postponed_idx);
+                            effects.start_postponed = Some((elem_idx, postponed_idx));
                         }
                         // Release cross-sequence postponed successor, if any.
                         if let Some(cross) = self.elements[elem_idx].cross_postponed.take() {
@@ -4231,6 +4239,29 @@ impl SequenceManager {
         self.process_effects(seq_id, effects, "element_impossible");
     }
 
+    /// Apply the `RHMOTION_ABORTED` result returned by an actor's own
+    /// `Execute` call.
+    ///
+    /// This is distinct from an external attempt to invalidate an active
+    /// element. `RHElementActor::Hourglass` asserts in debug builds that its
+    /// retained element is not non-interruptable, but release builds still
+    /// call `SetState(RHSEQ_IMPOSSIBLE)` after an intrinsic Execute abort.
+    /// Preserve that release behavior for malformed/sentinel orders authored
+    /// by Original itself.
+    pub fn element_impossible_from_execute(&mut self, seq_id: SequenceId, elem_idx: usize) {
+        let Some(seq) = self.sequences.get_mut(&seq_id) else {
+            return;
+        };
+
+        let effects = seq.set_element_state(
+            elem_idx,
+            SequenceState::Impossible,
+            CascadeFlags::NEXT_LEVEL,
+        );
+
+        self.process_effects(seq_id, effects, "element_impossible_from_execute");
+    }
+
     /// Set the priority of a specific sequence element.
     ///
     /// Used by the falling-pushed / rolling / ladder-wall / landing
@@ -4718,11 +4749,29 @@ impl SequenceManager {
     fn resume_postponed_effects(
         &mut self,
         seq_id: SequenceId,
-        start_postponed: Option<usize>,
+        start_postponed: Option<(usize, usize)>,
         resume_cross_postponed: Option<(SequenceId, usize)>,
     ) {
-        if let Some(postponed_idx) = start_postponed {
+        if let Some((blocker_idx, postponed_idx)) = start_postponed {
             self.register_element_to_go(seq_id, postponed_idx);
+            let blocker = self
+                .sequences
+                .get_mut(&seq_id)
+                .and_then(|sequence| sequence.elements.get_mut(blocker_idx))
+                .unwrap_or_else(|| {
+                    panic!("released postponed blocker {seq_id:?}/{blocker_idx} disappeared")
+                });
+            assert_eq!(
+                blocker.postponed_element_index,
+                Some(postponed_idx),
+                "released postponed blocker {seq_id:?}/{blocker_idx} no longer points to {postponed_idx}"
+            );
+            // Original `StartPostponedSequenceElement` clears
+            // `mpsqePostponedSequenceElement` immediately after registering
+            // the released element.  Leaving this edge live lets a later
+            // same-frame Stop recurse through the stale blocker and interrupt
+            // work that is already back on the manager FIFO.
+            blocker.postponed_element_index = None;
         }
 
         // Release the cross-sequence postponed successor. The manager's later
@@ -6525,6 +6574,43 @@ mod tests {
     }
 
     #[test]
+    fn released_same_sequence_postponed_action_clears_blocker_edge() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Soldier(crate::entity_id::SoldierId(0));
+
+        let mut sequence = Sequence::new();
+        sequence.append_element(make_simple_element(1, Command::Wait, Some(owner)));
+        sequence.append_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
+        let sequence_id = mgr.launch_sequence(sequence);
+        let _ = mgr.hourglass();
+
+        mgr.element_in_progress(sequence_id, 0);
+        mgr.postpone_element(sequence_id, 1);
+        mgr.get_element_mut(sequence_id, 0)
+            .unwrap()
+            .postponed_element_index = Some(1);
+
+        mgr.element_terminated(sequence_id, 0);
+        finish_test_condolations(&mut mgr);
+
+        assert_eq!(
+            mgr.get_element(sequence_id, 0)
+                .unwrap()
+                .postponed_element_index,
+            None,
+            "StartPostponedSequenceElement must detach the released edge"
+        );
+        assert!(matches!(
+            mgr.hourglass().as_slice(),
+            [SequenceAction::InstructOwner {
+                owner: action_owner,
+                sequence_id: action_sequence,
+                element_index: 1,
+            }] if *action_owner == owner && *action_sequence == sequence_id
+        ));
+    }
+
+    #[test]
     fn finishing_condolation_stops_at_nested_card_before_cascade_continues() {
         let mut mgr = SequenceManager::new();
         let owner = Some(EntityId::Pc(crate::entity_id::PcId(0)));
@@ -8122,7 +8208,12 @@ mod tests {
             OrderType::WalkingUpright,
         );
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 0.0, 0.0));
-        elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
+        let mut final_order = Order::test_new(OrderType::WalkingUpright, 100.0, 0.0);
+        final_order.tolerance = 40.0;
+        elem.push_order(final_order);
+        if let SequenceElementData::Movement { tolerance, .. } = &mut elem.data {
+            *tolerance = 40.0;
+        }
 
         let mut next_order_id = 1u32;
         elem.insert_transition_end(
@@ -8135,15 +8226,21 @@ mod tests {
         );
 
         // The last WalkingUpright order is relabelled to the transition,
-        // and a new WalkingUpright order is inserted in front of it,
-        // ~10 units back from (100,0) toward (0,0).
+        // and a new WalkingUpright order is inserted in front of it. The
+        // 40-unit tolerance is added to the 10-unit transition distance, so
+        // the inserted walking goal is 50 units back from the endpoint.
         assert_eq!(elem.orders.len(), 3);
         assert_eq!(elem.orders[0].order_type, OrderType::WalkingUpright);
         assert_eq!(elem.orders[1].order_type, OrderType::WalkingUpright);
-        assert!((elem.orders[1].target_x - 90.0).abs() < 0.5);
+        assert!((elem.orders[1].target_x - 50.0).abs() < 0.5);
         assert_eq!(
             elem.orders[2].order_type,
             OrderType::TransitionWalkingUprightWaitingUpright
+        );
+        assert_eq!(elem.orders[1].tolerance, 0.0);
+        assert_eq!(
+            elem.orders[2].tolerance, 40.0,
+            "relabeling the final order preserves its existing arrival tolerance"
         );
     }
 
@@ -8399,6 +8496,13 @@ mod tests {
             mgr.get_element(active_seq, 0).unwrap().state,
             SequenceState::InProgress,
             "an executing non-interruptable owner remains protected"
+        );
+
+        mgr.element_impossible_from_execute(active_seq, 0);
+        assert_eq!(
+            mgr.get_element(active_seq, 0).unwrap().state,
+            SequenceState::Impossible,
+            "the owner's intrinsic Execute abort follows Original release behavior"
         );
     }
 

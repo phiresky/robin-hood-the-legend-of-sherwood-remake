@@ -843,7 +843,9 @@ enum TraceCommand {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode,
+)]
 #[serde(rename_all = "snake_case")]
 enum TraceAction {
     NoAction,
@@ -877,6 +879,49 @@ enum TraceAction {
     Lockpick,
     Execute,
     Test,
+}
+
+/// Split refresh-owned orientation records from commands that entered through
+/// the input phase of this simulation boundary.
+///
+/// `RHGame` processes input before `PerformHourglass`, whereas
+/// `RHEngine::PerformOrientation` is called from `PerformRefreshAllElements`
+/// (`RHgame.cpp:1559-1643, RHengine.cpp:7489-7515`). Ordinarily a refresh
+/// orientation left over from the preceding host pass is already at the front
+/// of the next frame's command queue. When an orientation follows this
+/// boundary's matching `MSG_SELECT_ACTION`, it came from a refresh reached
+/// later in the same host pass and therefore must not affect the actor's
+/// earlier Execute/PerformAction call.
+fn split_late_refresh_orientations(
+    commands: Vec<TraceCommand>,
+) -> (Vec<TraceCommand>, Vec<TraceCommand>) {
+    let mut actions_selected_this_boundary = BTreeMap::new();
+    let mut before_hourglass = Vec::with_capacity(commands.len());
+    let mut after_hourglass = Vec::new();
+
+    for command in commands {
+        match &command {
+            TraceCommand::SelectAction { pc, action } => {
+                actions_selected_this_boundary.insert(*pc, *action);
+            }
+            TraceCommand::CancelAction { pc: Some(pc) } => {
+                actions_selected_this_boundary.remove(pc);
+            }
+            TraceCommand::CancelAction { pc: None } => {
+                actions_selected_this_boundary.clear();
+            }
+            TraceCommand::OrientActionAt { actor, action, .. }
+                if actions_selected_this_boundary.get(actor) == Some(action) =>
+            {
+                after_hourglass.push(command);
+                continue;
+            }
+            _ => {}
+        }
+        before_hourglass.push(command);
+    }
+
+    (before_hourglass, after_hourglass)
 }
 
 impl From<TraceAction> for Action {
@@ -1389,7 +1434,11 @@ struct TraceSequenceElement {
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceSequenceMovement {
-    action: u32,
+    /// Absent in current schema-16 traces when the movement-element
+    /// constructor does not initialize `maction` (for example WAIT_FREE_LIFT).
+    /// Older schema-15/16 traces may contain the field.
+    #[serde(default)]
+    action: Option<u32>,
     #[serde(default)]
     pass_door: Option<TracePassDoor>,
 }
@@ -1439,6 +1488,28 @@ struct TraceHuman {
     civilian: bool,
     #[serde(default)]
     opponents: Option<Vec<TraceEntityId>>,
+    #[serde(default)]
+    opponent_jump_lines: Option<Vec<Option<TraceJumpLine>>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceJumpLine {
+    a: TracePoint,
+    b: TracePoint,
+}
+
+fn trace_jump_line_bits(line: &TraceJumpLine) -> [u32; 4] {
+    [line.a.x.bits, line.a.y.bits, line.b.x.bits, line.b.y.bits]
+}
+
+fn runtime_jump_line_bits(line: &robin_engine::jump_line::JumpLine) -> [u32; 4] {
+    [
+        line.point_a.x.to_bits(),
+        line.point_a.y.to_bits(),
+        line.point_b.x.to_bits(),
+        line.point_b.y.to_bits(),
+    ]
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1498,6 +1569,19 @@ struct TraceAi {
     list_us: Option<Vec<TraceEntityId>>,
     #[serde(default)]
     list_them: Option<Vec<TraceEntityId>>,
+    /// Outer `None` is a legacy schema-16 snapshot without this field; inner
+    /// `None` is the authoritative null `mpMyLineJump` for a soldier.
+    #[serde(default, deserialize_with = "deserialize_present_nullable_jump_line")]
+    my_line_jump: Option<Option<TraceJumpLine>>,
+}
+
+fn deserialize_present_nullable_jump_line<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<TraceJumpLine>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<TraceJumpLine>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1666,6 +1750,337 @@ struct TraceRouteGate {
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 #[serde(deny_unknown_fields)]
+struct TracePointBox {
+    top_left: TracePoint,
+    bottom_right: TracePoint,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TracePopupEvent {
+    #[serde(default)]
+    ordinal: Option<u64>,
+    stage: String,
+    #[serde(default)]
+    universal_frame_counter: Option<u64>,
+    #[serde(default)]
+    last_popup_frame: Option<u64>,
+    #[serde(default)]
+    last_popup_frame_initialized: Option<bool>,
+    #[serde(default)]
+    same_frame_suppressed: Option<bool>,
+    #[serde(default)]
+    colorize_background: Option<bool>,
+    #[serde(default)]
+    modal: Option<bool>,
+    #[serde(default)]
+    centered: Option<bool>,
+    #[serde(default)]
+    popup_text_id: Option<u64>,
+    #[serde(default)]
+    source_surface: Option<u64>,
+    #[serde(default)]
+    remove_mouse: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceForecastGate {
+    gate_id: u32,
+    kind: String,
+    active: bool,
+    point_out: TracePoint,
+    sector_out: u16,
+    level_out: u16,
+    point_in: TracePoint,
+    sector_in: u16,
+    level_in: u16,
+    penalty: TraceFloat,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceAiForecastInput {
+    position: TracePoint,
+    sector: u16,
+    level: u16,
+    #[serde(default)]
+    direction: Option<u16>,
+    passing_door: bool,
+    #[serde(default)]
+    passing_door_directly: Option<bool>,
+    #[serde(default)]
+    door: Option<TraceForecastGate>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceAiForecastResolved {
+    position: TracePoint,
+    sector: u16,
+    level: u16,
+    #[serde(default)]
+    direction: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceAiForecastEvent {
+    ordinal: u64,
+    #[serde(default)]
+    phase: Option<String>,
+    target: TraceEntityId,
+    input: TraceAiForecastInput,
+    moving_upwards: bool,
+    resolution: String,
+    resolved: TraceAiForecastResolved,
+    #[serde(default)]
+    selected_building_exit: Option<TraceForecastGate>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceAlertEligibility {
+    rank: bool,
+    able_to_help: Option<bool>,
+    #[serde(alias = "stay_on_post")]
+    allowed_to_leave_post: Option<bool>,
+    can_call: Option<bool>,
+    max_radius: Option<bool>,
+    squared_radius: Option<bool>,
+    capacity: Option<bool>,
+    think: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceAlertFormationEvent {
+    #[serde(default)]
+    ordinal: Option<u64>,
+    stage: String,
+    invocation: u64,
+    #[serde(default)]
+    officer: Option<TraceEntityId>,
+    #[serde(default)]
+    officer_position: Option<TracePoint>,
+    #[serde(default)]
+    soldier_scan_count: Option<u16>,
+    #[serde(default)]
+    officer_in_building: Option<bool>,
+    #[serde(default)]
+    scan_index: Option<u16>,
+    #[serde(default)]
+    candidate: Option<TraceEntityId>,
+    #[serde(default)]
+    active: Option<bool>,
+    #[serde(default)]
+    script_locked: Option<bool>,
+    #[serde(default)]
+    eligibility: Option<TraceAlertEligibility>,
+    #[serde(default)]
+    rejection_stage: Option<String>,
+    #[serde(default)]
+    insertion_index: Option<u16>,
+    #[serde(default)]
+    squared_distance: Option<TraceFloat>,
+    #[serde(default)]
+    normalized_contribution: Option<TracePoint>,
+    #[serde(default)]
+    running_average: Option<TracePoint>,
+    #[serde(default)]
+    selected_index: Option<u16>,
+    #[serde(default)]
+    outside_step: Option<u16>,
+    #[serde(default)]
+    direction: Option<u16>,
+    #[serde(default)]
+    soldier_count: Option<u16>,
+    #[serde(default)]
+    slot_index: Option<u16>,
+    #[serde(default)]
+    layer: Option<u16>,
+    #[serde(default)]
+    sector: Option<u16>,
+    #[serde(default)]
+    destination: Option<TracePoint>,
+    #[serde(default)]
+    destination_box: Option<TracePointBox>,
+    #[serde(default)]
+    position_authorized: Option<bool>,
+    #[serde(default)]
+    thick_corridor_authorized: Option<bool>,
+    #[serde(default)]
+    blocker_ids_available: Option<bool>,
+    #[serde(default)]
+    blocking_motion_line_ids: Option<Vec<u32>>,
+    #[serde(default)]
+    blocking_mobile_line_ids: Option<Vec<u32>>,
+    #[serde(default)]
+    accepted: Option<bool>,
+    #[serde(default)]
+    result: Option<String>,
+    #[serde(default)]
+    average_direction: Option<u16>,
+    #[serde(default)]
+    selected_direction: Option<u16>,
+    #[serde(default)]
+    final_sector: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceGoToSource {
+    point: TracePoint,
+    layer: u16,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceGoToDestination {
+    point: TracePoint,
+    sector: Option<u16>,
+    layer: u16,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceGoToAuthorizationEvent {
+    ordinal: u64,
+    actor: Option<TraceEntityId>,
+    #[serde(default)]
+    source: Option<TraceGoToSource>,
+    #[serde(default)]
+    move_box: Option<TracePointBox>,
+    destination: TraceGoToDestination,
+    requested_flags: u16,
+    effective_flags: u16,
+    phase: String,
+    outcome: String,
+    straight_authorized: Option<bool>,
+    path_authorized: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum TraceTargetLifecyclePayload {
+    ActivateSword,
+    PlayAnimFreeze {
+        animation_id: Option<u32>,
+    },
+    SendMessage {
+        message: Option<u32>,
+        argument: Option<i32>,
+        argument_raw: Option<u32>,
+        extended_argument: Option<i32>,
+        extended_argument_raw: Option<u32>,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceTargetLifecycleEvent {
+    ordinal: u64,
+    #[serde(default)]
+    frame_ordinal: Option<u64>,
+    phase: String,
+    sequence_id: Option<u32>,
+    sequence_element_id: u32,
+    command_level: u16,
+    state: u32,
+    command: u16,
+    command_name: String,
+    owner: Option<TraceEntityId>,
+    context: Option<TraceEntityId>,
+    antagonist: Option<TraceEntityId>,
+    #[serde(default)]
+    antagonist_observed: Option<bool>,
+    payload: TraceTargetLifecyclePayload,
+    #[serde(default)]
+    payload_observed: Option<bool>,
+    script_enabled: Option<bool>,
+    class_instantiated: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceStrikeProposalEvent {
+    invocation: u32,
+    ordinal: u64,
+    frame_ordinal: u64,
+    phase: String,
+    actor: Option<TraceEntityId>,
+    actor_creation_order: u32,
+    threat: Option<TraceEntityId>,
+    threat_creation_order: Option<u32>,
+    principal_opponent: Option<TraceEntityId>,
+    principal_opponent_creation_order: Option<u32>,
+    command: Option<u16>,
+    command_name: Option<String>,
+    also_parade: Option<bool>,
+    only_parade: Option<bool>,
+    fighting_ability: Option<u16>,
+    blood_alcohol: Option<u16>,
+    special_gate_fighting_ability: Option<u16>,
+    parade_gate_fighting_ability: Option<u16>,
+    first_random_raw: Option<u32>,
+    first_random_modulo: Option<u32>,
+    second_random_raw: Option<u32>,
+    second_random_modulo: Option<u32>,
+    reason: Option<String>,
+    opponent_animation: Option<u32>,
+    opponent_strike: Option<i32>,
+    candidate_strike: Option<i32>,
+    time_limit: Option<i32>,
+    minimum_skill: Option<u16>,
+    maximum_alcohol: Option<u16>,
+    boredom_before: Option<u16>,
+    boredom_after_decay: Option<u16>,
+    skill_eligible: Option<bool>,
+    alcohol_eligible: Option<bool>,
+    time_eligible: Option<bool>,
+    raw_damage: Option<i32>,
+    victim_count: Option<i32>,
+    boredom_penalty: Option<i32>,
+    drunken_bonus: Option<i32>,
+    adjusted_damage: Option<i32>,
+    group_strike: Option<bool>,
+    group_condition: Option<bool>,
+    accepted_as_best: Option<bool>,
+    selected_strike: Option<i32>,
+    parry_transition_frames: Option<i32>,
+    parry_time_eligible: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceSequenceLifecycleEvent {
+    ordinal: u64,
+    frame_ordinal: u64,
+    event: String,
+    phase: String,
+    element_id: u32,
+    sequence_id: Option<u32>,
+    owner: Option<TraceEntityId>,
+    owner_creation_order: Option<u32>,
+    command: u16,
+    command_name: Option<String>,
+    command_level: u16,
+    state: Option<u32>,
+    priority: Option<u32>,
+    queue_size_before: Option<u32>,
+    queue_size_after: Option<u32>,
+    actor: Option<TraceEntityId>,
+    actor_creation_order: Option<u32>,
+    selected_sequence_id: Option<u32>,
+    selected_command: Option<u16>,
+    current_order_id: Option<u32>,
+    current_order_action: Option<u32>,
+    decision: Option<i32>,
+    accepted: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
 struct TraceFrame {
     #[serde(rename = "type")]
     record_type: String,
@@ -1691,16 +2106,20 @@ struct TraceFrame {
     /// same source/goal and ordered gate list.
     #[serde(default)]
     route_construction_events: Option<Vec<TraceRouteConstructionEvent>>,
-    /// Schema-16 diagnostic streams are deliberately typed at the stable
-    /// outer boundary while their event payloads remain extensible.
     #[serde(default)]
-    popup_events: Option<Vec<TraceJsonValue>>,
+    popup_events: Option<Vec<TracePopupEvent>>,
     #[serde(default)]
-    ai_forecast_events: Option<Vec<TraceJsonValue>>,
+    ai_forecast_events: Option<Vec<TraceAiForecastEvent>>,
     #[serde(default)]
-    alert_formation_events: Option<Vec<TraceJsonValue>>,
+    alert_formation_events: Option<Vec<TraceAlertFormationEvent>>,
     #[serde(default)]
-    goto_authorization_events: Option<Vec<TraceJsonValue>>,
+    goto_authorization_events: Option<Vec<TraceGoToAuthorizationEvent>>,
+    #[serde(default)]
+    strike_proposal_events: Option<Vec<TraceStrikeProposalEvent>>,
+    #[serde(default)]
+    sequence_lifecycle_events: Option<Vec<TraceSequenceLifecycleEvent>>,
+    #[serde(default)]
+    target_lifecycle_events: Option<Vec<TraceTargetLifecycleEvent>>,
     resolved_exclamations: Vec<TraceResolvedExclamation>,
     #[serde(default)]
     movement_steps: Vec<TraceMovementStep>,
@@ -1785,7 +2204,7 @@ impl TraceJsonValue {
     }
 }
 
-fn print_schema_sixteen_events(label: &str, events: Option<&Vec<TraceJsonValue>>) {
+fn print_schema_sixteen_events<T: Serialize>(label: &str, events: Option<&Vec<T>>) {
     if let Some(events) = events
         && !events.is_empty()
     {
@@ -1861,6 +2280,9 @@ fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
                 && frame.ai_forecast_events.is_none()
                 && frame.alert_formation_events.is_none()
                 && frame.goto_authorization_events.is_none()
+                && frame.strike_proposal_events.is_none()
+                && frame.sequence_lifecycle_events.is_none()
+                && frame.target_lifecycle_events.is_none()
         }
         15 => {
             frame.campaign.is_none()
@@ -1870,6 +2292,9 @@ fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
                 && frame.ai_forecast_events.is_none()
                 && frame.alert_formation_events.is_none()
                 && frame.goto_authorization_events.is_none()
+                && frame.strike_proposal_events.is_none()
+                && frame.sequence_lifecycle_events.is_none()
+                && frame.target_lifecycle_events.is_none()
         }
         16 => {
             frame.campaign.is_none()
@@ -1888,12 +2313,119 @@ fn trace_frame_envelope_matches(schema: u32, frame: &TraceFrame) -> bool {
                 && frame.ai_forecast_events.is_none()
                 && frame.alert_formation_events.is_none()
                 && frame.goto_authorization_events.is_none()
+                && frame.strike_proposal_events.is_none()
+                && frame.sequence_lifecycle_events.is_none()
+                && frame.target_lifecycle_events.is_none()
         }
         _ => unreachable!("trace schema was validated before frame parsing"),
     }
 }
 
+fn validate_jump_line_shapes(frame: &TraceFrame) {
+    for element in &frame.elements {
+        let Some(human) = element.human.as_ref() else {
+            continue;
+        };
+        validate_human_jump_line_shape(&element.entity_id, human);
+    }
+}
+
+fn validate_human_jump_line_shape(entity: &TraceEntityId, human: &TraceHuman) {
+    let Some(jump_lines) = human.opponent_jump_lines.as_ref() else {
+        return;
+    };
+    let opponents = human.opponents.as_ref().unwrap_or_else(|| {
+        panic!(
+            "schema-16 {entity:?} records opponent jump lines without the parallel opponent list"
+        )
+    });
+    assert_eq!(
+        opponents.len(),
+        jump_lines.len(),
+        "schema-16 {entity:?} opponent and jump-line arrays differ in length"
+    );
+}
+
+fn validate_sequence_diagnostic_order(frame: &TraceFrame) {
+    let proposals = frame.strike_proposal_events.as_deref().unwrap_or_default();
+    let lifecycle = frame
+        .sequence_lifecycle_events
+        .as_deref()
+        .unwrap_or_default();
+    for (expected, event) in proposals.iter().enumerate() {
+        assert_eq!(
+            event.ordinal, expected as u64,
+            "schema-16 strike-proposal event ordinals are not contiguous"
+        );
+    }
+    for (expected, event) in lifecycle.iter().enumerate() {
+        assert_eq!(
+            event.ordinal, expected as u64,
+            "schema-16 sequence-lifecycle event ordinals are not contiguous"
+        );
+    }
+    for (expected, event) in frame
+        .target_lifecycle_events
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(
+            event.ordinal, expected as u64,
+            "schema-16 target-lifecycle event ordinals are not contiguous"
+        );
+    }
+
+    let mut frame_ordinals = proposals
+        .iter()
+        .map(|event| event.frame_ordinal)
+        .chain(lifecycle.iter().map(|event| event.frame_ordinal))
+        .chain(
+            frame
+                .target_lifecycle_events
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|event| event.frame_ordinal),
+        )
+        .collect::<Vec<_>>();
+    frame_ordinals.sort_unstable();
+    assert_eq!(
+        frame_ordinals,
+        (0..frame_ordinals.len() as u64).collect::<Vec<_>>(),
+        "schema-16 strike/sequence/target frame ordinals are not a single contiguous timeline"
+    );
+
+    let mut invocation_state = BTreeMap::<u32, (bool, bool)>::new();
+    for event in proposals {
+        let state = invocation_state.entry(event.invocation).or_default();
+        assert!(!state.1, "strike-proposal event follows its result");
+        if event.phase == "entry" {
+            assert!(!state.0, "strike-proposal invocation has duplicate entry");
+            state.0 = true;
+        } else {
+            assert!(state.0, "strike-proposal event precedes its entry");
+        }
+        if event.phase == "result" {
+            state.1 = true;
+        }
+    }
+    for (invocation, (started, finished)) in invocation_state {
+        assert!(
+            started,
+            "strike-proposal invocation {invocation} has no entry"
+        );
+        assert!(
+            finished,
+            "strike-proposal invocation {invocation} has no result"
+        );
+    }
+}
+
 fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
+    validate_jump_line_shapes(frame);
+    validate_sequence_diagnostic_order(frame);
     match schema {
         12 | 14 | 15 | 16 => assert!(
             trace_frame_envelope_matches(schema, frame),
@@ -1907,8 +2439,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 60;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v60.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 63;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v63.native-bincode.zst";
 const TRACE_CACHE_FOOTER_MAGIC: [u8; 16] = *b"RHPRCACHEFOOTER!";
 const TRACE_CACHE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
@@ -2738,7 +3270,30 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     )
                 });
         }
-        for command in frame.commands.drain(..) {
+        // `RHGame` records the engine frame before running the host sound
+        // manager (`original-code/RHgame.cpp:1879-1915`). Consequently these
+        // resolutions belong chronologically before the input commands stored
+        // on this following frame record. Consume that sound-only boundary
+        // first so a current-frame selection bark cannot jump ahead of an NPC
+        // request created by the preceding boundary's SoundIsFinished callback.
+        let resolutions = frame
+            .resolved_exclamations
+            .drain(..)
+            .map(|resolved| {
+                let _selection_diagnostics = (resolved.selected_variant, resolved.selected_entry);
+                robin_engine::sound::ResolvedExclamation {
+                    actor_id: map.translate(resolved.actor).index(),
+                    identifier: resolved.identifier,
+                    exclamation_id: resolved.exclamation_id,
+                    duration_frames: resolved.duration_frames,
+                }
+            })
+            .collect();
+        engine.queue_replay_resolved_exclamations(resolutions);
+        engine.apply_replay_sound_boundary(&assets);
+        let (commands_before_hourglass, commands_after_hourglass) =
+            split_late_refresh_orientations(std::mem::take(&mut frame.commands));
+        for command in commands_before_hourglass {
             if debug_stage_timing {
                 eprintln!(
                     "parity stage: converting command before frame {}: {command:?}",
@@ -2761,23 +3316,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 }
             }
         }
-        // Original's Sound Hourglass ran after the preceding engine frame.
-        // Apply its ordered, concrete Pass-1 speech resolutions now, before
-        // the next simulation body begins. Audio RNG remains diagnostic only.
-        let resolutions = frame
-            .resolved_exclamations
-            .drain(..)
-            .map(|resolved| {
-                let _selection_diagnostics = (resolved.selected_variant, resolved.selected_entry);
-                robin_engine::sound::ResolvedExclamation {
-                    actor_id: map.translate(resolved.actor).index(),
-                    identifier: resolved.identifier,
-                    exclamation_id: resolved.exclamation_id,
-                    duration_frames: resolved.duration_frames,
-                }
-            })
-            .collect();
-        engine.queue_resolved_exclamations(resolutions);
+        let commands_after_hourglass = commands_after_hourglass
+            .into_iter()
+            .filter_map(|command| command.into_player_command(map, &engine))
+            .collect::<Vec<_>>();
         if debug_stage_timing {
             eprintln!(
                 "parity stage: entering Rust frame {} -> {}",
@@ -2788,12 +3330,22 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         robin_engine::movement_diagnostics::begin_parity_movement_capture();
         let simulation_started = Instant::now();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            engine.perform_hourglass_with_body_gate(
+            let effects = engine.perform_hourglass_with_body_gate(
                 &mut display,
                 &assets,
                 &mut dev,
                 frame.simulation_body_ran,
-            )
+            );
+            for command in &commands_after_hourglass {
+                if debug_stage_timing {
+                    eprintln!(
+                        "parity stage: applying refresh command after frame {}: {command:?}",
+                        frame.frame_after
+                    );
+                }
+                engine.apply_command(&mut display, &mut input, &assets, command);
+            }
+            effects
         }));
         if profile_timing {
             simulation_time += simulation_started.elapsed();
@@ -3154,6 +3706,18 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_schema_sixteen_events(
                 "GoTo-authorization events",
                 frame.goto_authorization_events.as_ref(),
+            );
+            print_schema_sixteen_events(
+                "strike-proposal events",
+                frame.strike_proposal_events.as_ref(),
+            );
+            print_schema_sixteen_events(
+                "sequence-lifecycle events",
+                frame.sequence_lifecycle_events.as_ref(),
+            );
+            print_schema_sixteen_events(
+                "target lifecycle events",
+                frame.target_lifecycle_events.as_ref(),
             );
             print_schema_sixteen_actor_diagnostics(&frame.elements);
             if automatic_dump_enabled {
@@ -6477,6 +7041,29 @@ fn compare_engine_state(
     }
 }
 
+/// Whether Original exposes indeterminate `RHPositionInterface` old-position
+/// storage for a bonus constructed during this replay.
+///
+/// `RHPositionInterface::RHPositionInterface` does not initialize
+/// `mpointOldPosition`/`mpointOldMap`. Both runtime bonus construction paths
+/// (`RHElementBonus` and the `RHElementAle` used by DROP_ALE) place the object
+/// through `RHElement::CopyPositionMapEtc`, which sets only the current
+/// position and never calls `NewMove` (`RHpositioninterface.cpp:50-108`,
+/// `RHelement.cpp:287-304`, `RHelementactorpc.cpp:5704-5713`). These stationary
+/// objects never acquire a defined old position during their live runtime.
+///
+/// Save/mission-start bonuses are deliberately excluded: serialization does
+/// retain the complete old position, and their creation orders lie below the
+/// boundary captured when the initial entity bijection is built. All other
+/// fields on runtime bonuses remain authoritative and are still compared.
+fn original_runtime_bonus_has_undefined_old_position(
+    kind: TraceEntityKind,
+    creation_order: u32,
+    runtime_creation_order_boundary: u32,
+) -> bool {
+    kind == TraceEntityKind::Bonus && creation_order >= runtime_creation_order_boundary
+}
+
 fn compare_frame(
     engine: &Engine,
     assets: &LevelAssets,
@@ -6635,13 +7222,21 @@ fn compare_frame(
             element.position_map(),
         );
         let pi = &element.sprite.position_iface;
-        compare_point(
-            &mut differences,
-            id,
-            "old_position_map",
-            expected.old_position_map,
-            pi.old_map_position(),
-        );
+        let undefined_runtime_bonus_old_position =
+            original_runtime_bonus_has_undefined_old_position(
+                expected.kind,
+                expected.creation_order,
+                entity_map.runtime_creation_order_boundary,
+            );
+        if !undefined_runtime_bonus_old_position {
+            compare_point(
+                &mut differences,
+                id,
+                "old_position_map",
+                expected.old_position_map,
+                pi.old_map_position(),
+            );
+        }
         compare_point_with_absolute_tolerance(
             &mut differences,
             id,
@@ -6657,13 +7252,15 @@ fn compare_frame(
             expected.elevation,
             pi.get_elevation(),
         );
-        compare_float(
-            &mut differences,
-            id,
-            "old_elevation",
-            expected.old_elevation,
-            pi.old_elevation(),
-        );
+        if !undefined_runtime_bonus_old_position {
+            compare_float(
+                &mut differences,
+                id,
+                "old_elevation",
+                expected.old_elevation,
+                pi.old_elevation(),
+            );
+        }
         let increment_map = pi.raw_increment_map();
         compare_point(
             &mut differences,
@@ -6681,14 +7278,16 @@ fn compare_frame(
                 pi.is_increment_map_computed(),
             );
         }
-        let movement_map = element.position_map() - pi.old_map_position();
-        compare_point(
-            &mut differences,
-            id,
-            "movement_map",
-            expected.movement_map,
-            MapPoint::new(movement_map.x, movement_map.y),
-        );
+        if !undefined_runtime_bonus_old_position {
+            let movement_map = element.position_map() - pi.old_map_position();
+            compare_point(
+                &mut differences,
+                id,
+                "movement_map",
+                expected.movement_map,
+                MapPoint::new(movement_map.x, movement_map.y),
+            );
+        }
         let actual_sector = element.sector().map_or(u16::MAX, |sector| sector.get());
         let mapped_building_sector = expected.sector != actual_sector
             && entity_map.sectors_equivalent(expected.sector, actual_sector);
@@ -6729,20 +7328,22 @@ fn compare_frame(
             expected.direction_goal,
             i16::from(pi.get_direction_goal().as_u8()),
         );
-        compare(
-            &mut differences,
-            id,
-            "moving",
-            expected.moving,
-            pi.is_moving(),
-        );
-        compare(
-            &mut differences,
-            id,
-            "moving_map",
-            expected.moving_map,
-            pi.is_moving_map(),
-        );
+        if !undefined_runtime_bonus_old_position {
+            compare(
+                &mut differences,
+                id,
+                "moving",
+                expected.moving,
+                pi.is_moving(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "moving_map",
+                expected.moving_map,
+                pi.is_moving_map(),
+            );
+        }
         compare(
             &mut differences,
             id,
@@ -6952,6 +7553,46 @@ fn compare_frame(
                     .clone();
                 compare(&mut differences, id, "human.opponents", expected, actual);
             }
+            if let Some(expected) = &expected_human.opponent_jump_lines {
+                let expected: Vec<Option<[u32; 4]>> = expected
+                    .iter()
+                    .map(|line| line.as_ref().map(trace_jump_line_bits))
+                    .collect();
+                let human = actual.human_data().unwrap_or_else(|| {
+                    panic!("trace reports human opponent jump lines for non-human {id:?}")
+                });
+                assert_eq!(
+                    human.opponents.len(),
+                    human.opponent_jump_lines.len(),
+                    "Rust {id:?} opponent and jump-line arrays differ in length"
+                );
+                let actual: Vec<Option<[u32; 4]>> = human
+                    .opponent_jump_lines
+                    .iter()
+                    .map(|line_index| {
+                        line_index.map(|line_index| {
+                            let line = engine
+                                .fast_grid()
+                                .level
+                                .jump_lines
+                                .get(usize::from(line_index))
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "human {id:?} opponent jump-line index {line_index} is out of range"
+                                    )
+                                });
+                            runtime_jump_line_bits(line)
+                        })
+                    })
+                    .collect();
+                compare(
+                    &mut differences,
+                    id,
+                    "human.opponent_jump_lines",
+                    expected,
+                    actual,
+                );
+            }
         }
         if let Some(expected_pc) = &expected.pc {
             use robin_engine::profiles::Action;
@@ -7152,6 +7793,24 @@ fn compare_frame(
                     })
                     .unwrap_or_default();
                 compare(&mut differences, id, "ai.list_them", expected, actual);
+            }
+            if let Some(expected) = &expected_ai.my_line_jump {
+                let expected = expected.as_ref().map(trace_jump_line_bits);
+                let enemy = actual.enemy_ai().unwrap_or_else(|| {
+                    panic!("trace reports my_line_jump for non-enemy entity {id:?}")
+                });
+                let actual = enemy.my_line_jump.map(|line_index| {
+                    let line = engine
+                        .fast_grid()
+                        .level
+                        .jump_lines
+                        .get(line_index as usize)
+                        .unwrap_or_else(|| {
+                            panic!("enemy {id:?} my_line_jump index {line_index} is out of range")
+                        });
+                    runtime_jump_line_bits(line)
+                });
+                compare(&mut differences, id, "ai.my_line_jump", expected, actual);
             }
         }
         if let Some(expected_detection) = &expected.detection {
@@ -8023,6 +8682,268 @@ mod tests {
     }
 
     #[test]
+    fn schema_sixteen_jump_lines_are_typed_parallel_and_cache_safe() {
+        let human: TraceHuman = serde_json::from_value(serde_json::json!({
+            "life_points": 40,
+            "dead": false,
+            "unconscious": false,
+            "camp": "lacklandists",
+            "original_camp": 1,
+            "vip": false,
+            "civilian": false,
+            "opponents": [{"kind": "pc", "index": 3}],
+            "opponent_jump_lines": [{
+                "a": {"x": {"bits": 1065353216}, "y": {"bits": 1073741824}},
+                "b": {"x": {"bits": 1077936128}, "y": {"bits": 1082130432}}
+            }]
+        }))
+        .expect("parse schema-16 opponent jump-line geometry");
+        let entity: TraceEntityId = serde_json::from_value(serde_json::json!({
+            "kind": "soldier", "index": 8
+        }))
+        .unwrap();
+        validate_human_jump_line_shape(&entity, &human);
+
+        let ai: TraceAi = serde_json::from_value(serde_json::json!({
+            "state": 1,
+            "substate": 2,
+            "my_line_jump": null
+        }))
+        .expect("parse authoritative null soldier jump line");
+        assert!(matches!(ai.my_line_jump, Some(None)));
+
+        let encoded = bincode::encode_to_vec(&(human, ai), bincode::config::standard())
+            .expect("cache typed jump-line snapshots");
+        let ((cached_human, cached_ai), consumed): ((TraceHuman, TraceAi), usize) =
+            bincode::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("restore typed jump-line snapshots");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(cached_human.opponent_jump_lines.as_ref().unwrap().len(), 1);
+        assert!(matches!(cached_ai.my_line_jump, Some(None)));
+
+        let malformed_line = serde_json::json!({
+            "a": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "b": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "pointer": 123
+        });
+        assert!(serde_json::from_value::<TraceJumpLine>(malformed_line).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "opponent and jump-line arrays differ in length")]
+    fn schema_sixteen_rejects_misaligned_opponent_jump_lines() {
+        let human: TraceHuman = serde_json::from_value(serde_json::json!({
+            "life_points": 40,
+            "dead": false,
+            "unconscious": false,
+            "camp": "lacklandists",
+            "original_camp": 1,
+            "vip": false,
+            "civilian": false,
+            "opponents": [{"kind": "pc", "index": 3}],
+            "opponent_jump_lines": []
+        }))
+        .unwrap();
+        let entity: TraceEntityId = serde_json::from_value(serde_json::json!({
+            "kind": "soldier", "index": 8
+        }))
+        .unwrap();
+        validate_human_jump_line_shape(&entity, &human);
+    }
+
+    #[test]
+    fn schema_sixteen_event_window_resets_only_after_record_frame() {
+        let mut pending = Vec::<(u64, &'static str)>::new();
+        let mut next_ordinal = 0_u64;
+        fn emit(
+            pending: &mut Vec<(u64, &'static str)>,
+            next_ordinal: &mut u64,
+            stage: &'static str,
+        ) {
+            pending.push((*next_ordinal, stage));
+            *next_ordinal += 1;
+        }
+
+        emit(&mut pending, &mut next_ordinal, "input_before_hourglass");
+        emit(&mut pending, &mut next_ordinal, "simulation_body");
+        let first_frame = std::mem::take(&mut pending);
+        next_ordinal = 0; // RecordFrame serialized and then reset the window.
+
+        emit(
+            &mut pending,
+            &mut next_ordinal,
+            "refresh_after_record_frame",
+        );
+        // BeginEngineFrame intentionally does not clear or reset event state.
+        emit(
+            &mut pending,
+            &mut next_ordinal,
+            "next_input_before_hourglass",
+        );
+        emit(&mut pending, &mut next_ordinal, "next_simulation_body");
+        let second_frame = std::mem::take(&mut pending);
+
+        assert_eq!(
+            first_frame,
+            vec![(0, "input_before_hourglass"), (1, "simulation_body")]
+        );
+        assert_eq!(
+            second_frame,
+            vec![
+                (0, "refresh_after_record_frame"),
+                (1, "next_input_before_hourglass"),
+                (2, "next_simulation_body")
+            ]
+        );
+    }
+
+    #[test]
+    fn schema_sixteen_target_unreached_observations_are_explicitly_nullable() {
+        let event: TraceTargetLifecycleEvent = serde_json::from_value(serde_json::json!({
+            "ordinal": 0,
+            "frame_ordinal": 0,
+            "phase": "engine_send_message_entry",
+            "sequence_id": null,
+            "sequence_element_id": 2,
+            "command_level": 1,
+            "state": 0,
+            "command": 15,
+            "command_name": "send_message",
+            "owner": null,
+            "context": null,
+            "antagonist": null,
+            "antagonist_observed": null,
+            "payload": {
+                "kind": "send_message",
+                "message": null,
+                "argument": null,
+                "argument_raw": null,
+                "extended_argument": null,
+                "extended_argument_raw": null
+            },
+            "payload_observed": false,
+            "script_enabled": false,
+            "class_instantiated": null
+        }))
+        .expect("parse unreached schema-16 target evidence");
+        assert!(event.sequence_id.is_none());
+        assert_eq!(event.payload_observed, Some(false));
+        assert!(matches!(
+            event.payload,
+            TraceTargetLifecyclePayload::SendMessage {
+                message: None,
+                argument: None,
+                ..
+            }
+        ));
+        let encoded = bincode::encode_to_vec(&event, bincode::config::standard()).unwrap();
+        let (cached, consumed): (TraceTargetLifecycleEvent, usize) =
+            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(consumed, encoded.len());
+        assert!(cached.sequence_id.is_none());
+        assert_eq!(cached.payload_observed, Some(false));
+    }
+
+    #[test]
+    fn schema_sixteen_movement_action_is_only_present_when_initialized() {
+        let sequence = |command: u16,
+                        command_name: &str,
+                        movement: serde_json::Value,
+                        movement_payload: serde_json::Value| {
+            serde_json::from_value::<TraceSequenceElement>(serde_json::json!({
+                "id": 5,
+                "type": 4,
+                "state": 2,
+                "command_level": 1,
+                "command": command,
+                "command_name": command_name,
+                "order_count": 1,
+                "priority": 0,
+                "posture_after_transition": 0,
+                "action_state_after_transition": 0,
+                "movement": movement,
+                "following": null,
+                "postponed": null,
+                "current_order": {"id": 77, "action": 0},
+                "movement_payload": movement_payload
+            }))
+            .expect("parse schema-16 movement constructor-shaped evidence")
+        };
+
+        let wait_free_lift = sequence(
+            0,
+            "wait_free_lift",
+            serde_json::json!({}),
+            serde_json::json!({
+                "speed_factor": {"bits": 1065353216, "value": 1.0},
+                "destination": {"x": {"bits": 0}, "y": {"bits": 0}},
+                "tolerance": {"bits": 0, "value": 0.0},
+                "flags": 0,
+                "target": null,
+                "sector": null
+            }),
+        );
+        assert_eq!(
+            wait_free_lift
+                .movement
+                .as_ref()
+                .expect("movement evidence")
+                .action,
+            None
+        );
+        assert!(
+            wait_free_lift
+                .movement_payload
+                .as_ref()
+                .expect("movement payload")
+                .to_json()
+                .get("action")
+                .is_none()
+        );
+
+        let movement = sequence(
+            1,
+            "move",
+            serde_json::json!({"action": 12}),
+            serde_json::json!({
+                "speed_factor": {"bits": 1065353216, "value": 1.0},
+                "action": 12,
+                "destination": {"x": {"bits": 0}, "y": {"bits": 0}},
+                "tolerance": {"bits": 0, "value": 0.0},
+                "flags": 3,
+                "target": null,
+                "sector": null
+            }),
+        );
+        assert_eq!(
+            movement
+                .movement
+                .as_ref()
+                .expect("movement evidence")
+                .action,
+            Some(12)
+        );
+        assert_eq!(
+            movement
+                .movement_payload
+                .as_ref()
+                .expect("movement payload")
+                .to_json()
+                .get("action"),
+            Some(&serde_json::json!(12))
+        );
+
+        let encoded =
+            bincode::encode_to_vec([&wait_free_lift, &movement], bincode::config::standard())
+                .unwrap();
+        let (cached, consumed): ([TraceSequenceElement; 2], usize) =
+            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(cached[0].movement.as_ref().unwrap().action, None);
+        assert_eq!(cached[1].movement.as_ref().unwrap().action, Some(12));
+    }
+
+    #[test]
     fn extensible_diagnostics_schema_sixteen_are_cached_and_required() {
         validate_trace_schema(16);
 
@@ -8098,29 +9019,401 @@ mod tests {
             "result": "success"
         }]);
         frame_json["popup_events"] = serde_json::json!([{
-            "kind": "nested_refresh",
-            "depth": 2
+            "ordinal": 0,
+            "stage": "nested_refresh_entry",
+            "universal_frame_counter": 44,
+            "source_surface": 7,
+            "colorize_background": true,
+            "remove_mouse": false
         }]);
         frame_json["ai_forecast_events"] = serde_json::json!([{
             "ordinal": 0,
-            "resolution": "building_exit"
+            "phase": "resolved",
+            "target": {"kind": "soldier", "index": 7},
+            "input": {
+                "position": {"x": {"bits": 0}, "y": {"bits": 0}},
+                "sector": 1,
+                "level": 2,
+                "passing_door": false
+            },
+            "moving_upwards": false,
+            "resolution": "current_position",
+            "resolved": {
+                "position": {"x": {"bits": 0}, "y": {"bits": 0}},
+                "sector": 1,
+                "level": 2,
+                "direction": 3
+            }
         }]);
         frame_json["alert_formation_events"] = serde_json::json!([{
-            "kind": "candidate",
-            "accepted": false
+            "ordinal": 0,
+            "stage": "candidate",
+            "invocation": 9,
+            "scan_index": 2,
+            "candidate": {"kind": "soldier", "index": 8},
+            "active": true,
+            "script_locked": false,
+            "eligibility": {
+                "rank": true,
+                "able_to_help": true,
+                "allowed_to_leave_post": true,
+                "can_call": false,
+                "max_radius": null,
+                "squared_radius": null,
+                "capacity": null,
+                "think": null
+            },
+            "rejection_stage": "can_call"
         }]);
-        frame_json["goto_authorization_events"] = serde_json::json!([{
-            "ordinal": 1,
-            "phase": "straight",
-            "outcome": "blocked",
-            "straight_authorized": false,
-            "path_authorized": null
+        frame_json["goto_authorization_events"] = serde_json::json!([
+            {
+                "ordinal": 0,
+                "actor": {"kind": "soldier", "index": 7},
+                "source": {"point": {"x": {"bits": 0}, "y": {"bits": 0}}, "layer": 2},
+                "move_box": {
+                    "top_left": {"x": {"bits": 0}, "y": {"bits": 0}},
+                    "bottom_right": {"x": {"bits": 0}, "y": {"bits": 0}}
+                },
+                "destination": {
+                    "point": {"x": {"bits": 0}, "y": {"bits": 0}},
+                    "sector": 3,
+                    "layer": 2
+                },
+                "requested_flags": 1,
+                "effective_flags": 3,
+                "phase": "straight",
+                "outcome": "blocked",
+                "straight_authorized": false,
+                "path_authorized": null
+            },
+            {
+                "ordinal": 1,
+                "actor": {"kind": "soldier", "index": 7},
+                "source": null,
+                "move_box": null,
+                "destination": {
+                    "point": {"x": {"bits": 0}, "y": {"bits": 0}},
+                    "sector": null,
+                    "layer": 2
+                },
+                "requested_flags": 1,
+                "effective_flags": 1,
+                "phase": "already_there",
+                "outcome": "accepted",
+                "straight_authorized": null,
+                "path_authorized": null
+            }
+        ]);
+        frame_json["target_lifecycle_events"] = serde_json::json!([{
+            "ordinal": 0,
+            "frame_ordinal": 6,
+            "phase": "engine_send_message_callback_entry",
+            "sequence_id": 701,
+            "sequence_element_id": 902,
+            "command_level": 2,
+            "state": 0,
+            "command": 15,
+            "command_name": "send_message",
+            "owner": null,
+            "context": null,
+            "antagonist": null,
+            "antagonist_observed": null,
+            "payload": {
+                "kind": "send_message",
+                "message": 10,
+                "argument": -1,
+                "argument_raw": 4294967295u64,
+                "extended_argument": 0,
+                "extended_argument_raw": 0
+            },
+            "payload_observed": true,
+            "script_enabled": true,
+            "class_instantiated": null
         }]);
+        frame_json["strike_proposal_events"] = serde_json::json!([
+            {
+                "invocation": 0,
+                "ordinal": 0,
+                "frame_ordinal": 0,
+                "phase": "entry",
+                "actor": {"kind": "pc", "index": 342},
+                "actor_creation_order": 373,
+                "threat": {"kind": "soldier", "index": 140},
+                "threat_creation_order": 171,
+                "principal_opponent": null,
+                "principal_opponent_creation_order": null,
+                "command": 0,
+                "command_name": "null",
+                "also_parade": true,
+                "only_parade": false,
+                "candidate_strike": null,
+                "skill_eligible": null,
+                "alcohol_eligible": null,
+                "time_eligible": null,
+                "time_limit": null,
+                "raw_damage": null,
+                "victim_count": null,
+                "accepted_as_best": null
+            },
+            {
+                "invocation": 0,
+                "ordinal": 1,
+                "frame_ordinal": 1,
+                "phase": "result",
+                "actor": {"kind": "pc", "index": 342},
+                "actor_creation_order": 373,
+                "threat": {"kind": "soldier", "index": 140},
+                "threat_creation_order": 171,
+                "principal_opponent": {"kind": "soldier", "index": 137},
+                "principal_opponent_creation_order": 168,
+                "command": 42,
+                "command_name": "parry_sword",
+                "also_parade": true,
+                "only_parade": true,
+                "candidate_strike": null,
+                "skill_eligible": null,
+                "alcohol_eligible": null,
+                "time_eligible": null,
+                "time_limit": 8,
+                "raw_damage": null,
+                "victim_count": null,
+                "accepted_as_best": null
+            },
+            {
+                "invocation": 1,
+                "ordinal": 2,
+                "frame_ordinal": 2,
+                "phase": "entry",
+                "actor": {"kind": "soldier", "index": 12},
+                "actor_creation_order": 44
+            },
+            {
+                "invocation": 1,
+                "ordinal": 3,
+                "frame_ordinal": 3,
+                "phase": "candidate",
+                "actor": {"kind": "soldier", "index": 12},
+                "actor_creation_order": 44,
+                "threat": null,
+                "threat_creation_order": null,
+                "principal_opponent": {"kind": "soldier", "index": 13},
+                "principal_opponent_creation_order": 45,
+                "command": 30,
+                "command_name": "swordstrike_thrust_a",
+                "also_parade": false,
+                "only_parade": false,
+                "candidate_strike": 0,
+                "skill_eligible": true,
+                "alcohol_eligible": true,
+                "time_eligible": true,
+                "time_limit": 1000,
+                "raw_damage": 35,
+                "victim_count": 1,
+                "accepted_as_best": true
+            },
+            {
+                "invocation": 1,
+                "ordinal": 4,
+                "frame_ordinal": 4,
+                "phase": "result",
+                "actor": {"kind": "soldier", "index": 12},
+                "actor_creation_order": 44,
+                "command": 30,
+                "command_name": "swordstrike_thrust_a",
+                "selected_strike": 0,
+                "reason": "strike"
+            }
+        ]);
+        frame_json["sequence_lifecycle_events"] = serde_json::json!([
+            {
+                "ordinal": 0,
+                "frame_ordinal": 5,
+                "event": "sequence_registered",
+                "phase": "manager_fifo",
+                "element_id": 900,
+                "sequence_id": 700,
+                "owner": {"kind": "pc", "index": 342},
+                "owner_creation_order": 373,
+                "command": 42,
+                "command_name": "parry_sword",
+                "command_level": 1,
+                "state": null,
+                "priority": null,
+                "queue_size_before": 0,
+                "queue_size_after": 1,
+                "actor": null,
+                "actor_creation_order": null,
+                "selected_sequence_id": null,
+                "selected_command": null,
+                "current_order_id": null,
+                "current_order_action": null,
+                "decision": null,
+                "accepted": null
+            },
+            {
+                "ordinal": 1,
+                "frame_ordinal": 7,
+                "event": "lazy_wait_created",
+                "phase": "actor_hourglass_lazy_wait",
+                "element_id": 901,
+                "sequence_id": null,
+                "owner": {"kind": "pc", "index": 342},
+                "owner_creation_order": 373,
+                "command": 1,
+                "command_name": "wait",
+                "command_level": 1,
+                "state": 0,
+                "priority": 1,
+                "queue_size_before": null,
+                "queue_size_after": null,
+                "actor": {"kind": "pc", "index": 342},
+                "actor_creation_order": 373,
+                "selected_sequence_id": null,
+                "selected_command": null,
+                "current_order_id": null,
+                "current_order_action": null,
+                "decision": null,
+                "accepted": null
+            },
+            {
+                "ordinal": 2,
+                "frame_ordinal": 8,
+                "event": "manager_fifo_pop",
+                "phase": "sequence_manager_hourglass",
+                "element_id": 900,
+                "sequence_id": 700,
+                "owner": {"kind": "pc", "index": 342},
+                "owner_creation_order": 373,
+                "command": 42,
+                "command_name": "parry_sword",
+                "command_level": 1,
+                "state": 0,
+                "priority": 6,
+                "queue_size_before": 1,
+                "queue_size_after": 0,
+                "actor": null,
+                "actor_creation_order": null,
+                "selected_sequence_id": null,
+                "selected_command": null,
+                "current_order_id": null,
+                "current_order_action": null,
+                "decision": null,
+                "accepted": null
+            },
+            {
+                "ordinal": 3,
+                "frame_ordinal": 9,
+                "event": "actor_instruct_result",
+                "phase": "installed",
+                "element_id": 900,
+                "sequence_id": 700,
+                "owner": {"kind": "pc", "index": 342},
+                "owner_creation_order": 373,
+                "command": 42,
+                "command_name": "parry_sword",
+                "command_level": 1,
+                "state": 2,
+                "priority": 6,
+                "queue_size_before": null,
+                "queue_size_after": null,
+                "actor": {"kind": "pc", "index": 342},
+                "actor_creation_order": 373,
+                "selected_sequence_id": 900,
+                "selected_command": 42,
+                "current_order_id": 99,
+                "current_order_action": 76,
+                "decision": 3,
+                "accepted": true
+            },
+            {
+                "ordinal": 4,
+                "frame_ordinal": 10,
+                "event": "sequence_registered",
+                "phase": "manager_fifo",
+                "element_id": 902,
+                "sequence_id": 701,
+                "owner": null,
+                "owner_creation_order": null,
+                "command": 63,
+                "command_name": "send_message",
+                "command_level": 2,
+                "state": 0,
+                "priority": 0,
+                "queue_size_before": 0,
+                "queue_size_after": 1,
+                "actor": null,
+                "actor_creation_order": null,
+                "selected_sequence_id": null,
+                "selected_command": null,
+                "current_order_id": null,
+                "current_order_action": null,
+                "decision": null,
+                "accepted": null
+            }
+        ]);
 
         let frame: TraceFrame = serde_json::from_value(frame_json)
             .expect("parse extensible schema-16 diagnostic streams");
         validate_trace_frame_envelope(16, &frame);
         assert_eq!(frame.popup_events.as_ref().unwrap().len(), 1);
+        assert_eq!(frame.popup_events.as_ref().unwrap()[0].ordinal, Some(0));
+        assert_eq!(
+            frame.ai_forecast_events.as_ref().unwrap()[0]
+                .phase
+                .as_deref(),
+            Some("resolved")
+        );
+        assert_eq!(
+            frame.alert_formation_events.as_ref().unwrap()[0].ordinal,
+            Some(0)
+        );
+        let authorizations = frame.goto_authorization_events.as_ref().unwrap();
+        assert_eq!(authorizations[0].source.as_ref().unwrap().layer, 2);
+        assert!(authorizations[0].move_box.is_some());
+        assert!(authorizations[1].source.is_none());
+        assert!(authorizations[1].move_box.is_none());
+        let target = &frame.target_lifecycle_events.as_ref().unwrap()[0];
+        assert_eq!(target.sequence_id, Some(701));
+        assert_eq!(target.frame_ordinal, Some(6));
+        assert_eq!(target.command_level, 2);
+        assert!(target.owner.is_none());
+        assert!(matches!(
+            target.payload,
+            TraceTargetLifecyclePayload::SendMessage {
+                argument: Some(-1),
+                argument_raw: Some(u32::MAX),
+                ..
+            }
+        ));
+        let proposals = frame.strike_proposal_events.as_ref().unwrap();
+        assert_eq!(proposals[0].actor_creation_order, 373);
+        assert_eq!(proposals[0].also_parade, Some(true));
+        assert_eq!(proposals[1].only_parade, Some(true));
+        assert_eq!(proposals[1].command_name.as_deref(), Some("parry_sword"));
+        assert_eq!(
+            proposals[2].actor.as_ref().unwrap().kind,
+            TraceEntityKind::Soldier
+        );
+        assert_eq!(proposals[2].threat, None);
+        assert_eq!(proposals[3].accepted_as_best, Some(true));
+        let lifecycle = frame.sequence_lifecycle_events.as_ref().unwrap();
+        assert_eq!(
+            lifecycle
+                .iter()
+                .map(|event| event.ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4]
+        );
+        assert_eq!(lifecycle[0].queue_size_after, Some(1));
+        assert_eq!(lifecycle[0].state, None);
+        assert_eq!(lifecycle[0].priority, None);
+        assert_eq!(lifecycle[1].selected_sequence_id, None);
+        assert_eq!(lifecycle[2].queue_size_after, Some(0));
+        assert_eq!(lifecycle[3].current_order_action, Some(76));
+        assert!(lifecycle[3].accepted.unwrap());
+        assert_eq!(lifecycle[4].owner, None);
+        assert_eq!(lifecycle[4].sequence_id, Some(701));
+        assert_eq!(lifecycle[4].command_level, 2);
         assert!(
             frame.route_construction_events.as_ref().unwrap()[0]
                 .draft_diagnostics
@@ -8138,6 +9431,17 @@ mod tests {
                 .expect("decode schema-16 frame from native cache representation");
         assert_eq!(consumed, encoded.len());
         assert_eq!(cached.alert_formation_events.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            cached.target_lifecycle_events.as_ref().unwrap()[0].sequence_id,
+            Some(701)
+        );
+        let cached_authorizations = cached.goto_authorization_events.as_ref().unwrap();
+        assert_eq!(cached_authorizations[0].source.as_ref().unwrap().layer, 2);
+        assert!(cached_authorizations[0].move_box.is_some());
+        assert!(cached_authorizations[1].source.is_none());
+        assert!(cached_authorizations[1].move_box.is_none());
+        assert_eq!(cached.strike_proposal_events.as_ref().unwrap().len(), 5);
+        assert_eq!(cached.sequence_lifecycle_events.as_ref().unwrap().len(), 5);
         assert!(
             cached.route_construction_events.as_ref().unwrap()[0]
                 .draft_diagnostics
@@ -8148,6 +9452,40 @@ mod tests {
         incomplete_json["route_construction_events"] = serde_json::json!([]);
         let incomplete: TraceFrame = serde_json::from_value(incomplete_json).unwrap();
         assert!(!trace_frame_envelope_matches(16, &incomplete));
+
+        let target_with_unknown = serde_json::json!({
+            "ordinal": 0,
+            "frame_ordinal": 0,
+            "phase": "engine_send_message_entry",
+            "sequence_id": 1,
+            "sequence_element_id": 2,
+            "command_level": 2,
+            "state": 0,
+            "command": 15,
+            "command_name": "send_message",
+            "owner": null,
+            "context": null,
+            "antagonist": null,
+            "payload": {
+                "kind": "send_message", "message": 10,
+                "argument": -1, "argument_raw": 4294967295u64,
+                "extended_argument": 0, "extended_argument_raw": 0
+            },
+            "script_enabled": null,
+            "class_instantiated": null,
+            "unstable_pointer": 123
+        });
+        assert!(serde_json::from_value::<TraceTargetLifecycleEvent>(target_with_unknown).is_err());
+
+        let mut legacy_schema_sixteen = minimal_frame_json();
+        legacy_schema_sixteen["route_construction_events"] = serde_json::json!([]);
+        legacy_schema_sixteen["popup_events"] = serde_json::json!([]);
+        legacy_schema_sixteen["ai_forecast_events"] = serde_json::json!([]);
+        legacy_schema_sixteen["alert_formation_events"] = serde_json::json!([]);
+        legacy_schema_sixteen["goto_authorization_events"] = serde_json::json!([]);
+        let legacy: TraceFrame = serde_json::from_value(legacy_schema_sixteen).unwrap();
+        assert!(trace_frame_envelope_matches(16, &legacy));
+        assert!(legacy.target_lifecycle_events.is_none());
     }
 
     #[test]
@@ -8995,6 +10333,27 @@ mod tests {
     }
 
     #[test]
+    fn only_replay_constructed_bonuses_omit_original_undefined_old_position() {
+        let boundary = 143;
+
+        assert!(original_runtime_bonus_has_undefined_old_position(
+            TraceEntityKind::Bonus,
+            326,
+            boundary,
+        ));
+        assert!(!original_runtime_bonus_has_undefined_old_position(
+            TraceEntityKind::Bonus,
+            142,
+            boundary,
+        ));
+        assert!(!original_runtime_bonus_has_undefined_old_position(
+            TraceEntityKind::Projectile,
+            326,
+            boundary,
+        ));
+    }
+
+    #[test]
     fn additive_ai_diagnostics_are_optional_within_schema_twelve() {
         let ai: TraceAi = serde_json::from_value(serde_json::json!({
             "state": 3,
@@ -9270,6 +10629,45 @@ mod tests {
         assert!(matches!(action, TraceAction::Bow));
         assert_eq!(MapPoint::from(mouse_map), MapPoint::new(1.0, 2.0));
         assert_eq!(WorldPoint3D::from(target), WorldPoint3D::new(3.0, 4.0, 5.0));
+    }
+
+    #[test]
+    fn matching_action_selection_marks_only_following_orientation_as_late_refresh() {
+        let pc = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 282,
+        };
+        let point = TracePoint {
+            x: TraceFloat { bits: 0 },
+            y: TraceFloat { bits: 0 },
+        };
+        let target = TracePoint3 {
+            x: TraceFloat { bits: 0 },
+            y: TraceFloat { bits: 0 },
+            z: TraceFloat { bits: 0 },
+        };
+        let orientation = || TraceCommand::OrientActionAt {
+            action: TraceAction::Purse,
+            actor: pc,
+            mouse_map: point,
+            target,
+        };
+        let commands = vec![
+            orientation(),
+            TraceCommand::SelectAction {
+                pc,
+                action: TraceAction::Purse,
+            },
+            orientation(),
+        ];
+
+        let (before, after) = split_late_refresh_orientations(commands);
+
+        assert_eq!(before.len(), 2);
+        assert!(matches!(before[0], TraceCommand::OrientActionAt { .. }));
+        assert!(matches!(before[1], TraceCommand::SelectAction { .. }));
+        assert_eq!(after.len(), 1);
+        assert!(matches!(after[0], TraceCommand::OrientActionAt { .. }));
     }
 
     #[test]

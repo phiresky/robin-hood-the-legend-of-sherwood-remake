@@ -3039,16 +3039,30 @@ mod tests {
                     position_direct: true,
                     steps: VecDeque::new(),
                     triggers_fired: 0,
-                    current_action: OrderType::TransitionWaitingUprightClimbingWallUp,
+                    // The concrete/lazy door queues can already have exposed
+                    // a copied successor by the time deferred completion
+                    // effects drain. The captured terminating action remains
+                    // authoritative.
+                    current_action: OrderType::WalkingUpright,
                     current_reverse: false,
                     saved_action_state: None,
                 });
             }
 
-            engine.apply_door_pass_transition_completion_side_effects(&assets, owner);
+            engine.apply_door_pass_transition_completion_side_effects(
+                &assets,
+                owner,
+                OrderType::TransitionWaitingUprightClimbingWallUp,
+            );
 
             let entity = engine.world.entities.get(owner).unwrap();
             let pi = entity.position_iface();
+            assert_eq!(entity.element_data().posture, Posture::OnWall);
+            assert_eq!(
+                entity.actor_data().unwrap().action_state,
+                crate::element::ActionState::Moving,
+                "the captured terminating transition, not the advanced live mirror, owns completion state"
+            );
             assert_eq!(pi.map_position(), MapPoint::new(20.0, 30.0));
             assert_eq!(
                 pi.get_obstacle(),

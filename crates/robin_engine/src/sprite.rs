@@ -419,6 +419,15 @@ pub struct Sprite {
     pub last_motion_state: Option<MotionState>,
 }
 
+/// Defined interpretation of the Original action-done state for callers that
+/// use it as a deadline. `InitializeActionDone` deliberately stores an
+/// out-of-row marker for animations where an action-done point is impossible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ActionDoneTiming {
+    Frames(i16),
+    Impossible,
+}
+
 #[derive(Serialize)]
 struct SpriteSnapshotRef<'a> {
     position_iface: &'a PositionInterface,
@@ -695,7 +704,19 @@ impl Sprite {
         }
 
         let cached_goal = self.position_iface.map_goal();
-        if cached_goal != ctx.destination {
+        // This is a Rust-only invariant for Original's unique-order-id cache,
+        // not a gameplay comparison.  Original can legitimately cache the
+        // unchecked NaN goal produced by a zero-length combat step-back and
+        // then revisit that same order on the following Execute.  IEEE `==`
+        // rejects NaN even when both values represent that unchanged cached
+        // goal, which turned the diagnostic into a false panic.  Treat paired
+        // NaNs as equal while retaining exact equality for finite values.
+        let same_coordinate = |cached: f32, expected: f32| {
+            cached == expected || (cached.is_nan() && expected.is_nan())
+        };
+        if !same_coordinate(cached_goal.x, ctx.destination.x)
+            || !same_coordinate(cached_goal.y, ctx.destination.y)
+        {
             return Some(MotionOrderStateMismatch::Goal {
                 cached: cached_goal,
                 expected: ctx.destination,
@@ -1861,8 +1882,26 @@ impl Sprite {
             self.initialize_motion_order(ctx);
         }
 
-        let mut state =
-            self.perform_action(sim, order_id, anim, direction, progression, force_init);
+        // Original's PerformMotion selects the sprite row only after motion
+        // initialization, using GetDirection() at that point. Mirror that
+        // late live-direction read for ordinary computed motion rather than
+        // trusting a direction captured by the caller before this boundary.
+        // Rust's non-computing transition paths deliberately pass an explicit
+        // pre/post-turn row, so retain their direction argument.
+        let action_direction =
+            if starts_new_motion_order && motion_order.is_some_and(|ctx| ctx.compute_direction) {
+                u16::from(self.position_iface.get_direction().as_u8())
+            } else {
+                direction
+            };
+        let mut state = self.perform_action(
+            sim,
+            order_id,
+            anim,
+            action_direction,
+            progression,
+            force_init,
+        );
 
         // `PerformAction` reports a natural animation loop as Terminated.
         // `RHSprite::PerformMotion` only observes that loop for
@@ -1996,6 +2035,24 @@ impl Sprite {
         // legacy implementation stores the running total in SWORD and returns it directly.
         // Preserve that 16-bit truncation instead of adding a Rust-only range panic.
         sum as i16
+    }
+
+    /// Return the action-done timing without conflating the deliberately
+    /// impossible marker with Original's ordinary `-1` (already passed)
+    /// result.
+    ///
+    /// The legacy getter indexes its delay vector until the marker (761 or
+    /// 0xffff). That is an out-of-bounds read: the shipping binary happened
+    /// to accumulate a negative `SWORD` for S075 frame 731, but reproducing
+    /// allocator contents would be undefined and non-portable. Preserve the
+    /// authored meaning from `RHSprite::InitializeActionDone` instead, so a
+    /// deadline consumer can reject the impossible action deterministically.
+    pub(crate) fn action_done_timing(&self) -> ActionDoneTiming {
+        if self.action_done_frame >= self.num_frames_for_row(self.current_row) {
+            ActionDoneTiming::Impossible
+        } else {
+            ActionDoneTiming::Frames(self.frames_from_now_till_action_done())
+        }
     }
 
     /// Frames from the start of an animation until its action-done.
@@ -2162,7 +2219,9 @@ mod tests {
         // `Sprite::new(scripts, conversion)` constructor consumes them
         // directly — no more `new()` + populate-fields dance.
 
-        // Create a simple script with 2 rows, each having 4 frames
+        // Create a simple script with 2 distinct rows. Directional motion
+        // tests also need rows 2..=15 because a conversion's base row is
+        // offset by the live 16-sector facing direction.
         let row0 = SpriteScript {
             action_id: 0,
             action_done: 2,
@@ -2202,8 +2261,10 @@ mod tests {
         conversion[0] = 0;
         conversion[1] = 1;
 
+        let mut scripts = vec![row0.clone(), row1];
+        scripts.resize(16, row0);
         let mut sprite = Sprite::new(
-            std::sync::Arc::new(vec![row0, row1]),
+            std::sync::Arc::new(scripts),
             std::sync::Arc::new(conversion),
         );
         sprite.current_width = 32;
@@ -2594,6 +2655,29 @@ mod tests {
     }
 
     #[test]
+    fn started_motion_order_accepts_unchanged_nan_goal() {
+        let mut s = make_test_sprite();
+        let order_id = std::num::NonZeroU32::new(42).unwrap();
+        let destination = MapPoint::new(f32::NAN, f32::NAN);
+        s.last_processed_order_id = order_id.get();
+        s.position_iface.set_map_goal(destination);
+        s.position_iface.compute_increment_all(true);
+
+        let ctx = MotionOrderContext {
+            order_id,
+            destination,
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: None,
+            target_element: None,
+        };
+
+        assert!(s.motion_order_state_mismatch(ctx).is_none());
+    }
+
+    #[test]
     fn changed_motion_order_id_reinitializes_goal_without_reseed_warning() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
@@ -2757,6 +2841,73 @@ mod tests {
         assert_eq!(sprite.current_frame, 0);
         assert_eq!(sprite.frame_count, 0);
         assert_eq!(distance, 3.0);
+    }
+
+    #[test]
+    fn fresh_motion_uses_initialized_direction_for_sprite_row() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut sprite = make_test_sprite();
+        let stale_direction = 0;
+        sprite
+            .position_iface
+            .set_direction_instantly(crate::position_interface::Direction::from_raw(7));
+        let motion_order = MotionOrderContext {
+            order_id: std::num::NonZeroU32::new(1).unwrap(),
+            destination: MapPoint::new(100.0, 0.0),
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: None,
+            target_element: None,
+        };
+
+        let _ = sprite.perform_motion(
+            &sim_context,
+            Some(motion_order),
+            OrderType::WaitingUprightBored,
+            stale_direction,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+
+        let initialized_direction = u16::from(sprite.position_iface.get_direction().as_u8());
+        assert_eq!(initialized_direction, 7);
+        assert_eq!(sprite.current_row, initialized_direction);
+    }
+
+    #[test]
+    fn fresh_motion_preserves_explicit_direction_when_not_computed() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut sprite = make_test_sprite();
+        let initial_direction = sprite.position_iface.get_direction();
+        let explicit_direction = 7;
+        let motion_order = MotionOrderContext {
+            order_id: std::num::NonZeroU32::new(1).unwrap(),
+            destination: MapPoint::new(100.0, 0.0),
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: false,
+            next_destination_same_action: None,
+            target_element: None,
+        };
+
+        let _ = sprite.perform_motion(
+            &sim_context,
+            Some(motion_order),
+            OrderType::WaitingUprightBored,
+            explicit_direction,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+
+        assert_eq!(sprite.position_iface.get_direction(), initial_direction);
+        assert_eq!(sprite.current_row, explicit_direction);
     }
 
     #[test]

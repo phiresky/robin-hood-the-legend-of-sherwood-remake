@@ -865,6 +865,11 @@ pub struct AiPerTickData {
     /// batches movement globally, so the live entity map can still trail the
     /// position the Original has committed when this NPC handles EVENT_VIEW.
     pub enemy_detectable_positions: Vec<(HumanHandle, Position)>,
+    /// Literal live `GetPosition()` values for Enemy detectables. Unlike
+    /// `enemy_detectable_positions`, these bypass AI-position door forecasts
+    /// and creation-slot boundary rewinding. Direct geometry helpers such as
+    /// `EnemyIsBelowMe` read the element itself.
+    pub enemy_detectable_live_world_positions: Vec<(HumanHandle, crate::coordinates::WorldPoint3D)>,
     /// True when the primary target is a player character.
     /// Used by lost-sight logic in `reconsider_swordfight` to decide
     /// whether to chase (PC) or pull a battle overview (NPC).
@@ -1059,6 +1064,16 @@ impl AiPerTickData {
             .map(|&(_, position)| position)
     }
 
+    pub fn enemy_detectable_live_world_position(
+        &self,
+        target: HumanHandle,
+    ) -> Option<crate::coordinates::WorldPoint3D> {
+        self.enemy_detectable_live_world_positions
+            .iter()
+            .find(|(handle, _)| *handle == target)
+            .map(|&(_, position)| position)
+    }
+
     /// Return the profile table required by swordfight evaluation.
     pub fn required_profile_manager(&self) -> &crate::profiles::ProfileManager {
         self.profile_manager.as_deref().expect(
@@ -1118,6 +1133,7 @@ impl AiPerTickData {
             primary_target_forecast: None,
             enemy_detectable_forecasts: Vec::new(),
             enemy_detectable_positions: Vec::new(),
+            enemy_detectable_live_world_positions: Vec::new(),
             primary_target_is_pc: false,
             missed_pc_forecast: None,
             missed_pc_is_pc: false,

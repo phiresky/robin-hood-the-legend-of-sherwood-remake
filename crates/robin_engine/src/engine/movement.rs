@@ -648,6 +648,35 @@ fn discard_lazy_door_pass_following_orders(pass: Option<&mut ActiveDoorPass>) {
     }
 }
 
+/// Insert a materialized lazy door-pass step at the same side of a copied
+/// transition-distance continuation as Original's single translated order
+/// list.
+///
+/// `PerformMotion(TILL_LAST_FRAME)` inserts the copied continuation immediately
+/// before the first later, distinct animation with a nonzero destination. Rust
+/// stores the orders preceding that animation (PassingDoor and zero-target
+/// posture transitions) in `ActiveDoorPass`, so those steps must be inserted
+/// before the concrete continuation. The matching authored walk belongs after
+/// it.
+fn insert_door_pass_successor(
+    element: &mut crate::sequence::SequenceElement,
+    order: crate::order::Order,
+) {
+    let continuation = element
+        .orders
+        .iter()
+        .position(|queued| queued.transition_distance_continuation);
+    let Some(continuation) = continuation else {
+        element.push_order(order);
+        return;
+    };
+    let copied = &element.orders[continuation];
+    let is_matching_authored_walk =
+        (order.target_x != 0.0 || order.target_y != 0.0) && order.order_type == copied.order_type;
+    let insertion = continuation + usize::from(is_matching_authored_walk);
+    element.insert_order(insertion, order);
+}
+
 fn completed_door_pass_to_commit(
     discarded_following_orders: bool,
     completed: Option<(crate::gate::DoorIndex, bool)>,
@@ -890,7 +919,9 @@ fn door_pass_eager_posture(
 #[cfg(test)]
 mod door_pass_posture_tests {
     use super::*;
-    use crate::element::Posture;
+    use crate::element::{Command, Posture};
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
 
     #[test]
     fn recursively_reached_wall_exit_preserves_its_done_posture() {
@@ -911,6 +942,78 @@ mod door_pass_posture_tests {
             Some(Posture::OnWall),
             "ordinary wall-climb rows continue owning their posture on every Execute"
         );
+    }
+
+    #[test]
+    fn lazy_door_steps_keep_original_position_around_copied_continuation() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut element = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        element.orders.clear();
+        element.orders.push_back(Order::new(
+            OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
+            20.0,
+            30.0,
+            std::num::NonZeroU32::new(1).unwrap(),
+        ));
+        let mut copied_walk = Order::new(
+            OrderType::WalkingUpright,
+            20.0,
+            30.0,
+            std::num::NonZeroU32::new(2).unwrap(),
+        );
+        copied_walk.transition_distance_continuation = true;
+        element.orders.push_back(copied_walk);
+
+        insert_door_pass_successor(
+            &mut element,
+            Order::new(
+                OrderType::PassingDoor,
+                0.0,
+                0.0,
+                std::num::NonZeroU32::new(3).unwrap(),
+            ),
+        );
+        insert_door_pass_successor(
+            &mut element,
+            Order::new(
+                OrderType::TransitionCrouchingUp,
+                0.0,
+                0.0,
+                std::num::NonZeroU32::new(4).unwrap(),
+            ),
+        );
+        insert_door_pass_successor(
+            &mut element,
+            Order::new(
+                OrderType::WalkingUpright,
+                20.0,
+                30.0,
+                std::num::NonZeroU32::new(5).unwrap(),
+            ),
+        );
+
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![
+                OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
+                OrderType::PassingDoor,
+                OrderType::TransitionCrouchingUp,
+                OrderType::WalkingUpright,
+                OrderType::WalkingUpright,
+            ],
+            "zero-target door steps precede the copied walk, while the authored matching walk follows it"
+        );
+        assert!(element.orders[3].transition_distance_continuation);
+        assert!(!element.orders[4].transition_distance_continuation);
     }
 }
 
@@ -971,19 +1074,21 @@ fn is_sword_motion_context(
     );
 
     // Human's FaceOpponent override owns only its literal sword-movement
-    // Execute arms. A door route can select a base Actor wall/ladder
-    // transition while the preceding walk's MOVING_SWORD state is still
-    // latched; that transition must go directly to Actor::Execute and retain
-    // its lift-facing goal. Ordinary distance-movement successors still use
-    // the outgoing sword state as their visual/facing context until their
-    // START effect publishes the successor state. Human's original dispatch
-    // converts exactly WALKING_UPRIGHT, RUNNING_UPRIGHT, and
-    // WALKING_WITH_CORPSE through this stale state; crouched, shield, and
-    // authored climb distance arms remain base Actor work too.
-    let stale_state_converts_selected_action = matches!(
-        selected_action,
-        OrderType::WalkingUpright | OrderType::RunningUpright | OrderType::WalkingWithCorpse
-    );
+    // Execute arms. DetermineMovementAnimation performs the state-dependent
+    // WALKING_UPRIGHT -> WALKING_WITH_SWORD rewrite while translating an
+    // ordinary movement element (`RHelementactorhuman.cpp:2365-2401`). A
+    // PassDoor step is already a concrete order selected by the door
+    // translator; Execute dispatches that literal action. Thus neither an
+    // ordinary WalkingUpright door step nor a wall/ladder transition may be
+    // reclassified from the preceding step's still-latched MOVING_SWORD
+    // state. Only non-door ordinary movement retains that translation-time
+    // fallback in Rust, where the successor START effect has not yet
+    // published its new state.
+    let stale_state_converts_selected_action = door_pass_action.is_none()
+        && matches!(
+            selected_action,
+            OrderType::WalkingUpright | OrderType::RunningUpright | OrderType::WalkingWithCorpse
+        );
     is_sword_movement_nonanimation(selected_action)
         || stale_sword_state && stale_state_converts_selected_action
 }
@@ -1058,6 +1163,11 @@ fn combat_directional_animation(
     let unit = std::f32::consts::FRAC_PI_4;
     match action_state {
         crate::element::ActionState::MovingShield => {
+            // FaceDangerPoint's four comparisons all reject NaN, then its
+            // release-build fallback returns WALKING_SHIELD.
+            if angle.is_nan() {
+                return OrderType::WalkingShield;
+            }
             if angle < unit || angle >= 7.0 * unit {
                 OrderType::WalkingShield
             } else if angle < 3.0 * unit {
@@ -1069,6 +1179,11 @@ fn combat_directional_animation(
             }
         }
         _ => {
+            // FaceOpponent likewise falls through its disabled assertion to
+            // WALKING_SWORD when unchecked normalization produced a NaN goal.
+            if angle.is_nan() {
+                return OrderType::WalkingSword;
+            }
             if angle < unit || angle >= 7.0 * unit {
                 OrderType::WalkingSword
             } else if angle < 3.0 * unit {
@@ -1115,6 +1230,9 @@ fn movement_execute_state_effect(
             MS::Done | MS::Terminated,
         ) => Some((P::Upright, AS::Waiting)),
         (OT::TransitionCrouchingDown, MS::Done | MS::Terminated) => {
+            Some((P::Crouched, AS::Waiting))
+        }
+        (OT::TransitionWalkingCrouchedWaitingCrouched, MS::Done | MS::Terminated) => {
             Some((P::Crouched, AS::Waiting))
         }
         (
@@ -1179,20 +1297,30 @@ fn should_defer_pc_movement_state_start(is_pc: bool, entity_target_seek: bool) -
     is_pc && !entity_target_seek
 }
 
-/// The shipped game clears a soldier's anti-vibration deviation latch when an
-/// in-place movement transition starts, but PCs preserve it across the same
-/// walking-to-waiting handoff. The latter is observable when the following
-/// `Turn` consumes the retained direction counter before rotating.
+/// The shipped game clears an anti-vibration deviation latch when an in-place
+/// movement startup transition starts. Both PCs and NPCs distinguish the two
+/// upright handoffs: a waiting-to-walking/running startup retires the
+/// preceding movement's latch, while a walking-to-waiting exit preserves it
+/// for the following `Turn`.
 #[inline]
 fn should_clear_deviated_for_aligned_transition_start(
-    is_pc: bool,
+    _is_pc: bool,
     execute_order_initialising: bool,
     is_transition_anim: bool,
+    order_action: OrderType,
     deviated: bool,
     position: MapPoint,
     goal: MapPoint,
 ) -> bool {
-    !is_pc && execute_order_initialising && is_transition_anim && deviated && position == goal
+    execute_order_initialising
+        && is_transition_anim
+        && matches!(
+            order_action,
+            OrderType::TransitionWaitingUprightWalkingUpright
+                | OrderType::TransitionWaitingUprightRunningUpright
+        )
+        && deviated
+        && position == goal
 }
 
 fn actor_line_crossing_eligible(
@@ -1205,7 +1333,7 @@ fn actor_line_crossing_eligible(
 
 #[inline]
 fn stationary_motion_waits(speed: f32, tolerance_arrival: bool, distance: f32) -> bool {
-    speed <= 0.0 && !tolerance_arrival && distance > f32::EPSILON
+    speed <= 0.0 && !tolerance_arrival && (distance > f32::EPSILON || !distance.is_finite())
 }
 
 #[inline]
@@ -1469,6 +1597,19 @@ fn original_final_path_metadata(
     }
 }
 
+/// Drop the pathfinder's source point before materializing movement orders.
+///
+/// `RHEngine::ProcessPathRequests` starts its order loop at index one whenever
+/// `bUseFirstPoint` is false (`RHengine.cpp:8410-8423`).  Do not re-check that
+/// the first point equals the request source here: legacy floating-point
+/// equality is not the gate, and a source poisoned with NaNs must still be
+/// skipped rather than becoming a live movement order.
+fn discard_unrequested_path_source(waypoints: &mut Vec<MapPoint>, use_first_point: bool) {
+    if !use_first_point && waypoints.len() > 1 {
+        waypoints.remove(0);
+    }
+}
+
 fn is_in_place_movement_transition(order: OrderType) -> bool {
     matches!(
         order,
@@ -1486,6 +1627,49 @@ fn is_in_place_movement_transition(order: OrderType) -> bool {
             | OrderType::StandingUpBow
             | OrderType::LoweringShield
     )
+}
+
+/// Whether an outgoing movement is still in one of the generated locomotion
+/// transitions that owns the previously published waypoint.
+///
+/// A replacement instructed while the actor is in a concrete walk/run order
+/// does not inherit that waypoint: Original clears it at the replacement
+/// arbitration boundary and leaves it zero until the new movement executes.
+/// The transition case is different because the transition itself continues
+/// to own the live movement forecast across the hand-off.
+fn movement_transition_retains_goal(order: OrderType) -> bool {
+    matches!(
+        order,
+        OrderType::TransitionWalkingUprightWaitingUpright
+            | OrderType::TransitionRunningUprightWaitingUpright
+            | OrderType::TransitionWaitingUprightWalkingUpright
+            | OrderType::TransitionWaitingUprightRunningUpright
+            | OrderType::TransitionWalkingUprightRunningUpright
+            | OrderType::TransitionRunningUprightWalkingUpright
+            | OrderType::TransitionWaitingCrouchedWalkingCrouched
+            | OrderType::TransitionWalkingCrouchedWaitingCrouched
+            | OrderType::TransitionWalkingUprightWalkingCrouched
+            | OrderType::TransitionWalkingCrouchedWalkingUpright
+            | OrderType::TransitionRunningUprightWalkingCrouched
+            | OrderType::TransitionWalkingCrouchedRunningUpright
+    )
+}
+
+#[cfg(test)]
+mod movement_goal_replacement_tests {
+    use super::*;
+
+    #[test]
+    fn only_live_locomotion_transitions_retain_the_outgoing_goal() {
+        assert!(movement_transition_retains_goal(
+            OrderType::TransitionWaitingUprightRunningUpright
+        ));
+        assert!(movement_transition_retains_goal(
+            OrderType::TransitionRunningUprightWaitingUpright
+        ));
+        assert!(!movement_transition_retains_goal(OrderType::RunningUpright));
+        assert!(!movement_transition_retains_goal(OrderType::WalkingUpright));
+    }
 }
 
 /// Result of [`EngineInner::advance_door_pass`].
@@ -2346,9 +2530,37 @@ pub(crate) fn current_door_for_route_source(
         })
 }
 
+/// Compare the object identities returned for two authored positions.
+///
+/// Original's GoTo branch compares `RHSector*` values directly
+/// (`RHartificialintelligence.cpp:2566`), so equal script-facing sector
+/// numbers do not imply that the positions occupy the same motion sector.
+pub(super) fn sector_hits_have_distinct_identity(
+    source: crate::fast_find_grid::SectorHit,
+    goal: crate::fast_find_grid::SectorHit,
+    expected_sector: crate::position_interface::SectorHandle,
+) -> bool {
+    match (source, goal) {
+        (
+            crate::fast_find_grid::SectorHit::Found {
+                sector_idx: source_idx,
+                sector_number: source_number,
+            },
+            crate::fast_find_grid::SectorHit::Found {
+                sector_idx: goal_idx,
+                sector_number: goal_number,
+            },
+        ) => {
+            let expected = crate::sector::SectorNumber::new(u16::from(expected_sector) as i16);
+            source_number == expected && goal_number == expected && source_idx != goal_idx
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod route_source_tests {
-    use super::current_door_for_route_source;
+    use super::{current_door_for_route_source, sector_hits_have_distinct_identity};
     use crate::element::{
         ActiveDoorPass, ActorData, ActorPc, ElementData, Entity, HumanData, PcData,
     };
@@ -2421,6 +2633,43 @@ mod route_source_tests {
         pc.position_iface_mut().set_door(DoorHandle(17), false);
 
         assert_eq!(current_door_for_route_source(&pc), (DoorHandle(17), false));
+    }
+
+    #[test]
+    fn goto_compares_sector_object_identity_even_when_numbers_match() {
+        use crate::fast_find_grid::{SectorHit, SectorIndex};
+        use crate::sector::SectorNumber;
+
+        let number = SectorNumber::new(18);
+        let hit = |index| SectorHit::Found {
+            sector_idx: SectorIndex::new(index).unwrap(),
+            sector_number: number,
+        };
+
+        let expected = crate::position_interface::SectorHandle::new(18).unwrap();
+        assert!(sector_hits_have_distinct_identity(
+            hit(12),
+            hit(37),
+            expected
+        ));
+        assert!(!sector_hits_have_distinct_identity(
+            hit(12),
+            hit(12),
+            expected
+        ));
+        assert!(!sector_hits_have_distinct_identity(
+            hit(12),
+            SectorHit::None,
+            expected
+        ));
+        assert!(!sector_hits_have_distinct_identity(
+            hit(12),
+            SectorHit::Found {
+                sector_idx: SectorIndex::new(37).unwrap(),
+                sector_number: SectorNumber::new(19),
+            },
+            expected
+        ));
     }
 }
 
@@ -2774,7 +3023,7 @@ struct MovementDeferred {
     blocked_impossible: Vec<(crate::sequence::SequenceId, usize)>,
     door_pass_transition_start_effects: Vec<EntityId>,
     door_pass_transition_done_effects: Vec<EntityId>,
-    door_pass_transition_completion_effects: Vec<EntityId>,
+    door_pass_transition_completion_effects: Vec<(EntityId, OrderType)>,
     post_seek_arrivals: Vec<(EntityId, crate::sequence::SequenceId, usize)>,
     /// Terminal state effect from a movement transition whose `PerformSeek`
     /// pre-motion tolerance arm launched a post-seek sequence. Original
@@ -5018,11 +5267,6 @@ impl EngineInner {
             (shots, start_sector)
         }; // host borrow dropped here
 
-        // An empty gate path is still a valid route when source adaptation
-        // (for example, an actor currently straddling a door) places the
-        // effective source in the goal sector. Keep building the sequence
-        // so its trailing direct MOVE is emitted.
-
         // Does the entity have the lockpick contextual action?
         // Needed to choose the lockpick sub-element branch.
         let has_lockpick = self
@@ -6137,6 +6381,20 @@ impl EngineInner {
         }
     }
 
+    /// Mark the engine-owned result of an AI order as available to the
+    /// deferred EndThink surface.  Original builds/authorizes the order
+    /// inline; Rust must not interpret an earlier nested drain with no result
+    /// as a successful authorization.
+    fn resolve_ai_engine_completion_verdict(&mut self, entity_id: EntityId) {
+        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+            panic!("AI order owner {entity_id:?} disappeared before its engine verdict")
+        });
+        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+            panic!("AI order owner {entity_id:?} lost its controller before its engine verdict")
+        });
+        ai.resolve_engine_completion_verdict();
+    }
+
     pub(super) fn launch_ai_move(
         &mut self,
         entity_id: EntityId,
@@ -6163,6 +6421,9 @@ impl EngineInner {
         // boundary — that is Original's
         // `StopNotYetLaunchedSequenceElements`.
         let mut intent = intent.clone();
+        if intent.defer_instruction && intent.not_before_frame.is_none() {
+            intent.not_before_frame = Some(self.control.frame_counter.saturating_add(1));
+        }
         if intent.source_position.is_none() {
             let (raw_source, raw_sector, raw_layer, door_handle, door_direction) = {
                 let entity = self.get_entity(entity_id).unwrap_or_else(|| {
@@ -6186,7 +6447,32 @@ impl EngineInner {
             // different door state at the later drain.
             let goal_layer = intent.target_layer.unwrap_or(raw_layer);
             let goal_sector = intent.target_sector.or(raw_sector);
-            let crosses_raw_topology = goal_layer != raw_layer || goal_sector != raw_sector;
+            let target_point = crate::coordinates::MapPoint::new(intent.target_x, intent.target_y);
+            // GoTo compares the two `RHSector*` values directly
+            // (`RHartificialintelligence.cpp:2538`). SectorHandle carries
+            // only the public number, but multiple motion polygons may share
+            // that number. Recover their arena identities from the two
+            // authored points while both call-time positions are available.
+            // This matters even when FindPathGates later returns an empty
+            // gate list: AppendMoveToSequence still emits its leading
+            // AssertPosition.
+            let source_target_sector_identity_differs = raw_sector
+                .filter(|source_sector| Some(*source_sector) == goal_sector)
+                .is_some_and(|shared_sector| {
+                    sector_hits_have_distinct_identity(
+                        self.world
+                            .fast_grid
+                            .get_sector(raw_source, target_point, raw_layer),
+                        self.world
+                            .fast_grid
+                            .get_sector(target_point, raw_source, goal_layer),
+                        shared_sector,
+                    )
+                });
+            intent.source_target_sector_identity_differs |= source_target_sector_identity_differs;
+            let crosses_raw_topology = goal_layer != raw_layer
+                || goal_sector != raw_sector
+                || source_target_sector_identity_differs;
             let adapted_source = crosses_raw_topology
                 .then(|| {
                     self.scripts.mission.as_ref().and_then(|_| {
@@ -6221,8 +6507,26 @@ impl EngineInner {
     /// this).
     pub(super) fn drain_pending_move_requests(&mut self, sim: &crate::sim_rng::SimulationContext) {
         let requests = std::mem::take(&mut self.orders.pending_move_requests);
+        let mut deferred = Vec::new();
         for (entity_id, intent) in requests {
-            let _ = self.do_launch_ai_move(sim, entity_id, &intent);
+            if intent
+                .not_before_frame
+                .is_some_and(|frame| frame > self.control.frame_counter)
+            {
+                deferred.push((entity_id, intent));
+                continue;
+            }
+            let launched = self.do_launch_ai_move(sim, entity_id, &intent);
+            if launched.is_some() && intent.halt_after_launch_for_path_waiter {
+                self.halt_actor(entity_id);
+            }
+            self.resolve_ai_engine_completion_verdict(entity_id);
+        }
+        // Work authored while draining may already have appended newer
+        // intents. The retained older FIFO prefix stays ahead of those.
+        if !deferred.is_empty() {
+            deferred.append(&mut self.orders.pending_move_requests);
+            self.orders.pending_move_requests = deferred;
         }
     }
 
@@ -6238,17 +6542,40 @@ impl EngineInner {
         let mut owner_requests = Vec::new();
         let mut remaining = Vec::with_capacity(requests.len());
         for request @ (entity_id, _) in requests {
-            if entity_id == owner {
+            // A continuation that resumes an Original call stack after its
+            // authored manager boundary may construct a movement now but must
+            // leave its instruction to the next ordinary drain. The global
+            // `drain_pending_move_requests` intentionally ignores this marker
+            // when that boundary arrives.
+            if entity_id == owner
+                && !request
+                    .1
+                    .not_before_frame
+                    .is_some_and(|frame| frame > self.control.frame_counter)
+            {
                 owner_requests.push(request);
             } else {
                 remaining.push(request);
             }
         }
         self.orders.pending_move_requests = remaining;
-        owner_requests
-            .into_iter()
-            .filter_map(|(_, intent)| self.do_launch_ai_move(sim, owner, &intent))
-            .collect()
+        let mut launched = Vec::new();
+        for (_, intent) in owner_requests {
+            if let Some(sequence_id) = self.do_launch_ai_move(sim, owner, &intent) {
+                if intent.halt_after_launch_for_path_waiter {
+                    // RHArtificialIntelligence::GoTo checks
+                    // `mpMe->IsComputingPath()` after LaunchSequence. In this
+                    // recursive path-waiter case it remains true, so Halt
+                    // synchronously interrupts the newly registered Move
+                    // before SequenceManager::Hourglass can instruct it.
+                    self.halt_actor(owner);
+                } else {
+                    launched.push(sequence_id);
+                }
+            }
+            self.resolve_ai_engine_completion_verdict(owner);
+        }
+        launched
     }
 
     /// Actually build and launch the Move sequence element for an AI
@@ -6322,7 +6649,9 @@ impl EngineInner {
         let action = intent.order_type;
         // A layer transition requires gate routing even when the numeric
         // sector handle happens to remain the same.
-        let crosses_topology = goal_layer != source_layer || goal_sector != source_sector;
+        let crosses_topology = goal_layer != source_layer
+            || goal_sector != source_sector
+            || intent.source_target_sector_identity_differs;
         if crosses_topology {
             let Some(source_sector) = source_sector else {
                 tracing::warn!(?entity_id, "cross-sector AI GoTo has no source sector");
@@ -6399,6 +6728,23 @@ impl EngineInner {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 return None;
             };
+            // Original FindPathGates can only authorize a cross-sector
+            // AppendMoveToSequence with at least one gate. If our compact
+            // sector handles compare equal while retained pointer provenance
+            // says they differ, its empty same-number result is failure, not
+            // a direct Move. In particular, do not replace the actor's
+            // existing sequence in this case.
+            if gate_path.is_empty() && intent.source_target_sector_identity_differs {
+                tracing::warn!(
+                    ?entity_id,
+                    source_sector = u16::from(source_sector),
+                    goal_sector = u16::from(goal_sector),
+                    identity_differs = intent.source_target_sector_identity_differs,
+                    "cross-sector AI GoTo resolved to an empty gate route"
+                );
+                self.set_ai_couldnt_reachpoint(entity_id);
+                return None;
+            }
             let mut prefix = Vec::new();
             if intent.quit_swordfight_before_move {
                 prefix.push(crate::sequence::SequenceElement::new(
@@ -6570,6 +6916,119 @@ impl EngineInner {
             "AI movement launched via sequence element"
         );
         Some(sequence_id)
+    }
+
+    /// Test the gate portion of `AppendMoveToSequence` before registering an
+    /// AI move that will immediately be cancelled by GoTo's legacy
+    /// `IsComputingPath` tail.
+    ///
+    /// The Original constructs a cross-topology sequence synchronously. If
+    /// gate construction fails, `GoTo` publishes `mbCouldntReachpoint` before
+    /// it notices and halts the outgoing `MOVE_WAITING` element
+    /// (`RHartificialintelligence.cpp:2538-2580,2614-2620`). Rust normally
+    /// defers construction through `pending_move_requests`; that tail halt
+    /// would otherwise erase the raw intent before the failure can be seen.
+    fn ai_move_gate_route_is_authorized(
+        &self,
+        entity_id: EntityId,
+        intent: &crate::order::AiOrderIntent,
+    ) -> bool {
+        let Some(entity) = self.get_entity(entity_id) else {
+            return false;
+        };
+        let ed = entity.element_data();
+        let (door_handle, door_direction) = current_door_for_route_source(entity);
+        let raw_source = ed.position_map();
+        let raw_layer = ed.layer();
+        let raw_sector = ed.sector();
+        let (source, source_layer, source_sector) = if let Some(source) = intent.source_position {
+            (
+                source,
+                intent.source_layer.unwrap_or_else(|| {
+                    panic!("AI GoTo for {entity_id:?} captured a source position without a layer")
+                }),
+                intent.source_sector,
+            )
+        } else {
+            self.scripts
+                .mission
+                .as_ref()
+                .and_then(|_| {
+                    adapt_source_to_current_door(
+                        &self.script_domains.interactables.doors,
+                        door_handle,
+                        door_direction,
+                    )
+                })
+                .map(|(point, sector, layer)| {
+                    (
+                        point,
+                        layer,
+                        crate::position_interface::SectorHandle::new(sector),
+                    )
+                })
+                .unwrap_or((raw_source, raw_layer, raw_sector))
+        };
+        let goal_layer = intent.target_layer.unwrap_or(source_layer);
+        let goal_sector = intent.target_sector.or(source_sector);
+        if goal_layer == source_layer && goal_sector == source_sector {
+            return true;
+        }
+        let (Some(source_sector), Some(goal_sector), Some(_)) =
+            (source_sector, goal_sector, self.scripts.mission.as_ref())
+        else {
+            return false;
+        };
+        let auth = entity.actor_auth_info();
+        let level = &self.world.fast_grid.level;
+        let move_flags =
+            crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
+        let door_goal = self
+            .grid_sector_by_number(crate::sector::SectorNumber::new(
+                u16::from(goal_sector) as i16
+            ))
+            .filter(|sector| sector.sector_type.is_door())
+            .and_then(|sector| sector.door_index)
+            .map(crate::gate::DoorIndex);
+        let goal = (intent.target_x, intent.target_y);
+        if let Some(door_index) = door_goal {
+            crate::gate::find_path_into_door(
+                &self.script_domains.interactables.doors,
+                (source.x, source.y),
+                u16::from(source_sector),
+                door_index,
+                Some(&auth),
+                move_flags.contains(crate::sequence::MoveFlags::MAP),
+                &|sector| self.building_sector_is_authorized(sector),
+                &|sector| {
+                    level
+                        .sectors
+                        .iter()
+                        .find(|candidate| candidate.sector_number == sector)
+                        .and_then(|candidate| candidate.lift_type)
+                },
+            )
+            .is_some()
+        } else {
+            crate::gate::find_path_gates(
+                &self.script_domains.interactables.doors,
+                (source.x, source.y),
+                u16::from(source_sector),
+                goal,
+                u16::from(goal_sector),
+                Some(&auth),
+                move_flags.contains(crate::sequence::MoveFlags::MAP),
+                &|sector| self.building_sector_is_authorized(sector),
+                &|sector| {
+                    level
+                        .sectors
+                        .iter()
+                        .find(|candidate| candidate.sector_number == sector)
+                        .and_then(|candidate| candidate.lift_type)
+                },
+            )
+            .is_some()
+        }
     }
 
     /// The raise-sword element `RHArtificialIntelligence::GoTo` inserts into
@@ -8036,8 +8495,8 @@ impl EngineInner {
         for entity_id in door_pass_transition_done_effects {
             self.apply_door_pass_transition_done_side_effects(assets, entity_id);
         }
-        for entity_id in door_pass_transition_completion_effects {
-            self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
+        for (entity_id, action) in door_pass_transition_completion_effects {
+            self.apply_door_pass_transition_completion_side_effects(assets, entity_id, action);
         }
 
         // PerformSeek calls SetMovingActionState and RefreshSeek synchronously
@@ -8250,9 +8709,14 @@ impl EngineInner {
         // transition order blocks subsequent orders until its sprite
         // animation completes.
         for (seq_id, elem_idx, order) in transition_pushes {
-            self.orders
+            let element = self
+                .orders
                 .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
+                .get_element_mut(seq_id, elem_idx)
+                .unwrap_or_else(|| {
+                    panic!("door-pass successor has stale element handle ({seq_id:?}, {elem_idx})")
+                });
+            insert_door_pass_successor(element, order);
         }
 
         // Fire pending Select hulk flashes.
@@ -9643,22 +10107,28 @@ impl EngineInner {
                 provenance_frame,
                 "perform_motion:return",
             );
-            // A generated transition can begin exactly where an
-            // anti-collision deviation ended (destination == current map
-            // position). The shipped Linux game drops the deviation latch on
-            // that zero-distance START tick, so every following in-place
-            // `Turn()` rotates immediately in *both* directions — a
-            // counter-clockwise first-call rotation from a +2 count
-            // (Savegame_010 replay-014 frame 1030) rules out the previous
-            // count-priming model from task #545. The available C++ source
-            // does not expose the latch update responsible for this
-            // save-observable detail; see
+            // A generated walking- or running-start transition can begin
+            // exactly where an anti-collision deviation ended (destination
+            // == current map position). The shipped Linux game drops the
+            // deviation latch on that zero-distance START tick, so every
+            // following in-place `Turn()` rotates immediately in *both*
+            // directions — a counter-clockwise first-call rotation from a +2
+            // count (Savegame_010 replay-014 frame 1030) rules out the
+            // previous count-priming model from task #545. Savegame_032
+            // replay-010 additionally proves the running-start case: the
+            // visible turn history establishes a -2 count immediately before
+            // the aligned start, then its next clockwise shield turn rotates
+            // on the first call. The available C++ source does not expose the
+            // latch update responsible for this save-observable detail; see
             // `clear_deviated_for_aligned_transition_start` for the trace
-            // evidence bounding it to exactly this initialization.
+            // evidence bounding it to exactly this startup initialization.
+            // The matching walking-to-waiting exit deliberately preserves
+            // the latch (Savegame_023 replay-027, Soldier 136, frame 25195).
             if should_clear_deviated_for_aligned_transition_start(
                 is_pc,
                 execute_order_initialising,
                 is_transition_anim,
+                order_action,
                 sprite.position_iface.is_deviated(),
                 sprite.position_iface.map_position(),
                 goal,
@@ -10423,7 +10893,7 @@ impl EngineInner {
             {
                 deferred
                     .door_pass_transition_completion_effects
-                    .push(entity_id);
+                    .push((entity_id, order_action));
             }
             if matches!(motion_state, MotionState::Terminated) {
                 if let Some((external_direction, movement_direction)) =
@@ -10601,6 +11071,58 @@ impl EngineInner {
                         .push((eid, move_seq_id, move_elem_idx));
                     return;
                 }
+                // PerformMotion(TILL_LAST_FRAME) can mutate the order list
+                // before returning TERMINATED: when a startup transition
+                // loops short of its destination, it inserts a copied order
+                // using the next distinct animation. PerformSeek then reads
+                // that live successor, just like it does after an ordinary
+                // walking waypoint, and rejects an out-of-reach stop
+                // transition when the seek target moved in the meantime
+                // (RHelementactor.cpp:7974-8007, RHsprite.cpp:1849-1925).
+                if !is_final_waypoint_after_transition_cleanup
+                    && let Some((target_position, _, target_point)) = live_seek_target
+                    && target_position != ft.last_seek_target_position
+                    && let Some(next_action) = self
+                        .orders
+                        .sequence_manager
+                        .get_element(move_seq_id, move_elem_idx)
+                        .and_then(|element| element.orders.get(1))
+                        .map(|order| order.order_type)
+                    && matches!(
+                        next_action,
+                        OrderType::TransitionRunningUprightWaitingUpright
+                            | OrderType::TransitionWalkingUprightWaitingUpright
+                            | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                    )
+                {
+                    let aim = target_point.unwrap_or(target_position);
+                    let here = entity.element_data().position_map();
+                    let dx = aim.x - here.x;
+                    let dy = if ft.directional {
+                        const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
+                        (aim.y - here.y) * INVERSE_ASPECT_RATIO
+                    } else {
+                        aim.y - here.y
+                    };
+                    let reach = (f32::from(entity.sprite().distance_for_animation(next_action))
+                        + ft.tol)
+                        * 1.05;
+                    if dx * dx + dy * dy > reach * reach {
+                        deferred
+                            .movement_state_effects
+                            .retain(|(id, _, _)| *id != eid);
+                        deferred
+                            .transition_seek_refreshes
+                            .push((eid, move_seq_id, move_elem_idx));
+                        tracing::trace!(
+                            ?eid,
+                            ?next_action,
+                            reach,
+                            "tick_move: looped transition exposed stale stop; refreshing seek",
+                        );
+                        return;
+                    }
+                }
                 // A Hit can be attached to a Seek whose authored stop
                 // transition uses up the last few map units before the
                 // interaction.  Original terminates that transition at
@@ -10619,7 +11141,12 @@ impl EngineInner {
                     })
                     .flatten();
                 let terminal_interaction_out_of_range = final_entity_seek_arrival == Some(true)
-                    && terminal_interaction.is_some()
+                    // HITTING's rejected initialization is collapsed at this
+                    // boundary by the controls above. TYING is different:
+                    // Original publishes the newly instructed Tying order as
+                    // IN_PROGRESS first, and its Execute-time position check
+                    // cannot run until the actor's following Hourglass.
+                    && terminal_interaction == Some(ActorPostSeekInteraction::Hit)
                     && live_seek_target
                         .map(|(target_position, _, _)| {
                             let here = entity.element_data().position_map();
@@ -10627,24 +11154,20 @@ impl EngineInner {
                         })
                         .unwrap_or(false);
                 if terminal_interaction_out_of_range {
-                    if terminal_interaction == Some(ActorPostSeekInteraction::Hit) {
-                        // HITTING initialization turns toward its antagonist
-                        // before the validity check which aborts it
-                        // (`RHelementactorhuman.cpp:4462-4472`). TYING does
-                        // the opposite: it validates before SetDirection
-                        // (`RHelementactorpc.cpp:5902-5913`).
-                        let target_ground = live_seek_target_ground
-                            .expect("terminal entity seek retained its target ground position");
-                        let here_ground = entity.ground_position();
-                        let facing = vector_to_sector_0_to_15(
-                            target_ground.x - here_ground.x,
-                            target_ground.y - here_ground.y,
-                        );
-                        entity.element_data_mut().set_direction_goal(facing);
-                    }
+                    // HITTING initialization turns toward its antagonist
+                    // before the validity check which aborts it
+                    // (`RHelementactorhuman.cpp:4462-4472`).
+                    let target_ground = live_seek_target_ground
+                        .expect("terminal entity seek retained its target ground position");
+                    let here_ground = entity.ground_position();
+                    let facing = vector_to_sector_0_to_15(
+                        target_ground.x - here_ground.x,
+                        target_ground.y - here_ground.y,
+                    );
+                    entity.element_data_mut().set_direction_goal(facing);
 
-                    // PC-only: these replay controls use PC Hit/Tie arms,
-                    // whose invalid interactions have no NPC Think/AI
+                    // PC-only: these replay controls use the PC Hit arm,
+                    // whose invalid interaction has no NPC Think/AI
                     // continuation. Keep NPC post-seek lifecycle on the
                     // ordinary sequence-manager path.
                     let actor = entity.actor_data_mut().expect("actor-only branch");
@@ -10731,7 +11254,7 @@ impl EngineInner {
                     })
                     .flatten();
                 let actor_owned_interaction_out_of_range = final_actor_owned_post_seek_arrival
-                    && actor_owned_interaction.is_some()
+                    && actor_owned_interaction == Some(ActorPostSeekInteraction::Hit)
                     && live_actor_seek_target
                         .map(|(target_position, _, _, _)| {
                             interaction_exceeds_init_range(
@@ -10744,17 +11267,15 @@ impl EngineInner {
                     // A copied terminal transition can lose its movement
                     // element target while PerformSeek's mpSeekTarget
                     // remains actor-owned. HITTING still turns before its
-                    // validity abort; TYING validates before turning.
-                    if actor_owned_interaction == Some(ActorPostSeekInteraction::Hit) {
-                        let (_, target_ground, _, _) = live_actor_seek_target
-                            .expect("out-of-range actor-owned Hit retained a live target");
-                        let here_ground = entity.ground_position();
-                        let facing = vector_to_sector_0_to_15(
-                            target_ground.x - here_ground.x,
-                            target_ground.y - here_ground.y,
-                        );
-                        entity.element_data_mut().set_direction_goal(facing);
-                    }
+                    // validity abort.
+                    let (_, target_ground, _, _) = live_actor_seek_target
+                        .expect("out-of-range actor-owned Hit retained a live target");
+                    let here_ground = entity.ground_position();
+                    let facing = vector_to_sector_0_to_15(
+                        target_ground.x - here_ground.x,
+                        target_ground.y - here_ground.y,
+                    );
+                    entity.element_data_mut().set_direction_goal(facing);
 
                     let actor = entity.actor_data_mut().expect("actor-only branch");
                     actor.wait_time = actor.seek_refresh_wait;
@@ -12177,6 +12698,7 @@ impl EngineInner {
                     order = ?intent.order_type,
                     "allied stance suppressed AI-authored combat movement"
                 );
+                self.resolve_ai_engine_completion_verdict(entity_id);
                 continue;
             }
             match intent.order_type {
@@ -12197,6 +12719,22 @@ impl EngineInner {
                         .is_some_and(|element| {
                             element.command == crate::element::Command::MoveWaiting
                         });
+                    if was_computing_path {
+                        let ai = self
+                            .world
+                            .entities
+                            .get_mut(entity_id)
+                            .and_then(Entity::ai_controller_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "movement owner {} lost AI while preserving path-waiter provenance",
+                                    entity_id.index()
+                                )
+                            });
+                        if ai.outbox.reentrant.reconsider_approach_completion_pending {
+                            ai.outbox.reentrant.reconsider_approach_replaced_path_waiter = true;
+                        }
+                    }
                     // `find_accessible` / `ask_obstacle` pre-flight
                     // gates.  Run them before the halt so a failure
                     // leaves the outgoing sequence in place rather
@@ -12204,16 +12742,16 @@ impl EngineInner {
                     // move.
                     let mut intent = intent;
                     if !self.preflight_ai_goto(entity_id, &mut intent) {
+                        self.resolve_ai_engine_completion_verdict(entity_id);
                         continue;
                     }
-                    // Original Halt preserves a selected movement long enough
-                    // for the replacement Move to become mpSequenceElement.
-                    // Only then is the old movement interrupted, so its
-                    // SendCondolationCard no longer owns the selected element
-                    // and cannot clear PositionGoalMap. Preserve that cached
-                    // transition goal across Rust's eager halt; launching the
-                    // replacement below remains free to overwrite it when a
-                    // path is available immediately.
+                    // A generated locomotion transition continues to own its
+                    // previously published waypoint while a replacement Move
+                    // becomes mpSequenceElement. Preserve that cached goal
+                    // until the replacement installs a concrete waypoint.
+                    // A concrete MoveOk walk/run does not have this lifetime:
+                    // Original clears its goal at replacement arbitration and
+                    // leaves zero visible until the new movement executes.
                     //
                     // An explicit StopAll before this GoTo has already
                     // performed the selected-element cleanup and must not
@@ -12226,7 +12764,12 @@ impl EngineInner {
                                 .and_then(|(seq, idx)| {
                                     self.orders.sequence_manager.get_element(seq, idx)
                                 })
-                                .is_some_and(|element| element.data.is_movement())
+                                .is_some_and(|element| {
+                                    element.data.is_movement()
+                                        && element.current_order().is_some_and(|order| {
+                                            movement_transition_retains_goal(order.order_type)
+                                        })
+                                })
                         })
                         .filter(|selected_is_movement| *selected_is_movement)
                         .and_then(|_| {
@@ -12242,7 +12785,14 @@ impl EngineInner {
                     // zero: ordinary GoTo never halts here. Keep explicit
                     // StopAll/Halt effects at their own call sites instead of
                     // "fixing" the legacy bug.
-                    self.launch_ai_move(entity_id, &intent);
+                    let route_rejected_before_launch = was_computing_path
+                        && !self.ai_move_gate_route_is_authorized(entity_id, &intent);
+                    if route_rejected_before_launch {
+                        self.set_ai_couldnt_reachpoint(entity_id);
+                        self.resolve_ai_engine_completion_verdict(entity_id);
+                    } else {
+                        self.launch_ai_move(entity_id, &intent);
+                    }
                     if debug_decision_path {
                         let ai = self
                             .world
@@ -12277,6 +12827,12 @@ impl EngineInner {
                     if was_computing_path {
                         self.check_shape1_contract(entity_id);
                         self.halt_actor(entity_id);
+                        if !route_rejected_before_launch {
+                            // The authorized replacement is deliberately
+                            // cancelled by GoTo's IsComputingPath tail; its
+                            // synchronous verdict is nevertheless complete.
+                            self.resolve_ai_engine_completion_verdict(entity_id);
+                        }
                     }
                 }
                 OrderType::Turning => {
@@ -12358,6 +12914,9 @@ impl EngineInner {
                         order,
                     );
                 }
+            }
+            if !is_movement {
+                self.resolve_ai_engine_completion_verdict(entity_id);
             }
         }
     }
@@ -13941,14 +14500,7 @@ impl EngineInner {
         //   no-op: `[goal]` stays a single waypoint and the actor
         //   walks straight to goal — anti-collision handles the small
         //   obstacle clip on that first leg.)
-        if !use_first_point && waypoints.len() > 1 {
-            let first = waypoints[0];
-            if (first.x - source.x).abs() < f32::EPSILON
-                && (first.y - source.y).abs() < f32::EPSILON
-            {
-                waypoints.remove(0);
-            }
-        }
+        discard_unrequested_path_source(&mut waypoints, use_first_point);
         let mut rewritten_installed_order = None;
         {
             let next_order_id = &mut self.orders.next_order_id;
@@ -15515,12 +16067,12 @@ mod orphaned_sword_movement_tests {
     #[test]
     fn ordinary_successor_does_not_inherit_sword_movement_start_side_effects() {
         assert!(
-            is_sword_motion_context(
+            !is_sword_motion_context(
                 ActionState::MovingSword,
                 Some(OrderType::WalkingUpright),
                 OrderType::WalkingUpright,
             ),
-            "the outgoing sword state remains valid visual/facing context"
+            "a concrete ordinary door successor must not re-enter Human's sword-facing Execute arm"
         );
         assert!(
             !executes_sword_movement_action(
@@ -15835,13 +16387,20 @@ mod movement_transition_state_tests {
     }
 
     #[test]
-    fn ordinary_distance_successor_retains_stale_sword_facing_context() {
+    fn door_distance_successor_dispatches_its_literal_non_sword_action() {
         assert!(order_uses_distance_motion(OrderType::WalkingUpright));
-        assert!(is_sword_motion_context(
-            ActionState::MovingSword,
-            Some(OrderType::WalkingUpright),
-            OrderType::WalkingUpright,
-        ));
+        assert!(
+            !is_sword_motion_context(
+                ActionState::MovingSword,
+                Some(OrderType::WalkingUpright),
+                OrderType::WalkingUpright,
+            ),
+            "PassDoor's concrete WalkingUpright order enters base Actor::Execute"
+        );
+        assert!(
+            is_sword_motion_context(ActionState::MovingSword, None, OrderType::WalkingUpright,),
+            "ordinary movement still receives the translation-time sword rewrite"
+        );
         assert!(is_sword_motion_context(
             ActionState::Waiting,
             None,
@@ -15857,6 +16416,125 @@ mod movement_transition_state_tests {
             None,
             OrderType::WalkingCrouched,
         ));
+    }
+
+    #[test]
+    fn stale_sword_state_does_not_face_opponent_before_plain_door_walk() {
+        use crate::gate::{Door, DoorIndex};
+
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(100.0, 100.0);
+        let destination = MapPoint::new(108.0, 106.0);
+        let action = OrderType::WalkingUpright;
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 1.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 16,
+            frame_ids: vec![1, 2],
+            delays: vec![0; 2],
+            distances: vec![1; 2],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+
+        // The opponent lies in sector 0. The translated door step, however,
+        // inherited sector 15 from the preceding door route and must execute
+        // Actor's literal WALKING_UPRIGHT arm before PerformMotion replaces
+        // the trajectory cache for the new destination.
+        let mut opponent = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        opponent
+            .element_data_mut()
+            .set_position_map(MapPoint::new(100.0, 80.0));
+        let opponent = engine.add_entity(opponent);
+
+        let mut owner_entity = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData {
+                action_state: ActionState::MovingSword,
+                execute_order_initialising: true,
+                active_door_pass: Some(ActiveDoorPass {
+                    door_index: DoorIndex(0),
+                    direct: true,
+                    position_direct: true,
+                    steps: Default::default(),
+                    triggers_fired: 0,
+                    current_action: action,
+                    current_reverse: false,
+                    saved_action_state: None,
+                }),
+                ..ActorData::default()
+            },
+            human: HumanData {
+                opponents: vec![opponent],
+                ..HumanData::default()
+            },
+            pc: PcData::default(),
+        });
+        owner_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        owner_entity.element_data_mut().set_position_map(start);
+        owner_entity.element_data_mut().set_direction_instantly(0);
+        owner_entity.element_data_mut().set_direction_goal(15);
+        owner_entity
+            .position_iface_mut()
+            .set_anti_collision_on(false);
+        let owner = engine.add_entity(owner_entity);
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(Door::default());
+
+        let order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(1, Command::PassDoor, Some(owner), action);
+        let mut order = Order::new(action, destination.x, destination.y, order_id);
+        order.compute_direction = false;
+        movement.orders.push_back(order);
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        let _ = engine.tick_entity_movement_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            Some(MovementOwnerSelection {
+                seq_id: sequence,
+                elem_idx: 0,
+                order_id,
+            }),
+        );
+        let sprite = &engine.get_entity(owner).unwrap().element_data().sprite;
+        assert_eq!(sprite.position_iface.get_direction().as_u8(), 15);
+        assert_eq!(sprite.current_row, 15);
     }
 
     #[test]
@@ -16826,6 +17504,7 @@ mod movement_transition_state_tests {
         };
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[transition as usize] = 0;
+        conversion[OrderType::TransitionWaitingUprightWalkingUpright as usize] = 16;
 
         let mut owner_element = ElementData {
             kind: ElementKind::ActorPc,
@@ -16834,7 +17513,7 @@ mod movement_transition_state_tests {
             ..ElementData::default()
         };
         owner_element.sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(vec![script; 32]),
             std::sync::Arc::new(conversion),
         );
         owner_element
@@ -17141,6 +17820,97 @@ mod movement_transition_state_tests {
     }
 
     #[test]
+    fn looped_seek_start_transition_refreshes_before_copied_stop_transition() {
+        let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HealCmd, 70.0);
+        let (seq_id, elem_idx) = {
+            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            (
+                actor.active_movement.sequence_id.unwrap(),
+                actor.active_movement.element_index,
+            )
+        };
+        let stale_target = MapPoint::new(140.0, 100.0);
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.last_seek_target_position = stale_target;
+            actor.seek_refresh_wait = 22;
+            actor.wait_time = 22;
+        }
+        let order_ids = [
+            engine.orders.allocate_order_id(),
+            engine.orders.allocate_order_id(),
+        ];
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .unwrap();
+        let SequenceElementData::Movement {
+            element: seek_target,
+            destination,
+            tolerance,
+            ..
+        } = &mut element.data
+        else {
+            panic!("seek regression lost movement data")
+        };
+        *seek_target = Some(target);
+        *destination = stale_target;
+        *tolerance = 17.0;
+        element.orders.clear();
+        element.orders.push_back(Order::new(
+            OrderType::TransitionWaitingUprightWalkingUpright,
+            120.0,
+            100.0,
+            order_ids[0],
+        ));
+        element.orders.push_back(Order::new(
+            OrderType::TransitionWalkingUprightWaitingUpright,
+            stale_target.x,
+            stale_target.y,
+            order_ids[1],
+        ));
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        for _ in 0..8 {
+            engine.tick_entity_movement(&sim, &assets);
+            if engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .seek_refresh_wait
+                == 25
+            {
+                break;
+            }
+        }
+
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert_eq!(actor.seek_refresh_wait, 25);
+        assert_eq!(actor.wait_time, 25);
+        assert_eq!(
+            actor.last_seek_target_position,
+            engine
+                .get_entity(target)
+                .unwrap()
+                .element_data()
+                .position_map()
+        );
+        assert_eq!(actor.action_state, ActionState::Moving);
+        assert_ne!(
+            engine.actor_order_type(owner),
+            Some(OrderType::TransitionWalkingUprightWaitingUpright),
+            "PerformSeek must refresh before executing the copied stale stop transition"
+        );
+    }
+
+    #[test]
     fn terminal_pc_hit_in_live_range_precedes_expired_stale_seek_refresh() {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 20.0);
         let (seq_id, elem_idx) = {
@@ -17204,17 +17974,21 @@ mod movement_transition_state_tests {
     }
 
     #[test]
-    fn terminal_pc_tie_seek_outside_init_range_aborts_without_turning_or_visible_tie() {
+    fn terminal_pc_tie_seek_outside_init_range_publishes_tie_before_execute_validation() {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::TieCmd, 55.8);
         finish_terminal_seek_tick(&mut engine, owner);
 
-        assert_ne!(engine.actor_order_type(owner), Some(OrderType::Tying));
+        assert_eq!(engine.actor_order_type(owner), Some(OrderType::Tying));
         let entity = engine.get_entity(owner).unwrap();
         let actor = entity.actor_data().unwrap();
         assert!(actor.post_seek_sequence.is_none());
         assert!(actor.seek_target.is_none());
         assert!(actor.active_movement.sequence_id.is_none());
-        assert_eq!(i16::from(entity.position_iface().get_direction_goal()), 7);
+        assert_eq!(
+            i16::from(entity.position_iface().get_direction_goal()),
+            7,
+            "Tie translation itself must not run the next Hourglass's initialization turn"
+        );
     }
 
     #[test]
@@ -17429,22 +18203,84 @@ mod aligned_transition_deviation_tests {
         let aligned = MapPoint::new(407.967_35, 786.937_9);
 
         assert!(!should_clear_deviated_for_aligned_transition_start(
-            true, true, true, true, aligned, aligned,
+            true,
+            true,
+            true,
+            crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
+            true,
+            aligned,
+            aligned,
         ));
     }
 
     #[test]
-    fn non_pc_still_clears_deviation_on_aligned_transition_start() {
-        let aligned = MapPoint::new(100.0, 200.0);
+    fn pc_retires_stale_deviation_at_aligned_movement_start_transition() {
+        let aligned = MapPoint::new(1297.909_3, 720.281_25);
 
         assert!(should_clear_deviated_for_aligned_transition_start(
-            false, true, true, true, aligned, aligned,
+            true,
+            true,
+            true,
+            crate::order::OrderType::TransitionWaitingUprightWalkingUpright,
+            true,
+            aligned,
+            aligned,
+        ));
+    }
+
+    #[test]
+    fn non_pc_clears_deviation_only_on_aligned_movement_start_transition() {
+        let aligned = MapPoint::new(100.0, 200.0);
+
+        assert!(!should_clear_deviated_for_aligned_transition_start(
+            false,
+            true,
+            true,
+            crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
+            true,
+            aligned,
+            aligned,
+        ));
+        assert!(should_clear_deviated_for_aligned_transition_start(
+            false,
+            true,
+            true,
+            crate::order::OrderType::TransitionWaitingUprightWalkingUpright,
+            true,
+            aligned,
+            aligned,
+        ));
+        // Savegame_032 replay-010: Soldier 52 reaches an aligned generated
+        // running startup with the observable anti-vibration history
+        // `deviated=true, direction_count=-2`. The next clockwise shield
+        // turn rotates on its first call in the Original, which is possible
+        // only when this running startup drops the deviation latch.
+        assert!(should_clear_deviated_for_aligned_transition_start(
+            false,
+            true,
+            true,
+            crate::order::OrderType::TransitionWaitingUprightRunningUpright,
+            true,
+            aligned,
+            aligned,
         ));
         assert!(!should_clear_deviated_for_aligned_transition_start(
-            false, false, true, true, aligned, aligned,
+            false,
+            false,
+            true,
+            crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
+            true,
+            aligned,
+            aligned,
         ));
         assert!(!should_clear_deviated_for_aligned_transition_start(
-            false, true, false, true, aligned, aligned,
+            false,
+            true,
+            false,
+            crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
+            true,
+            aligned,
+            aligned,
         ));
     }
 }
@@ -17884,6 +18720,14 @@ mod line_jump_tests {
                 MotionState::Done
             ),
             Some((Posture::Upright, ActionState::Bored))
+        );
+        assert_eq!(
+            movement_execute_state_effect(
+                OrderType::TransitionWalkingCrouchedWaitingCrouched,
+                MotionState::Terminated
+            ),
+            Some((Posture::Crouched, ActionState::Waiting)),
+            "a seek arrival in the crouched stop transition must publish Waiting before its post-seek interaction is instructed"
         );
         assert_eq!(
             movement_execute_state_effect(OrderType::TransitionCrouchingDown, MotionState::Done),
@@ -18519,6 +19363,10 @@ mod line_jump_tests {
             !stationary_motion_waits(0.0, true, 1.0),
             "a pre-motion seek-tolerance arrival must complete without displacement"
         );
+        assert!(
+            stationary_motion_waits(0.0, false, f32::NAN),
+            "a zero-distance animation frame must not multiply an invalid movement increment by zero"
+        );
     }
 
     #[test]
@@ -18772,6 +19620,18 @@ mod line_jump_tests {
             original_final_path_metadata(2, 28.9, antagonist),
             (28.9, antagonist)
         );
+    }
+
+    #[test]
+    fn path_source_is_skipped_even_when_nan_breaks_source_equality() {
+        let mut waypoints = vec![
+            MapPoint::new(f32::from_bits(0xffc0_0000), f32::from_bits(0xffc0_0000)),
+            MapPoint::new(342.5066, 1546.6641),
+        ];
+
+        discard_unrequested_path_source(&mut waypoints, false);
+
+        assert_eq!(waypoints, vec![MapPoint::new(342.5066, 1546.6641)]);
     }
 
     #[test]
@@ -19099,6 +19959,22 @@ mod line_jump_tests {
             ),
             OrderType::WalkingBackwardsSword,
             "moving directly away from the opponent walks backwards"
+        );
+    }
+
+    #[test]
+    fn combat_nan_angle_uses_original_release_fallback_animation() {
+        use crate::element::ActionState;
+
+        let angle = combat_movement_angle((f32::NAN, f32::NAN), (1.0, 0.0));
+        assert!(angle.is_nan());
+        assert_eq!(
+            combat_directional_animation(ActionState::MovingSword, angle),
+            OrderType::WalkingSword
+        );
+        assert_eq!(
+            combat_directional_animation(ActionState::MovingShield, angle),
+            OrderType::WalkingShield
         );
     }
 

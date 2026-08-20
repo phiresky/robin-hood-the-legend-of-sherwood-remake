@@ -588,6 +588,8 @@ impl EngineInner {
             }
 
             let mut script_data = crate::sector::ScriptSectorData::new();
+            script_data.owning_motion_sector =
+                crate::sector::SectorNumber::new(sec.sector_ref as i16);
             script_data.script_associated = sec.script_class.is_some() && script_enabled;
             script_data.script_class_name = sec.script_class.clone();
 
@@ -611,6 +613,9 @@ impl EngineInner {
                     bounding_box: bbox,
                     sector_type,
                     layer: sec.layer,
+                    // Script polygons do not own a motion-sector number. The
+                    // SCRP owner lives on ScriptSectorData so this registration
+                    // cannot replace the real motion sector in number_map.
                     sector_number: crate::sector::SectorNumber::new(-1),
                     door_index: None,
                     lift_type: None,

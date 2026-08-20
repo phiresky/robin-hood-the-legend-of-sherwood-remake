@@ -3297,10 +3297,14 @@ fn current_arrow_orientation(proj: &mut ElementProjectile) -> (u16, i16) {
     let dz = next.position.z - current.z;
     let norm_sq = dx * dx + dy * dy + dz * dz;
     if norm_sq == 0.0 {
-        return (
-            proj.projectile.last_orientation_sector,
-            proj.projectile.last_orientation_azimuth,
-        );
+        // Original does not guard SBGeoVector3D::Normalize here. On the
+        // shipped i386 build, the resulting zero-segment direction flows
+        // through GetSector0to15/acos and both integer conversions collapse
+        // to zero. This is observable when an arrow reaches a trajectory
+        // point which remains queued for another presentation refresh.
+        proj.projectile.last_orientation_sector = 0;
+        proj.projectile.last_orientation_azimuth = 0;
+        return (0, 0);
     }
 
     let inv_norm = 1.0 / norm_sq.sqrt();
@@ -3346,18 +3350,15 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
         return;
     }
     let trajectory_empty = proj.projectile.trajectory.is_empty();
-    let flight_at_endpoint = proj.projectile.trajectory_frame_count == 0;
     let world_position_is_moving = proj.element.sprite.position_iface.is_moving();
-    let retire_stopped = !proj.projectile.flying && !world_position_is_moving;
-    let retire_live_flying = proj.projectile.flying
-        && proj.projectile.falling
-        && flight_at_endpoint
-        && !world_position_is_moving;
-    if trajectory_empty && (retire_stopped || retire_live_flying) {
+    if trajectory_empty && !world_position_is_moving {
         // Original tests the empty-trajectory/settled-position retirement
-        // condition before its falling-arrow visual branch. Preserve the
-        // already-published endpoint sprite and retire without another tumble
-        // draw.
+        // condition before inspecting mbFlying or entering its falling-arrow
+        // visual branch. A non-falling arrow can therefore still have
+        // mbFlying=true after consuming a zero-length final waypoint and be
+        // retired here, before its next Hourglass reaches HitObstacle.
+        // Preserve the already-published endpoint sprite and retire without
+        // another tumble draw.
         // Refresh retires the arrow before another Projectile::Hourglass can
         // call NewMove. Settle the exposed movement snapshot at the endpoint
         // as Original's retired sprite state records it.
@@ -9048,6 +9049,27 @@ mod tests {
     }
 
     #[test]
+    fn arrow_refresh_zero_length_queued_endpoint_resets_orientation_like_i386() {
+        let mut arrow = refresh_test_arrow();
+        let endpoint = arrow.projectile.trajectory[0].position;
+        arrow.element.set_position(endpoint);
+        arrow.projectile.last_orientation_sector = 8;
+        arrow.projectile.last_orientation_azimuth = -60;
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert_eq!(arrow.projectile.last_orientation_sector, 0);
+        assert_eq!(arrow.projectile.last_orientation_azimuth, 0);
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame
+            ),
+            (0, 4)
+        );
+    }
+
+    #[test]
     fn nested_dialogue_refresh_publishes_new_arrow_in_creation_frame() {
         // QuickSave frame 35731 creates an arrow during actor Hourglass and
         // then executes PlayDialog from SequenceManager::Hourglass. The
@@ -9275,18 +9297,18 @@ mod tests {
     }
 
     #[test]
-    fn non_falling_flying_endpoint_waits_for_projectile_hourglass() {
+    fn non_falling_flying_arrow_retires_after_stationary_final_waypoint() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.trajectory.clear();
         arrow.projectile.trajectory_frame_count = 0;
+        arrow.projectile.flying = true;
         arrow.projectile.falling = false;
 
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
 
-        assert!(
-            arrow.element.active,
-            "ordinary arrows process the empty trajectory in Projectile::Hourglass"
-        );
+        assert!(!arrow.element.active);
         assert!(arrow.projectile.flying);
+        assert!(!arrow.element.sprite.position_iface.is_moving());
+        assert_eq!(arrow.element.position().z, 0.0);
     }
 }

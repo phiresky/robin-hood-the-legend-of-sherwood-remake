@@ -408,16 +408,14 @@ pub fn begin_carry(
 
     let order_id = alloc_order_id(order_id_counter);
 
-    // Latch `pc.carried` and `pc.carried_posture` on the carrier *now*,
-    // before the pickup animation finishes, so the carrier "owns" the
-    // body through the entire pickup transition.  A mid-grab cancel
-    // (sequence interrupted before the pickup animation finishes) is
-    // recognised by `send_condolation_card_pc` — its TAKE_CORPSE arm
-    // checks `pc.carried.is_some() && carried_posture != Carried` and
-    // force-drops the partially-grabbed body.  Without these set during
-    // the transition, the condolation handler would have nothing to drop.
+    // Preserve the posture that DropCorpse must restore, but do not publish
+    // the carrier relationship during translation. Original assigns
+    // `mpCarried` and calls `SetCarrier(this)` only in the first Execute of
+    // TRANSITION_WAITING_UPRIGHT_CARRYING_CORPSE, after its validity check
+    // (RHelementactorpc.cpp:4835-4860). A command interrupted while an older
+    // transition prefix is still playing therefore has no partially grabbed
+    // body for SendCondolationCard(TAKE_CORPSE) to drop.
     if let Some(pc) = carrier.pc_data_mut() {
-        pc.carried = Some(target_id);
         pc.set_live_carried_posture(target_posture);
     }
 
@@ -456,26 +454,54 @@ pub fn begin_carry(
     // carrier keeps the facing it arrived with, and the carried body is
     // aligned relative to that direction instead.
 
-    // Carry is now committed. Set up the target:
-    // - Back-reference (`human.carrier = carrier_id`) so
-    //   `compute_stars_point` and other systems can find the carrier.
-    // - The freeze-execution step is performed by the caller via
-    //   `EngineInner::actor_freeze_execution(target_id)` after this
-    //   returns `Started`, so the cascade-interrupt on the target's
-    //   current sequence element happens with the full engine context
-    //   available.
-    if let Some(target) = entities.get_mut(target_id) {
-        if let Some(human) = target.human_data_mut() {
-            human.carrier = Some(carrier_id);
-        }
-        // Re-enable anti-collision so the carrier-body collision tests
-        // fire while the corpse is held.
-        if let Some(actor) = target.actor_data_mut() {
-            actor.is_ignored_for_anti_collision = false;
-        }
+    BeginResult::Started
+}
+
+/// Publish the corpse/carrier relationship at the pickup order's first
+/// Execute boundary.
+///
+/// Original performs these assignments inside
+/// `RHANIMATION_TRANSITION_WAITING_UPRIGHT_CARRYING_CORPSE`, immediately
+/// before freezing and positioning the body (RHelementactorpc.cpp:4842-4864),
+/// not when the command is translated.
+pub(crate) fn initialize_carry_relationship(
+    entities: &mut Entities,
+    carrier_id: EntityId,
+    target_id: EntityId,
+) {
+    let carrier = entities
+        .get_mut(carrier_id)
+        .unwrap_or_else(|| panic!("Carry owner {carrier_id:?} vanished at initialization"));
+    let pc = carrier
+        .pc_data_mut()
+        .unwrap_or_else(|| panic!("Carry owner {carrier_id:?} is not a PC"));
+    if let Some(existing) = pc.carried {
+        assert_eq!(
+            existing, target_id,
+            "Carry owner {carrier_id:?} acquired a different body before initialization"
+        );
+    } else {
+        pc.carried = Some(target_id);
     }
 
-    BeginResult::Started
+    let target = entities
+        .get_mut(target_id)
+        .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"));
+    let human = target
+        .human_data_mut()
+        .unwrap_or_else(|| panic!("Carry target {target_id:?} is not human"));
+    if let Some(existing) = human.carrier {
+        assert_eq!(
+            existing, carrier_id,
+            "Carry target {target_id:?} acquired a different carrier before initialization"
+        );
+    } else {
+        human.carrier = Some(carrier_id);
+    }
+    target
+        .actor_data_mut()
+        .unwrap_or_else(|| panic!("Carry target {target_id:?} is not an actor"))
+        .is_ignored_for_anti_collision = false;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2097,11 +2123,12 @@ pub fn tick_ability(
 
     if kind == AbilityKind::Carry && !sprite_frozen {
         let order_id = ability.order_id.expect("active Carry ability order");
+        let target_id = ability.target.expect("active Carry ability target");
+        initialize_carry_relationship(entities, requested_actor, target_id);
         let carrier = entities
             .get(requested_actor)
             .expect("validated Carry owner vanished before initialization");
         if carrier.element_data().sprite.last_processed_order_id != order_id.get() {
-            let target_id = ability.target.expect("active Carry ability target");
             let carrier_position = carrier.element_data().position_map();
             let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
             let target = entities
@@ -4000,7 +4027,17 @@ mod tests {
             BeginResult::Started
         );
         assert_eq!(next_id, 301);
+        assert_eq!(
+            entities.get(carrier).unwrap().pc_data().unwrap().carried,
+            None,
+            "translation before the pickup order's first Execute must not publish mpCarried"
+        );
         let target_entity = entities.get(target).unwrap();
+        assert_eq!(
+            target_entity.human_data().unwrap().carrier,
+            None,
+            "translation before the pickup order's first Execute must not publish SetCarrier"
+        );
         assert_eq!(
             target_entity.element_data().position_map(),
             MapPoint::new(10.0, 20.0)
@@ -4016,6 +4053,11 @@ mod tests {
         );
 
         let target_entity = entities.get(target).unwrap();
+        assert_eq!(
+            entities.get(carrier).unwrap().pc_data().unwrap().carried,
+            Some(target)
+        );
+        assert_eq!(target_entity.human_data().unwrap().carrier, Some(carrier));
         assert_eq!(
             target_entity.element_data().position_map(),
             MapPoint::new(80.0, 90.0)

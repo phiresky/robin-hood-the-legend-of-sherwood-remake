@@ -37,6 +37,14 @@ pub struct SoundSimState {
     /// Concrete sample durations resolved at the preceding sound-manager
     /// boundary and applied at the start of the next engine frame.
     pub resolved_exclamations: Vec<ResolvedExclamation>,
+    /// True only while `resolved_exclamations` came from an authoritative
+    /// Original parity trace rather than Rust's live host sound manager.
+    ///
+    /// A recorded host resolution can lack a Rust logical request when the
+    /// Original engine alone asked its host to play a line. Live resolutions
+    /// remain strictly paired with Rust requests.
+    #[serde(default)]
+    pub replay_injected_resolved_exclamations: bool,
     /// Single/Volatile/Delayed sound sources currently playing, with the (sim)
     /// frame on which the engine will apply their finish transition
     /// (`active = false` for Single, `sources.delete` for Volatile).

@@ -488,6 +488,34 @@ impl Default for EnemyAi {
 }
 
 impl EnemyAi {
+    /// Clear both combat-neighbour links and synchronously request the two
+    /// reciprocal clears performed by `RHElementActorSoldier::
+    /// UpdateLeftCombatNeighbour(NULL)` / `UpdateRightCombatNeighbour(NULL)`.
+    ///
+    /// Keeping this as one operation matters: a one-sided stale link can be
+    /// consumed by a later phalanx insertion and detach an otherwise valid
+    /// formation chain.
+    pub(crate) fn clear_combat_neighbours(&mut self) {
+        if self.left_combat_neighbour != 0 {
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::SetRightCombatNeighbour {
+                    target: self.left_combat_neighbour,
+                    neighbour: 0,
+                },
+            );
+        }
+        if self.right_combat_neighbour != 0 {
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::SetLeftCombatNeighbour {
+                    target: self.right_combat_neighbour,
+                    neighbour: 0,
+                },
+            );
+        }
+        self.left_combat_neighbour = 0;
+        self.right_combat_neighbour = 0;
+    }
+
     pub fn new(owner: NpcHandle) -> Self {
         // The derived malignity constructor overrides two fields after
         // the base-class defaults: `attitude = Hostile` and
@@ -794,7 +822,7 @@ impl EnemyAi {
     fn forget_attentive_mode(&mut self) {
         self.attentive = false;
         self.will_be_attentive = false;
-        if let Some(request) = self.base.outbox.actor.set_attentive_mode.as_mut() {
+        if let Some(request) = self.base.outbox.actor.last_pending_attentive_mode_mut() {
             // SetState called SetAttentiveMode synchronously before the
             // Original reached ForgetAttentiveMode. Preserve the transition
             // launch, then restore this helper's later flag writes after the
@@ -2785,7 +2813,8 @@ impl EnemyAi {
                     self.base.me, enemy
                 )
             });
-        let forecast = prepared.resolve(sim);
+        let forecast =
+            prepared.resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
         self.base.seek_position = forecast.position;
         self.pc_gone_away_in_this_direction = forecast.direction;
 
@@ -3168,24 +3197,7 @@ impl EnemyAi {
                 // Leaving only the local half cleared makes a former neighbour
                 // incorrectly believe it is not the left/right end of a
                 // phalanx on its next timer tick.
-                if self.left_combat_neighbour != 0 {
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SetRightCombatNeighbour {
-                            target: self.left_combat_neighbour,
-                            neighbour: 0,
-                        },
-                    );
-                }
-                if self.right_combat_neighbour != 0 {
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SetLeftCombatNeighbour {
-                            target: self.right_combat_neighbour,
-                            neighbour: 0,
-                        },
-                    );
-                }
-                self.left_combat_neighbour = 0;
-                self.right_combat_neighbour = 0;
+                self.clear_combat_neighbours();
             }
         }
 
@@ -4111,6 +4123,10 @@ impl EnemyAi {
             // reachable. This frame stays open until the cascade ends (see
             // `open_end_think_frames`).
             self.base.open_end_think_frames = self.base.open_end_think_frames.saturating_add(1);
+        } else if self.base.defer_end_think_for_engine_completion() {
+            // Rust learns an engine-owned GoTo failure after releasing this
+            // AI borrow. Keep the Original EndThink frame alive until that
+            // synchronous path verdict is surfaced.
         } else {
             // No continuation was queued: this is the innermost Think of the
             // cascade, so the entire chain of still-open ancestor frames
@@ -4361,16 +4377,23 @@ impl EnemyAi {
         // hoisted: the early returns above never reach the common tail and
         // must leave the report standing.
         self.base.my_reconnaissance_report.reset();
-        self.base.outbox.reentrant.owner_work.push(
+        let owner_boundary_positions = ctx
+            .entity_views
+            .iter()
+            .map(|(&handle, view)| (handle, view.position))
+            .collect();
+        let continuation = if (100..111).contains(&self.base.think_recursion_depth) {
+            AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
+                flags,
+                owner_boundary_positions,
+            }
+        } else {
             AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,
-                owner_boundary_positions: ctx
-                    .entity_views
-                    .iter()
-                    .map(|(&handle, view)| (handle, view.position))
-                    .collect(),
-            },
-        );
+                owner_boundary_positions,
+            }
+        };
+        self.base.outbox.reentrant.owner_work.push(continuation);
     }
 
     /// Resume the non-engine half of Original Enemy `ReturnToDuty` after its
@@ -4380,6 +4403,7 @@ impl EnemyAi {
         sim: &crate::sim_rng::SimulationContext,
         flags: DutyFlags,
         ctx: &AiContext,
+        high_recursion_failsafe: bool,
     ) {
         let outgoing_state = self.base.current_state;
         let outgoing_substate = self.base.current_substate;
@@ -4389,7 +4413,21 @@ impl EnemyAi {
         // Original. That override forgets the old timer before the common tail
         // decides whether to launch a fresh bored timer.
         self.base.timer_is_running = false;
+        let resumed_depth = self.base.think_recursion_depth;
+        if high_recursion_failsafe && resumed_depth == 0 {
+            self.base.think_recursion_depth = 100;
+        }
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
+        if high_recursion_failsafe && resumed_depth == 0 {
+            self.base.think_recursion_depth = resumed_depth;
+            // Original's high-recursion ReturnToDuty is already inside the
+            // currently executing EndThink branch. Its newly-set latch is
+            // not revisited by that branch; it survives the unwind and is
+            // cleared by the next StartThink. The deferred Rust boundary has
+            // no matching EndThink left, so prevent the generic completion
+            // surfacer from converting it into an immediate self event.
+            self.base.completion_latch_inside_think = false;
+        }
         let incoming_state = self.base.current_state;
         let incoming_substate = self.base.current_substate;
 
@@ -4441,24 +4479,7 @@ impl EnemyAi {
                 | Substate::AttackingProtectingWithShield
         ) || incoming_substate.is_real_swordfight();
         if !incoming_keeps_combat_neighbours {
-            if self.left_combat_neighbour != 0 {
-                self.base.outbox.reentrant.cross_npc_actions.push(
-                    CrossNpcAction::SetRightCombatNeighbour {
-                        target: self.left_combat_neighbour,
-                        neighbour: 0,
-                    },
-                );
-            }
-            if self.right_combat_neighbour != 0 {
-                self.base.outbox.reentrant.cross_npc_actions.push(
-                    CrossNpcAction::SetLeftCombatNeighbour {
-                        target: self.right_combat_neighbour,
-                        neighbour: 0,
-                    },
-                );
-            }
-            self.left_combat_neighbour = 0;
-            self.right_combat_neighbour = 0;
+            self.clear_combat_neighbours();
         }
 
         // `ReturnToDutyCommonStuff` calls the virtual Enemy `SetState` in
@@ -4946,6 +4967,7 @@ mod tests {
             active: true,
             is_unconscious: false,
             action_state: crate::element::ActionState::Waiting,
+            is_moving_map: false,
             passing_door: false,
             obstacle_idx: None,
             in_building: false,
@@ -5420,7 +5442,7 @@ mod tests {
                 _ => None,
             })
             .expect("refused report queues the return-to-duty continuation");
-        ai.resume_return_to_duty_after_patrol_init(sim, resume, &ctx);
+        ai.resume_return_to_duty_after_patrol_init(sim, resume, &ctx, false);
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
@@ -6171,7 +6193,7 @@ mod tests {
             [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
         ));
 
-        ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx);
+        ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx, false);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
     }
@@ -6190,7 +6212,7 @@ mod tests {
             ..AiContext::default()
         };
 
-        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx);
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx, false);
 
         assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
         assert!(
@@ -6207,13 +6229,57 @@ mod tests {
         ai.base.timer_is_running = true;
         ai.base.when_does_timer_ring = 999;
 
-        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &AiContext::default());
+        ai.resume_return_to_duty_after_patrol_init(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext::default(),
+            false,
+        );
 
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
         assert!(
             !ai.base.timer_is_running,
             "virtual SetState must still clear the old timer when the common tail launches none"
         );
+    }
+
+    #[test]
+    fn high_recursion_return_to_duty_keeps_close_point_as_latch_after_deferred_resume() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(90);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.think_recursion_depth = 100;
+        let ctx = AiContext {
+            position: ai.base.initial_position,
+            self_animation: OrderType::WaitingAlerted,
+            ..AiContext::default()
+        };
+
+        ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+        let (flags, high_recursion_failsafe) =
+            std::mem::take(&mut ai.base.outbox.reentrant.owner_work)
+                .into_iter()
+                .find_map(|work| match work {
+                    AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
+                        flags, ..
+                    } => Some((flags, true)),
+                    _ => None,
+                })
+                .expect("high-recursion ReturnToDuty must queue its common tail");
+        assert!(high_recursion_failsafe);
+
+        // Rust releases the AI borrow for InitializePatrol and may not resume
+        // this owner work until the deferred recursion stack has unwound.
+        ai.base.think_recursion_depth = 0;
+        ai.base.open_end_think_frames = 0;
+        ai.resume_return_to_duty_after_patrol_init(&sim, flags, &ctx, high_recursion_failsafe);
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+        assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+        assert!(ai.base.already_on_point);
+        assert!(!ai.base.completion_latch_inside_think);
+        assert_eq!(ai.base.think_recursion_depth, 0);
     }
 
     #[test]
@@ -6245,7 +6311,7 @@ mod tests {
             ..AiContext::default()
         };
 
-        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx);
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &ctx, false);
 
         let [preexisting, return_to_post] = ai.base.outbox.actor.orders.as_slice() else {
             panic!("expected the pre-existing control and one return-to-duty move")
@@ -6266,6 +6332,7 @@ mod tests {
                 position: here,
                 ..AiContext::default()
             },
+            false,
         );
         let [order] = already_unalerted.base.outbox.actor.orders.as_slice() else {
             panic!("already-unalerted return must still author its move")
@@ -6413,7 +6480,8 @@ mod tests {
             [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,
                 owner_boundary_positions
-            }] if flags.is_empty() && owner_boundary_positions.is_empty()
+            }] if flags.is_empty()
+                && owner_boundary_positions.is_empty()
         ));
     }
 
@@ -6426,7 +6494,12 @@ mod tests {
         ai.base.current_substate = Substate::MenacingPcInComa;
         ai.guarded_pc = Some(guarded);
 
-        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &AiContext::default());
+        ai.resume_return_to_duty_after_patrol_init(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext::default(),
+            false,
+        );
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.guarded_pc, None);
@@ -6449,7 +6522,12 @@ mod tests {
         ai.left_combat_neighbour = 225;
         ai.right_combat_neighbour = 227;
 
-        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &AiContext::default());
+        ai.resume_return_to_duty_after_patrol_init(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext::default(),
+            false,
+        );
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.left_combat_neighbour, 0);
@@ -6485,6 +6563,7 @@ mod tests {
             &sim,
             DutyFlags::empty(),
             &AiContext::default(),
+            false,
         );
 
         assert_eq!(archer.base.current_state, AiState::Default);
@@ -6837,6 +6916,90 @@ mod tests {
         assert_eq!(
             ai.base.stuck_counter, 3,
             "an unrelated command in the same movement substate leaves the counter untouched"
+        );
+    }
+
+    #[test]
+    fn periodic_phalanx_goto_is_visible_to_same_call_stuck_detector() {
+        // schema14 seed1000000, linux2/P002/Savegame_032/replay-008,
+        // frame 17254. RefreshArrowProtection synchronously changes the
+        // soldier from Reactiontime/Wait to RunningToPhalanx/MoveOk before
+        // Original's stuck detector reads GetCommand(). The deferred Rust
+        // order must have the same same-call visibility.
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.stuck_counter = 2;
+        ai.list_them.push(2);
+
+        let owner_position = test_position(0.0, 0.0);
+        let enemy_position = test_position(1_000.0, 0.0);
+        let mut owner_view = soldier_view(owner_position);
+        owner_view.camp = Camp::Royalists;
+        let mut enemy_view = soldier_view(enemy_position);
+        enemy_view.camp = Camp::Lacklandists;
+        enemy_view.action_state = crate::element::ActionState::AimingWithBow;
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, owner_view);
+        views.insert(2, enemy_view);
+        let ctx = AiContext {
+            position: owner_position,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.seen_last_frame_enemies.push(2);
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 1,
+            position: owner_position,
+            raw_position: owner_position,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 2,
+            position: enemy_position,
+            raw_position: enemy_position,
+            is_able_to_fight: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 3,
+            position: test_position(100.0, 0.0),
+            raw_position: test_position(100.0, 0.0),
+            direction: 0,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            current_substate: Substate::AttackingPhalanx as u32,
+            ..FighterSnapshot::default()
+        });
+
+        ai.the_16th_frame(
+            &sim,
+            0,
+            &ctx,
+            &AiGlobalState::default(),
+            &tick,
+            None,
+            true,
+            false,
+            true,
+            false,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunningToPhalanx
+        );
+        assert_ne!(ai.base.last_goto_destination, Position::default());
+        assert_eq!(
+            ai.base.stuck_counter, 2,
+            "the same-call MoveOk launch leaves Original's counter untouched"
         );
     }
 

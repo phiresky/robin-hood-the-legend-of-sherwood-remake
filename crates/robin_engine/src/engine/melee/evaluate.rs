@@ -87,7 +87,7 @@ pub(super) fn reactive_sword_debug_creation_order_matches(creation_order: u32) -
 
 pub(super) fn opponent_sword_strike_time_limit(
     animation: Option<crate::order::OrderType>,
-    frames_from_now: impl FnOnce() -> i16,
+    action_done_timing: impl FnOnce() -> crate::sprite::ActionDoneTiming,
 ) -> i16 {
     use crate::order::OrderType as OT;
 
@@ -108,9 +108,56 @@ pub(super) fn opponent_sword_strike_time_limit(
         return 1000;
     }
 
-    match frames_from_now() {
-        -1 => 1000,
-        frames => frames,
+    match action_done_timing() {
+        crate::sprite::ActionDoneTiming::Frames(-1) => 1000,
+        crate::sprite::ActionDoneTiming::Frames(frames) => frames,
+        // InitializeActionDone calls this state "impossible". The legacy
+        // vector over-read observed at S075 frame 731 produced -16230; use a
+        // defined deadline below every non-negative strike/parry startup
+        // rather than fabricating a permissive `-1` result.
+        crate::sprite::ActionDoneTiming::Impossible => i16::MIN,
+    }
+}
+
+impl EngineInner {
+    /// Return the proposal deadline using Original's deliberately mixed view:
+    /// `RHElementActor::GetAnimation()` exposes the live selected order, while
+    /// `RHSprite::GetFramesFromNowTillActionDone()` still reads the sprite's
+    /// current row even when that order has not executed yet
+    /// (`RHelementactorhuman.cpp:13010-13022`).
+    ///
+    /// Keep that stale-row boundary -- an ordinary `-1` means the prior
+    /// action point has passed and remains the permissive 1000 fallback. Only
+    /// the sprite's explicit impossible marker uses the deterministic strict
+    /// deadline required by the S075 frame-731 control.
+    pub(super) fn opponent_sword_strike_time_limit_for_actor(
+        &self,
+        opponent: EntityId,
+    ) -> Option<i16> {
+        let animation = self.live_actor_animation(opponent)?;
+        let entity = self.get_entity(opponent)?;
+        let actor = entity.actor_data()?;
+        let sprite = &entity.element_data().sprite;
+        let timing = match sprite.action_done_timing() {
+            crate::sprite::ActionDoneTiming::Impossible
+                if actor.installed_order.is_some_and(|order| {
+                    order.order_id.get() != sprite.last_processed_order_id
+                }) =>
+            {
+                // `GetAnimation()` has already switched to the newly
+                // published mpOrder, but PerformAction has not acknowledged
+                // it yet, so GetFramesFromNowTillActionDone still observes
+                // the previous sprite row.  Its unusable action point is a
+                // stale-row `-1` for this mixed read, which the Original
+                // proposal promotes to the permissive 1000 deadline.  Do not
+                // apply the current-order impossible-action rule until the
+                // sprite has processed the selected order.  This is the
+                // synchronous boundary in RHelementactorhuman.cpp:13010-22.
+                crate::sprite::ActionDoneTiming::Frames(-1)
+            }
+            timing => timing,
+        };
+        Some(opponent_sword_strike_time_limit(Some(animation), || timing))
     }
 }
 
@@ -1187,23 +1234,19 @@ impl EngineInner {
                     crate::order::OrderType::TransitionWaitingSwordParryingSword,
                 ) as i16
             });
-        let opponent_time_limit: Option<i16> = {
-            let target = self.get_entity(target_id).unwrap_or_else(|| {
+        self.get_entity(target_id)
+            .unwrap_or_else(|| {
                 panic!(
                     "EvaluateSwordfight strike proposal PC {pc_id:?} references missing target {target_id:?}"
                 )
-            });
-            target.actor_data().unwrap_or_else(|| {
+            })
+            .actor_data()
+            .unwrap_or_else(|| {
                 panic!(
                     "EvaluateSwordfight strike proposal PC {pc_id:?} target {target_id:?} is not an actor"
                 )
             });
-            let sprite = &target.element_data().sprite;
-            Some(opponent_sword_strike_time_limit(
-                self.live_actor_animation(target_id),
-                || sprite.frames_from_now_till_action_done(),
-            ))
-        };
+        let opponent_time_limit = self.opponent_sword_strike_time_limit_for_actor(target_id);
 
         // Build the nearby-victim list (same shape as the soldier path).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -1908,9 +1951,9 @@ impl EngineInner {
                 let sprite = &opponent.element_data().sprite;
                 let principal_animation = self.live_actor_animation(target_id_for_nearby);
                 let raw_frames = debug.map(|_| sprite.frames_from_now_till_action_done());
-                let time_limit = opponent_sword_strike_time_limit(principal_animation, || {
-                    sprite.frames_from_now_till_action_done()
-                });
+                let time_limit = self
+                    .opponent_sword_strike_time_limit_for_actor(target_id_for_nearby)
+                    .unwrap_or(1000);
                 if let (Some(debug), Some(raw_frames)) = (debug, raw_frames) {
                     eprintln!(
                         "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=pc_principal principal={} animation={:?} raw_frames_from_now={} time_limit={}]",
@@ -2387,15 +2430,8 @@ impl EngineInner {
         // ProposeGoodSwordStrike always times the defender's principal
         // opponent, which need not be the hitter that triggered this
         // reactive warning.
-        let opponent_time_limit: Option<i16> = principal_opponent.and_then(|principal_opponent| {
-            let e = self.get_entity(principal_opponent)?;
-            e.actor_data()?;
-            let sprite = &e.element_data().sprite;
-            Some(opponent_sword_strike_time_limit(
-                self.live_actor_animation(principal_opponent),
-                || sprite.frames_from_now_till_action_done(),
-            ))
-        });
+        let opponent_time_limit: Option<i16> = principal_opponent
+            .and_then(|opponent| self.opponent_sword_strike_time_limit_for_actor(opponent));
 
         // Compute per-strike startup frames from the victim's sprite.
         let victim_sprite_frames: Option<[i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES]> = self
@@ -2572,6 +2608,19 @@ impl EngineInner {
                     && let Some(ai) = s.npc.ai_brain.base_mut()
                 {
                     ai.stop_all();
+                    // StopMovement only preserves the three ordinary
+                    // upright/crouched locomotion actions. Sword movement and
+                    // every other interruptible order are cleared, so the
+                    // immediately following Original GoTo observes
+                    // RHNONANIMATION_END rather than the pre-Stop animation.
+                    // Rust installs its fallback Wait eagerly during the halt
+                    // drain, so project that narrow null-order boundary onto
+                    // the retained call-site context before using it below.
+                    if let Some(ctx) = step_back_ctx.as_mut()
+                        && ai.pending_halt_exposes_goto_idle(ctx)
+                    {
+                        ctx.self_animation = crate::order::OrderType::NonanimationEnd;
+                    }
                 }
                 // `RHArtificialMalignity::ConsiderToBeginParade` performs
                 // StopAll synchronously before either GoTo or the parry
@@ -2647,20 +2696,6 @@ impl EngineInner {
                         );
                     }
                     if let Some(step_back_goal) = step_back_goal {
-                        // ProposeGoodStepBackGoal returns the actor's current
-                        // position when the incoming push/circle strike is
-                        // already farther away than `good_dist`. Original
-                        // still calls GoTo, whose synchronous completion
-                        // reaches EVENT_REACHPOINT on this ConsiderToBeginParade
-                        // stack and immediately restores the ordinary
-                        // swordfight substate. Preserve the GoTo publication
-                        // below, but surface that zero-distance completion at
-                        // the same owner boundary.
-                        let already_at_step_back_goal = step_back_goal.level == victim_ai_pos.level
-                            && (step_back_goal.x - victim_ai_pos.x)
-                                .abs()
-                                .max((step_back_goal.y - victim_ai_pos.y).abs())
-                                < 5.0;
                         let ctx = step_back_ctx.take().unwrap_or_else(|| {
                             panic!(
                                 "ConsiderToBeginParade step-back victim {} has no retained GoTo context",
@@ -2684,10 +2719,6 @@ impl EngineInner {
                                 flags,
                                 &ctx,
                             );
-                            if already_at_step_back_goal {
-                                ai.base.completion_latch_inside_think = true;
-                                ai.base.already_on_point = true;
-                            }
                             if let Some(debug) = step_back_debug {
                                 eprintln!(
                                     "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",
@@ -3080,7 +3111,9 @@ mod tests {
             maximal_distance: 100,
             ..Default::default()
         };
-        let deadline = opponent_sword_strike_time_limit(Some(opponent_animation), || 5);
+        let deadline = opponent_sword_strike_time_limit(Some(opponent_animation), || {
+            crate::sprite::ActionDoneTiming::Frames(5)
+        });
         let ctx = StrikeSelectionContext {
             attacker_profile: &profile,
             fighting_ability: 100,
@@ -3137,6 +3170,49 @@ mod tests {
     }
 
     #[test]
+    fn s075_impossible_action_done_rejects_frame_731_then_valid_deadline_accepts_frame_732() {
+        let profile = HtHWeaponProfile::default();
+        let propose = |timing| {
+            let deadline = opponent_sword_strike_time_limit(
+                Some(crate::order::OrderType::StrikingStraightSword),
+                || timing,
+            );
+            let ctx = StrikeSelectionContext {
+                attacker_profile: &profile,
+                fighting_ability: 100,
+                blood_alcohol: 0,
+                is_rank_soldier: false,
+                attacker_direction: 0,
+                attacker_elevation: 0.0,
+                attacker_camp: Camp::Royalists,
+                is_swordfighting: true,
+                opponent_time_limit: Some(deadline),
+                strike_startup_frames: Some([10; crate::weapons::NUM_NORMAL_SWORD_STRIKES]),
+                parry_startup_frames: Some(0),
+                is_npc: false,
+            };
+            combat::propose_good_sword_strike(
+                &crate::sim_rng::test_context(),
+                &ctx,
+                &[],
+                &mut vec![0; crate::weapons::NUM_NORMAL_SWORD_STRIKES],
+                true,
+            )
+        };
+
+        assert_eq!(
+            propose(crate::sprite::ActionDoneTiming::Impossible),
+            None,
+            "frame 731's impossible action-done marker must not become the permissive -1 fallback"
+        );
+        assert_eq!(
+            propose(crate::sprite::ActionDoneTiming::Frames(18)),
+            Some(ProposedCombatAction::Parry),
+            "frame 732's valid 18-frame deadline admits the zero-frame parry transition"
+        );
+    }
+
+    #[test]
     fn enemy_executing_sword_deadline_rejects_b_and_selects_a() {
         let mut profile = HtHWeaponProfile::default();
         profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
@@ -3166,7 +3242,9 @@ mod tests {
             is_walking_with_sword: false,
         };
         let propose = |opponent_animation| {
-            let deadline = opponent_sword_strike_time_limit(Some(opponent_animation), || 10);
+            let deadline = opponent_sword_strike_time_limit(Some(opponent_animation), || {
+                crate::sprite::ActionDoneTiming::Frames(10)
+            });
             let ctx = StrikeSelectionContext {
                 attacker_profile: &profile,
                 fighting_ability: 100,

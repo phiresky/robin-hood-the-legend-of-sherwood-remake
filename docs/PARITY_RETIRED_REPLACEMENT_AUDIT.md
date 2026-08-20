@@ -151,3 +151,73 @@ tree, then run `original-code/scripts/capture_parity_save_replays.sh` with
 `PARITY_RANDOM_REPLAYS=1`, and `PARITY_FRAMES=1500`, publishing to a dated
 schema-16 replacement corpus. Apply the normal header/frame/suffix, zstd, and
 parity-profile exact-EOF gates before accepting it.
+
+## Seed-1000000 Savegame_016 replacement
+
+The corpus-qualified schema-14 recording
+`schema14-seed1000000-20260814/traces/Savegame_linux3/Profile_001/Savegame_016/replay-001-session-0001.jsonl.zst`
+is also source-inconsistent. Soldier 124's non-timer bored animation terminates
+on transition 8445->8446. `RHElementActor::Execute` must evaluate `rand()%10`
+at that boundary, but the archive omits that mandatory third bored-choice draw
+and begins the following transition at its draw index. The exact path is
+retired; other Savegame_016 recordings are unaffected.
+
+Its current-Original replacement is under
+`60s-random-input/schema16-seed1000000-replacements-20260818`. It preserves the
+exact Savegame_linux3/Profile_001/Savegame_016 fixture, mission H05_Lin_EC,
+loaded-save start, RNG seed 1, random-input seed 1000000, 25 Hz simulation, and
+1,500 transitions from initial frame 7199 through final frame 8699. The corpus
+README and audit record the capture binary/save/trace hashes and validation
+state.
+
+## Seed-1000007 Savegame_072 MakeFast replacement
+
+The corpus-qualified schema-14 recording
+`schema14-seed1000000-20260814/traces/Savegame_linux3/Profile_003/Savegame_072/replay-008-session-0001.jsonl.zst`
+cannot reproduce Original's live beggar cooldown. A left-double-click
+interaction enters MakeFast, whose schema-14 macro records no target and
+deletes the interaction before the later generic interaction recorder can
+retain it. The Civilian caller nevertheless stamps the targeted beggar with a
+three-tick no-talk counter. Without that identity, Rust incorrectly reaches
+RandomSpeech and asks for draw 1804 at frame 39122; live Original suppresses
+the speech and records no draw. Schema 16's `beggar_dont_talk_stamp` makes the
+side effect replayable, so the exact old path is retired rather than adding a
+gameplay exception.
+
+The replacement under
+`60s-random-input/schema16-seed1000000-replacements-20260818` preserves the
+exact Savegame_linux3/Profile_003/Savegame_072 fixture, mission H12_Not_MP,
+loaded-save start, RNG seed 1, random-input seed 1000007, 25 Hz simulation, and
+1,500 transitions from initial frame 38775 through final frame 40275. Its
+checksum and coordinated-runner validation state are recorded beside the
+corpus.
+
+## Seed-1000008 Savegame_059 arrow-sprite correction and extra recording
+
+The corpus-qualified schema-14 recording
+`schema14-seed1000000-20260814/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-009-session-0001.jsonl.zst`
+is source-consistent and is not retired. Projectile element index 92 (creation
+order 128) reaches its still-queued final point on frame 1490. The following
+presentation Refresh therefore calls `RHElementArrow::GetOrientations` with a
+nonempty but zero-length segment. Original's unchecked vector normalization
+and shipped i386 float-to-integer conversions update the serialized
+`mubLastSector`/`mswLastAzimut` cache from 8/-60 to 0/0 and publish row/frame
+0/4. On frame 1491 the zero-length final point is consumed without movement;
+the following `RHElementArrow::Refresh` deactivates the arrow before another
+projectile Hourglass can apply the ordinary +0.001 landing snap. Rust's old
+zero-vector cache guard and flying/falling retirement gate were both too
+restrictive and have been corrected generally.
+
+The stale trace is 1,100,392 bytes with SHA-256
+`4a8b32611af5e8a53b0cf732b891ff7977f01d44ce1be250c94649ec01711c12`.
+Its header requests schema 14, mission `Emb01_FoA_EC`, proto-level
+`Croisement01`, loaded-save start, RNG seed 1, random-input seed 1000008,
+25 Hz simulation, and 1,500 transitions from initial frame 6 through final
+frame 1506. The exact 151,249-byte save is
+`reference-saves/Savegame_nicouzouf/Profile_001/Savegame_059`, SHA-256
+`ce186755a0cf5d7c9ce686b145e48b264db2053c2a47b4a37f1139ca4bfd57b3`.
+An additional schema-16 recording of the same inputs is published in
+`60s-random-input/schema16-seed1000000-replacements-20260818`. The directory
+name predates this correction; this S059 artifact is extra observability
+coverage, not a replacement. Both schema-14 and schema-16 traces remain in the
+authoritative manifest and require coordinated exact-EOF validation.

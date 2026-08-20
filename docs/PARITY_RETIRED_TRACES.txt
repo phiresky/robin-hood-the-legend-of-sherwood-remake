@@ -265,6 +265,12 @@ parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_072/replay-003-session-0001.jsonl.zst
 parity-save-replays/30s-random-input/traces/Savegame_linux3/Profile_003/Savegame_073/replay-003-session-0001.jsonl.zst
 parity-save-replays/60s-random-input/schema12/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-003-session-0001.jsonl.zst
+# The schema14 seed-1000000 Savegame_072 member has the same unrecorded
+# `beggar_dont_talk_stamp`: at frame 39122 Rust consequently enters the
+# RandomSpeech gate and then requests CivilianBeggarSpeechChoice draw 1804,
+# while Original records neither draw. Replace it with a schema16 capture,
+# whose explicit stamp event preserves the discarded MakeFast target effect.
+parity-save-replays/60s-random-input/schema14-seed1000000-20260814/traces/Savegame_linux3/Profile_003/Savegame_072/replay-008-session-0001.jsonl.zst
 # B5-detection: the three 30s Savegame_023 recordings carry one extra
 # IsReachable per frame that today's Original does not emit. Fresh captures
 # from the same save (sha256 295bab92...) and the same -PARITYSEED 1 /
@@ -330,3 +336,36 @@ parity-save-replays/60s-random-input/schema12/traces/Savegame_nicouzouf/Profile_
 parity-save-replays/60s-random-input/schema12/traces/Savegame_linux3/Profile_003/Savegame_042/replay-012-session-0001.jsonl.zst
 # Schema-16 replacement (same save/RNG/input seed, 1,500 frames):
 # parity-save-replays/60s-random-input/schema16-replacements-20260818/traces/Savegame_linux3/Profile_003/Savegame_042/replay-012-session-0001.jsonl.zst
+# Source-inconsistent bored-animation RNG stream. Soldier 124 (creation order
+# 155, class 259) is executing RHCOMMAND_WAIT in WaitingUprightBored with
+# sprite row/frame/count 7/5/3 after frame 8445. The next PerformAction reaches
+# the animation terminator. RHElementActor::Execute
+# (original-code/RHelementactor.cpp:1555-1574) must therefore evaluate
+# rand()%10 because this is RHCOMMAND_WAIT, not the exempt
+# RHCOMMAND_WAIT_TIMER (original-code/RHCommand.h:218-221). The archive records
+# only one VipIdleRemark and two BoredAnimationChoice draws on transition
+# 8445->8446, then starts the following transition at the missing draw index
+# 3273. Current source and Rust both require Soldier 124's third bored-choice
+# draw. Retire only this corpus-qualified seed-1000000 recording; do not add a
+# gameplay compatibility branch.
+parity-save-replays/60s-random-input/schema14-seed1000000-20260814/traces/Savegame_linux3/Profile_001/Savegame_016/replay-001-session-0001.jsonl.zst
+# The first current-Original schema-16 recapture is also invalid: coordinated
+# replay reaches the same 8445->8446 boundary and exhausts at mandatory
+# BoredAnimationChoice draw 3273. Exclude this exact artifact pending a fresh
+# recorder/runtime audit and recapture; retaining schema-16 observability does
+# not make an incomplete RNG stream authoritative.
+parity-save-replays/60s-random-input/schema16-seed1000000-replacements-20260818/traces/Savegame_linux3/Profile_001/Savegame_016/replay-001-session-0001.jsonl.zst
+# Schema-14 MakeFast loses the beggar target and therefore cannot replay its
+# cooldown stamp. Civilian::MouseClicked calls AddInteractionWithSeek and then
+# SetBeggarDontTalkCounter(3) (original-code/RHelementactorcivilian.cpp:583-611).
+# A left double-click sets bRun, but MakeFast records only target-free
+# make_pc_fast and deletes the interaction before RecordInteraction can retain
+# the beggar identity (original-code/RHelementactorpc.cpp:9263-9274,
+# 9304-9313, 9339). At frame 39122 Rust consequently enters RandomSpeech and
+# requests choice draw 1804, while Original's live cooldown correctly suppresses
+# speech and records no draw. Schema 16 records beggar_dont_talk_stamp; retire
+# only this corpus-qualified schema-14 seed recording.
+parity-save-replays/60s-random-input/schema14-seed1000000-20260814/traces/Savegame_linux3/Profile_003/Savegame_072/replay-008-session-0001.jsonl.zst
+# Current-Original schema-16 replacement (same exact save/RNG/input seed and
+# 1,500 transitions):
+# parity-save-replays/60s-random-input/schema16-seed1000000-replacements-20260818/traces/Savegame_linux3/Profile_003/Savegame_072/replay-008-session-0001.jsonl.zst

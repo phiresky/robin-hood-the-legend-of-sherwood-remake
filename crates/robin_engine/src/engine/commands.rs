@@ -7,7 +7,7 @@
 use super::movement::GoalShape;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::coordinates::MapPoint;
-use crate::element::{Command, EntityId, Human as _};
+use crate::element::{Command, Entity, EntityId, Human as _};
 use crate::player_command::{PlayerCommand, PlayerInput};
 use crate::profiles::Action;
 use crate::sequence::{
@@ -2630,7 +2630,9 @@ impl EngineInner {
         // face-opponent USE_POINT flag (already on for Pay) lines
         // on-arrival positioning up with the same hotspot.
         let b_use_action_point = command == Command::Pay;
-        let (tgt_pos, tgt_sector, take_tolerance_override) = match self.get_entity(target) {
+        let (tgt_pos, tgt_sector, take_tolerance_override, pc_in_coma_carry) = match self
+            .get_entity(target)
+        {
             Some(e) => {
                 let pos_map = e.element_data().position_map();
                 let gating_pos = if b_use_action_point {
@@ -2642,6 +2644,22 @@ impl EngineInner {
                     gating_pos,
                     e.element_data().sector(),
                     (command == Command::Take).then(|| take_seek_tolerance(e)),
+                    if command == Command::TakeCorpse {
+                        match e {
+                            Entity::Pc(pc) => self
+                                .pc_description_for_pc_data(&pc.pc)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "TakeCorpse target {target:?} is a live PC without its required campaign description"
+                                    )
+                                })
+                                .status
+                                .in_coma,
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    },
                 )
             }
             None => return,
@@ -2652,6 +2670,20 @@ impl EngineInner {
         // other command.
         let action_distance = match take_tolerance_override {
             Some(distance) => distance,
+            // RHElementActorPC::MouseClicked owns a distinct in-coma-PC
+            // pickup path. Unlike Human::MouseClicked, it neither casts the
+            // lift action distance to UWORD nor uses it unchanged: it keeps
+            // the fractional value and adds 10
+            // (RHelementactorpc.cpp:1058-1075).
+            None if pc_in_coma_carry => {
+                match self.actor_action_distance(
+                    actor,
+                    crate::order::OrderType::TransitionWaitingUprightCarryingCorpse,
+                ) {
+                    Some(distance) => distance + 10.0,
+                    None => return,
+                }
+            }
             None => match self.interaction_action_distance(actor, command) {
                 Some(distance) => distance,
                 None => return,
@@ -2690,8 +2722,10 @@ impl EngineInner {
             | Command::SearchCmd
             | Command::SwordstrikeDown
             | Command::TieCmd
-            | Command::Take
-            | Command::TakeCorpse => {
+            | Command::Take => {
+                per_command_seek_flags |= MoveFlags::SEEK_IN_BUILDINGS;
+            }
+            Command::TakeCorpse if !pc_in_coma_carry => {
                 per_command_seek_flags |= MoveFlags::SEEK_IN_BUILDINGS;
             }
             _ => {}
@@ -4798,6 +4832,15 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(actor_position);
+        {
+            let sprite = &mut engine
+                .get_entity_mut(pc_id)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            sprite.force_sprite_row_raw(78);
+            sprite.current_frame = 9;
+        }
         let target = WorldPoint3D::new(435.0, 2329.0, 274.0);
 
         engine.perform_resolved_orientation(&assets, pc_id, Action::Stone, MapPoint::ZERO, target);
@@ -4810,6 +4853,8 @@ mod tests {
                 target.y - actor_position.y,
             )
         );
+        assert_eq!(element.sprite.current_row, 78);
+        assert_eq!(element.sprite.current_frame, 9);
     }
 
     fn setup_pc_engine_with_split_profile_and_status(
@@ -6260,6 +6305,89 @@ mod tests {
     }
 
     #[test]
+    fn pc_in_coma_carry_keeps_fractional_action_distance_plus_ten() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+        {
+            let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+            pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
+            pc.set_direction_instantly(0);
+        }
+        let lift_distance = f32::from_bits(0x41a1_dcb0); // 20.232757
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::TransitionWaitingUprightCarryingCorpse,
+            crate::coordinates::SpriteLocalPoint::new(lift_distance, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+        let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().posture = Posture::Lying;
+            target.human_data_mut().unwrap().unconscious = true;
+        }
+        let target_description_index = engine
+            .get_entity(target_id)
+            .and_then(Entity::pc_data)
+            .and_then(|pc| pc.campaign_description_index)
+            .expect("test PC has a campaign description")
+            as usize;
+        engine.mission_domain.campaign.characters[target_description_index]
+            .status
+            .in_coma = true;
+
+        engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::TakeCorpse, false);
+
+        assert_eq!(first_seek_tolerance(&engine).to_bits(), 0x41f1_dcb0);
+        let seek = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let SequenceElementData::Movement { flags, .. } = &seek.data else {
+            panic!("PC in-coma carry must start with Seek");
+        };
+        assert!(flags.contains(MoveFlags::SEEK));
+        assert!(
+            !flags.contains(MoveFlags::SEEK_IN_BUILDINGS),
+            "the PC-specific carry branch does not pass Human::MouseClicked's building flag"
+        );
+    }
+
+    #[test]
+    fn unconscious_pc_outside_coma_uses_human_take_corpse_distance() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+        {
+            let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+            pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
+            pc.set_direction_instantly(0);
+        }
+        let lift_distance = f32::from_bits(0x4116_2058); // 9.382896
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::TransitionWaitingUprightCarryingCorpse,
+            crate::coordinates::SpriteLocalPoint::new(lift_distance, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+        let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().posture = Posture::Lying;
+            target.human_data_mut().unwrap().unconscious = true;
+        }
+
+        engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::TakeCorpse, false);
+
+        assert_eq!(first_seek_tolerance(&engine), 9.0);
+    }
+
+    #[test]
     fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
         let commands = [
             Command::SearchCmd,
@@ -7194,6 +7322,87 @@ mod tests {
                     element.owner == Some(pc_id) && element.command == Command::EquipBow
                 }),
             "the root SelectPc must not synthesize stale EquipBow before its recorded nested CancelAction"
+        );
+    }
+
+    #[test]
+    fn replay_sound_boundary_consumes_prior_npc_before_current_select_bark() {
+        use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
+
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        engine.control.sim_config.amount_of_speaking = 9;
+        let mut input = InputState::default();
+        let mut display = HostDisplayState::default();
+        let npc_profile = 0x4651_0000;
+
+        // This request belongs to the preceding engine frame. The Original
+        // host resolves it after RecordFrame, so its trace event appears on
+        // the following record before that record's selection command runs.
+        engine
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .push(PendingExclamation {
+                actor_id: 191,
+                group: ExclamationGroup::Civilian,
+                profile_id: npc_profile,
+                exclamation_id: 62,
+                variant: -1,
+            });
+        engine.queue_replay_resolved_exclamations(vec![ResolvedExclamation {
+            actor_id: 191,
+            identifier: npc_profile | 62,
+            exclamation_id: 62,
+            duration_frames: 24,
+        }]);
+
+        engine.hourglass_phase_sound_boundary(sim, &assets);
+        engine.apply_commands(
+            sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[PlayerInput::host(PlayerCommand::SelectPc {
+                pc_id,
+                append: false,
+            })],
+        );
+
+        // `perform_hourglass` enters the same helper again. With the replay
+        // resolutions already drained, that second entry must not consume the
+        // bark queued by this boundary's input; Original will first expose it
+        // to the host sound manager after the engine frame is recorded.
+        engine.hourglass_phase_sound_boundary(sim, &assets);
+
+        assert_eq!(
+            engine
+                .feedback
+                .sound_sim
+                .playing_exclamations
+                .iter()
+                .map(|playing| (playing.actor_id, playing.exclamation_id))
+                .collect::<Vec<_>>(),
+            vec![(191, 62)]
+        );
+        assert!(engine.feedback.sound_sim.resolved_exclamations.is_empty());
+        assert!(
+            !engine
+                .feedback
+                .sound_sim
+                .replay_injected_resolved_exclamations
+        );
+        assert_eq!(
+            engine
+                .feedback
+                .sound_sim
+                .pending_exclamations
+                .iter()
+                .map(|pending| (pending.actor_id, pending.exclamation_id))
+                .collect::<Vec<_>>(),
+            vec![(pc_id.index(), crate::engine::melee::HERO_SELECT)],
+            "the current input bark must follow the preceding host sound boundary"
         );
     }
 

@@ -676,6 +676,41 @@ pub(super) fn ai_square_distance(
     dx * dx + dy * dy + dz * dz
 }
 
+/// `SquareDistance` over two literal `RHElement::GetPosition()` world points.
+///
+/// Use this when the Original call site receives an element pointer directly.
+/// AI-facing `Position()` may snap a door-passing actor to a gate endpoint,
+/// whereas `SquareDistance` reads the actor body's stored position.
+pub(super) fn ai_square_distance_world(
+    target: &crate::coordinates::WorldPoint3D,
+    me: &crate::coordinates::WorldPoint3D,
+) -> f32 {
+    let dx = target.x - me.x;
+    let dy = (target.y - me.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let dz = target.z - me.z;
+    dx * dx + dy * dy + dz * dz
+}
+
+#[cfg(test)]
+mod raw_element_distance_tests {
+    use super::ai_square_distance_world;
+    use crate::coordinates::WorldPoint3D;
+
+    #[test]
+    fn door_endpoint_is_not_substituted_for_literal_body_point() {
+        // RefreshArrowProtection compares PHALANX_ATTACK_DISTANCE (100) with
+        // SquareDistance(pNearestEnemy). A PC can be physically outside that
+        // radius while AI Position() has already snapped it to the near door
+        // endpoint; Original uses the physical body point.
+        let owner = WorldPoint3D::new(0.0, 0.0, 0.0);
+        let literal_body = WorldPoint3D::new(101.0, 0.0, 0.0);
+        let ai_door_endpoint = WorldPoint3D::new(99.0, 0.0, 0.0);
+
+        assert!(ai_square_distance_world(&literal_body, &owner) >= 100.0 * 100.0);
+        assert!(ai_square_distance_world(&ai_door_endpoint, &owner) < 100.0 * 100.0);
+    }
+}
+
 /// The AI's `MaxNormDistance`: the stretched **3D** Chebyshev distance.
 ///
 /// The world-space points are subtracted, the Y component is stretched by
@@ -734,11 +769,16 @@ pub(super) fn iso_norm(v: (f32, f32), aspect_ratio: f32) -> f32 {
     (v.0 * v.0 + yi * yi).sqrt()
 }
 
-/// Isometric normalize.  Thin alias over
-/// [`crate::position_interface::vector_normalize_iso`].
-pub(super) fn iso_normalize(v: (f32, f32), _aspect_ratio: f32) -> (f32, f32) {
-    let [x, y] = crate::position_interface::vector_normalize_iso(v.0, v.1);
-    (x, y)
+/// Match `SBGeoVector2D::Normalize` exactly, including its unchecked division
+/// when assertions are disabled in the shipping build.
+///
+/// In particular, a zero vector becomes `(NaN, NaN)`.  That behavior is
+/// observable when two sword-fight observers occupy the same point: Original
+/// starts a movement with a NaN goal instead of treating the zero vector as an
+/// already-reached destination.
+pub(super) fn iso_normalize(v: (f32, f32), aspect_ratio: f32) -> (f32, f32) {
+    let norm = iso_norm(v, aspect_ratio);
+    (v.0 / norm, v.1 / norm)
 }
 
 /// Sector to unit vector with the caller's Y aspect scaling.
@@ -776,7 +816,24 @@ fn step_back_direction_sector(direction: u16, relative_direction: i16) -> u16 {
 
 #[cfg(test)]
 mod step_back_direction_tests {
-    use super::{iso_norm, sector_to_vector_iso, step_back_direction_sector, vec_to_sector_ar};
+    use super::{
+        iso_norm, iso_normalize, sector_to_vector_iso, step_back_direction_sector, vec_to_sector_ar,
+    };
+
+    #[test]
+    fn zero_vector_normalization_preserves_original_nan_result() {
+        // Original SBGeoVector2D::Normalize asserts only in debug builds and
+        // otherwise performs these divisions unconditionally. Schema-14 seed
+        // 1000000, linux2 P002 Savegame_029 replay-010 frame 4851 exercises
+        // this through ReconsiderSwordfightObservation.
+        let zero = std::hint::black_box(0.0_f32);
+        let normalized = iso_normalize(
+            (zero, zero),
+            std::hint::black_box(crate::position_interface::ASPECT_RATIO),
+        );
+        assert_eq!(normalized.0.to_bits(), 0xffc0_0000);
+        assert_eq!(normalized.1.to_bits(), 0xffc0_0000);
+    }
 
     #[test]
     fn negative_step_back_offsets_keep_signed_cpp_remainder() {
@@ -804,23 +861,25 @@ mod step_back_direction_tests {
 
 /// Returns `true` iff the enemy is sufficiently below the viewer
 /// that an archer should bend down to bow-down posture.  The inputs
-/// are the viewer's [`AiContext`] and the target's `(position,
-/// elevation)` — or `None` when the target has no view snapshot
-/// (defensive: always return `false`).
+/// are the viewer's [`AiContext`], its literal live map position, and the
+/// target's literal live world position. The Original bypasses
+/// `RHArtificialIntelligence::Position` here and calls `GetPositionGround()`
+/// plus `GetElevation()` directly.
 pub(super) fn enemy_is_below_me(
     ctx: &AiContext,
-    target: Option<(crate::ai::Position, f32)>,
+    owner_live_position: Option<crate::ai::Position>,
+    target: Option<crate::coordinates::WorldPoint3D>,
 ) -> bool {
     // Leaning out = enemy is downstairs.
     if ctx.posture == crate::element::Posture::LeaningOut {
         return true;
     }
 
-    let Some((target_pos, target_elevation)) = target else {
-        return false;
-    };
+    let target = target.expect("EnemyIsBelowMe requires the target's literal live position");
+    let owner =
+        owner_live_position.expect("EnemyIsBelowMe requires the owner's literal live position");
 
-    let height_diff = target_elevation - ctx.elevation;
+    let height_diff = target.z - ctx.elevation;
     if height_diff >= 0.0 {
         // Same height or above — not below.
         return false;
@@ -832,9 +891,98 @@ pub(super) fn enemy_is_below_me(
 
     // Horizontal vs vertical distance comparison (stretched Y to
     // cancel the isometric aspect ratio).
-    let dx = target_pos.x - ctx.position.x;
-    let dy = (target_pos.y - ctx.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let owner_ground_y = owner.y + ctx.elevation;
+    let dx = target.x - owner.x;
+    let dy = (target.y - owner_ground_y) * crate::position_interface::INVERSE_ASPECT_RATIO;
     (dx * dx + dy * dy) <= height_diff * height_diff
+}
+
+#[cfg(test)]
+mod enemy_below_tests {
+    use super::*;
+
+    fn context() -> AiContext {
+        AiContext {
+            posture: crate::element::Posture::Upright,
+            elevation: 105.001_01,
+            ..AiContext::default()
+        }
+    }
+
+    #[test]
+    fn door_transition_uses_literal_live_ground_position() {
+        // Savegame_021 seed replay: the projected map coordinates differ by
+        // only (5, 8), but elevation projection puts the target more than
+        // seven world-Y units away while it is less than one unit lower.
+        let target = crate::coordinates::WorldPoint3D::new(577.0, 2472.219_0, 104.218_95);
+        assert!(!enemy_is_below_me(
+            &context(),
+            Some(Position {
+                x: 572.0,
+                y: 2360.0,
+                ..Position::default()
+            }),
+            Some(target),
+        ));
+    }
+
+    #[test]
+    fn nearby_lower_target_is_below() {
+        let target = crate::coordinates::WorldPoint3D::new(572.0, 2465.001, 104.0);
+        assert!(enemy_is_below_me(
+            &context(),
+            Some(Position {
+                x: 572.0,
+                y: 2360.0,
+                ..Position::default()
+            }),
+            Some(target),
+        ));
+    }
+
+    #[test]
+    fn moving_archer_uses_post_execute_live_position_at_detection_boundary() {
+        // schema14 seed1000000, linux3/P003/Savegame_043/replay-004,
+        // frame 8310. Soldier 88's own Execute has advanced five map-Y units
+        // before NPC::Hourglass calls EnemyIsBelowMe. That movement is just
+        // enough to put PC 169 inside the vertical-distance cone and select
+        // EquipBowDown at frame 8320.
+        let ctx = AiContext {
+            posture: crate::element::Posture::Upright,
+            elevation: 150.001_007_080_078_12,
+            ..AiContext::default()
+        };
+        let target = crate::coordinates::WorldPoint3D::new(
+            1031.413_818_359_375,
+            2002.760_009_765_625,
+            107.499_275_207_519_53,
+        );
+        let owner_after_execute = Position {
+            x: 1061.203_857_421_875,
+            y: 1865.277_832_031_25,
+            ..Position::default()
+        };
+        assert!(enemy_is_below_me(
+            &ctx,
+            Some(owner_after_execute),
+            Some(target),
+        ));
+
+        let owner_before_execute = Position {
+            y: owner_after_execute.y + 5.0,
+            ..owner_after_execute
+        };
+        assert!(
+            !enemy_is_below_me(&ctx, Some(owner_before_execute), Some(target)),
+            "the tick-start position is across the exact Original cone boundary"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "target's literal live position")]
+    fn missing_required_target_geometry_is_not_fake_not_below() {
+        let _ = enemy_is_below_me(&context(), Some(Position::default()), None);
+    }
 }
 
 /// Compute a retreat position away from `pos_enemy`.

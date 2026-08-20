@@ -115,11 +115,15 @@ impl EnemyAi {
             if friend_handle == self.base.me {
                 continue;
             }
-            let f = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
-                panic!("friend {friend_handle} in list_us is absent from fighter snapshot")
-            });
-            let dx = f.position.x - my_pos.x;
-            let dy = (f.position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
+            let Some(f) = self.find_fighter(friend_handle, tick) else {
+                panic!("friend {friend_handle} in list_us is absent from fighter snapshot");
+            };
+            // Original calls Point(pFriend), which is the AI Position()
+            // helper rather than RHElement::GetPosition(). Door-passing
+            // actors therefore contribute their committed gate endpoint.
+            let friend_position = self.archer_enemy_position(friend_handle, ctx);
+            let dx = friend_position.x - my_pos.x;
+            let dy = (friend_position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
             let to_friend = (dx, dy);
             let sq_dist = square_norm(to_friend);
             let angle = legacy_vector_angle(nose, to_friend);
@@ -174,13 +178,17 @@ impl EnemyAi {
             if !self.is_allowed_to_attack(enemy_handle, ctx, tick) {
                 continue;
             }
-            let Some(enemy) = self.find_fighter(enemy_handle, tick) else {
+            if self.find_fighter(enemy_handle, tick).is_none() {
                 continue;
-            };
+            }
 
             // Isometric-stretched vector and distance to enemy.
-            let dx = enemy.position.x - my_pos.x;
-            let dy = (enemy.position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
+            // `Point(pEnemy)` has the same Position() semantics as the friend
+            // scan above. In particular, using raw interpolated stair feet
+            // can move a valid door-committed target just outside bow range.
+            let enemy_position = self.archer_enemy_position(enemy_handle, ctx);
+            let dx = enemy_position.x - my_pos.x;
+            let dy = (enemy_position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
             let mut sq_distance = dx * dx + dy * dy;
 
             // Within bow range?
@@ -349,6 +357,7 @@ mod tests {
     use crate::ai_enemy::{EnemyAi, FighterSnapshot, archer};
     use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
     use crate::element::{ActionState, ActorPc, Entity};
+    use crate::sim_rng::SimulationContext;
 
     use super::legacy_vector_angle;
 
@@ -431,5 +440,56 @@ mod tests {
             "the regression must distinguish committed AI Position from raw fighter geometry"
         );
         assert_eq!(ai.archer_enemy_position(target, &ctx), committed);
+    }
+
+    #[test]
+    fn shot_target_range_uses_door_committed_ai_position() {
+        // linux2 Savegame_015 replay-002, frame 15954: a crossbowman's
+        // 400-unit range includes the selected stair endpoint, while the PC's
+        // interpolated feet are still just outside it. Original scans
+        // Point(pEnemy), i.e. AI Position(), in ProposeShotTarget.
+        let owner = 127;
+        let target = 172;
+        let committed = Position {
+            x: 399.0,
+            ..Position::default()
+        };
+        let mut ctx = archer_context_with_target_position(target, committed);
+        ctx.position = Position::default();
+        ctx.direction = 4;
+
+        let mut ai = EnemyAi::default();
+        ai.base.me = owner;
+        ai.base.list_us = vec![owner];
+        ai.list_them = vec![target];
+
+        let mut tick = crate::ai::AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: owner,
+            bow_max_range: 400,
+            is_friendly: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: target,
+            // The tactical fighter snapshot can retain the actor's raw feet;
+            // the AI view above owns Position()'s door-side substitution.
+            position: Position {
+                x: 401.0,
+                ..Position::default()
+            },
+            raw_position: Position {
+                x: 401.0,
+                ..Position::default()
+            },
+            is_pc: true,
+            is_able_to_fight: true,
+            ..FighterSnapshot::default()
+        });
+
+        assert_eq!(
+            ai.propose_shot_target(&SimulationContext::with_seed(0), &ctx, &tick),
+            target
+        );
     }
 }

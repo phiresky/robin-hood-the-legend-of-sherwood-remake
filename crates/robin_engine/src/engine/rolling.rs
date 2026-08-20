@@ -264,6 +264,10 @@ impl EngineInner {
             rolling_terminal_posture(effective_motion, entity.is_dead())
         };
         if let Some(posture) = landing_posture {
+            // RHElementActorHuman::Execute(RHANIMATION_ROLLING) only calls
+            // SetPosture here (RHelementactorhuman.cpp:5008-5023). SetPosture
+            // does not alter PositionInterface::mbDeviated, so preserve the
+            // roll's anti-vibration latch for the following stand-up/turn.
             self.world
                 .entities
                 .get_mut(owner)

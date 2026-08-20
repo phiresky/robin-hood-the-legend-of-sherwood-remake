@@ -65,6 +65,17 @@ fn push_flight_vector(
     }
 }
 
+/// Facing selected by `ExecuteFallingPushed` after computing its flight.
+///
+/// Original calls `GetSector0to15` unconditionally.  A coincident circular
+/// push normalizes a zero vector through `0 / 0`; every comparison in the
+/// sector classifier is then false, yielding sector 0 and therefore facing 8.
+/// Rust keeps the stationary flight as finite zeroes, but must still perform
+/// that same observable facing update.
+fn push_flight_facing(flight_x: f32, flight_y: f32) -> i16 {
+    (crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y) + 8) % 16
+}
+
 /// Select the animation queued by `TranslatePushDamage`.
 ///
 /// The dead-rider arm precedes the posture switch in the original, so even a
@@ -1083,14 +1094,11 @@ impl EngineInner {
                 thrust.maximal_distance as f32,
             )
         };
-        if flight_x.abs() > 0.01 || flight_y.abs() > 0.01 {
-            let facing =
-                (crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y) + 8) % 16;
-            self.get_entity_mut(victim_id)
-                .expect("falling-pushed victim vanished")
-                .element_data_mut()
-                .set_direction_instantly(facing);
-        }
+        let facing = push_flight_facing(flight_x, flight_y);
+        self.get_entity_mut(victim_id)
+            .expect("falling-pushed victim vanished")
+            .element_data_mut()
+            .set_direction_instantly(facing);
         if rider {
             flight_x = 0.0;
             flight_y = 0.0;
@@ -1603,6 +1611,16 @@ mod tests {
     }
 
     #[test]
+    fn coincident_circle_push_still_sets_original_back_first_facing() {
+        let point = MapPoint::new(1748.0, 1236.0);
+        let flight =
+            push_flight_vector(WeaponThrustKind::TrueCircle, (1.0, 0.0), point, point, 30.0);
+
+        assert_eq!(flight, (0.0, 0.0));
+        assert_eq!(push_flight_facing(flight.0, flight.1), 8);
+    }
+
+    #[test]
     fn circle_push_uses_original_geotype_norm_rounding() {
         let attacker = MapPoint::new(0.0, 0.0);
         let victim = MapPoint::new(46.609222, 53.838055);
@@ -1676,6 +1694,26 @@ mod tests {
             Some(crate::order::OrderType::FallingPushedUpright)
         );
         assert_eq!(translated_push_posture(anims.is_some(), false, true), None);
+    }
+
+    #[test]
+    fn crouched_family_stunning_push_retains_original_sentinel_standup_order() {
+        for posture in [Posture::Crouched, Posture::Tree, Posture::SimulatingBeggar] {
+            let anims =
+                translated_push_damage_animations(posture, ActionState::WaitingSword, false, false)
+                    .expect("crouched-family pushes retain a falling animation");
+
+            assert_eq!(
+                anims.falling,
+                crate::order::OrderType::FallingPushedCrouched
+            );
+            assert_eq!(
+                anims.standing_up,
+                Some(crate::order::OrderType::NonanimationEnd),
+                "Original appends its initialized sentinel for {posture:?}"
+            );
+            assert_eq!(anims.stunned, None);
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
-use super::util::{ai_max_norm_distance, vec_to_sector, vec_to_sector_ar};
+use super::util::{ai_max_norm_distance, iso_normalize, vec_to_sector, vec_to_sector_ar};
 use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, combat, task_priority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +27,25 @@ pub(crate) enum CommandSoldiersStart {
 /// vectors by a sector.
 fn formation_direction(dx: f32, dy: f32) -> u16 {
     vec_to_sector_ar(dx, dy, ASPECT_RATIO)
+}
+
+/// Sum the unit directions used by Original's officer attack broadcast.
+///
+/// `SBGeoVector2D::GetNormalized()` divides unconditionally in shipping
+/// builds. An alerted soldier standing exactly on the officer therefore adds
+/// `(NaN, NaN)` rather than being skipped; the later sector classifier maps
+/// that poisoned accumulator to sector 0 because every comparison is false.
+fn average_alerted_direction_vector(
+    officer: Position,
+    alerted_positions: &[Position],
+) -> (f32, f32) {
+    alerted_positions
+        .iter()
+        .fold((0.0, 0.0), |(sum_x, sum_y), soldier_pos| {
+            let direction =
+                iso_normalize((soldier_pos.x - officer.x, soldier_pos.y - officer.y), 1.0);
+            (sum_x + direction.0, sum_y + direction.1)
+        })
 }
 
 /// Direction used by Original's officer attack-point sequence:
@@ -64,6 +83,19 @@ fn alert_officer_distance(
             * (owner_layer as f32 - officer_layer as f32).abs()) as u32;
     }
     distance
+}
+
+/// Original `AlertOfficer` admits officers through `IsAbleToFight`, not the
+/// distinct `IsAbleToHelp` predicate used by several officer-coordination
+/// scans. In particular, an inactive Default-state officer can help according
+/// to the latter but cannot be selected as somebody to alert.
+fn can_alert_officer(
+    rank: ProfileRank,
+    is_able_to_fight: bool,
+    state: AiState,
+    script_locked: bool,
+) -> bool {
+    rank == ProfileRank::Officer && is_able_to_fight && state == AiState::Default && !script_locked
 }
 
 /// Distance stored on each accepted soldier before Original inserts it into
@@ -359,18 +391,7 @@ impl EnemyAi {
                 })
                 .collect();
             let (avg_dir_vec_x, avg_dir_vec_y) =
-                alerted_positions
-                    .iter()
-                    .fold((0.0, 0.0), |(sum_x, sum_y), soldier_pos| {
-                        let dx = soldier_pos.x - my_pos.x;
-                        let dy = soldier_pos.y - my_pos.y;
-                        let len = (dx * dx + dy * dy).sqrt();
-                        if len > 0.0 {
-                            (sum_x + dx / len, sum_y + dy / len)
-                        } else {
-                            (sum_x, sum_y)
-                        }
-                    });
+                average_alerted_direction_vector(my_pos, &alerted_positions);
             // Try a line formation on the average
             // soldier-direction side, then distribute slots to each
             // alerted soldier (nearest-slot match, outdoor only) with
@@ -1115,10 +1136,12 @@ impl EnemyAi {
                     ProfileRank::Officer => {
                         // Candidate officer: must be able to fight, in DEFAULT
                         // state, and not script-locked.
-                        if !cs.is_able_to_help
-                            || cs.ai_state != AiState::Default
-                            || cs.script_locked
-                        {
+                        if !can_alert_officer(
+                            cs.rank,
+                            cs.is_able_to_fight,
+                            cs.ai_state,
+                            cs.script_locked,
+                        ) {
                             continue;
                         }
 
@@ -1760,6 +1783,32 @@ mod tests {
     }
 
     #[test]
+    fn coincident_alerted_soldier_poisons_attack_formation_direction() {
+        let officer = Position {
+            x: 744.0,
+            y: 675.0,
+            ..Position::default()
+        };
+        let alerted = [
+            Position {
+                x: 683.0,
+                y: 713.0,
+                ..Position::default()
+            },
+            officer,
+            Position {
+                x: 486.0,
+                y: 880.0,
+                ..Position::default()
+            },
+        ];
+
+        let average = average_alerted_direction_vector(officer, &alerted);
+        assert!(average.0.is_nan() && average.1.is_nan());
+        assert_eq!(formation_direction(average.0, average.1), 0);
+    }
+
+    #[test]
     fn inactive_duty_soldier_uses_indoor_stay_on_post_answer() {
         assert!(!alert_soldier_stays_on_post(false, false, false, true, 0));
         assert!(alert_soldier_stays_on_post(true, false, false, true, 0));
@@ -1831,6 +1880,28 @@ mod tests {
             .abs()
             .max((officer_66.y - owner.y).abs() * INVERSE_ASPECT_RATIO);
         assert!(raw_map_distance_47 > raw_map_distance_66);
+    }
+
+    #[test]
+    fn alert_officer_rejects_inactive_default_officer_able_to_help() {
+        // nicouzouf Savegame_067 replay-008, frame 1509: Officer55 is
+        // inactive inside a building. Original IsAbleToFight rejects it,
+        // while IsAbleToHelp would accept its Default state.
+        let is_able_to_help =
+            crate::ai_enemy::soldier_is_able_to_help_state(true, AiState::Default, Substate::None);
+        assert!(is_able_to_help, "the mismatched legacy predicate admits it");
+        assert!(!can_alert_officer(
+            ProfileRank::Officer,
+            false,
+            AiState::Default,
+            false,
+        ));
+        assert!(can_alert_officer(
+            ProfileRank::Officer,
+            true,
+            AiState::Default,
+            false,
+        ));
     }
 
     #[test]

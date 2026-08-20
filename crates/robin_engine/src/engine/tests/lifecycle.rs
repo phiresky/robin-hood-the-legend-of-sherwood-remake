@@ -1829,6 +1829,106 @@ fn instant_corpse_drop_leaves_the_goal_at_the_carrier_heading() {
 }
 
 #[test]
+fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{CascadeFlags, SequenceElement};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let body = engine.add_entity(make_test_soldier(Posture::Tied));
+    let carrier = engine.add_entity(make_test_pc(Posture::Upright));
+    let carrier_position = crate::coordinates::MapPoint::new(1005.0, 827.0);
+    {
+        let carrier_entity = engine.get_entity_mut(carrier).unwrap();
+        carrier_entity.pc_data_mut().unwrap().carried = Some(body);
+        carrier_entity
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Tied);
+        carrier_entity
+            .element_data_mut()
+            .set_position_map(carrier_position);
+        carrier_entity.element_data_mut().set_direction_instantly(3);
+    }
+    {
+        let tied = OrderType::BeingTied;
+        let script = SpriteScript {
+            action_id: tied as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[tied as usize] = 0;
+        let body_entity = engine.get_entity_mut(body).unwrap();
+        body_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        body_entity
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(1012.68, 821.24));
+        body_entity.position_iface_mut().new_move();
+        body_entity
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(1000.0, 820.0));
+        body_entity.human_data_mut().unwrap().carrier = Some(carrier);
+        body_entity.human_data_mut().unwrap().unconscious = true;
+        body_entity.actor_data_mut().unwrap().execution_frozen = true;
+    }
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut take =
+        SequenceElement::new_interaction(1, Command::TakeCorpse, Some(carrier), Some(body));
+    take.orders.push_back(Order::new(
+        OrderType::TransitionWaitingUprightCarryingCorpse,
+        0.0,
+        0.0,
+        order_id,
+    ));
+    let take_sequence = engine.orders.sequence_manager.launch_element(take);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(take_sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_interrupted(take_sequence, 0, CascadeFlags::NEXT_LEVEL);
+    let sim = crate::sim_rng::test_context();
+    engine.dispatch_condolations(&sim, &LevelAssets::new());
+
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.element_data().position_map(), carrier_position);
+    assert_eq!(
+        body_entity.position_iface().old_map_position(),
+        crate::coordinates::MapPoint::new(1012.68, 821.24),
+        "DropCorpse must not execute the body's later Hourglass NewMove"
+    );
+    assert_ne!(body_entity.sprite().last_action, OrderType::BeingTied);
+    assert_eq!(body_entity.sprite().current_frame, 0);
+    assert_eq!(body_entity.sprite().frame_count, u16::MAX);
+    let selected = engine
+        .orders
+        .sequence_manager
+        .current_element_for_actor(body)
+        .and_then(|(sequence, index)| engine.orders.sequence_manager.get_element(sequence, index))
+        .expect("DropCorpse must synchronously instruct the body's Wait");
+    assert_eq!(selected.command, Command::Wait);
+    assert_eq!(
+        selected.current_order().map(|order| order.order_type),
+        Some(OrderType::BeingTied)
+    );
+}
+
+#[test]
 fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
     use crate::movement::AbilityKind;
 
@@ -2590,6 +2690,160 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         old_goal,
         "replacement selection must happen before the old movement's condolence can clear its cached transition goal"
     );
+}
+
+#[test]
+fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
+    use crate::element::{Command, Posture};
+    use crate::order::{AiOrderIntent, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequencePriority};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_sector(SectorHandle::new(1));
+
+    let mut waiting = SequenceElement::new_movement(
+        1,
+        Command::MoveWaiting,
+        Some(owner),
+        OrderType::RunningUpright,
+    );
+    waiting.priority = SequencePriority::Normal;
+    let waiting_sequence = engine.orders.sequence_manager.launch_element(waiting);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(waiting_sequence, 0);
+
+    let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
+    intent.target_sector = SectorHandle::new(119);
+    intent.target_layer = Some(8);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .reentrant
+        .reconsider_approach_completion_pending = true;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .orders
+        .push(intent);
+
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+
+    let ai = engine.get_entity(owner).unwrap().ai_controller().unwrap();
+    assert!(
+        ai.couldnt_reachpoint,
+        "AppendMoveToSequence's synchronous gate failure must reach EndThink"
+    );
+    assert!(
+        ai.outbox.reentrant.reconsider_approach_replaced_path_waiter,
+        "the typed reconsider continuation must retain that its failed route replaced MoveWaiting"
+    );
+    assert!(engine.orders.pending_move_requests.is_empty());
+}
+
+#[test]
+fn deferred_ai_move_skips_recursive_owner_drain_then_promotes_globally() {
+    use crate::element::Posture;
+    use crate::order::{AiOrderIntent, OrderType};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+
+    let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
+    intent.defer_instruction = true;
+    engine.launch_ai_move(owner, &intent);
+
+    assert!(
+        engine
+            .drain_pending_move_requests_for_owner(&sim, owner)
+            .is_empty(),
+        "recursive owner closure must not promote the deferred roof move"
+    );
+    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+
+    engine.drain_pending_move_requests(&sim);
+    assert_eq!(
+        engine.orders.pending_move_requests.len(),
+        1,
+        "the later global drain in the authored frame must also retain the move"
+    );
+    engine.control.frame_counter += 1;
+    engine.drain_pending_move_requests(&sim);
+    assert!(engine.orders.pending_move_requests.is_empty());
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .iter()
+            .any(|(sequence_id, element_index)| engine
+                .orders
+                .sequence_manager
+                .get_element(*sequence_id, *element_index)
+                .is_some_and(|element| element.owner == Some(owner)))
+    );
+}
+
+#[test]
+fn path_waiter_tail_halts_registered_roof_move_before_instruction() {
+    use crate::element::{Command, Posture};
+    use crate::order::{AiOrderIntent, OrderType};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+
+    let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
+    intent.halt_after_launch_for_path_waiter = true;
+    engine.launch_ai_move(owner, &intent);
+
+    let launched = engine.drain_pending_move_requests_for_owner(&sim, owner);
+    assert!(
+        launched.is_empty(),
+        "the path-waiter tail must not expose the interrupted sequence for instruction"
+    );
+    assert!(engine.orders.pending_move_requests.is_empty());
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .pending_elements_for_owner(owner)
+            .is_empty(),
+        "GoTo's post-launch Halt removes the roof Move from the manager FIFO"
+    );
+    assert_eq!(engine.actor_command(owner), Command::Wait);
 }
 
 #[test]

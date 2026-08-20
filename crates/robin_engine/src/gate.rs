@@ -286,6 +286,15 @@ pub struct Door {
     pub sector_out: crate::sector::SectorNumber,
     pub sector_in: crate::sector::SectorNumber,
 
+    /// Lift sector which authored this door in its embedded door array.
+    ///
+    /// This is deliberately stronger than `sector_in`: unrelated standalone
+    /// or building doors can lead into the same lift sector, but Original's
+    /// `RHSectorLift::mpLowestDoor/mpHighestDoor` candidates are only the
+    /// doors embedded in that lift's proto chunk.
+    #[serde(default)]
+    pub owning_lift_sector: Option<crate::sector::SectorNumber>,
+
     /// Linked gates: indices of doors that share a sector with this one.
     /// Each link's distance is the in-sector distance between the two
     /// gates' nearest entry points. Built once at level load.
@@ -381,6 +390,7 @@ impl Default for Door {
             layer_in: 0,
             sector_out: crate::sector::SectorNumber::new(0),
             sector_in: crate::sector::SectorNumber::new(0),
+            owning_lift_sector: None,
             gate_links: Vec::new(),
             click_polygon: Vec::new(),
             click_bbox: crate::coordinates::MapBBox::new(),
@@ -415,13 +425,28 @@ impl Door {
         if !self.click_bbox.contains_point(pt) {
             return false;
         }
-        // Standard ray-casting point-in-polygon test.
+        // Original `SBGeoPolygon2DArray::IsInside` counts polygon boundaries
+        // as inside. This matters for recorded group moves: H02_Not_EC can
+        // select door sector 296 at x=1669, exactly on its right edge.
+        // Check the closed edge before applying the half-open ray toggle.
         let mut inside = false;
         let n = self.click_polygon.len();
         let mut j = n - 1;
         for i in 0..n {
             let (xi, yi) = self.click_polygon[i];
             let (xj, yj) = self.click_polygon[j];
+            let edge_x = xj - xi;
+            let edge_y = yj - yi;
+            let rel_x = x - xi;
+            let rel_y = y - yi;
+            if edge_x * rel_y == edge_y * rel_x
+                && x >= xi.min(xj)
+                && x <= xi.max(xj)
+                && y >= yi.min(yj)
+                && y <= yi.max(yj)
+            {
+                return true;
+            }
             if (yi > y) != (yj > y) {
                 let x_intersect = (xj - xi) * (y - yi) / (yj - yi) + xi;
                 if x < x_intersect {
@@ -1758,7 +1783,7 @@ pub fn lift_endpoint_door_indices(doors: &[Door], lift_sector: SectorNumber) -> 
     let mut candidates = doors
         .iter()
         .enumerate()
-        .filter(|(_, door)| door.sector_in == lift_sector);
+        .filter(|(_, door)| door.owning_lift_sector == Some(lift_sector));
     let (first_idx, first) = candidates.next()?;
     let mut low = (first_idx as u32, first.point_out.y);
     let mut high = low;
@@ -1814,6 +1839,22 @@ mod tests {
         assert!(!door.is_locked_npc_civilian());
         assert!(!door.is_unlockable());
         assert!(!door.has_special_authorisation());
+    }
+
+    #[test]
+    fn click_polygon_includes_original_h02_door_boundary() {
+        let mut door = Door::default();
+        door.click_polygon = vec![
+            (1669.0, 1536.0),
+            (1645.0, 1536.0),
+            (1644.0, 1485.0),
+            (1669.0, 1485.0),
+        ];
+        door.rebuild_click_bbox();
+
+        assert!(door.click_polygon_contains(1669.0, 1505.44));
+        assert!(door.click_polygon_contains(1655.0, 1505.44));
+        assert!(!door.click_polygon_contains(1670.0, 1505.44));
     }
 
     #[test]

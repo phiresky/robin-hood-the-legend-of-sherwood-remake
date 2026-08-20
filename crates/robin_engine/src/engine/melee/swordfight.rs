@@ -893,7 +893,12 @@ impl EngineInner {
             // Distance check: 3D distance must be within both
             // combatants' UBER sword range.
             {
-                let dist = entity_distance(&self.world.entities, initiator, opponent);
+                // Original `EnterSwordFight` compares
+                // `(GetPosition() - pOpponent->GetPosition()).Norm()`.  Use
+                // the stored three-dimensional world positions here: map
+                // projection can make fighters on different elevations look
+                // farther apart and reject a valid engagement before LOS.
+                let dist = entity_world_distance(&self.world.entities, initiator, opponent);
                 let uber_a = self
                     .world
                     .entities

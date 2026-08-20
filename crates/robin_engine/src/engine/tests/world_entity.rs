@@ -228,6 +228,58 @@ fn mytalk_uses_concrete_sound_manager_resolution_duration() {
 }
 
 #[test]
+fn replay_host_resolution_without_logical_request_keeps_authoritative_completion_timing() {
+    use crate::ai::Remark;
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    let sim = crate::sim_rng::test_context();
+    assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
+    assert_eq!(
+        mytalk_ai(&engine, soldier_id).current_remark,
+        Remark::TheSoundOfSilence
+    );
+
+    engine.queue_replay_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: soldier_id.index(),
+        identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
+        exclamation_id: Remark::Arrow as u16,
+        duration_frames: 3,
+    }]);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+
+    assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(
+        engine.feedback.sound_sim.playing_exclamations[0].finish_frame,
+        103
+    );
+
+    engine.control.frame_counter = 103;
+    super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 103);
+    engine.settle_npc_speech_completions(&sim, &assets);
+    assert!(engine.feedback.sound_sim.playing_exclamations.is_empty());
+    assert_eq!(
+        mytalk_ai(&engine, soldier_id).current_remark,
+        Remark::TheSoundOfSilence,
+        "an Original-only host line must not invent a Rust AI speech latch"
+    );
+}
+
+#[test]
+#[should_panic(expected = "live sound manager resolved exclamation")]
+fn live_host_resolution_without_logical_request_remains_an_invariant_failure() {
+    use crate::ai::Remark;
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: soldier_id.index(),
+        identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
+        exclamation_id: Remark::Arrow as u16,
+        duration_frames: 3,
+    }]);
+    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets);
+}
+
+#[test]
 fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
     use crate::ai::{LogLineType, Remark, StimulusType};
 
@@ -312,6 +364,107 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
     );
     assert!(ai.outbox.reentrant.owner_work.is_empty());
     assert!(!ai.outbox.actor.halt);
+}
+
+#[test]
+fn set_state_halt_prefix_retains_detached_goto_until_engine_rejection() {
+    use crate::ai::{
+        AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
+        StimulusType, Substate,
+    };
+    use crate::element::{AiBrain, Posture};
+    use crate::order::{AiOrderIntent, OrderType};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(100.0, 100.0);
+
+    let mut soldier_entity = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.element.active = true;
+    soldier
+        .element
+        .set_position_map(crate::coordinates::MapPoint::new(90.0, 90.0));
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier_entity);
+
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier has Enemy AI");
+        ai.think_recursion_depth = 1;
+        ai.completion_latch_inside_think = true;
+
+        // SeekingSeekpoint calls Halt, SetState, then GoTo. SetState stores
+        // the Halt in its pre-callback prefix while the later GoTo remains in
+        // the caller tail until that prefix has settled.
+        let mut halt_prefix = AiActorOutbox::default();
+        halt_prefix.queue_halt();
+        ai.outbox
+            .reentrant
+            .owner_work
+            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+                outgoing_state: AiState::Seeking,
+                outgoing_substate: Substate::SeekingGroupGetInstructedByOfficer,
+                incoming_state: AiState::Seeking,
+                incoming_substate: Substate::SeekingSeekpoint,
+                source: AiStateChangeSource::SelfActor,
+                actor_effects_before_callback: Some(halt_prefix),
+            }));
+        ai.outbox
+            .actor
+            .orders
+            .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 90.0));
+        assert!(ai.end_think_completion_events());
+    }
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+    {
+        let ai = engine
+            .get_entity(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI after SetState prefix");
+        assert_eq!(ai.think_recursion_depth, 1);
+        assert!(ai.completion_latch_inside_think);
+        assert_eq!(ai.outbox.actor.orders.len(), 1);
+        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    // A prefix drain may reach the generic completion surface before the
+    // caller-tail GoTo has been handed to movement. It must not mistake the
+    // absence of a result for successful authorization and close EndThink.
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    {
+        let ai = engine
+            .get_entity(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI while its GoTo verdict is pending");
+        assert_eq!(ai.think_recursion_depth, 1);
+        assert!(ai.completion_latch_inside_think);
+        assert_eq!(ai.engine_deferred_end_think_frames, 1);
+        assert_eq!(ai.outbox.actor.orders.len(), 1);
+        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    // The caller-tail GoTo is outside the level and is rejected only after
+    // the AI borrow is released. Original AppendMoveToSequence reports this
+    // inline to the enclosing EndThink, which recursively dispatches the
+    // fallback seek event.
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::ai_controller)
+        .expect("test soldier retains AI after rejected GoTo");
+    assert_eq!(ai.think_recursion_depth, 1);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        [StimulusType::EventCouldntReachPoint]
+    );
 }
 
 #[test]
@@ -517,6 +670,68 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
     assert_eq!(
         enemy.base.current_substate,
         Substate::AttackingTooProudToAttackApproach
+    );
+}
+
+#[test]
+fn opposite_attentive_transitions_launch_before_following_turn() {
+    use crate::ai::AttentiveModeEffect;
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier_entity = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
+    enemy.attentive = false;
+    enemy.will_be_attentive = false;
+    enemy
+        .base
+        .outbox
+        .actor
+        .queue_set_attentive_mode(AttentiveModeEffect::new(true, false));
+    enemy
+        .base
+        .outbox
+        .actor
+        .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
+    let mut turn = crate::order::AiOrderIntent::face_direction(14);
+    turn.after_attentive_mode = true;
+    enemy.base.outbox.actor.orders.push(turn);
+    let owner = engine.add_entity(soldier_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    let owned: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| (element.command, element.state))
+        .collect();
+    assert_eq!(
+        owned,
+        [
+            (Command::EnterAttentiveMode, SequenceState::Todo),
+            (Command::LeaveAttentiveMode, SequenceState::Todo),
+            (Command::Turn, SequenceState::Todo),
+        ],
+        "Original launches both opposite SetAttentiveMode transitions synchronously before the following Face"
+    );
+    assert!(
+        !engine
+            .get_entity(owner)
+            .and_then(Entity::enemy_ai)
+            .expect("Enemy test AI remains live")
+            .will_be_attentive,
+        "the final attentive request still owns the projected flag"
     );
 }
 
@@ -1360,6 +1575,82 @@ fn speech_fifo_preserves_rejected_accepted_busy_and_emergency_attempts() {
 }
 
 #[test]
+fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
+    use crate::ai::{
+        AiOwnerWork, AiState, ForbiddenRemark, Remark, RemarkTargetFlags, SpeechFlags, Substate,
+    };
+
+    for rejected in [true, false] {
+        let mut engine = EngineInner::new();
+        engine.control.frame_counter = 50;
+        let mut assets = LevelAssets::new();
+        let owner = add_speech_test_npc(
+            &mut engine,
+            &mut assets,
+            SpeechNpcKind::Soldier { vip: false },
+            501,
+        );
+        let charly = add_speech_test_npc(
+            &mut engine,
+            &mut assets,
+            SpeechNpcKind::Soldier { vip: false },
+            502,
+        );
+        let charly_handle = charly.index();
+        let owner_creation_order = engine.world.original_creation_order(owner);
+        if rejected {
+            engine.ai.global.forbidden_remarks.push(ForbiddenRemark {
+                remark: Remark::FoundCharly,
+                flags: RemarkTargetFlags::THIS_GUY.bits(),
+                speech_id: 0,
+                guy_index: owner_creation_order as u16,
+                bad_guy: true,
+                forbidden_till_frame: 50,
+            });
+        }
+        {
+            let enemy = engine
+                .get_entity_mut(owner)
+                .and_then(Entity::enemy_ai_mut)
+                .expect("speech test owner has Enemy AI");
+            enemy.base.current_state = AiState::Seeking;
+            enemy.base.current_substate = Substate::SeekingSendCharlyToOfficer;
+            enemy.base.friend_in_trouble = 0;
+            enemy
+                .base
+                .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
+            enemy
+                .base
+                .outbox
+                .reentrant
+                .owner_work
+                .push(AiOwnerWork::ResumeSendCharlyAfterSpeech {
+                    charly: charly_handle,
+                });
+        }
+
+        engine.drain_ai_owner_work_for(&crate::sim_rng::test_context(), &assets, owner);
+
+        let enemy = engine
+            .get_entity(owner)
+            .and_then(Entity::enemy_ai)
+            .expect("speech test owner retains Enemy AI");
+        assert_eq!(enemy.base.friend_in_trouble, charly_handle);
+        if rejected {
+            assert_eq!(enemy.base.current_state, AiState::Default);
+            assert_eq!(last_speech_impossible(&engine, owner), Some(2));
+        } else {
+            assert_eq!(enemy.base.current_state, AiState::Seeking);
+            assert_eq!(
+                enemy.base.current_substate,
+                Substate::SeekingSendCharlyToOfficer
+            );
+            assert_eq!(enemy.base.current_remark, Remark::FoundCharly);
+        }
+    }
+}
+
+#[test]
 fn speech_id_zero_latches_subtitle_and_forbid_without_completion_callback() {
     use crate::ai::{Remark, SpeechFlags};
 
@@ -1947,6 +2238,64 @@ fn alert_soldier_typed_tail_owns_couldnt_reachpoint_before_event_surface() {
     assert_eq!(
         ai.outbox.reentrant.self_stimuli,
         vec![crate::ai::StimulusType::EventCouldntReachPoint]
+    );
+}
+
+#[test]
+fn tower_guard_alert_officer_tail_consumes_ignored_route_failure() {
+    use crate::ai::{AiOwnerWork, StimulusType};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    {
+        let ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("tower-guard call-me owner has Enemy AI");
+        ai.base.completion_latch_inside_think = true;
+        ai.base.couldnt_reachpoint = true;
+        ai.base
+            .outbox
+            .reentrant
+            .tower_guard_alert_officer_completion_pending = true;
+        ai.base
+            .outbox
+            .reentrant
+            .owner_work
+            .push(AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure);
+    }
+
+    // The generic EndThink surface must leave AlertOfficer's synchronous
+    // result for its typed no-result tail, rather than dispatching a seek.
+    engine.surface_synchronous_completion_events_for_owner(owner);
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("tower-guard call-me owner retains Enemy AI");
+    assert!(ai.base.couldnt_reachpoint);
+    assert!(ai.base.outbox.reentrant.self_stimuli.is_empty());
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("tower-guard call-me owner retains Enemy AI after tail");
+    assert!(!ai.base.couldnt_reachpoint);
+    assert!(
+        !ai.base
+            .outbox
+            .reentrant
+            .tower_guard_alert_officer_completion_pending
+    );
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(
+        !ai.base
+            .outbox
+            .reentrant
+            .self_stimuli
+            .contains(&StimulusType::EventCouldntReachPoint)
     );
 }
 
@@ -2837,6 +3186,60 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
 }
 
 #[test]
+fn one_shot_hearing_uses_authoritative_world_y_at_uword_volume_boundary() {
+    use crate::ai::NoiseType;
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::Camp;
+    use crate::position_interface::INVERSE_ASPECT_RATIO;
+
+    // Find the adjacent f32 world-Y values whose aspect-stretched distances
+    // straddle 499. Original truncates `500 - distance` to UWORD, so the
+    // lower reconstructed value is audible at volume 1 while the upper
+    // authoritative value is inaudible at volume 0.
+    let boundary = 499.0_f32 / INVERSE_ASPECT_RATIO;
+    let mut reconstructed_y = boundary;
+    while reconstructed_y * INVERSE_ASPECT_RATIO >= 499.0 {
+        reconstructed_y = f32::from_bits(reconstructed_y.to_bits() - 1);
+    }
+    let mut authoritative_y = boundary;
+    while authoritative_y * INVERSE_ASPECT_RATIO <= 499.0 {
+        authoritative_y = f32::from_bits(authoritative_y.to_bits() + 1);
+    }
+    assert_eq!((500.0 - reconstructed_y * INVERSE_ASPECT_RATIO) as u16, 1);
+    assert_eq!((500.0 - authoritative_y * INVERSE_ASPECT_RATIO) as u16, 0);
+
+    let mut engine = EngineInner::new();
+    let mut listener = make_test_ai_soldier(Camp::Lacklandists);
+    let Entity::Soldier(soldier) = &mut listener else {
+        unreachable!("make_test_ai_soldier returned non-soldier")
+    };
+    soldier
+        .element
+        .set_position(WorldPoint3D::new(0.0, authoritative_y, 0.0));
+    // Projection roundoff can make map Y reconstruct to the adjacent lower
+    // float even though stored world Y remains authoritative.
+    soldier
+        .element
+        .set_position_map_preserving_3d(MapPoint::new(0.0, reconstructed_y));
+    let listener_id = engine.add_entity(listener);
+    let drawbridge = engine.one_shot_noise(
+        NoiseType::Drawbridge,
+        MapPoint::new(0.0, 0.0),
+        0,
+        crate::parameters_ai::NOISE_VOLUME_DRAWBRIDGE as u16,
+        0,
+        None,
+    );
+
+    assert!(
+        engine
+            .subjective_one_shot_noise_for(listener_id, drawbridge)
+            .is_none(),
+        "GetHearVolume must use stored 3D Y; reconstructing map Y would create a spurious volume-1 listener"
+    );
+}
+
+#[test]
 fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     use crate::ai::{
         AiState, AlertLevel, ArcheryReservationRelease, GuardedPcEffect, PointArchery,
@@ -3548,6 +3951,10 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     assert_eq!(owner.base.outbox.actor.orders.len(), 1);
     assert_eq!(owner.base.outbox.actor.orders[0].target_x, 100.0);
     assert_eq!(owner.base.outbox.actor.orders[0].target_y, 100.0);
+    assert!(
+        !owner.base.outbox.actor.orders[0].defer_instruction,
+        "an ordinary route failure registers before this frame's manager boundary"
+    );
 
     // Without the selected PassDoor, both ordinary live positions are in the
     // same sector. The roof special case must remain absent so the caller can
@@ -5556,6 +5963,80 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
 }
 
 #[test]
+fn resumed_return_to_duty_translates_its_goto_on_the_owner_work_boundary() {
+    use crate::ai::{AiOwnerWork, AiState, DutyFlags, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::element::Command;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let sector = crate::position_interface::SectorHandle::new(1);
+    let entity = engine
+        .get_entity_mut(owner)
+        .expect("return-to-duty owner exists");
+    entity.element_data_mut().active = true;
+    entity
+        .element_data_mut()
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    entity.element_data_mut().set_sector(sector);
+    let ai = entity
+        .enemy_ai_mut()
+        .expect("return-to-duty owner has Enemy AI");
+    ai.base.me = owner.index();
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingGroupGetInstructedByOfficer;
+    ai.base.initial_position = crate::ai::Position {
+        x: 300.0,
+        y: 100.0,
+        sector,
+        level: 0,
+    };
+    ai.base
+        .outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
+            flags: DutyFlags::empty(),
+            owner_boundary_positions: vec![(
+                owner.index(),
+                crate::ai::Position {
+                    x: 100.0,
+                    y: 100.0,
+                    sector,
+                    level: 0,
+                },
+            )],
+        });
+
+    engine.drain_ai_owner_work_for(&sim, &assets, owner);
+
+    let ai = engine
+        .get_entity(owner)
+        .and_then(Entity::enemy_ai)
+        .expect("return-to-duty owner retains Enemy AI");
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    assert!(
+        !ai.base.outbox.actor.has_boundary_work(),
+        "ReturnToDutyCommonStuff's GoTo must be translated before the resumed owner work returns"
+    );
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| element.owner == Some(owner) && element.command == Command::Move),
+        "the return-to-post GoTo must already exist in the sequence manager"
+    );
+}
+
+#[test]
 fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
     use crate::ai::{AiState, CrossNpcAction, Substate, ThinkResultContinuation};
     use crate::element::{Detectable, DetectableType};
@@ -6136,8 +6617,15 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         WorldPoint3D::new(200.0, 20.0, 0.0),
         Direction::EAST,
     );
+    // This candidate would see Charly, but is the owner's antagonist at the
+    // synchronous sweep call boundary and must therefore be skipped.
+    let excluded_antagonist = add_enemy(
+        &mut engine,
+        WorldPoint3D::new(200.0, -150.0, 0.0),
+        Direction::EAST,
+    );
 
-    for candidate in [second_arm, first_arm, near_side] {
+    for candidate in [second_arm, first_arm, near_side, excluded_antagonist] {
         let soldier = engine
             .get_entity_mut(candidate)
             .and_then(|entity| match entity {
@@ -6160,13 +6648,25 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             ..Detectable::default()
         });
     }
-    engine
-        .get_entity_mut(owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("Unalert owner has AI")
-        .outbox
-        .actor
-        .unalert_near_charly_seekers = Some(CharlySeekerTarget::Npc(charly.index()));
+    {
+        let owner_ai = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("Unalert owner has EnemyAi");
+        owner_ai.soldier_profile_rank = crate::profiles::ProfileRank::Soldier;
+        owner_ai.base.antagonist = excluded_antagonist.index();
+        owner_ai
+            .base
+            .outbox
+            .actor
+            .queue_unalert_near_charly_seekers(
+                CharlySeekerTarget::Npc(charly.index()),
+                owner_ai.base.antagonist,
+            );
+        // Model rejected speech running ReturnToDuty after the Original call
+        // but before Rust drains the engine-side sweep.
+        owner_ai.base.antagonist = 0;
+    }
 
     let mut wall = SightObstacle::new_default(1);
     wall.obstacle_points = vec![
@@ -6268,6 +6768,16 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         );
         assert!(enemy.base.outbox.actor.delete_detectables.is_empty());
     }
+    assert_eq!(
+        engine
+            .get_entity(excluded_antagonist)
+            .and_then(Entity::enemy_ai)
+            .expect("excluded antagonist retains EnemyAi")
+            .base
+            .current_substate,
+        Substate::SeekingBody,
+        "the sweep must use the call-boundary antagonist after the owner's live field is cleared"
+    );
     assert_eq!(
         u8::from(
             engine

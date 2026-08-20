@@ -11,11 +11,12 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 use super::util::{
-    FighterView, ai_max_norm_distance, ai_square_distance, calculate_opponent_nearest_to_rene,
-    check_straight_movement, det2, dot2, evaluate_combat_position_full, get_normal, get_normal_iso,
-    get_normal_right, is_any_swordfight_substate, is_observing_combat_substate,
-    is_walking_running_charging_substate, iso_norm, iso_normalize, max_norm, pos_diff,
-    sector_to_vector, sector_to_vector_iso, square_norm, vec_to_sector, vec_to_sector_ar,
+    FighterView, ai_max_norm_distance, ai_square_distance, ai_square_distance_world,
+    calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
+    evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
+    is_any_swordfight_substate, is_observing_combat_substate, is_walking_running_charging_substate,
+    iso_norm, iso_normalize, max_norm, pos_diff, sector_to_vector, sector_to_vector_iso,
+    square_norm, vec_to_sector, vec_to_sector_ar,
 };
 use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
@@ -91,6 +92,27 @@ fn arrow_protection_debug_matches(
             .is_none_or(|expected| owner == expected)
 }
 
+/// Resolve the point stored in `RHFIELD_SHIELD_DANGER_POINT`.
+///
+/// The Original reads `RHElement::GetPosition()` here.  This deliberately
+/// bypasses the AI-facing position, which may be a door endpoint while the
+/// target is passing through a gate.
+fn shield_danger_point(
+    fighter: Option<&FighterSnapshot>,
+    view: Option<&crate::ai_entity_view::AiEntityView>,
+) -> Option<(Position, f32)> {
+    fighter
+        .map(|fighter| (fighter.raw_position, fighter.elevation))
+        .or_else(|| {
+            view.map(|view| {
+                let mut raw_position = view.position;
+                raw_position.x = view.detection_position.x;
+                raw_position.y = view.detection_position.y;
+                (raw_position, view.detection_position_world.z)
+            })
+        })
+}
+
 fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
@@ -133,6 +155,53 @@ fn phalanx_advance_vectors(to_target: (f32, f32)) -> ((f32, f32), (f32, f32)) {
     );
 
     (forward_step, right_step)
+}
+
+/// Recover the pointer identity inherited by an `RHposition +/- vector`
+/// result. Original copies the complete anchor position, including its
+/// `RHSector*`; resolving the derived slot point itself can select a
+/// different overlapping motion polygon.
+// TODO(parity): carry Original's arena-sector identity explicitly through
+// Position, door-side adaptation, saved mposSeekPosition values, and
+// AiOrderIntent. This recovery covers the observed phalanx call but cannot
+// represent every door-adapted or transitive inherited-position provenance.
+fn inherited_position_crosses_sector_identity(
+    grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    current: &Position,
+    anchor: &Position,
+) -> bool {
+    let (Some(current_sector), Some(anchor_sector)) = (current.sector, anchor.sector) else {
+        return false;
+    };
+    // RHArtificialIntelligence::GoTo compares the two RHSector pointers
+    // directly.  A distinct retained handle is therefore already decisive;
+    // the spatial recovery below is only needed for overlapping polygons
+    // whose compact Rust positions expose the same public handle.
+    if current_sector != anchor_sector || current.level != anchor.level {
+        return true;
+    }
+    let Some(grid) = grid else { return false };
+    let current_point = crate::coordinates::MapPoint::new(current.x, current.y);
+    let anchor_point = crate::coordinates::MapPoint::new(anchor.x, anchor.y);
+    match (
+        grid.get_sector(current_point, anchor_point, current.level),
+        grid.get_sector(anchor_point, current_point, anchor.level),
+    ) {
+        (
+            crate::fast_find_grid::SectorHit::Found {
+                sector_idx: current_idx,
+                sector_number: current_number,
+            },
+            crate::fast_find_grid::SectorHit::Found {
+                sector_idx: anchor_idx,
+                sector_number: anchor_number,
+            },
+        ) => {
+            let expected = crate::sector::SectorNumber::new(u16::from(current_sector) as i16);
+            current_number == expected && anchor_number == expected && current_idx != anchor_idx
+        }
+        _ => false,
+    }
 }
 
 fn is_facing_swordfight_target(
@@ -537,8 +606,13 @@ impl EnemyAi {
                 if !ok {
                     continue;
                 }
+                // RHArtificialIntelligence::SquareDistance receives the
+                // element pointer and reads RHElement::GetPosition().  Keep
+                // that literal body point for ranking neighbours; `position`
+                // is the door-aware AI Position() and may already be snapped
+                // to a gate endpoint.
                 let sq = ai_square_distance(
-                    &snap.position,
+                    &snap.raw_position,
                     snap.elevation as f32,
                     &me_pos,
                     ctx.elevation,
@@ -1277,7 +1351,7 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) -> Option<(Position, u16, HumanHandle, HumanHandle)> {
+    ) -> Option<(Position, u16, HumanHandle, HumanHandle, bool)> {
         if self.phalanx_aborted {
             return None;
         }
@@ -1363,18 +1437,22 @@ impl EnemyAi {
         let me_pos = ctx.position;
         let sq_left = square_norm(pos_diff(&pos_left, &me_pos));
         let sq_right = square_norm(pos_diff(&pos_right, &me_pos));
+        let left_crosses_identity =
+            inherited_position_crosses_sector_identity(grid, &me_pos, &left_pos);
+        let right_crosses_identity =
+            inherited_position_crosses_sector_identity(grid, &me_pos, &right_pos);
 
         match (left_accessible, right_accessible) {
             (true, true) => {
                 // Strict `<` — ties go to right slot.
                 if sq_left < sq_right {
-                    Some((pos_left, left_dir, 0, left_guy))
+                    Some((pos_left, left_dir, 0, left_guy, left_crosses_identity))
                 } else {
-                    Some((pos_right, right_dir, right_guy, 0))
+                    Some((pos_right, right_dir, right_guy, 0, right_crosses_identity))
                 }
             }
-            (true, false) => Some((pos_left, left_dir, 0, left_guy)),
-            (false, true) => Some((pos_right, right_dir, right_guy, 0)),
+            (true, false) => Some((pos_left, left_dir, 0, left_guy, left_crosses_identity)),
+            (false, true) => Some((pos_right, right_dir, right_guy, 0, right_crosses_identity)),
             (false, false) => None,
         }
     }
@@ -1793,8 +1871,7 @@ impl EnemyAi {
         if refresh_them_list {
             self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick, None);
         }
-        self.left_combat_neighbour = 0;
-        self.right_combat_neighbour = 0;
+        self.clear_combat_neighbours();
         self.phalanx_aborted = true;
         self.battle_decisions(sim, global, ctx, tick, grid);
     }
@@ -2373,35 +2450,31 @@ impl EnemyAi {
             return false;
         }
 
-        // Both range gates below are `SquareDistance`, the stretched 3D
-        // metric — see `ai_square_distance`.
-        let square_distance_to = |pos: &crate::ai::Position, elevation: f32| -> f32 {
-            ai_square_distance(pos, elevation, &ctx.position, ctx.elevation)
+        // Both range gates below call `SquareDistance(element)`. That helper
+        // reads each actor's literal `RHElement::GetPosition()`, not the
+        // door-aware AI `Position()` stored in fighter snapshots.
+        let square_distance_to = |handle: HumanHandle| -> f32 {
+            let target = ctx
+                .expect_entity_view(handle, "RefreshArrowProtection SquareDistance target")
+                .detection_position_world;
+            ai_square_distance_world(&target, &ctx.self_body_position_world)
         };
 
         // Are we already near enough to fight? (PHALANX_ATTACK_DISTANCE gate)
-        if let Some(enemy_snap) = self.find_fighter(nearest_enemy, tick) {
-            let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            let enemy_square_distance =
-                square_distance_to(&enemy_snap.position, enemy_snap.elevation as f32);
-            if enemy_square_distance < atk_dist * atk_dist {
-                if debug {
-                    eprintln!(
-                        "ARROW_PROTECTION frame={} owner={} result=reject reason=enemy_near nearest={} square_distance_bits={} threshold={}",
-                        ctx.frame,
-                        self.base.me,
-                        nearest_enemy,
-                        enemy_square_distance.to_bits(),
-                        atk_dist * atk_dist
-                    );
-                }
-                return false;
+        let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
+        let enemy_square_distance = square_distance_to(nearest_enemy);
+        if enemy_square_distance < atk_dist * atk_dist {
+            if debug {
+                eprintln!(
+                    "ARROW_PROTECTION frame={} owner={} result=reject reason=enemy_near nearest={} square_distance_bits={} threshold={}",
+                    ctx.frame,
+                    self.base.me,
+                    nearest_enemy,
+                    enemy_square_distance.to_bits(),
+                    atk_dist * atk_dist
+                );
             }
-        } else if debug {
-            eprintln!(
-                "ARROW_PROTECTION frame={} owner={} stage=nearest_enemy_snapshot_missing nearest={}",
-                ctx.frame, self.base.me, nearest_enemy
-            );
+            return false;
         }
 
         // Scan all visible enemies for a dangerous one (using a bow).
@@ -2448,12 +2521,12 @@ impl EnemyAi {
                     ctx.frame,
                     self.base.me,
                     handle,
-                    square_distance_to(&view.position, view.elevation),
+                    square_distance_to(handle),
                     view.action_state,
                     view.action_state.is_bow()
                 );
             }
-            if square_distance_to(&view.position, view.elevation) < min_dist * min_dist {
+            if square_distance_to(handle) < min_dist * min_dist {
                 continue;
             }
             if view.action_state.is_bow() {
@@ -2475,7 +2548,7 @@ impl EnemyAi {
                             (
                                 h,
                                 v.action_state,
-                                square_distance_to(&v.position, v.elevation),
+                                square_distance_to(h),
                             )
                         })
                 })
@@ -2528,37 +2601,41 @@ impl EnemyAi {
 
         // Focus primary target. Original Focus updates the NPC's view target;
         // it does not turn the actor's body or overwrite direction_goal.
-        // The shield's danger point is the primary target's position. Fall
+        // RHArtificialMalignity::RefreshArrowProtection stores the target's
+        // raw RHElement::GetPosition(), not RHArtificialIntelligence::Position()
+        // (which snaps an actor in door transit to a gate endpoint). Fall
         // back to the entity-view map when the target is outside the
         // `nearby_fighters` snapshot — a dangerous archer is by definition
         // at least MIN_PROTECT_ARROW_DISTANCE away and may be posturing in
         // a way that keeps it out of that list entirely.
-        let (target_pos, target_elevation) = self
-            .find_fighter(self.base.primary_target, tick)
-            .map(|f| (f.position, f.elevation as f32))
-            .or_else(|| {
-                ctx.entity_view(self.base.primary_target)
-                    .map(|v| (v.position, v.elevation))
-            })
-            .unwrap_or_else(|| {
-                tracing::warn!(
-                    target: "robin_engine::ai_enemy::shield",
-                    frame = ctx.frame,
-                    me = self.base.me,
-                    target = self.base.primary_target,
-                    "RefreshArrowProtection: primary target has no position snapshot"
-                );
-                (ctx.position, ctx.elevation)
-            });
+        let (target_pos, target_elevation) = shield_danger_point(
+            self.find_fighter(self.base.primary_target, tick),
+            ctx.entity_view(self.base.primary_target),
+        )
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                target: "robin_engine::ai_enemy::shield",
+                frame = ctx.frame,
+                me = self.base.me,
+                target = self.base.primary_target,
+                "RefreshArrowProtection: primary target has no position snapshot"
+            );
+            (ctx.position, ctx.elevation)
+        });
         self.base.outbox.actor.set_focus(self.base.primary_target);
 
         // Try to join a phalanx
-        if let Some((run_pos, direction, left_neighbour, right_neighbour)) =
-            self.find_phalanx_place(ctx, tick, grid)
+        if let Some((
+            run_pos,
+            direction,
+            left_neighbour,
+            right_neighbour,
+            inherited_sector_identity_differs,
+        )) = self.find_phalanx_place(ctx, tick, grid)
         {
             if debug {
                 eprintln!(
-                    "ARROW_PROTECTION frame={} owner={} result=run_to_phalanx nearest={} dangerous={} target={} run_pos={:?} direction={} left={} right={}",
+                    "ARROW_PROTECTION frame={} owner={} result=run_to_phalanx nearest={} dangerous={} target={} run_pos={:?} direction={} left={} right={} inherited_sector_identity_differs={}",
                     ctx.frame,
                     self.base.me,
                     nearest_enemy,
@@ -2567,7 +2644,8 @@ impl EnemyAi {
                     run_pos,
                     direction,
                     left_neighbour,
-                    right_neighbour
+                    right_neighbour,
+                    inherited_sector_identity_differs
                 );
             }
             self.base.say(Remark::ShieldBearersLineFormation);
@@ -2608,6 +2686,15 @@ impl EnemyAi {
                 GotoFlags::RUN,
                 ctx,
             );
+            if inherited_sector_identity_differs {
+                let order = self.base.outbox.actor.orders.last_mut().unwrap_or_else(|| {
+                    panic!(
+                        "phalanx placement GoTo for {} did not emit its required movement intent",
+                        self.base.me
+                    )
+                });
+                order.source_target_sector_identity_differs = true;
+            }
         } else {
             if debug {
                 eprintln!(
@@ -2913,8 +3000,9 @@ impl EnemyAi {
                 );
             }
             self.end_swordfight(ctx, tick);
-            self.left_combat_neighbour = 0;
-            self.right_combat_neighbour = 0;
+            // Original uses the reciprocal Update* setters here
+            // (RHartificialmalignity.cpp:13709-13710).
+            self.clear_combat_neighbours();
             self.set_state(AiState::Attacking, Substate::AttackingQuittingSwordfight);
             self.base.launch_timer(3, ctx.frame);
             return;
@@ -2937,7 +3025,8 @@ impl EnemyAi {
         if !detects_primary {
             // Lost sight: forecast their direction and abandon the fight.
             if let Some(prepared) = &tick.primary_target_forecast {
-                let forecast = prepared.resolve(sim);
+                let forecast =
+                    prepared.resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
                 self.base.seek_position = forecast.position;
                 self.pc_gone_away_in_this_direction = forecast.direction;
             }
@@ -4317,6 +4406,150 @@ mod tests {
             sector: None,
             level: 0,
         }
+    }
+
+    #[test]
+    fn vector_derived_phalanx_slot_retains_anchor_sector_identity() {
+        use crate::coordinates::{MapBBox, MapPoint};
+        use crate::fast_find_grid::{FastFindGrid, GridSector};
+        use crate::sector::{SectorNumber, SectorType};
+
+        let current_with_distinct_handle = Position {
+            x: 20.0,
+            y: 20.0,
+            sector: crate::position_interface::SectorHandle::new(17),
+            level: 0,
+        };
+        let anchor_with_distinct_handle = Position {
+            x: 80.0,
+            y: 20.0,
+            sector: crate::position_interface::SectorHandle::new(18),
+            level: 0,
+        };
+        assert!(inherited_position_crosses_sector_identity(
+            None,
+            &current_with_distinct_handle,
+            &anchor_with_distinct_handle,
+        ));
+
+        let mut grid = FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+        let make_sector = |min_x: f32, max_x: f32| {
+            let points = vec![
+                MapPoint::new(min_x, 0.0),
+                MapPoint::new(max_x, 0.0),
+                MapPoint::new(max_x, 63.0),
+                MapPoint::new(min_x, 63.0),
+            ];
+            GridSector {
+                points,
+                bounding_box: MapBBox::from_coords(min_x, 0.0, max_x, 63.0),
+                sector_type: SectorType::AREA | SectorType::MOTION | SectorType::MOUSE,
+                layer: 0,
+                sector_number: SectorNumber::new(18),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            }
+        };
+        grid.add_sector(make_sector(0.0, 63.0), 0);
+        grid.add_sector(make_sector(64.0, 127.0), 0);
+        let sector = crate::position_interface::SectorHandle::new(18);
+        let current = Position {
+            x: 20.0,
+            y: 20.0,
+            sector,
+            level: 0,
+        };
+        let anchor = Position {
+            x: 80.0,
+            y: 20.0,
+            sector,
+            level: 0,
+        };
+
+        assert!(inherited_position_crosses_sector_identity(
+            Some(&grid),
+            &current,
+            &anchor
+        ));
+        assert!(!inherited_position_crosses_sector_identity(
+            Some(&grid),
+            &current,
+            &current
+        ));
+    }
+
+    #[test]
+    fn shield_danger_point_uses_raw_target_position_during_door_pass() {
+        // Schema-14 seed 1000000, SuN1Sh1nE Profile_004/Savegame_013
+        // replay-008 frame 1173. PC 171's AI Position() is the door endpoint,
+        // but RefreshArrowProtection stores the PC element's raw position in
+        // RHFIELD_SHIELD_DANGER_POINT. The two points face different sectors.
+        let target = FighterSnapshot {
+            handle: 171,
+            position: position(572.0, 2360.0),
+            raw_position: position(578.74, 2388.01),
+            elevation: 85.44939,
+            ..FighterSnapshot::default()
+        };
+
+        let (danger_position, danger_elevation) =
+            shield_danger_point(Some(&target), None).expect("fighter has a raw position");
+
+        assert_eq!(danger_position, target.raw_position);
+        assert_eq!(danger_elevation, target.elevation);
+        assert_ne!(danger_position, target.position);
+    }
+
+    #[test]
+    fn combat_neighbour_ranking_uses_literal_body_position_during_door_pass() {
+        // Schema-16 seed 2,000,000, linux2/Profile_002/Savegame_003,
+        // replay-037 frame 15008. Soldier 130's AI Position() is the nearby
+        // door endpoint (1173, 1849), while its literal body remains at
+        // (1159.50, 1829.36). RHArtificialIntelligence::SquareDistance uses
+        // the latter, making Soldier 178 the nearest right neighbour.
+        let mut ai = EnemyAi::new(186);
+        ai.base.list_us = vec![186, 130, 178];
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.extend([
+            FighterSnapshot {
+                handle: 130,
+                position: position(1173.0, 1849.0),
+                raw_position: position(1159.4979, 1829.3608),
+                elevation: 1.4621211,
+                direction: 7,
+                is_soldier: true,
+                rank: ProfileRank::Soldier,
+                ..FighterSnapshot::default()
+            },
+            FighterSnapshot {
+                handle: 178,
+                position: position(1220.2673, 1886.527),
+                raw_position: position(1220.2673, 1886.527),
+                direction: 8,
+                is_soldier: true,
+                rank: ProfileRank::Soldier,
+                ..FighterSnapshot::default()
+            },
+        ]);
+        let ctx = AiContext {
+            position: position(1231.5779, 1845.2806),
+            direction: 8,
+            ..AiContext::default()
+        };
+
+        assert_eq!(ai.propose_left_and_right_neighbour(&ctx, &tick), (0, 178));
     }
 
     #[test]

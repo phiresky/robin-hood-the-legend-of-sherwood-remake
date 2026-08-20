@@ -375,12 +375,23 @@ impl NativeContext<'_, '_> {
                     && let Some(zone) = self.fast_grid.level.sectors.get(grid_idx as usize)
                     && let Some(entity) = self.get_entity(actor)
                 {
+                    let script_zone =
+                        self.script_domains
+                            .zones
+                            .scripts
+                            .get(zi)
+                            .unwrap_or_else(|| {
+                                panic!("script location {zi} has geometry but no sector state")
+                            });
                     let ed = entity.element_data();
                     // Filter invisible objects.
                     if !ed.active || ed.in_honolulu {
                         return 0;
                     }
                     if zone.layer != ed.layer() {
+                        return 0;
+                    }
+                    if ed.sector().map(i16::from) != Some(script_zone.owning_motion_sector.get()) {
                         return 0;
                     }
                     let pt = ed.position_map();

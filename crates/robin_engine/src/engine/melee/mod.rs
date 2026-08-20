@@ -2671,7 +2671,8 @@ fn select_combat_animations(
 struct PushDamageAnimations {
     /// The falling-pushed animation to play.
     falling: crate::order::OrderType,
-    /// Standing-up animation (None for crouched / no standup).
+    /// Standing-up animation.  Crouched-family pushes deliberately retain
+    /// Original's `NonanimationEnd` sentinel here; see the selector below.
     standing_up: Option<crate::order::OrderType>,
     /// Stunned animation if concussion > threshold (None if not applicable).
     stunned: Option<crate::order::OrderType>,
@@ -2727,7 +2728,15 @@ fn select_push_damage_animations(
         Posture::Crouched | Posture::SimulatingBeggar | Posture::Tree => {
             Some(PushDamageAnimations {
                 falling: OrderType::FallingPushedCrouched,
-                standing_up: None,
+                // Original initializes `standupAnimation` to
+                // RHNONANIMATION_END, changes only `fallingAnimation` in
+                // this posture arm, and nevertheless appends the stand-up
+                // order for a conscious stunning hit.  That sentinel is a
+                // real one-slot order: it keeps ReceiveSwordDamage selected
+                // for one more Hourglass before a postponed successor runs.
+                // See original-code/RHelementactorhuman.cpp
+                // TranslatePushDamage.
+                standing_up: Some(OrderType::NonanimationEnd),
                 stunned: None,
             })
         }
@@ -3159,6 +3168,29 @@ mod tests {
     }
 
     #[test]
+    fn swordfight_range_uses_stored_world_position_across_elevation() {
+        let mut engine = EngineInner::new();
+        let initiator = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let opponent = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        engine
+            .get_entity_mut(initiator)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(1028.4918, 2063.3013, 22.8174));
+        engine
+            .get_entity_mut(opponent)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(1032.8688, 1992.2421, 122.2636));
+
+        // This is the replay geometry from S043 r004 f8369. Isometric map
+        // projection puts the actors more than 150 units apart, while the
+        // 3D GetPosition norm used by Original EnterSwordFight is in range.
+        assert!(entity_distance(&engine.world.entities, initiator, opponent) > 150.0);
+        assert!(entity_world_distance(&engine.world.entities, initiator, opponent) < 150.0);
+    }
+
+    #[test]
     #[should_panic(expected = "straight-strike distance references missing victim Soldier")]
     fn straight_strike_range_rejects_a_missing_victim() {
         let mut engine = EngineInner::new();
@@ -3178,6 +3210,82 @@ mod tests {
             ..Default::default()
         }];
         engine
+    }
+
+    #[test]
+    fn fresh_selected_strike_keeps_stale_sprite_action_done_timing() {
+        let mut engine = make_engine();
+        let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let selected_row = crate::sprite_script::SpriteScript {
+            action_done: 2,
+            frame_ids: vec![0, 1, 2],
+            delays: vec![2, 2, 2],
+            distances: vec![0; 3],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+            ..Default::default()
+        };
+        let stale_row = crate::sprite_script::SpriteScript {
+            action_done: u16::MAX,
+            frame_ids: vec![0, 1],
+            delays: vec![2, 2],
+            distances: vec![0; 2],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+            ..Default::default()
+        };
+        {
+            let sprite = &mut engine
+                .get_entity_mut(target)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            let mut conversion =
+                vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+            conversion[OrderType::StrikingRightSword as usize] = 0;
+            sprite.scripts = std::sync::Arc::new(vec![selected_row, stale_row]);
+            sprite.conversion = std::sync::Arc::new(conversion);
+            sprite.current_row = 1;
+            sprite.current_frame = 1;
+            sprite.action_done_frame = u16::MAX;
+            sprite.last_processed_order_id = 41;
+        }
+
+        let mut element =
+            crate::sequence::SequenceElement::new(1, Command::SwordstrikeThrustE, Some(target));
+        element.priority = crate::sequence::SequencePriority::Preference;
+        let selected_order_id = engine.orders.allocate_order_id();
+        element.orders.push_back(crate::order::Order::new(
+            OrderType::StrikingRightSword,
+            0.0,
+            0.0,
+            selected_order_id,
+        ));
+        let sequence_id = engine.orders.sequence_manager.launch_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        engine.publish_selected_order_as_installed(target);
+
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(target),
+            Some(1000),
+            "GetAnimation's fresh strike must treat the unacknowledged sprite's impossible marker as stale -1 timing"
+        );
+
+        let sprite = &mut engine
+            .get_entity_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = selected_order_id.get();
+        sprite.action_done_frame = u16::MAX;
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(target),
+            Some(i16::MIN),
+            "the current sprite's impossible marker retains the strict S075 behavior"
+        );
     }
 
     fn empty_mission_script() -> crate::engine::types::MissionScript {
@@ -4116,6 +4224,20 @@ mod tests {
                 .unwrap()
                 .opponents
                 .push(attacker);
+            // ProposeGoodSwordStrike owns a required sprite timing read for
+            // its principal opponent.  Keep this shared synthetic duel
+            // fixture structurally valid instead of relying on Sprite's
+            // asset-less default row.
+            target_entity.element_data_mut().sprite.scripts =
+                std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                    action_done: 1,
+                    frame_ids: vec![0, 1, 2],
+                    delays: vec![1, 1, 1],
+                    distances: vec![0, 0, 0],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+                    sound_ids: vec![0, 0, 0],
+                    ..Default::default()
+                }]);
         }
         (attacker, target)
     }
@@ -4597,12 +4719,13 @@ mod tests {
                 sprite.conversion = std::sync::Arc::new(conversion);
             }
 
-            let old_movement = crate::sequence::SequenceElement::new_movement(
+            let mut old_movement = crate::sequence::SequenceElement::new_movement(
                 1,
                 Command::MoveOk,
                 Some(victim),
                 OrderType::WalkingWithSword,
             );
+            old_movement.priority = crate::sequence::SequencePriority::Normal;
             let old_sequence = engine.launch_element(old_movement);
             let old_order =
                 engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
@@ -4799,18 +4922,22 @@ mod tests {
                     std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
             }
 
-            // The replay victim is already moving with a sword. StopAll
-            // interrupts that selected movement, but Original's immediately
-            // following GoTo still reads its installed sword animation. The
-            // attacker is already beyond the desired separation, making the
-            // proposed step-back goal the victim's current point and exposing
-            // the animation-gated zero-distance path.
-            let old_movement = crate::sequence::SequenceElement::new_movement(
+            // The replay victim is already moving with a sword. StopAll calls
+            // StopMovement, whose switch preserves only ordinary upright or
+            // crouched locomotion; WalkingWithSword falls through to
+            // INTERRUPTED and clears mpOrder. The immediately following GoTo
+            // therefore reads NONANIMATION_END. Since the attacker is already
+            // beyond the desired separation, the proposed step-back goal is
+            // the victim's current point and GoTo must take its synchronous
+            // already-at-destination exit without publishing a replacement
+            // movement.
+            let mut old_movement = crate::sequence::SequenceElement::new_movement(
                 1,
                 Command::MoveOk,
                 Some(victim),
                 OrderType::WalkingWithSword,
             );
+            old_movement.priority = crate::sequence::SequencePriority::Normal;
             let old_sequence = engine.launch_element(old_movement);
             let old_order =
                 engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
@@ -4902,37 +5029,15 @@ mod tests {
                     .any(|(command, _, _)| *command == Command::EnterSwordfight),
                 "a soldier already in WaitingSword must not receive a spurious raise-sword prefix: {owned_elements:?}"
             );
-            let (move_sequence, move_element) = engine
-            .orders
-            .sequence_manager
-            .live_element_for_actor_matching(victim, |element| {
-                matches!(element.command, Command::Move | Command::MoveOk)
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "step-back GoTo must not remain queued until the next owner slot; owned elements: {owned_elements:?}; pending moves: {:?}",
-                    engine.orders.pending_move_requests
-                )
-            });
-            let movement = engine
-                .orders
-                .sequence_manager
-                .get_element(move_sequence, move_element)
-                .expect("live step-back movement remains inspectable");
-            assert_eq!(
-                movement.movement_action_for_test(),
-                Some(if rider {
-                    OrderType::WalkingUpright
-                } else {
-                    OrderType::RunningUpright
-                }),
-                "GOTO_RUN authors only the non-rider replacement's pre-instruction movement action"
-            );
             assert!(
-                movement.movement_flags_for_test().is_some_and(
-                    |flags| flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT)
-                ),
-                "the live soldier context must preserve GOTO_SWORD on the replacement movement"
+                engine
+                    .orders
+                    .sequence_manager
+                    .live_element_for_actor_matching(victim, |element| {
+                        matches!(element.command, Command::Move | Command::MoveOk)
+                    })
+                    .is_none(),
+                "the already-at-goal GoTo must not leave a stale movement that can displace a same-frame smalltalk parry: {owned_elements:?}"
             );
         }
     }
@@ -9760,6 +9865,100 @@ mod tests {
             unreachable!()
         };
         assert!(!pc.pc.trumpet_enabled);
+    }
+
+    #[test]
+    fn charge_hit_on_already_dead_pc_does_not_repeat_virtual_kill_rng() {
+        let sim = crate::sim_rng::SimulationContext::with_seed(0x182);
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        {
+            let victim = engine.get_entity_mut(victim).unwrap();
+            victim.pc_data_mut().unwrap().life_points = 0;
+            victim.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+        }
+
+        // Keep an eligible replacement in the gang so replaying the PC Kill
+        // cascade would observably consume CampaignReinforcementPeasant.
+        engine.mission_domain.campaign.characters = vec![
+            crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                instanced: true,
+                ..Default::default()
+            },
+            crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(1)),
+                ..Default::default()
+            },
+        ];
+        engine.mission_domain.campaign.gang_indices = vec![0, 1];
+
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::Charge,
+            crate::profiles::WeaponThrustKind::Straight,
+        );
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(crate::profiles::CharacterProfile::default());
+        let damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveSwordDamage,
+            Some(victim),
+            Some(attacker),
+            1,
+            0,
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            engine.apply_sword_damage(
+                &sim,
+                &assets,
+                victim,
+                Some(attacker),
+                Some(SwordStrike::Charge),
+                Some(1),
+                (sequence, 0),
+            );
+        });
+
+        assert_eq!(
+            draws,
+            vec![
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::MeleeProvoke,
+            ],
+            "SetLifePoints returns before Kill, while TranslatePushDamage only owns the visual response"
+        );
+        assert_eq!(engine.mission_domain.campaign.gang_indices, vec![0, 1]);
+        assert!(
+            !engine
+                .get_entity(victim)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .trumpet_enabled,
+            "an already-dead PC must not be offered another replacement"
+        );
     }
 
     #[test]

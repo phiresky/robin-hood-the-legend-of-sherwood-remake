@@ -1066,6 +1066,226 @@ mod parity_tests {
     }
 
     #[test]
+    fn engine_deferred_completion_preserves_recursive_think_depth_until_success() {
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier has AI");
+        ai.think_recursion_depth = 1;
+        ai.completion_latch_inside_think = true;
+        ai.outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                crate::order::OrderType::RunningUpright,
+                100.0,
+                200.0,
+            ));
+        assert!(ai.end_think_completion_events());
+        ai.outbox.actor.orders.clear();
+        ai.couldnt_reachpoint = true;
+
+        engine.surface_synchronous_completion_events_for_owner(owner);
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier retains AI");
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli,
+            [crate::ai::StimulusType::EventCouldntReachPoint]
+        );
+        assert_eq!(ai.think_recursion_depth, 1);
+        assert_eq!(ai.open_end_think_frames, 1);
+
+        // Model the recursively dispatched failure issuing a successful
+        // replacement GoTo. Its StartThink adds one level; authorization
+        // then returns through both retained Original frames.
+        ai.outbox.reentrant.self_stimuli.clear();
+        ai.think_recursion_depth += 1;
+        ai.outbox
+            .actor
+            .orders
+            .push(crate::order::AiOrderIntent::new(
+                crate::order::OrderType::RunningUpright,
+                300.0,
+                400.0,
+            ));
+        assert!(ai.end_think_completion_events());
+        ai.outbox.actor.orders.clear();
+        ai.resolve_engine_completion_verdict();
+        engine.surface_synchronous_completion_events_for_owner(owner);
+
+        let ai = engine
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI");
+        assert_eq!(ai.think_recursion_depth, 0);
+        assert_eq!(ai.open_end_think_frames, 0);
+        assert_eq!(ai.engine_deferred_end_think_frames, 0);
+    }
+
+    #[test]
+    fn set_state_prefix_boundary_retains_enclosing_end_think_for_tail_route_failure() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+
+        {
+            let ai = engine
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::ai_controller_mut)
+                .expect("test soldier has AI");
+            // Model EventView's EndThink retained across an engine-owned
+            // GoNear verdict. SetState has detached that caller-tail intent
+            // while its pre-callback effects are being settled.
+            ai.think_recursion_depth = 1;
+            ai.completion_latch_inside_think = true;
+            ai.open_end_think_frames = 1;
+            ai.engine_deferred_end_think_frames = 1;
+        }
+
+        engine.drain_direct_ai_owner_prefix_boundary_mode(&sim, owner, &assets, false, true);
+        {
+            let ai = engine
+                .world
+                .entities
+                .get(owner)
+                .and_then(Entity::ai_controller)
+                .expect("test soldier retains AI");
+            assert!(ai.completion_latch_inside_think);
+            assert_eq!(ai.think_recursion_depth, 1);
+            assert_eq!(ai.open_end_think_frames, 1);
+        }
+
+        // The restored caller-tail GoNear now fails gate construction. This
+        // is the real Original EndThink surface and must recursively deliver
+        // EVENT_COULDNT_REACHPOINT instead of discarding it as outside-Think.
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier retains AI")
+            .couldnt_reachpoint = true;
+        engine.surface_synchronous_completion_events_for_owner(owner);
+        let ai = engine
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI after failure surface");
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli,
+            [crate::ai::StimulusType::EventCouldntReachPoint]
+        );
+    }
+
+    #[test]
+    fn detached_goto_tail_does_not_turn_an_absent_verdict_into_success() {
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+
+        {
+            let ai = engine
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::ai_controller_mut)
+                .expect("test soldier has AI");
+            // Model EndThink after it retained a GoTo whose caller tail is
+            // temporarily held outside the controller by a nested SetState
+            // drain. No visible order and no failure is not a verdict.
+            ai.think_recursion_depth = 1;
+            ai.open_end_think_frames = 1;
+            ai.engine_deferred_end_think_frames = 1;
+            ai.completion_latch_inside_think = true;
+        }
+
+        engine.surface_synchronous_completion_events_for_owner(owner);
+        {
+            let ai = engine
+                .world
+                .entities
+                .get(owner)
+                .and_then(Entity::ai_controller)
+                .expect("test soldier retains AI");
+            assert_eq!(ai.think_recursion_depth, 1);
+            assert_eq!(ai.open_end_think_frames, 1);
+            assert_eq!(ai.engine_deferred_end_think_frames, 1);
+            assert!(ai.completion_latch_inside_think);
+        }
+
+        // Once the engine actually consumes the restored order, a successful
+        // authorization closes the retained Original frame.
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier retains AI")
+            .resolve_engine_completion_verdict();
+        engine.surface_synchronous_completion_events_for_owner(owner);
+        let ai = engine
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI after success");
+        assert_eq!(ai.think_recursion_depth, 0);
+        assert_eq!(ai.open_end_think_frames, 0);
+        assert_eq!(ai.engine_deferred_end_think_frames, 0);
+        assert!(!ai.completion_latch_inside_think);
+    }
+
+    #[test]
     fn suspended_tower_guard_alert_tail_owns_deferred_route_rejection() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
@@ -8426,16 +8646,16 @@ impl EngineInner {
         // is authoritative and the fight waits behind it. Rust batches both
         // effects in one outbox; preserve that authored order instead of
         // draining the core swordfight channel first.
-        let attentive_request = {
-            let mut take = None;
+        let attentive_requests = {
+            let mut take = Vec::new();
             if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(base) = s.npc.ai_brain.base_mut()
             {
-                take = base.outbox.actor.set_attentive_mode.take();
+                take = base.outbox.actor.take_attentive_modes();
             }
             take
         };
-        if let Some(request) = attentive_request {
+        for request in attentive_requests {
             self.set_soldier_attentive_mode_from(
                 npc_id,
                 request.target,
@@ -8937,23 +9157,19 @@ impl EngineInner {
         let unalert = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
-            let u = ai.outbox.actor.unalert_near_charly_seekers;
-            ai.outbox.actor.unalert_near_charly_seekers = None;
-            u
+            ai.outbox.actor.take_unalert_near_charly_seekers()
         } else {
             None
         };
-        if let Some(target_charly) = unalert {
-            let (my_rank, my_antagonist) = match self.get_entity(npc_id) {
-                Some(Entity::Soldier(s)) => (
-                    s.npc
-                        .ai_brain
-                        .enemy()
-                        .map(|e| e.soldier_profile_rank)
-                        .unwrap_or(crate::profiles::ProfileRank::None),
-                    s.npc.ai_brain.base().map(|b| b.antagonist).unwrap_or(0),
-                ),
-                _ => (crate::profiles::ProfileRank::None, 0),
+        if let Some((target_charly, my_antagonist)) = unalert {
+            let my_rank = match self.get_entity(npc_id) {
+                Some(Entity::Soldier(s)) => s
+                    .npc
+                    .ai_brain
+                    .enemy()
+                    .map(|e| e.soldier_profile_rank)
+                    .unwrap_or(crate::profiles::ProfileRank::None),
+                _ => crate::profiles::ProfileRank::None,
             };
             let charly_handle = match target_charly {
                 crate::ai::CharlySeekerTarget::SelfNpc => npc_id.index(),
@@ -12052,7 +12268,7 @@ impl EngineInner {
     ) -> Option<crate::ai::Noise> {
         const HEARING_FACTOR: f32 = 1.0;
 
-        let (npc_pos, npc_elev) = {
+        let (npc_pos, npc_world) = {
             let entity = self.world.entities.get(npc_id)?;
             let include = match entity {
                 Entity::Civilian(_) => true,
@@ -12069,14 +12285,19 @@ impl EngineInner {
             // GetHearVolume for every registered civilian/Lacklandist and
             // leaves refusal to StartThink, after the deafness read.
             let elem = entity.element_data();
-            (elem.position_map(), elem.position().z)
+            (elem.position_map(), elem.position())
         };
 
         let source_elev = noise.elevation as f32;
         let modified_volume = noise.volume as f32 * HEARING_FACTOR;
-        let dx = npc_pos.x - noise.origin.x;
-        let dy_world = npc_pos.y + npc_elev - noise.origin.y - source_elev;
-        let dz = npc_elev - source_elev;
+        // Original `GetHearVolume` subtracts the source point from the
+        // listener's authoritative `GetPosition()` result. Do not rebuild Y
+        // from `position_map + elevation`: a 3D-authored position projected
+        // into map space can reconstruct one bit away, which is observable
+        // when the positive remainder truncates to `UWORD` at volume 1.
+        let dx = npc_world.x - noise.origin.x;
+        let dy_world = npc_world.y - noise.origin.y - source_elev;
+        let dz = npc_world.z - source_elev;
 
         // Original compares the full 3D points before range and deafness
         // work. A wounded or trapped source therefore cannot hear its own
@@ -12102,7 +12323,7 @@ impl EngineInner {
             .feedback
             .sound_sim
             .sources
-            .max_noise_covering_volume_for_3d(npc_pos.x, npc_pos.y, npc_elev);
+            .max_noise_covering_volume_for_3d(npc_pos.x, npc_pos.y, npc_world.z);
         let frame = self.control.frame_counter;
         let deafness = self
             .world
@@ -13106,12 +13327,28 @@ impl EngineInner {
             || ai.outbox.reentrant.battle_observe_completion_pending
             || ai.outbox.reentrant.look_for_help_completion_pending
             || ai.outbox.reentrant.alert_soldier_completion_pending
-            || ai.outbox.reentrant.dead_body_alert_completion_pending;
+            || ai.outbox.reentrant.dead_body_alert_completion_pending
+            || ai
+                .outbox
+                .reentrant
+                .tower_guard_alert_officer_completion_pending
+            || ai
+                .outbox
+                .reentrant
+                .civilian_report_alert_officer_completion_pending;
         let retain_couldnt_reachpoint =
             ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
+        // Owner-work prefixes (notably Enemy SetState's synchronous callback)
+        // can ask for a completion surface while the caller-tail GoTo is still
+        // queued on the controller. Original cannot close that EndThink yet:
+        // AppendMoveToSequence runs before control returns to EndThink, and its
+        // path verdict belongs to the same open frame. Keep the deferred frame
+        // alive until the engine has actually drained the queued intent.
+        let engine_verdict_pending =
+            ai.engine_deferred_end_think_frames != 0 && !ai.engine_completion_verdict_resolved;
         if debug_decision_path {
             eprintln!(
-                "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} owner_work={:?}",
+                "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} engine_verdict_pending={} owner_work={:?}",
                 self.control.frame_counter,
                 npc_id.index(),
                 ai.completion_latch_inside_think,
@@ -13120,6 +13357,7 @@ impl EngineInner {
                 ai.already_turned,
                 typed_tail_pending,
                 retain_couldnt_reachpoint,
+                engine_verdict_pending,
                 ai.outbox.reentrant.owner_work,
             );
         }
@@ -13142,7 +13380,14 @@ impl EngineInner {
         ai.already_on_point = false;
         ai.already_turned = false;
         if let Some(event) = event {
+            ai.engine_completion_verdict_resolved = false;
             ai.outbox.reentrant.self_stimuli.push(event);
+        } else if !retain_couldnt_reachpoint && !typed_tail_pending && !engine_verdict_pending {
+            // A successful engine-side authorization produces no recursive
+            // completion event. This is the point where Original returns
+            // through every EndThink frame that was kept live while Rust
+            // released the AI borrow to build the path.
+            ai.close_engine_deferred_end_think_frames();
         }
         if debug_decision_path {
             eprintln!(
@@ -15547,6 +15792,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         flags: crate::ai::DutyFlags,
+        high_recursion_failsafe: bool,
         owner_boundary_positions: &[(u32, crate::ai::Position)],
     ) {
         let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
@@ -15606,7 +15852,7 @@ impl EngineInner {
                     npc_id.index()
                 )
             })
-            .resume_return_to_duty_after_patrol_init(sim, flags, &ctx);
+            .resume_return_to_duty_after_patrol_init(sim, flags, &ctx, high_recursion_failsafe);
     }
 
     /// Run `CMD_PATROL_START`'s inline patrol rebuild, then continue the
@@ -15907,6 +16153,47 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) {
+        self.drain_direct_ai_owner_boundary_mode_inner(
+            sim,
+            npc_id,
+            assets,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+            true,
+        );
+    }
+
+    /// SetState's pre-callback actor prefix is only a statement boundary
+    /// inside the enclosing Think.  Its caller tail is temporarily detached
+    /// by `drain_ai_owner_work_for_mode`, so there is no complete EndThink
+    /// boundary to surface until that tail has been restored and executed.
+    pub(super) fn drain_direct_ai_owner_prefix_boundary_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
+    ) {
+        self.drain_direct_ai_owner_boundary_mode_inner(
+            sim,
+            npc_id,
+            assets,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+            false,
+        );
+    }
+
+    fn drain_direct_ai_owner_boundary_mode_inner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
+        surface_completion: bool,
+    ) {
         // This entry point models one direct, synchronous member-call stack.
         // Cards that were already queued for other owners belong to their
         // established later Hourglass boundaries; nested helpers below still
@@ -15932,7 +16219,9 @@ impl EngineInner {
             );
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-            self.surface_synchronous_completion_events_for_owner(npc_id);
+            if surface_completion {
+                self.surface_synchronous_completion_events_for_owner(npc_id);
+            }
             self.process_synchronous_reentrant_actions_for_mode(
                 sim,
                 npc_id,

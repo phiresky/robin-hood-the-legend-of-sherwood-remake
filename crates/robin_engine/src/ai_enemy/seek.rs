@@ -52,7 +52,10 @@ fn accumulate_seek_point_interest(current: f32, interest: u8) -> f32 {
 }
 
 use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
-use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, task_priority};
+use super::{
+    AlertSoldiersFailureContinuation, EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION,
+    task_priority,
+};
 
 impl EnemyAi {
     pub(crate) fn seek_area_phase6_caller_debug_enabled() -> bool {
@@ -1314,15 +1317,21 @@ impl EnemyAi {
     pub fn search_charly(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
         self.base.set_emoticon(EmoticonType::QuestionMark);
 
         // Officer arm.
         if self.get_rank() == ProfileRank::Officer {
-            self.set_state(AiState::Seeking, Substate::SeekingCharlyWatching);
-            self.base.fire_self_stimulus(StimulusType::EventDone);
+            // Original calls MissedCharlyAlert directly, while the officer is
+            // still in DEFAULT_LOOKING_FOR_CHARLY.  That ordering is
+            // observable: SeekArea's StopAll deliberately preserves a macro
+            // in the two CheckFor-look substates.  Do not insert a synthetic
+            // SEEKING_CHARLY_WATCHING/EventDone boundary here.
+            self.missed_charly_alert(sim, global, ctx, tick, grid);
             return;
         }
 
@@ -1425,6 +1434,75 @@ impl EnemyAi {
         self.base.go_to(first, flags, ctx);
     }
 
+    /// Report a failed CheckFor search and either delegate it or begin the
+    /// area search locally. Original `SearchCharly` invokes this synchronously
+    /// for officers; `SeekingCharlyWatching(EVENT_DONE)` is its other caller.
+    pub(super) fn missed_charly_alert(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) {
+        self.base.say(Remark::DidntFindCharly);
+        let my_pos = ctx.position;
+        self.base.seek_position = my_pos;
+        self.base
+            .my_reconnaissance_report
+            .update(ReportType::MissedCharly, my_pos);
+        self.base.my_reconnaissance_report.charly = self.base.checkpoint_charly;
+        self.base.frame_when_enemy_detected = ctx.frame;
+        if self.base.checkpoint_charly != 0 {
+            self.base
+                .outbox
+                .actor
+                .set_reported_to_officer
+                .push((self.base.checkpoint_charly as NpcHandle, false));
+        }
+
+        let alert_handled = match self.get_rank() {
+            ProfileRank::Soldier => {
+                self.alert_officer(sim, my_pos, SeekFlags::CHARLY_SEEK.bits(), ctx, tick)
+            }
+            ProfileRank::Officer => self.alert_soldiers(
+                my_pos,
+                SeekFlags::CHARLY_SEEK.bits(),
+                global,
+                grid,
+                ctx,
+                tick,
+                AlertSoldiersFailureContinuation::SeekMissedCharly { center: my_pos },
+            ),
+            ProfileRank::Knight | ProfileRank::None => false,
+        };
+        if alert_handled {
+            return;
+        }
+
+        let charly_has_path = ctx
+            .expect_entity_view(
+                self.base.checkpoint_charly,
+                "missed-charly checkpoint charly",
+            )
+            .has_patrol_path;
+        let radius = if charly_has_path {
+            parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
+        } else {
+            parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
+        };
+        self.seek_area(
+            sim,
+            my_pos,
+            radius,
+            SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
+            UNDEFINED_DIRECTION,
+            global,
+            ctx,
+            tick,
+        );
+    }
+
     pub fn run_to_examine_body(
         &mut self,
         body: HumanHandle,
@@ -1520,6 +1598,73 @@ mod tests {
     use super::*;
     use crate::ai_enemy::CampSoldierInfo;
 
+    fn charly_view() -> crate::ai_entity_view::AiEntityView {
+        use crate::ai_entity_view::EntityKind;
+        use crate::element::{Camp, Posture};
+
+        crate::ai_entity_view::AiEntityView {
+            original_creation_order: 96,
+            position: Position::default(),
+            detection_position: crate::coordinates::MapPoint::new(0.0, 0.0),
+            detection_position_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0),
+            direction: 0,
+            posture: Posture::Upright,
+            camp: Camp::Lacklandists,
+            is_pc: false,
+            is_robin: false,
+            is_vip: false,
+            is_beggar: false,
+            is_child: false,
+            kind: EntityKind::Soldier,
+            is_tower_guard: false,
+            is_swordfighting: false,
+            is_able_to_fight: true,
+            active: true,
+            is_unconscious: false,
+            action_state: crate::element::ActionState::Waiting,
+            is_moving_map: false,
+            passing_door: false,
+            obstacle_idx: None,
+            in_building: false,
+            building_sector: None,
+            script_locked: false,
+            forecasted_destination: crate::ai::PreparedForecastDestination::fixed(
+                Position::default(),
+                0,
+            ),
+            ai_state: AiState::Default,
+            ai_substate: Substate::DefaultEnroute,
+            current_animation: crate::order::OrderType::WaitingUpright,
+            elevation: 0.0,
+            object_type: crate::element_kinds::ObjectType::None,
+            is_dead: false,
+            is_carried: false,
+            is_archer: false,
+            is_rider: false,
+            stuck_under_net: false,
+            covering_nets: Vec::new(),
+            in_coma: false,
+            guard: None,
+            has_patrol_path: false,
+            initial_position: Position::default(),
+            number_of_arrows: 0,
+            rank: ProfileRank::Soldier,
+            reported_to_officer: false,
+            looted_after_money_fight: false,
+            current_money: 0,
+            macro_in_progress: false,
+            path_current_waypoint_index: 0,
+            path_last_waypoint_index: 0,
+            path_forward_movement: true,
+            patrol_hiking_path_index: None,
+            interesting_object: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+        }
+    }
+
     fn alert_test_officer(handle: u32, substate: Substate) -> CampSoldierInfo {
         let position = Position {
             x: 80.0,
@@ -1565,6 +1710,47 @@ mod tests {
             real_half_aperture: 1.0,
             eye_blind: false,
         }
+    }
+
+    #[test]
+    fn officer_search_charly_preserves_check_for_macro_into_inline_seek_area() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(202);
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultLookingForCharly;
+        ai.base.macro_in_progress = true;
+        ai.base.macro_command_offset = 23;
+        ai.base.number_of_remaining_macro_bytes = 0;
+        ai.base.checkpoint_charly = 96;
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(96, charly_view());
+        let ctx = AiContext {
+            frame: 34_426,
+            camp: crate::element::Camp::Lacklandists,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points.push(SeekPoint {
+            position: Position {
+                x: 100.0,
+                ..Position::default()
+            },
+            frame_when_full_interest: 0,
+            directions: vec![4],
+            last_calculated_interest: 100,
+            locked: false,
+            id: 0,
+        });
+
+        ai.search_charly(&sim, &mut global, &ctx, &AiPerTickData::stub(), None);
+
+        assert!(ai.base.macro_in_progress);
+        assert_eq!(ai.base.macro_command_offset, 23);
+        assert_eq!(ai.base.number_of_remaining_macro_bytes, 0);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
     }
 
     #[test]

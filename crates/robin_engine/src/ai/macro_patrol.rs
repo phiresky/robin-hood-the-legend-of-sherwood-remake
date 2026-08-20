@@ -460,6 +460,11 @@ pub struct PreparedForecastDestination {
     fallback: ForecastedDestination,
     building_gates: Vec<ForecastedDestination>,
     entry_gate: Option<usize>,
+    /// Whether `ForecastDestinationForIA` assigns its `UWORD& uwDirection`
+    /// output on this deterministic branch. A one-gate building enters the
+    /// building branch, but the `uwNumberOfGates > 1` body does not run, so
+    /// Original leaves the caller's previous value untouched.
+    direction_written: bool,
 }
 
 impl PreparedForecastDestination {
@@ -471,6 +476,7 @@ impl PreparedForecastDestination {
             },
             building_gates: Vec::new(),
             entry_gate: None,
+            direction_written: true,
         }
     }
 
@@ -497,6 +503,20 @@ impl PreparedForecastDestination {
                 return self.building_gates[selected];
             }
         }
+    }
+
+    /// Resolve while preserving the caller-owned direction when Original's
+    /// output-reference branch does not assign it.
+    pub fn resolve_retaining_direction(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        retained_direction: u16,
+    ) -> ForecastedDestination {
+        let mut resolved = self.resolve(sim);
+        if !self.direction_written {
+            resolved.direction = retained_direction;
+        }
+        resolved
     }
 }
 
@@ -536,6 +556,7 @@ mod prepared_forecast_tests {
                 },
             ],
             entry_gate: Some(1),
+            direction_written: true,
         };
 
         let seed = (0..10_000)
@@ -593,6 +614,7 @@ mod prepared_forecast_tests {
                 },
             ],
             entry_gate: None,
+            direction_written: true,
         };
 
         let sim = SimulationContext::with_seed(17);
@@ -605,6 +627,34 @@ mod prepared_forecast_tests {
             prepared.building_gates[expected].position.x
         );
         assert_eq!(trace, vec![RngSite::BuildingExitGate]);
+    }
+
+    #[test]
+    fn one_gate_building_keeps_the_callers_direction_output() {
+        // RHelementactorhuman.cpp:13560-13588 enters the building branch,
+        // but assigns uwDirection only inside `uwNumberOfGates > 1`.
+        let prepared = PreparedForecastDestination {
+            fallback: ForecastedDestination {
+                position: Position {
+                    x: 985.0,
+                    y: 2597.0,
+                    ..Position::default()
+                },
+                // The target currently faces 10, but this value must not
+                // overwrite the caller-owned output on the one-gate branch.
+                direction: 10,
+            },
+            building_gates: Vec::new(),
+            entry_gate: None,
+            direction_written: false,
+        };
+
+        let sim = SimulationContext::with_seed(1);
+        let (resolved, trace) = with_draw_trace(|| prepared.resolve_retaining_direction(&sim, 0));
+
+        assert_eq!(resolved.position.x, 985.0);
+        assert_eq!(resolved.direction, 0);
+        assert!(trace.is_empty());
     }
 }
 
@@ -726,6 +776,7 @@ pub fn prepare_forecast_destination_for_ia(
     let mut direction = input.direction;
     let mut building_gates = Vec::new();
     let mut entry_gate = None;
+    let mut direction_written = true;
 
     // Look up the destination sector in the grid.
     let grid_sector = sector_map
@@ -771,6 +822,11 @@ pub fn prepare_forecast_destination_for_ia(
             if building_gates.len() <= 1 {
                 building_gates.clear();
                 entry_gate = None;
+                // Original has already selected the building `else if` here,
+                // so it does not fall through to `uwDirection =
+                // GetDirection()`. With no alternate exit, the output
+                // reference retains its caller-owned value.
+                direction_written = false;
             } else if let Some(current_door) = current_door_index {
                 assert!(
                     entry_gate.is_some(),
@@ -803,6 +859,7 @@ pub fn prepare_forecast_destination_for_ia(
         },
         building_gates,
         entry_gate,
+        direction_written,
     }
 }
 

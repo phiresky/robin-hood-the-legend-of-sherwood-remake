@@ -249,6 +249,7 @@ fn convert_serialized_sound(
         playing_exclamations: Vec::new(),
         pending_exclamations: Vec::new(),
         resolved_exclamations: Vec::new(),
+        replay_injected_resolved_exclamations: false,
         playing_sources: Vec::new(),
         suspended_active_sources: Vec::new(),
     })

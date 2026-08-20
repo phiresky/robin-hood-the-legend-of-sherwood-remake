@@ -866,6 +866,33 @@ fn goto_already_on_point_uses_original_animation_gate() {
 }
 
 #[test]
+fn gonear_runs_goto_idle_shortcut_before_zero_near_tolerance() {
+    let destination = Position {
+        x: 101.0,
+        y: 203.0,
+        sector: SectorHandle::new(1),
+        level: 0,
+    };
+    let mut idle = AiController::new(1);
+    idle.think_recursion_depth = 1;
+    let idle_ctx = goto_short_circuit_ctx(crate::order::OrderType::NonanimationEnd);
+
+    idle.go_near(destination, 0, GotoFlags::RUN, &idle_ctx);
+
+    assert!(idle.already_on_point);
+    assert!(idle.take_pending_orders().is_empty());
+
+    let mut running = AiController::new(1);
+    running.think_recursion_depth = 1;
+    let running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
+
+    running.go_near(destination, 0, GotoFlags::RUN, &running_ctx);
+
+    assert!(!running.already_on_point);
+    assert_eq!(running.take_pending_orders().len(), 1);
+}
+
+#[test]
 fn goto_replayed_near_flags_finish_inside_stored_tolerance() {
     let ctx = AiContext {
         position: Position {
@@ -1103,6 +1130,7 @@ fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destinat
     // the proposed archer step-back goal is the actor's exact position.
     let mut ctx =
         goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
+    ctx.self_action_state = crate::element::ActionState::MovingFast;
     ctx.self_animation_reached_action_done = true;
     let mut ai = AiController::new(93);
     ai.think_recursion_depth = 1;
@@ -1141,6 +1169,20 @@ fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destinat
     starting_ai.go_to(starting_ctx.position, GotoFlags::RUN, &starting_ctx);
     assert!(!starting_ai.already_on_point);
     assert_eq!(starting_ai.take_pending_orders().len(), 1);
+
+    // Once the transition has executed its Waiting state change it is a live
+    // transition in Original too.  A timer-driven ReturnToDuty at the exact
+    // post must therefore launch the Move and remain in GOTOPOST until that
+    // movement reports EVENT_REACHPOINT (Save018/replay-006, frame 8809).
+    let mut waiting_ctx =
+        goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
+    waiting_ctx.self_action_state = crate::element::ActionState::Waiting;
+    waiting_ctx.self_animation_motion_state = crate::sprite::MotionState::InProgress;
+    let mut waiting_ai = AiController::new(93);
+    waiting_ai.think_recursion_depth = 1;
+    waiting_ai.go_to(waiting_ctx.position, GotoFlags::empty(), &waiting_ctx);
+    assert!(!waiting_ai.already_on_point);
+    assert_eq!(waiting_ai.take_pending_orders().len(), 1);
 
     let mut speed_ai = AiController::new(93);
     speed_ai.think_recursion_depth = 1;

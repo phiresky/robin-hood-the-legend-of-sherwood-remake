@@ -685,19 +685,33 @@ impl NativeContext<'_, '_> {
 
             // --- Reverse index lookup (handle → script index) ---
             //
-            // There is a separate native per object type, but the
-            // All reverse lookups decode the tagged 0-based payload.
+            // There is a separate native per object type. Reverse lookups
+            // normally decode the tagged 0-based payload; Location is the
+            // multiply-inherited Original exception below.
             // `GetSoundSourceIndex` also gates
             // on the sound subsystem being ready and on canonical
             // per-slot liveness — split out below.
-            GetActorIndex | GetDoorIndex | GetPatchIndex | GetLocationIndex | GetBuildingIndex
-            | GetWayIndex => {
+            GetLocationIndex => {
+                let _location = stack.pop_i32();
+                // Original `Location` is `void *`. `GetLocationScript` first
+                // downcasts the stored `RHObjectScript *` to the concrete
+                // multiply-inherited point/line/sector, then erases that
+                // most-derived address to `void *`. `GetLocationIndex`
+                // static-casts the `void *` straight back to
+                // `RHObjectScript *`, so it does not restore the base-class
+                // adjustment and `marrayScriptObjects.Find` returns -1.
+                // Dynamically computed locations are not in that array and
+                // return -1 as well. Keep this executable Original quirk;
+                // tagged Rust handles would otherwise make the broken
+                // round-trip accidentally succeed.
+                -1
+            }
+            GetActorIndex | GetDoorIndex | GetPatchIndex | GetBuildingIndex | GetWayIndex => {
                 let handle = stack.pop_i32();
                 let idx = match native {
                     GetActorIndex => self.actor_script_index(handle),
                     GetDoorIndex => Self::door_index(handle),
                     GetPatchIndex => Self::patch_index(handle),
-                    GetLocationIndex => Self::location_index(handle),
                     GetBuildingIndex => Self::building_index(handle),
                     GetWayIndex => Self::way_index(handle),
                     _ => unreachable!(),

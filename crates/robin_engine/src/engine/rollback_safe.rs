@@ -2960,6 +2960,30 @@ impl Engine {
         self.inner.queue_resolved_exclamations(resolutions);
     }
 
+    /// Queue authoritative Original-host speech resolutions from a parity
+    /// trace. This is deliberately separate from live host resolutions so
+    /// only replay injection may tolerate a missing Rust logical request.
+    #[doc(hidden)]
+    pub fn queue_replay_resolved_exclamations(
+        &mut self,
+        resolutions: Vec<crate::sound::ResolvedExclamation>,
+    ) {
+        self.inner.queue_replay_resolved_exclamations(resolutions);
+    }
+
+    /// Consume the authoritative between-frame Original sound update before
+    /// replay applies the following frame's input commands.
+    ///
+    /// The normal tick also enters this boundary first; calling it here is
+    /// intentionally idempotent once the queued resolutions and matured
+    /// callbacks have been drained.
+    #[doc(hidden)]
+    pub fn apply_replay_sound_boundary(&mut self, assets: &LevelAssets) {
+        self.require_live_campaign("applying a replay sound boundary");
+        let sim = self.inner.control.simulation_context();
+        self.inner.hourglass_phase_sound_boundary(&sim, assets);
+    }
+
     /// Apply one recorded director completion at the pre-Hourglass boundary.
     ///
     /// This validates the currently latched sequence command, terminates it,

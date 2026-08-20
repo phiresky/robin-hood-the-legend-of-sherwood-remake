@@ -38,6 +38,46 @@ fn scale_falling_hit_sector_vector(x: f32, y: f32) -> (f32, f32) {
     (x * scale, y * scale)
 }
 
+/// Normalize the live antagonist-to-victim delta used by
+/// `RHElementActorHuman::ExecuteFallingHit`.
+///
+/// The Original does not special-case coincident actors: multiplying its
+/// zero vector by `30 / 0` produces unordered components, and
+/// `SBGeoVector2D::GetSector0to15` consequently leaves every comparison bit
+/// clear (sector 0). The observable result is a stationary flight initialized
+/// facing sector 8. Keep the zero displacement explicitly instead of storing
+/// NaNs in Rust state; the shared sector classifier still yields the same
+/// facing. Non-zero deltas, including arbitrarily small ones, use the Original
+/// normalization rather than an epsilon fallback.
+fn normalize_falling_hit_antagonist_delta(x: f32, y: f32) -> (f32, f32) {
+    if x == 0.0 && y == 0.0 {
+        (0.0, 0.0)
+    } else {
+        scale_falling_hit_sector_vector(x, y)
+    }
+}
+
+#[cfg(test)]
+mod falling_hit_vector_tests {
+    use super::normalize_falling_hit_antagonist_delta;
+
+    #[test]
+    fn coincident_hit_uses_original_zero_vector_facing() {
+        let (x, y) = normalize_falling_hit_antagonist_delta(0.0, 0.0);
+        assert_eq!((x.to_bits(), y.to_bits()), (0, 0));
+        let flight_sector = crate::position_interface::vector_to_sector_0_to_15(x, y);
+        assert_eq!(flight_sector, 0);
+        assert_eq!((flight_sector + 8) % 16, 8);
+    }
+
+    #[test]
+    fn near_coincident_hit_still_normalizes_live_delta() {
+        let (x, y) = normalize_falling_hit_antagonist_delta(0.001, 0.0);
+        assert_eq!(x.to_bits(), 30.0_f32.to_bits());
+        assert_eq!(y.to_bits(), 0.0_f32.to_bits());
+    }
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct TestSwordDamageObservation {
@@ -731,6 +771,11 @@ impl EngineInner {
                 killer_is_pc,
             );
         }
+        // Human::SetLifePoints returns immediately when the victim was
+        // already dead. Its earlier Kill call has therefore already owned
+        // the one-shot death cascade; TranslatePushDamage may still author
+        // the visual push response, but must not replay that cascade.
+        let push_death_cascade_already_applied = fresh_lethal_push || life_points_before <= 0;
 
         // Handle push effect — the push path handles animations and skips the
         // regular hit animation / post-damage translation below.
@@ -748,7 +793,7 @@ impl EngineInner {
                     &push_info,
                     result,
                     damage_element,
-                    fresh_lethal_push,
+                    push_death_cascade_already_applied,
                 )
             } else {
                 false
@@ -2183,13 +2228,7 @@ impl EngineInner {
         } else if let Some(attacker_pos) = attacker_pos {
             let dx = victim_pos.x - attacker_pos.x;
             let dy = victim_pos.y - attacker_pos.y;
-            let distance = (dx * dx + dy * dy).sqrt();
-            if distance < 0.01 {
-                let (x, y) = sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO);
-                scale_falling_hit_sector_vector(x, y)
-            } else {
-                scale_falling_hit_sector_vector(dx, dy)
-            }
+            normalize_falling_hit_antagonist_delta(dx, dy)
         } else {
             let (x, y) = sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO);
             scale_falling_hit_sector_vector(x, y)

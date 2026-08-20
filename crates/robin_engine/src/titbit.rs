@@ -759,8 +759,17 @@ impl TitbitManager {
         }
 
         // Sort by display order (stable sort preserves insertion order for ties).
-        self.titbits
-            .sort_by(|a, b| a.display_order.partial_cmp(&b.display_order).unwrap());
+        // Original delegates to `std::list::sort` with
+        // `RHtitbitInfo::operator<`, whose float comparison simply returns
+        // false for an unordered (NaN) pair.  NaN display orders are reachable
+        // through Original's unchecked zero-vector normalization, so treat
+        // those comparisons as equivalent rather than assuming a total float
+        // order and panicking.
+        self.titbits.sort_by(|a, b| {
+            a.display_order
+                .partial_cmp(&b.display_order)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 
     /// Per-frame update: advance animations, expire finished titbits.
@@ -1541,5 +1550,34 @@ mod tests {
         mgr.prepare_refresh(|_| Some(99.0));
 
         assert_eq!(mgr.titbits()[0].display_order, created_order);
+    }
+
+    #[test]
+    fn prepare_refresh_accepts_original_nan_display_order() {
+        let mut mgr = TitbitManager::new();
+        for display_order in [20.0, f32::NAN, 10.0] {
+            mgr.add_titbit(
+                pt3(0.0, 0.0, 0.0),
+                0,
+                TitbitKind::DangerPoint,
+                ElementHandle::INVALID,
+                0,
+                ElementHandle::INVALID,
+                false,
+                INVALID_ID,
+                true,
+                Some(display_order),
+                Some(0),
+            );
+        }
+
+        mgr.prepare_refresh(|_| None);
+
+        assert_eq!(mgr.titbits().len(), 3);
+        assert!(
+            mgr.titbits()
+                .iter()
+                .any(|titbit| titbit.display_order.is_nan())
+        );
     }
 }

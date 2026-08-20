@@ -930,9 +930,7 @@ impl SightObstacle {
                 continue;
             }
 
-            if geo2d::segments_intersect(ray_seg, edge)
-                && let geo2d::Intersection2D::Point(ip) = geo2d::segment_intersection(ray_seg, edge)
-            {
+            if let Some(ip) = original_segment_intersection_point(ray_seg, edge) {
                 let ip_ground = GroundPoint::from_geo(ip);
                 let ray_z = ray_eq.z_at(ip_ground);
                 let top_z = self.compute_top_z(ip.x, ip.y);
@@ -1059,6 +1057,76 @@ impl SightObstacle {
 struct ObstacleRayImpact {
     t: f32,
     point: crate::coordinates::WorldPoint3D,
+}
+
+/// Return a single-point intersection using
+/// `SBGeoSegment2D::operator^`'s arithmetic.
+///
+/// Original promotes already-rounded binary32 endpoint deltas to binary64,
+/// solves the slope/intercept equations there, then narrows the result back
+/// to `GEOTYPE` (`FLOAT`). Projectile wall impacts retain those rounding
+/// points, so `geo`'s determinant-based intersection is not bit-equivalent.
+/// Collinear overlap is deliberately `None`: the projectile caller only
+/// consumes Original's `POINT` result.
+fn original_segment_intersection_point(
+    first: geo::Line<f32>,
+    second: geo::Line<f32>,
+) -> Option<geo::Coord<f32>> {
+    const PRECISION: f64 = 1.0e-9_f32 as f64;
+
+    let first_dx = f64::from(first.end.x - first.start.x);
+    let second_dx = f64::from(second.end.x - second.start.x);
+    let between = |value: f64, a: f32, b: f32| {
+        (value <= f64::from(a) + PRECISION && value >= f64::from(b) - PRECISION)
+            || (value >= f64::from(a) - PRECISION && value <= f64::from(b) + PRECISION)
+    };
+
+    if first_dx != 0.0 {
+        let first_slope = f64::from(first.end.y - first.start.y) / first_dx;
+        let first_intercept = f64::from(first.start.y) - f64::from(first.start.x) * first_slope;
+        if second_dx != 0.0 {
+            let second_slope = f64::from(second.end.y - second.start.y) / second_dx;
+            let second_intercept =
+                f64::from(second.start.y) - f64::from(second.start.x) * second_slope;
+            if first_slope == second_slope {
+                return None;
+            }
+            let x = (second_intercept - first_intercept) / (first_slope - second_slope);
+            if !between(x, first.start.x, first.end.x) || !between(x, second.start.x, second.end.x)
+            {
+                return None;
+            }
+            return Some(geo::Coord {
+                x: x as f32,
+                y: (x * first_slope + first_intercept) as f32,
+            });
+        }
+
+        let y = first_slope * f64::from(second.start.x) + first_intercept;
+        if between(y, first.start.y, first.end.y) && between(y, second.start.y, second.end.y) {
+            return Some(geo::Coord {
+                x: second.start.x,
+                y: y as f32,
+            });
+        }
+        return None;
+    }
+
+    if second_dx != 0.0 {
+        let second_slope = f64::from(second.end.y - second.start.y) / second_dx;
+        let second_intercept = f64::from(second.start.y) - f64::from(second.start.x) * second_slope;
+        let y = f64::from(first.start.x) * second_slope + second_intercept;
+        if between(y, first.start.y, first.end.y)
+            && between(f64::from(first.start.x), second.start.x, second.end.x)
+        {
+            return Some(geo::Coord {
+                x: first.start.x,
+                y: y as f32,
+            });
+        }
+    }
+
+    None
 }
 
 fn impact_is_closer_3d(
@@ -1987,6 +2055,21 @@ pub fn is_reachable_impact_up_3d(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projectile_wall_intersection_uses_original_double_slope_equations() {
+        // The projectile ray uses the same magnitude and direction as the
+        // terminal falling-arrow segment from Str02_Der_MP. The exact bits
+        // pin SBGeoSegment2D's FLOAT-delta -> DOUBLE-equation -> FLOAT-point
+        // sequence instead of `geo`'s determinant-based construction.
+        let ray = segment(pt(915.8944, 2022.6726), pt(971.32715, 2018.2826));
+        let wall = segment(pt(920.125, 2000.25), pt(950.75, 2075.5));
+
+        let intersection = original_segment_intersection_point(ray, wall)
+            .expect("non-parallel segments must intersect");
+        assert_eq!(intersection.x.to_bits(), 0x4468_3557);
+        assert_eq!(intersection.y.to_bits(), 0x44fc_b4bc);
+    }
 
     /// Build a simple square obstacle at (0,0)..(10,10) with z 0..5.
     /// `top_plane_points` and `bottom_plane_points` are set separately

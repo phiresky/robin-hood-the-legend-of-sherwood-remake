@@ -478,6 +478,16 @@ pub struct ScriptSectorData {
     /// owning sector is registered with the grid.
     pub sector_index: Option<crate::fast_find_grid::SectorIndex>,
 
+    /// Authoritative motion sector which owns this script polygon.
+    ///
+    /// Original `RHSectorScript::IsReallyInside` requires the actor's
+    /// current motion sector to match this SCRP reference before testing the
+    /// polygon.  This must not be stored in `GridSector::sector_number`:
+    /// script sectors have no motion-sector identity and registering that
+    /// duplicate number would overwrite the fast-grid motion lookup.
+    #[serde(default = "invalid_sector_number")]
+    pub owning_motion_sector: crate::sector::SectorNumber,
+
     /// Whether this sector has a script class bound to it.
     pub script_associated: bool,
 
@@ -503,10 +513,15 @@ pub struct ScriptSectorData {
     pub occupant_indices: Vec<crate::entity_id::EntityId>,
 }
 
+fn invalid_sector_number() -> crate::sector::SectorNumber {
+    crate::sector::SectorNumber::new(-1)
+}
+
 impl Default for ScriptSectorData {
     fn default() -> Self {
         Self {
             sector_index: None,
+            owning_motion_sector: invalid_sector_number(),
             script_associated: false,
             script_class_name: None,
             production_sector_type: sector_production::Type::Unknown,
@@ -967,6 +982,18 @@ mod tests {
         script.add_occupant(second);
 
         assert_eq!(script.occupant_indices, vec![first, second]);
+    }
+
+    #[test]
+    fn older_script_sector_state_defaults_missing_motion_owner_to_invalid() {
+        let mut encoded = serde_json::to_value(ScriptSectorData::new()).unwrap();
+        encoded
+            .as_object_mut()
+            .unwrap()
+            .remove("owning_motion_sector");
+
+        let decoded: ScriptSectorData = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded.owning_motion_sector, SectorNumber::new(-1));
     }
 
     #[test]

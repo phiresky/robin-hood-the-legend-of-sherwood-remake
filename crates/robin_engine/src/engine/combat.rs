@@ -126,6 +126,41 @@ enum ArrowHitOutcome {
     Ricochet,
 }
 
+/// Finish Original's `IsHurtableByArrow` decision after its civilian/camp
+/// filter. Only PCs and soldiers own a sword whose piercing protection can
+/// reject an otherwise hurtable arrow. A civilian on Hard difficulty is
+/// immediately hurtable and must not be treated as if a missing sword meant
+/// full protection.
+fn resolve_arrow_hurtable(
+    hurtable_base: bool,
+    victim_is_pc_or_soldier: bool,
+    piercing_roll_passed: Option<bool>,
+) -> bool {
+    if !hurtable_base {
+        false
+    } else if !victim_is_pc_or_soldier {
+        true
+    } else {
+        piercing_roll_passed.expect("PC/soldier arrow classification requires a piercing result")
+    }
+}
+
+#[cfg(test)]
+mod arrow_hurtable_tests {
+    use super::resolve_arrow_hurtable;
+
+    #[test]
+    fn hard_difficulty_civilian_does_not_require_a_piercing_weapon_profile() {
+        assert!(resolve_arrow_hurtable(true, false, None));
+    }
+
+    #[test]
+    fn protected_or_filtered_human_remains_unhurtable() {
+        assert!(!resolve_arrow_hurtable(true, true, Some(false)));
+        assert!(!resolve_arrow_hurtable(false, false, None));
+    }
+}
+
 impl EngineInner {
     // ─── Bow shots & arrow projectiles ───────────────────────────
 
@@ -1262,7 +1297,7 @@ impl EngineInner {
                 .map(|w| w.piercing_protection),
             _ => None,
         };
-        let hurtable = if hurtable_base {
+        let piercing_roll_passed = if hurtable_base && victim_is_pc_or_soldier {
             // `(rand() % 101) > protection` runs even when protection is
             // 0 — gives a 1/101 ricochet for the exact `roll == 0` case,
             // and keeps RNG consumption consistent with the
@@ -1276,19 +1311,21 @@ impl EngineInner {
                         crate::sim_rng::RngSite::ArrowPiercingProtection,
                         0..101,
                     );
-                    roll > protection as u32
+                    Some(roll > protection as u32)
                 }
                 None => {
                     tracing::warn!(
                         ?victim_id,
                         "IsHurtableByArrow: missing HtH weapon profile; treating victim as protected",
                     );
-                    false
+                    Some(false)
                 }
             }
         } else {
-            false
+            None
         };
+        let hurtable =
+            resolve_arrow_hurtable(hurtable_base, victim_is_pc_or_soldier, piercing_roll_passed);
 
         // ── (F) Outcome dispatch ────────────────────────────────────
         // Hurtable → Damage.
@@ -4342,6 +4379,11 @@ impl EngineInner {
             // the pair and lights the body's hulk. Both are visible one
             // frame later than the element's translation, which happens in
             // the manager pass after the carrier's own slot.
+            crate::abilities::initialize_carry_relationship(
+                &mut self.world.entities,
+                actor_id,
+                target_id,
+            );
             self.actor_freeze_execution(target_id);
             self.apply_carry_building_hulk(actor_id, target_id);
         }

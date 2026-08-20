@@ -1668,6 +1668,91 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
 }
 
 #[test]
+fn fresh_group_route_translates_before_unexecuted_posture_recovery() {
+    use crate::element::{Command, InstalledActorOrder, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+
+    let speak = SequenceElement::new(1, Command::SpeakHeroReachDestination, Some(owner));
+    let mut equip = SequenceElement::new(2, Command::EquipBow, Some(owner));
+    equip.priority = SequencePriority::PostponeEverythingButInjuries;
+    let equip_order = Order::new(
+        OrderType::TransitionEquipBow,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let equip_order_id = equip_order.order_id;
+    equip.orders.push_back(equip_order);
+    let mut recovery = Sequence::new();
+    recovery.append_element(speak);
+    recovery.append_element(equip);
+    let recovery_id = engine.orders.sequence_manager.launch_sequence(recovery);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(recovery_id, 0)
+        .unwrap()
+        .state = SequenceState::Terminated;
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(recovery_id, 1);
+    {
+        let actor = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.installed_order = Some(InstalledActorOrder {
+            order_id: equip_order_id,
+            order_type: OrderType::TransitionEquipBow,
+        });
+        actor.last_execute_order_id = None;
+    }
+
+    let route_assert = SequenceElement::new_movement(
+        1,
+        Command::AssertPosition,
+        Some(owner),
+        OrderType::WalkingUpright,
+    );
+    let route_move =
+        SequenceElement::new_movement(2, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let mut route = Sequence::new();
+    route.append_element(route_assert);
+    route.append_element(route_move);
+    let route_id = engine.orders.sequence_manager.launch_sequence(route);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(route_id, 0)
+        .unwrap()
+        .state = SequenceState::Terminated;
+
+    assert_eq!(
+        engine.fresh_recovery_blocker_after_route_assert(owner, route_id, 1),
+        Some((recovery_id, 1)),
+        "a just-installed recovery must preserve Original's transient route request"
+    );
+
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .last_execute_order_id = Some(equip_order_id);
+    assert_eq!(
+        engine.fresh_recovery_blocker_after_route_assert(owner, route_id, 1),
+        None,
+        "an EquipBow that has already executed is a real blocker, not the same-drain FIFO seam"
+    );
+}
+
+#[test]
 fn postponing_resolved_movement_restores_untranslated_move() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
@@ -2000,6 +2085,125 @@ fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_em
     assert_eq!(
         entity.actor_data().unwrap().continuation.motion_state,
         MotionState::InProgress
+    );
+}
+
+#[test]
+fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
+    use crate::element::{ActionState, Command, InstalledActorOrder, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_entity(make_test_soldier(Posture::Upright));
+    for entity in [owner, target] {
+        engine
+            .get_entity_mut(entity)
+            .unwrap()
+            .element_data_mut()
+            .set_sector(SectorHandle::new(24));
+    }
+
+    // f4987 starts from the PC's selected bored Wait. Actor::Instruct
+    // generates this exit transition before it interrupts that Wait
+    // (`original-code/RHelementactor.cpp:1379-1458`). Install the same
+    // owner-slot topology explicitly so this test isolates the subsequent
+    // RefreshSeek(PassDoor) return.
+    let old_order_id = engine.orders.allocate_order_id();
+    let mut old_wait = SequenceElement::new(1, Command::Wait, Some(owner));
+    old_wait.priority = SequencePriority::Wait;
+    old_wait.orders.push_back(Order::new(
+        OrderType::WaitingUprightBored,
+        0.0,
+        0.0,
+        old_order_id,
+    ));
+    let old_sequence = engine.orders.sequence_manager.launch_element(old_wait);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(old_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        let actor = entity.actor_data_mut().unwrap();
+        actor.action_state = ActionState::Bored;
+        actor.installed_order = Some(InstalledActorOrder {
+            order_id: old_order_id,
+            order_type: OrderType::WaitingUprightBored,
+        });
+        entity.sprite_mut().last_processed_order_id = old_order_id.get();
+    }
+
+    let mut pass = SequenceElement::new_movement(
+        1,
+        Command::PassDoor,
+        Some(target),
+        OrderType::RunningUpright,
+    );
+    pass.priority = SequencePriority::NonInterruptable;
+    let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(pass_sequence, 0);
+    engine
+        .get_entity_mut(target)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_movement = ActiveMovement::new(pass_sequence, 0);
+
+    let transition = OrderType::TransitionWaitingUprightBoredWaitingUpright;
+    let transition_order_id = engine.orders.allocate_order_id();
+    let mut seek =
+        SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+    seek.priority = SequencePriority::Normal;
+    seek.posture_after_transition = Posture::Upright;
+    seek.action_state_after_transition = ActionState::Waiting;
+    seek.orders
+        .push_back(Order::new(transition, 0.0, 0.0, transition_order_id));
+    if let SequenceElementData::Movement {
+        element, tolerance, ..
+    } = &mut seek.data
+    {
+        *element = Some(target);
+        *tolerance = 17.0;
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let seek_sequence = engine.orders.sequence_manager.launch_element(seek);
+
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut HostDisplayState::default(),
+        &LevelAssets::new(),
+    );
+
+    let seek = engine
+        .orders
+        .sequence_manager
+        .get_element(seek_sequence, 0)
+        .expect("PassDoor-waiting Seek remains selected");
+    assert_eq!(seek.command, Command::Move);
+    assert_eq!(seek.state, SequenceState::InProgress);
+    assert_eq!(seek.current_order().unwrap().order_type, transition);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .installed_order,
+        Some(InstalledActorOrder {
+            order_id: transition_order_id,
+            order_type: transition,
+        }),
+        "RefreshSeek's PassDoor return must preserve Actor::Instruct's generated transition"
     );
 }
 

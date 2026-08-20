@@ -28,6 +28,18 @@ const BLIP_SUPER_DETECTION: f32 = 1.5;
 const BLIP_ON_SHOULDERS_FACTOR: f32 = 1.3;
 const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 
+fn fighter_ai_position(
+    ai_positions: &std::collections::HashMap<EntityId, crate::ai::Position>,
+    id: EntityId,
+) -> crate::ai::Position {
+    *ai_positions.get(&id).unwrap_or_else(|| {
+        panic!(
+            "fighter {} is absent from the owner-boundary AI position view",
+            id.index()
+        )
+    })
+}
+
 #[derive(Clone, Copy)]
 struct HearingGateDebugConfig {
     enabled: bool,
@@ -391,6 +403,9 @@ struct EnemyOpticalTarget {
     /// Exact owner-boundary literal GetPosition value. This must not be
     /// reconstructed through projected map coordinates.
     position_world: crate::coordinates::WorldPoint3D,
+    /// Literal current element position. Direct geometry helpers bypass the
+    /// creation-slot boundary snapshot used by optical detection.
+    live_position_world: crate::coordinates::WorldPoint3D,
     /// Owner-boundary `RHArtificialIntelligence::Position(pEnemy)`, including
     /// committed door-side and carried-PC substitution.
     ai_position: crate::ai::Position,
@@ -3030,6 +3045,10 @@ impl EngineInner {
                         )
                     })
                     .collect();
+                tick_data.enemy_detectable_live_world_positions = enemy_targets
+                    .iter()
+                    .map(|target| (target.id.index(), target.live_position_world))
+                    .collect();
                 // Build them-list: visible enemies with distances.
                 //
                 // Cleanup pass during battle decisions: an enemy
@@ -3399,14 +3418,10 @@ impl EngineInner {
                     if let Some(me_snap) =
                         soldier_snapshots.iter().find(|s| s.id.index() == me_handle)
                     {
+                        let position = fighter_ai_position(&world.ai_positions, me_snap.id);
                         tick_data.nearby_fighters.push(FighterSnapshot {
                             handle: me_handle,
-                            position: crate::ai::Position {
-                                x: me_snap.position.x,
-                                y: me_snap.position.y,
-                                sector: None,
-                                level: my_layer,
-                            },
+                            position,
                             // `SoldierSnapshot::position` is already the
                             // raw `RHElement::GetPosition()` (no door
                             // transit / carrier substitution).
@@ -3496,14 +3511,10 @@ impl EngineInner {
                         if dx.abs().max(dy.abs()) > SWORDFIGHT_RADIUS {
                             continue;
                         }
+                        let position = fighter_ai_position(&world.ai_positions, ss.id);
                         tick_data.nearby_fighters.push(FighterSnapshot {
                             handle: ss.id.index(),
-                            position: crate::ai::Position {
-                                x: ss.position.x,
-                                y: ss.position.y,
-                                sector: None,
-                                level: ss.layer,
-                            },
+                            position,
                             // Already the raw `RHElement::GetPosition()`.
                             raw_position: crate::ai::Position {
                                 x: ss.position.x,
@@ -3573,16 +3584,12 @@ impl EngineInner {
                         if dx.abs().max(dy.abs()) > SWORDFIGHT_RADIUS {
                             continue;
                         }
+                        let position = fighter_ai_position(&world.ai_positions, pc.id);
                         let number_of_opponents =
                             pc.opponent_handles.len().min(u16::MAX as usize) as u16;
                         tick_data.nearby_fighters.push(FighterSnapshot {
                             handle: enemy_handle,
-                            position: crate::ai::Position {
-                                x: pc.position.x,
-                                y: pc.position.y,
-                                sector: None,
-                                level: pc.layer,
-                            },
+                            position,
                             // Already the raw `RHElement::GetPosition()`.
                             raw_position: crate::ai::Position {
                                 x: pc.position.x,
@@ -3993,6 +4000,7 @@ impl EngineInner {
                         id: entity_id,
                         position: boundary.map,
                         position_world: boundary.world,
+                        live_position_world: pc.element.position(),
                         ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
                         ground_position: GroundPoint::from_map_and_z(boundary.map, ground_z),
                         sector: pc.element.sector(),
@@ -4048,6 +4056,7 @@ impl EngineInner {
                         id: entity_id,
                         position,
                         position_world,
+                        live_position_world: soldier.element.position(),
                         ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
                         ground_position: GroundPoint::from_map_and_z(
                             position,
@@ -5526,6 +5535,41 @@ struct ViewContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tactical_fighter_snapshot_keeps_owner_boundary_door_position() {
+        // Schema-14 seed 1000000, linux2 Profile_002/Savegame_015
+        // replay-002 frame 15954. Original PC 173 (Rust runtime PC 172) is
+        // mid-door-pass: its live map point lies beyond the crossbow's range,
+        // while Original Position() returns the committed gate endpoint and
+        // accepts it as a shot target.
+        let target = EntityId::Pc(crate::element::PcId(172));
+        let raw_position = crate::ai::Position {
+            x: 1392.8706,
+            y: 1368.8823,
+            level: 1,
+            sector: None,
+        };
+        let gate_position = crate::ai::Position {
+            x: 1386.0,
+            y: 1356.0,
+            level: 1,
+            sector: None,
+        };
+        let ai_positions = std::collections::HashMap::from([(target, gate_position)]);
+
+        let snapshot_position = fighter_ai_position(&ai_positions, target);
+
+        assert_eq!(snapshot_position, gate_position);
+        assert_ne!(snapshot_position, raw_position);
+        let shot_distance_squared = |position: crate::ai::Position| {
+            let dx = position.x - 1130.0;
+            let dy = (position.y - 1187.0) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            dx * dx + dy * dy
+        };
+        assert!(shot_distance_squared(raw_position) > 400.0_f32.powi(2));
+        assert!(shot_distance_squared(snapshot_position) < 400.0_f32.powi(2));
+    }
 
     #[test]
     fn detection_sharpness_accumulation_wraps_as_uword() {

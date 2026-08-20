@@ -23,14 +23,22 @@ fi
 
 workspace=$(pwd)
 snapshot="$audit_dir/traces.snapshot"
-mkdir -p "$audit_dir/logs" "$audit_dir/status"
+mkdir -p "$audit_dir/logs" "$audit_dir/status" "$audit_dir/.trace-locks"
 
-concurrency=${PARITY_SWEEP_CONCURRENCY:-$shards}
-if [[ ! "$concurrency" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'error: PARITY_SWEEP_CONCURRENCY must be a positive integer\n' >&2
+# Runner processes from distinct audit directories must share the same slot
+# pool.  Original's asynchronous pathfinder is sensitive to several parity
+# runners competing on the host, so an audit-local lock can produce a result
+# that a serial replay cannot reproduce.  Keep the safe default globally
+# serial.  PARITY_SWEEP_CONCURRENCY remains a compatibility alias, but callers
+# that deliberately want parallelism should set the global spelling to the
+# same value for every participating sweep.
+global_concurrency=${PARITY_SWEEP_GLOBAL_CONCURRENCY:-${PARITY_SWEEP_CONCURRENCY:-1}}
+if [[ ! "$global_concurrency" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'error: PARITY_SWEEP_GLOBAL_CONCURRENCY must be a positive integer\n' >&2
     exit 2
 fi
-mkdir -p "$audit_dir/.runner-slots"
+runner_slot_dir=${PARITY_SWEEP_SLOT_DIR:-$workspace/.git/parity-runner-slots}
+mkdir -p "$runner_slot_dir"
 
 exact_eof_marker='parity trace matched every recorded frame'
 integrity_status='integrity-eof-marker'
@@ -54,8 +62,8 @@ write_status() {
 acquire_runner_slot() {
     local slot
     while true; do
-        for ((slot = 0; slot < concurrency; slot += 1)); do
-            exec {runner_slot_fd}>"$audit_dir/.runner-slots/$slot.lock"
+        for ((slot = 0; slot < global_concurrency; slot += 1)); do
+            exec {runner_slot_fd}>"$runner_slot_dir/$slot.lock"
             if flock -n "$runner_slot_fd"; then
                 return 0
             fi
@@ -83,11 +91,21 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     log="$audit_dir/logs/$key.log"
     status="$audit_dir/status/$key.status"
 
+    # Two watcher instances can briefly overlap during a restart.  Sharding
+    # prevents duplicate work within one invocation, but it cannot stop both
+    # invocations from observing the same absent status and writing the same
+    # log concurrently.  Serialize each logical trace across the whole audit,
+    # then repeat the status check while holding the claim.
+    exec {trace_lock_fd}>"$audit_dir/.trace-locks/$full_key.lock"
+    flock "$trace_lock_fd"
+
     if [[ -f "$status" || -f "$audit_dir/status/$full_key.status" ]]; then
+        exec {trace_lock_fd}>&-
         continue
     fi
     if [[ ! -f "$trace" ]]; then
         write_status "$status" missing
+        exec {trace_lock_fd}>&-
         continue
     fi
 
@@ -107,4 +125,5 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         write_status "$status" "$runner_status"
     fi
     exec {runner_slot_fd}>&-
+    exec {trace_lock_fd}>&-
 done

@@ -2379,9 +2379,24 @@ impl ObjectInteractionCommandContext<'_> {
         let antagonist_is_net = antagonist
             .and_then(|id| self.entities.get(id))
             .is_some_and(|entity| matches!(entity, Entity::Net(_)));
+        // RHElementActorPC::Translate(RHCOMMAND_TAKE) selects the ordinary
+        // object's pickup row from the interaction element's stamped
+        // post-transition posture.  This is especially important for a Take
+        // postponed behind a crouched Seek: the live actor is crouched too,
+        // but the authored sequence stamp is the Original source of truth.
+        let posture_after_transition = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|element| element.posture_after_transition)
+            .unwrap_or(crate::element::Posture::Undefined);
         let order_type = match command {
             Command::DrinkAle => crate::order::OrderType::DrinkingAle,
             Command::Take if antagonist_is_net => crate::order::OrderType::TakingNet,
+            Command::Take
+                if owner_is_pc && posture_after_transition == crate::element::Posture::Crouched =>
+            {
+                crate::order::OrderType::TakingCrouched
+            }
             Command::Take => crate::order::OrderType::Taking,
             _ => unreachable!(),
         };

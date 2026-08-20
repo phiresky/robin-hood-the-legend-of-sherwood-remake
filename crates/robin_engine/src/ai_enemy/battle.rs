@@ -1076,7 +1076,8 @@ impl EnemyAi {
                 self.base.say(Remark::HuntsEnemy);
                 // Re-predict missed PC's destination before seeking.
                 if let Some(prepared) = &tick.missed_pc_forecast {
-                    let forecast = prepared.resolve(sim);
+                    let forecast = prepared
+                        .resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
                     self.base.seek_position = forecast.position;
                     self.pc_gone_away_in_this_direction = forecast.direction;
                 }
@@ -2373,19 +2374,24 @@ impl EnemyAi {
             return;
         }
 
-        // Unconditional seek_position = Position(enemy). Prefer the
-        // per-tick fighter snapshot, but fall back to the engine entity
-        // view so we never re-use a stale `seek_position` from a
-        // previous state.
-        let enemy_pos = tick
-            .nearby_fighters
-            .iter()
-            .find(|f| f.handle == enemy)
-            .map(|f| f.position)
-            .or_else(|| ctx.entity_view(enemy).map(|v| v.position));
-        if let Some(p) = enemy_pos {
-            self.base.seek_position = p;
-        }
+        // Unconditional `mposSeekPosition = Position(pEnemy)`. When the
+        // selected enemy is the target for which this tick was built, the
+        // target-specific snapshot is the authoritative result of that exact
+        // call (including door/carrier semantics). A generic fighter snapshot
+        // may have been sampled at an earlier owner boundary and must not win
+        // merely because it contains the same handle.
+        let enemy_pos = if enemy == tick.primary_target_snapshot_handle {
+            tick.primary_target_position
+                .unwrap_or_else(|| panic!("AttackEnemy target {enemy} has no Position() snapshot"))
+        } else {
+            tick.nearby_fighters
+                .iter()
+                .find(|fighter| fighter.handle == enemy)
+                .map(|fighter| fighter.position)
+                .or_else(|| ctx.entity_view(enemy).map(|view| view.position))
+                .unwrap_or_else(|| panic!("AttackEnemy target {enemy} disappeared"))
+        };
+        self.base.seek_position = enemy_pos;
 
         // primary_target then emoticon.
         self.base.primary_target = enemy;
@@ -2895,6 +2901,34 @@ impl EnemyAi {
         // this GoNear prefix. An older matching notification can legitimately
         // still be queued by a recursive caller.
         let owner_work_before_approach = self.base.outbox.reentrant.owner_work.len();
+        let mut same_substate_route_split = false;
+
+        // Original GoNear has finished constructing (or rejecting) its route
+        // before the following SetState call starts.  A changed-substate
+        // SetState captures that prefix in its StateChange notification.  A
+        // same-substate SetState has no notification, so split the prefix here
+        // instead; otherwise its later SetAttentiveMode tail gets batched in
+        // front of the movement by Rust's field-oriented actor drain.
+        let split_same_substate_route_before_set_state =
+            |this: &mut Self, incoming_substate: Substate| {
+                if this.base.current_state != AiState::Attacking
+                    || this.base.current_substate != incoming_substate
+                {
+                    return false;
+                }
+                assert!(
+                    this.base.outbox.actor.has_boundary_work(),
+                    "same-substate reconsider approach lost its GoNear prefix"
+                );
+                this.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                        &mut this.base.outbox.actor,
+                    )));
+                true
+            };
 
         // Not below run distance: charge or run.
         if !b_below_run_distance {
@@ -2911,6 +2945,10 @@ impl EnemyAi {
                     self.begin_swordfight(ctx, tick);
                     return;
                 }
+                same_substate_route_split |= split_same_substate_route_before_set_state(
+                    self,
+                    Substate::AttackingChargingEnemy,
+                );
                 self.set_state(AiState::Attacking, Substate::AttackingChargingEnemy);
                 self.base.launch_timer(10, ctx.frame);
             } else {
@@ -2926,6 +2964,10 @@ impl EnemyAi {
                     self.begin_swordfight(ctx, tick);
                     return;
                 }
+                same_substate_route_split |= split_same_substate_route_before_set_state(
+                    self,
+                    Substate::AttackingRunningToEnemy,
+                );
                 self.set_state(AiState::Attacking, Substate::AttackingRunningToEnemy);
                 self.base.launch_timer(10, ctx.frame);
             }
@@ -2954,6 +2996,10 @@ impl EnemyAi {
                     self.begin_swordfight(ctx, tick);
                     return;
                 }
+                same_substate_route_split |= split_same_substate_route_before_set_state(
+                    self,
+                    Substate::AttackingRunningToEnemy,
+                );
                 self.set_state(AiState::Attacking, Substate::AttackingRunningToEnemy);
                 self.base.launch_timer(10, ctx.frame);
             } else {
@@ -2974,6 +3020,10 @@ impl EnemyAi {
                     self.begin_swordfight(ctx, tick);
                     return;
                 }
+                same_substate_route_split |= split_same_substate_route_before_set_state(
+                    self,
+                    Substate::AttackingWalkingToEnemy,
+                );
                 self.set_state(AiState::Attacking, Substate::AttackingWalkingToEnemy);
                 self.base.launch_timer(10, ctx.frame);
             }
@@ -2999,24 +3049,28 @@ impl EnemyAi {
             // actor prefix for its callback barrier; lift it into an explicit
             // earlier owner boundary so route construction is not deferred
             // with ordinary sequence instruction.
-            let state_change_index = self
-                .base
-                .outbox
-                .reentrant
-                .owner_work
-                .iter()
-                .enumerate()
-                .skip(owner_work_before_approach)
-                .rev()
-                .find_map(|(index, work)| {
-                    matches!(
-                        work,
-                        crate::ai::AiOwnerWork::StateChange(notification)
-                            if notification.incoming_state == self.base.current_state
-                                && notification.incoming_substate == self.base.current_substate
-                    )
-                    .then_some(index)
-                });
+            let state_change_index = if same_substate_route_split {
+                None
+            } else {
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .iter()
+                    .enumerate()
+                    .skip(owner_work_before_approach)
+                    .rev()
+                    .find_map(|(index, work)| {
+                        matches!(
+                            work,
+                            crate::ai::AiOwnerWork::StateChange(notification)
+                                if notification.incoming_state == self.base.current_state
+                                    && notification.incoming_substate
+                                        == self.base.current_substate
+                        )
+                        .then_some(index)
+                    })
+            };
             if let Some(state_change_index) = state_change_index {
                 let route_effects =
                     match &mut self.base.outbox.reentrant.owner_work[state_change_index] {
@@ -3030,7 +3084,7 @@ impl EnemyAi {
                     state_change_index,
                     crate::ai::AiOwnerWork::ActorEffects(route_effects),
                 );
-            } else {
+            } else if !same_substate_route_split {
                 // SetState deliberately omits FilterAIEvent when the selected
                 // substate is unchanged. GoNear therefore remains in the live
                 // actor outbox, but Original still constructs it synchronously
@@ -3094,6 +3148,13 @@ impl EnemyAi {
         avenger_wait_position: Option<Position>,
         ctx: &AiContext,
     ) {
+        let halt_roof_fallback_after_launch = std::mem::take(
+            &mut self
+                .base
+                .outbox
+                .reentrant
+                .reconsider_approach_replaced_path_waiter,
+        );
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
@@ -3144,6 +3205,19 @@ impl EnemyAi {
             GotoFlags::RUN,
             ctx,
         );
+        // When the failed approach replaced a live MoveWaiting, Original still
+        // observes that command in this recursive GoTo's final
+        // `IsComputingPath()` check. It launches the roof sequence and then
+        // Halt removes it from the manager FIFO before instruction. A failure
+        // constructed from an ordinary Wait skips that tail Halt and the roof
+        // sequence starts this frame.
+        self.base
+            .outbox
+            .actor
+            .orders
+            .last_mut()
+            .expect("avenger-on-roof fallback GoNear did not emit an order")
+            .halt_after_launch_for_path_waiter = halt_roof_fallback_after_launch;
         // The wait position is only the reachable staging point. Original
         // keeps the actual avenger position for the later face/wait behavior.
         self.base.seek_position = target_position;
@@ -3770,7 +3844,7 @@ impl EnemyAi {
     // BeginSwordfight
     // -----------------------------------------------------------------------
 
-    pub fn begin_swordfight(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
+    pub fn begin_swordfight(&mut self, ctx: &AiContext, _tick: &AiPerTickData) {
         if self.base.primary_target == 0 {
             tracing::warn!(
                 current_state = ?self.base.current_state,
@@ -3781,7 +3855,7 @@ impl EnemyAi {
         }
         tracing::info!(
             target = self.base.primary_target,
-            jump_line = ?tick.primary_target_jump_line,
+            jump_line = ?self.my_line_jump,
             "Enemy AI: entering swordfight"
         );
         self.base.stop_all();
@@ -3791,8 +3865,10 @@ impl EnemyAi {
         // EVENT_ENTER_SWORDFIGHT entry).
         self.nearby_civilians_panic();
 
-        self.left_combat_neighbour = 0;
-        self.right_combat_neighbour = 0;
+        // Original enters swordfight by calling both reciprocal Update*
+        // setters, not by dropping only this soldier's local pointers
+        // (RHartificialmalignity.cpp:7191-7192).
+        self.clear_combat_neighbours();
 
         // Release eye-tracking lock on swordfight entry so the soldier's
         // focus arrow / cone stops chasing the previous focus target.
@@ -3817,17 +3893,17 @@ impl EnemyAi {
         // `EngineInner::dispatch_enter_swordfight` and
         // `EngineInner::enter_swordfight_with_jump_line`.
 
-        // Store the jump-line for the ENTER_SWORDFIGHT handler
-        // (RHFIELD_JUMPLINE_DESTINATION).
-        self.my_line_jump = tick.primary_target_jump_line;
-
         // Tell the engine to call enter_swordfight(me, target) so both
         // entities get added to each other's opponent lists and action
-        // states transition to sword combat. The jump-line index is
-        // passed alongside for table-swordfight positioning.
+        // states transition to sword combat. Original BeginSwordfight reads
+        // the persistent `mpMyLineJump` selected by ReconsiderEnemyApproach;
+        // it does not recompute the line from the target's current position.
+        // The target may have moved away from the edge during the approach,
+        // but the retained line still has to become
+        // RHFIELD_JUMPLINE_DESTINATION on ENTER_SWORDFIGHT.
         self.base.outbox.actor.enter_swordfight =
             Some(EnterSwordfightRequest::Engage(self.base.primary_target));
-        self.base.outbox.actor.enter_swordfight_jump_line = tick.primary_target_jump_line;
+        self.base.outbox.actor.enter_swordfight_jump_line = self.my_line_jump;
 
         // VIPs use a different remark variant.
         if self.is_vip {
@@ -3990,6 +4066,67 @@ pub(crate) fn rider_charge_goal_geometry(
 mod tests {
     use super::*;
 
+    #[test]
+    fn begin_swordfight_publishes_reciprocal_combat_neighbour_clears() {
+        // RHArtificialMalignity::BeginSwordfight clears the formation with
+        // UpdateLeft/RightCombatNeighbour(NULL). Dropping only the local
+        // pointers leaves stale back-pointers that a later phalanx insertion
+        // can follow and use to detach a live chain.
+        let mut ai = EnemyAi::new(132);
+        ai.base.primary_target = 343;
+        ai.left_combat_neighbour = 131;
+        ai.right_combat_neighbour = 133;
+
+        ai.begin_swordfight(&AiContext::default(), &AiPerTickData::stub());
+
+        assert_eq!(ai.left_combat_neighbour, 0);
+        assert_eq!(ai.right_combat_neighbour, 0);
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [
+                CrossNpcAction::SetRightCombatNeighbour {
+                    target: 131,
+                    neighbour: 0,
+                },
+                CrossNpcAction::SetLeftCombatNeighbour {
+                    target: 133,
+                    neighbour: 0,
+                },
+            ]
+        ));
+    }
+
+    #[test]
+    fn begin_swordfight_retains_approach_jump_line_when_live_probe_is_none() {
+        // RHArtificialMalignity::ReconsiderEnemyApproach stores the chosen
+        // line in mpMyLineJump. BeginSwordfight later copies that member to
+        // RHFIELD_JUMPLINE_DESTINATION even if the victim has moved far enough
+        // that a fresh IsTableSwordfightNeeded probe would now return null.
+        let mut ai = EnemyAi::new(222);
+        ai.base.primary_target = 317;
+        ai.my_line_jump = Some(19);
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_jump_line = None;
+
+        ai.begin_swordfight(&AiContext::default(), &tick);
+
+        assert_eq!(ai.my_line_jump, Some(19));
+        let staged = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .find_map(|work| match work {
+                AiOwnerWork::StateChange(notification) => {
+                    notification.actor_effects_before_callback.as_ref()
+                }
+                _ => None,
+            })
+            .expect("BeginSwordfight actor effects must precede its SetState callback");
+        assert_eq!(staged.enter_swordfight_jump_line, Some(19));
+    }
+
     /// nicouzouf Savegame_047 replay-004, frame 563: Soldier51 (a rider in
     /// AttackingReactiontimeRunning) plans a charge approach against Pc76.
     /// Inputs captured bit-exact from the parity replay. The Original's
@@ -4098,6 +4235,49 @@ mod tests {
         view.detection_position_world =
             crate::coordinates::WorldPoint3D::new(position.x, position.y, 0.0);
         view
+    }
+
+    #[test]
+    fn attack_enemy_prefers_matching_position_snapshot_over_fighter_geometry() {
+        // RHArtificialMalignity::AttackEnemy writes
+        // `mposSeekPosition = Position(pEnemy)`. The target-specific tick
+        // field is that source read; nearby-fighter geometry can represent an
+        // older owner boundary and must not replace it for the same handle.
+        let mut ai = EnemyAi::new(104);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+
+        let authoritative = Position {
+            x: 1578.1302,
+            y: 1894.2336,
+            sector: crate::position_interface::SectorHandle::new(119),
+            level: 8,
+        };
+        let stale_fighter_position = Position {
+            x: 1524.8396,
+            y: 1704.1648,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 252;
+        tick.primary_target_position = Some(authoritative);
+        tick.nearby_fighters.push(FighterSnapshot {
+            handle: 252,
+            position: stale_fighter_position,
+            ..FighterSnapshot::default()
+        });
+        // Force ReconsiderEnemyApproach's already-fighting early return so
+        // the assertion observes AttackEnemy's assignment directly.
+        let ctx = AiContext {
+            is_swordfighting: true,
+            ..AiContext::default()
+        };
+
+        ai.attack_enemy(252, None, &ctx, &tick, None);
+
+        assert_eq!(ai.base.primary_target, 252);
+        assert_eq!(ai.base.seek_position, authoritative);
     }
 
     fn reconsider_approach_lift_grid() -> crate::fast_find_grid::FastFindGrid {
@@ -4928,6 +5108,24 @@ mod tests {
             })
             .expect("route completion must resume the source statement");
         assert!(actor_effects_index < resume_index);
+        let attentive_effects_index = work
+            .iter()
+            .enumerate()
+            .skip(actor_effects_index + 1)
+            .find_map(|(index, work)| match work {
+                crate::ai::AiOwnerWork::ActorEffects(effects)
+                    if effects.set_attentive_mode.map(|effect| effect.target) == Some(true) =>
+                {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .expect("same-substate SetState tail must remain after the GoNear boundary");
+        assert!(attentive_effects_index < resume_index);
+        let crate::ai::AiOwnerWork::ActorEffects(route_effects) = &work[actor_effects_index] else {
+            unreachable!()
+        };
+        assert!(route_effects.set_attentive_mode.is_none());
         assert!(ai.base.outbox.actor.orders.is_empty());
         assert!(
             ai.base
@@ -4975,6 +5173,48 @@ mod tests {
         assert_eq!(order.target_sector, wait_position.sector);
         assert_eq!(order.target_layer, Some(wait_position.level));
         assert_eq!(order.tolerance, 50.0);
+        assert!(
+            !order.defer_instruction,
+            "an ordinary synchronous route failure instructs its roof fallback this frame"
+        );
+    }
+
+    #[test]
+    fn failed_reconsider_approach_replacing_path_waiter_halts_roof_after_launch() {
+        let mut ai = EnemyAi::new(205);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.primary_target = 298;
+        ai.base.couldnt_reachpoint = true;
+        ai.base
+            .outbox
+            .reentrant
+            .reconsider_approach_replaced_path_waiter = true;
+
+        ai.resume_reconsider_enemy_approach_after_go_near(
+            Position {
+                x: 264.0,
+                y: 1358.0,
+                ..Position::default()
+            },
+            Some(Position {
+                x: 250.0,
+                y: 1200.0,
+                sector: crate::position_interface::SectorHandle::new(64),
+                level: 1,
+            }),
+            &AiContext::default(),
+        );
+
+        assert!(ai.base.outbox.actor.orders[0].halt_after_launch_for_path_waiter);
+        assert!(!ai.base.outbox.actor.orders[0].defer_instruction);
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .reconsider_approach_replaced_path_waiter,
+            "path-waiter provenance is one-shot"
+        );
     }
 
     #[test]

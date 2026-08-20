@@ -9,6 +9,7 @@ fi
 output=$1
 retired_file=docs/PARITY_RETIRED_SAVES.txt
 retired_trace_file=docs/PARITY_RETIRED_TRACES.txt
+seed_snapshot=parity-save-replays/seed1000000-final-20260818.snapshot
 old_corpus=parity-save-replays/60s-random-input/schema12
 corpora=(
     parity-save-replays/60s-random-input/schema14
@@ -20,6 +21,7 @@ replacement_corpora=(
     parity-save-replays/30s-random-input/schema15-replacements-20260817
     parity-save-replays-legacy/10s-no-input-schema15-replacements-20260817
     parity-save-replays/60s-random-input/schema16-replacements-20260818
+    parity-save-replays/60s-random-input/schema16-seed1000000-replacements-20260818
 )
 
 if [[ ! -f "$retired_file" ]]; then
@@ -28,6 +30,10 @@ if [[ ! -f "$retired_file" ]]; then
 fi
 if [[ ! -f "$retired_trace_file" ]]; then
     printf 'error: retired-trace manifest does not exist: %s\n' "$retired_trace_file" >&2
+    exit 2
+fi
+if [[ ! -f "$seed_snapshot" ]]; then
+    printf 'error: curated seed-1000000 snapshot does not exist: %s\n' "$seed_snapshot" >&2
     exit 2
 fi
 for corpus in "$old_corpus" "${corpora[@]}" "${replacement_corpora[@]}"; do
@@ -83,16 +89,26 @@ for corpus in "${corpora[@]}"; do
     done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
 done | sort >> "$snapshot_tmp"
 
-# Current schema-15/schema-16 recaptures supersede retired traces and belong in
-# the authoritative sweep even though their historical paths are deny-listed.
-# The separate schema14-seed1000000-20260814 campaign is intentionally absent;
-# it is validated in its own later pass.
+# Current schema-15/schema-16 recaptures supersede retired historical paths.
+# An exact replacement artifact can itself be retired after validation, so the
+# fully qualified deny-list still applies here.
 for corpus in "${replacement_corpora[@]}"; do
     while IFS= read -r -d '' trace; do
+        [[ ! -v "retired_traces[$trace]" ]] || continue
         trace_is_complete "$trace" || continue
         printf '%s\n' "$trace"
     done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
 done | sort >> "$snapshot_tmp"
+
+# The seed-1000000 campaign is curated separately because individual stale
+# schema-14 recordings can be replaced by schema-16 captures. Include that
+# already-audited authoritative set in the all-replay snapshot instead of
+# rediscovering the raw seed corpus here.
+while IFS= read -r trace; do
+    [[ -n "$trace" ]] || continue
+    trace_is_complete "$trace" || continue
+    printf '%s\n' "$trace"
+done < "$seed_snapshot" >> "$snapshot_tmp"
 
 sort -u "$snapshot_tmp" -o "$snapshot_tmp"
 mv "$snapshot_tmp" "$output"

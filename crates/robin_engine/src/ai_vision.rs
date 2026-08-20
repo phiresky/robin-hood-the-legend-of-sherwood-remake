@@ -984,6 +984,18 @@ fn night_fog_shadow_sector_indices(
     reference: MapPoint,
     layer: u16,
 ) -> Vec<u32> {
+    // Original converts the clipped query-box bounds to signed 16-bit block
+    // coordinates in `RHFastFindGrid::GetSectors`.  On the shipped Linux
+    // capture, the indefinite conversion produced by a NaN reference does
+    // not visit a grid block.  Rust's saturating float-to-integer cast maps
+    // NaN to zero instead, which incorrectly walks cell (0, 0) and emits
+    // opaque light-source queries.  The NaN can legitimately originate from
+    // Original's unchecked zero-length combat step-back, so preserve the
+    // observed empty sector list rather than manufacturing cell-zero work.
+    if !reference.x.is_finite() || !reference.y.is_finite() {
+        return Vec::new();
+    }
+
     let level = &fast_grid.level;
     let query_box = crate::coordinates::MapBBox::from_coords(
         reference.x - 400.0,
@@ -2053,6 +2065,29 @@ mod tests {
         assert_eq!(
             night_fog_shadow_sector_indices(&grid, MapPoint::new(512.0, 512.0), 0),
             vec![selected]
+        );
+    }
+
+    #[test]
+    fn night_fog_light_lookup_does_not_map_nan_reference_to_cell_zero() {
+        let mut grid = crate::fast_find_grid::FastFindGrid::new();
+        grid.size_map(2, 2);
+        grid.allocate_layers(1);
+        grid.add_sector(
+            shadow_sector(
+                1,
+                vec![
+                    MapPoint::new(0.0, 0.0),
+                    MapPoint::new(63.0, 0.0),
+                    MapPoint::new(63.0, 63.0),
+                    MapPoint::new(0.0, 63.0),
+                ],
+            ),
+            0,
+        );
+
+        assert!(
+            night_fog_shadow_sector_indices(&grid, MapPoint::new(f32::NAN, f32::NAN), 0).is_empty()
         );
     }
 

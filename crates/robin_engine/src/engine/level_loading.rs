@@ -3769,6 +3769,7 @@ impl EngineInner {
                         layer_in: raw.layer_in,
                         sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
                         sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
+                        owning_lift_sector: None,
                         gate_links: Vec::new(),
                         click_polygon: raw
                             .door_sector
@@ -3848,6 +3849,15 @@ impl EngineInner {
                         layer_in: raw.layer_in,
                         sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
                         sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
+                        // `RHSectorLift` owns every door embedded in this
+                        // CHUNK_LIFT record. The owning sector is the chunk's
+                        // `uwSector` (`motion_area_index` here), not
+                        // necessarily the door's `sector_in`: wall-lift data
+                        // can route an embedded door through a distinct
+                        // associated sector.
+                        owning_lift_sector: Some(crate::sector::SectorNumber::new(
+                            lift.motion_area_index as i16,
+                        )),
                         click_polygon: raw
                             .door_sector
                             .points
@@ -5094,6 +5104,7 @@ mod lift_endpoint_tests {
     fn lift_door(lift_sector: SectorNumber, point_in: MapPoint, point_out: MapPoint) -> Door {
         Door {
             sector_in: lift_sector,
+            owning_lift_sector: Some(lift_sector),
             point_in,
             point_out,
             ..Door::default()
@@ -5139,6 +5150,24 @@ mod lift_endpoint_tests {
         ];
 
         assert_eq!(lift_endpoint_door_indices(&doors, lift), Some((1, 0)));
+    }
+
+    #[test]
+    fn lift_endpoint_identity_excludes_foreign_door_entering_same_sector() {
+        let lift = SectorNumber::new(42);
+        let mut foreign = Door {
+            sector_in: lift,
+            point_out: MapPoint::new(30.0, 101.0),
+            ..Door::default()
+        };
+        foreign.owning_lift_sector = None;
+        let doors = vec![
+            foreign,
+            lift_door(lift, MapPoint::new(10.0, 10.0), MapPoint::new(10.0, 10.0)),
+            lift_door(lift, MapPoint::new(20.0, 100.0), MapPoint::new(20.0, 100.0)),
+        ];
+
+        assert_eq!(lift_endpoint_door_indices(&doors, lift), Some((2, 1)));
     }
 
     #[test]

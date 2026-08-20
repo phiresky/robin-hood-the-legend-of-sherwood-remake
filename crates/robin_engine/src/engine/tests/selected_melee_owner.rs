@@ -422,6 +422,10 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
         .push(later_principal);
     for principal in [earlier_principal, later_principal] {
         set_map_position(&mut engine, principal, 500.0, 500.0);
+        // Reactive strike proposal reads the principal opponent's current
+        // sprite timing.  These synthetic inactive duel links still need a
+        // real row, just like a loaded actor profile does.
+        bind_animation(&mut engine, principal, OrderType::WaitingSword);
         engine
             .get_entity_mut(principal)
             .unwrap()

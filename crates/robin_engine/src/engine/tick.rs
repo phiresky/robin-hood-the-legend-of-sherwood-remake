@@ -905,6 +905,49 @@ pub(super) enum ExecuteOwnerFamily {
     WaitingSword,
 }
 
+/// Whether the entry-latched Human::Execute arm reaches the synchronous
+/// `WAITING_SWORD` swordfight work.
+///
+/// Original keys this work to the selected order after the common execution-
+/// freeze and validity exits; it is not conditional on a later sprite helper
+/// returning a completion record (`RHelementactorhuman.cpp:3729-3741`).
+fn waiting_sword_execute_reaches_evaluation(
+    selected_order_type: Option<crate::order::OrderType>,
+    validity_short_circuited: bool,
+    execution_frozen: bool,
+) -> bool {
+    selected_order_type == Some(crate::order::OrderType::WaitingSword)
+        && !validity_short_circuited
+        && !execution_frozen
+}
+
+#[cfg(test)]
+#[test]
+fn waiting_sword_evaluation_follows_entry_latched_execute_arm() {
+    use crate::order::OrderType;
+
+    assert!(waiting_sword_execute_reaches_evaluation(
+        Some(OrderType::WaitingSword),
+        false,
+        false,
+    ));
+    assert!(!waiting_sword_execute_reaches_evaluation(
+        Some(OrderType::WaitingSword),
+        true,
+        false,
+    ));
+    assert!(!waiting_sword_execute_reaches_evaluation(
+        Some(OrderType::WaitingSword),
+        false,
+        true,
+    ));
+    assert!(!waiting_sword_execute_reaches_evaluation(
+        Some(OrderType::WaitingUpright),
+        false,
+        false,
+    ));
+}
+
 /// Return the canonical order installed by `TranslateCommand` for the active
 /// ability.  Execute-owner selection must match that order, even when an
 /// ability later asks the sprite to perform a different animation.  In
@@ -2452,18 +2495,19 @@ impl EngineInner {
         GameCode::LevelInProgress
     }
 
-    /// Drain effects deferred by the preceding tick before any mission,
-    /// entity, path, NPC, or sequence work observes this frame's state.
+    /// Consume the host sound-manager update that completed after the
+    /// preceding Original engine frame.
     ///
-    /// Original provenance: `original-code/RHengine.cpp:3446-3548` starts
-    /// `RHEngine::PerformHourglass` with host/widget and mission-state work.
-    /// These Rust-owned queues have no one-to-one original equivalent; their
-    /// relative placement is retained from the pre-decomposition Rust tick.
-    pub(super) fn hourglass_phase_deferred_effects_start(
+    /// Parity traces attach these between-frame resolutions to the following
+    /// frame record: `RHGame` records the engine frame before calling
+    /// `RHSound::Hourglass` (`original-code/RHgame.cpp:1879-1915`). Replay
+    /// must therefore be able to run this boundary before applying the
+    /// following frame's recorded input commands.
+    pub(super) fn hourglass_phase_sound_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) -> bool {
+    ) {
         // Sound Hourglass completes after the preceding Engine frame in the
         // Original. Its callbacks therefore finish before the next
         // PerformHourglass begins and must be the first mutation here.
@@ -2473,6 +2517,12 @@ impl EngineInner {
         // sound list. That callback may synchronously Think/Say and append a
         // request which a later resolution in this same boundary consumes.
         self.settle_npc_speech_completions(sim, assets);
+        let replay_injected_resolutions = std::mem::take(
+            &mut self
+                .feedback
+                .sound_sim
+                .replay_injected_resolved_exclamations,
+        );
         let resolutions = std::mem::take(&mut self.feedback.sound_sim.resolved_exclamations);
         for resolution in resolutions {
             self.debug_speech_lifecycle(
@@ -2484,30 +2534,47 @@ impl EngineInner {
                     resolution.duration_frames,
                 ),
             );
-            let pending = self
+            if let Some(pending) = self
                 .feedback
                 .sound_sim
                 .pending_exclamations
                 .first()
                 .cloned()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "sound manager resolved exclamation {} for actor {} with no pending request",
-                        resolution.exclamation_id, resolution.actor_id
-                    )
-                });
-            assert_eq!(
-                (pending.actor_id, pending.exclamation_id),
-                (resolution.actor_id, resolution.exclamation_id),
-                "sound-manager resolution order diverged; pending FIFO: {:?}",
-                self.feedback.sound_sim.pending_exclamations
-            );
-            assert_eq!(
-                (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id),
-                resolution.identifier,
-                "sound manager resolved a different speech profile than the pending request"
-            );
-            self.feedback.sound_sim.pending_exclamations.remove(0);
+            {
+                assert_eq!(
+                    (pending.actor_id, pending.exclamation_id),
+                    (resolution.actor_id, resolution.exclamation_id),
+                    "sound-manager resolution order diverged; pending FIFO: {:?}",
+                    self.feedback.sound_sim.pending_exclamations
+                );
+                assert_eq!(
+                    (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id),
+                    resolution.identifier,
+                    "sound manager resolved a different speech profile than the pending request"
+                );
+                self.feedback.sound_sim.pending_exclamations.remove(0);
+            } else {
+                assert!(
+                    replay_injected_resolutions,
+                    "live sound manager resolved exclamation {} for actor {} with no pending request",
+                    resolution.exclamation_id, resolution.actor_id
+                );
+                // This is an explicit `resolved_exclamations` event recorded
+                // by `RHParity::RecordResolvedExclamation` inside Original's
+                // host-owned pending-sound loop (`original-code/RHsound.cpp:
+                // 2150-2255`), not a request inferred by Rust. Preserve that
+                // authoritative host playback/completion timing, but do not
+                // invent a Rust AI current-remark latch. The eventual callback
+                // is consequently stale unless Rust independently has the
+                // matching logical speech state.
+                tracing::warn!(
+                    actor_id = resolution.actor_id,
+                    exclamation_id = resolution.exclamation_id,
+                    identifier = resolution.identifier,
+                    duration_frames = resolution.duration_frames,
+                    "replay injected an authoritative Original host exclamation with no Rust logical request"
+                );
+            }
             if resolution.duration_frames == 0 {
                 self.feedback
                     .sound_sim
@@ -2524,6 +2591,22 @@ impl EngineInner {
                 );
             }
         }
+    }
+
+    /// Drain effects deferred by the preceding tick before any mission,
+    /// entity, path, NPC, or sequence work observes this frame's state.
+    ///
+    /// Original provenance: `original-code/RHengine.cpp:3446-3548` starts
+    /// `RHEngine::PerformHourglass` with host/widget and mission-state work.
+    /// These Rust-owned queues have no one-to-one original equivalent; their
+    /// relative placement is retained from the pre-decomposition Rust tick.
+    pub(super) fn hourglass_phase_deferred_effects_start(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> bool {
+        self.hourglass_phase_sound_boundary(sim, assets);
+        let cur_frame = self.control.frame_counter;
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in
         // `Game::run_engine_tick` because they needed `&mut LevelAssets`
@@ -4801,9 +4884,24 @@ impl EngineInner {
                         // returning its motion result to Actor::Hourglass. Keep
                         // launches and cross-actor mutations live so later slots
                         // observe them and earlier slots do not.
-                        if execute_result.as_ref().is_some_and(|result| {
-                            result.order_type == crate::order::OrderType::WaitingSword
-                        }) {
+                        // This is part of Human::Execute's selected
+                        // WAITING_SWORD arm, not an animation-completion
+                        // callback.  In particular, the arm still runs when
+                        // the generic sprite helper has no completion record
+                        // for this slot.  Key it to Actor::Hourglass's
+                        // entry-latched order, as Original does, while keeping
+                        // the two Execute entry exits above intact.
+                        let execution_frozen = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .and_then(Entity::actor_data)
+                            .is_some_and(|actor| actor.execution_frozen);
+                        if waiting_sword_execute_reaches_evaluation(
+                            selected_order_type,
+                            validity_short_circuited,
+                            execution_frozen,
+                        ) {
                             self.tick_waiting_sword_execute_for(sim, assets, entity_id);
                         }
 
@@ -6600,17 +6698,18 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
+        action: crate::order::OrderType,
     ) {
         use crate::coordinates::MapPoint;
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType as OT;
 
-        let Some((door_index, action, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
+        let Some((door_index, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
             entity.actor_data().and_then(|actor| {
                 actor
                     .active_door_pass
                     .as_ref()
-                    .map(|dp| (dp.door_index, dp.current_action, entity.is_pc()))
+                    .map(|dp| (dp.door_index, entity.is_pc()))
             })
         }) else {
             return;
@@ -7010,12 +7109,33 @@ impl EngineInner {
     }
 
     fn drain_seq_impossible(&mut self, seq_impossible: Vec<(crate::sequence::SequenceId, usize)>) {
-        // ABORTED motion result: set the sequence element to
-        // IMPOSSIBLE.
         for (seq_id, elem_idx) in seq_impossible {
-            self.orders
+            let original_push_sentinel = self
+                .orders
                 .sequence_manager
-                .element_impossible(seq_id, elem_idx);
+                .get_element(seq_id, elem_idx)
+                .is_some_and(|element| {
+                    element.command == crate::element::Command::ReceiveSwordDamage
+                        && element.current_order().is_some_and(|order| {
+                            order.order_type == crate::order::OrderType::NonanimationEnd
+                        })
+                });
+
+            if original_push_sentinel {
+                // TranslatePushDamage accidentally authors a
+                // RHNONANIMATION_END stand-up order for a conscious,
+                // crouched-family stunning push. Base Actor::Execute returns
+                // ABORTED for that unknown action; the release build then
+                // sets even this NonInterruptable injury Impossible and
+                // synchronously releases its postponed successor.
+                self.orders
+                    .sequence_manager
+                    .element_impossible_from_execute(seq_id, elem_idx);
+            } else {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+            }
         }
     }
 
@@ -7068,7 +7188,15 @@ impl EngineInner {
         use super::movement::DoorPassAdvance;
 
         for entity_id in resume_door_pass {
-            self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
+            let Some(action) = self
+                .get_entity(entity_id)
+                .and_then(|entity| entity.actor_data())
+                .and_then(|actor| actor.active_door_pass.as_ref())
+                .map(|pass| pass.current_action)
+            else {
+                continue;
+            };
+            self.apply_door_pass_transition_completion_side_effects(assets, entity_id, action);
             // Advance through Transition / PassingDoor / Walk steps.
             // PassingDoor triggers fired here need to run through
             // `execute_pass_door` with `&mut self`, so we collect them
@@ -7302,6 +7430,14 @@ impl EngineInner {
             let now_empty = status.get_ammo(action) == 0;
             if now_empty {
                 self.disable_pc_action(assets, pc_id, action);
+                // RHElementActorPC::DecreaseAmmoAmount uses its default
+                // bSpeak=true here: after disabling the emptied action it
+                // queues HERO_OUT_OF_AMMO, except on the Sherwood hub map.
+                // Keep this after bottle creation/detection and inventory
+                // consumption, matching RHANIMATION_DROPPING_ALE's DONE arm.
+                if !self.is_sherwood(&assets.profile_manager) {
+                    self.hero_speaking(assets, pc_id, crate::engine::melee::HERO_OUT_OF_AMMO);
+                }
             }
             tracing::debug!(
                 pc = ?pc_id,
@@ -8593,6 +8729,34 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
+    fn ladder_fall_wait_owns_legacy_scalar_over_dormant_seek() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Moving));
+        let actor = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+
+        // A swordstrike post-seek may remain attached while a non-interruptible
+        // ladder/wall fall runs. Original's FallingLadderWall Execute arm owns
+        // the single mulWaitTime scalar for the flight countdown in this state.
+        actor.seek_target = Some(owner);
+        actor.post_seek_sequence = Some(Box::new(crate::sequence::Sequence::new()));
+        actor.seek_refresh_wait = 0;
+        actor.wait_time = 2;
+        actor.active_flight = Some(crate::element::ActiveFlight {
+            frames_remaining: 2,
+            ladder_fall: true,
+            ..crate::element::ActiveFlight::default()
+        });
+
+        assert_eq!(engine.actor_legacy_wait_time(owner), 2);
+    }
+
+    #[test]
     fn frozen_all_wait_timer_still_completes_in_owner_slot() {
         use crate::sequence::{Field, FieldValue};
 
@@ -9824,6 +9988,30 @@ mod soldier_take_drink_parity_tests {
     }
 
     #[test]
+    fn crouched_pc_take_uses_stamped_crouched_animation() {
+        let mut pc = make_pc_at(0.0, 0.0);
+        pc.element_data_mut().posture = Posture::Crouched;
+        let (engine, actor_id) = launch_interaction_and_tick(
+            Command::Take,
+            pc,
+            make_bonus_object_at(ObjectType::BonusPurse, 10.0, 0.0),
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(actor_id)
+                .expect("crouched PC remains present")
+                .actor_data()
+                .expect("crouched PC retains actor data")
+                .installed_order
+                .as_ref()
+                .map(|order| order.order_type),
+            Some(OrderType::TakingCrouched),
+            "PC Translate(Take) must use the interaction element's Crouched post-transition stamp"
+        );
+    }
+
+    #[test]
     fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
@@ -10027,6 +10215,17 @@ mod drop_ammo_merge_tests {
                 .get_ammo(Action::Ale),
             0,
             "DropAle DONE must consume one ale at the action point"
+        );
+        assert_eq!(
+            engine
+                .feedback
+                .sound_sim
+                .pending_exclamations
+                .iter()
+                .map(|pending| (pending.actor_id, pending.exclamation_id))
+                .collect::<Vec<_>>(),
+            vec![(pc_id.index(), crate::engine::melee::HERO_OUT_OF_AMMO)],
+            "the last ale must synchronously queue HERO_OUT_OF_AMMO"
         );
         let ale_id = engine
             .world

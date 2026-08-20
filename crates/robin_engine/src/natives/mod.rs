@@ -1345,6 +1345,7 @@ impl NativeContext<'_, '_> {
                 layer,
                 gate_id,
                 flags,
+                direction,
                 speed_factor: sf,
                 ..
             } = &mut pass.data
@@ -1353,8 +1354,13 @@ impl NativeContext<'_, '_> {
                 *layer = shot.exit_layer;
                 *gate_id = Some(shot.door_index);
                 // Original PASS_DOOR constructor uses default flags
-                // and only attaches the gate via SetGate.
+                // and only attaches the gate via SetGate. SetGate preserves
+                // the path-local RHGate::mbDirect value in mswDirection;
+                // RHArtificialIntelligence::Position reads it while the
+                // PassDoor is selected (RHSequenceElementMovement.cpp:394,
+                // RHartificialintelligence.cpp:4358).
                 *flags = MoveFlags::empty();
+                *direction = i16::from(shot.direct);
                 *sf = speed_factor;
             }
             self.record_seq_step(pass, emit_count == 0);

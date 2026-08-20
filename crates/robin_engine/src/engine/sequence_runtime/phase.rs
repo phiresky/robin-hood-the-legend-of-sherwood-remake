@@ -1,6 +1,74 @@
 use super::*;
 
 impl EngineInner {
+    /// Detect the one manager-FIFO inversion produced when a completed player
+    /// movement publishes its posture-recovery tail beside a newly launched
+    /// cross-sector move.
+    ///
+    /// Original instructs the new route's first Move before the recovery
+    /// EquipBow takes ownership. The Move consequently queues a path request;
+    /// EquipBow then postpones MoveWaiting and `CancelPathRequest` retains the
+    /// queue head for one invalid completion. Rust normally sees the recovery
+    /// first and postpones the still-untranslated Move, losing both path
+    /// events. Restrict the correction to a recovery order which has been
+    /// installed but never executed and to a Move immediately following the
+    /// route's leading AssertPosition.
+    pub(in crate::engine) fn fresh_recovery_blocker_after_route_assert(
+        &self,
+        owner: EntityId,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+    ) -> Option<(crate::sequence::SequenceId, usize)> {
+        use crate::element::Command;
+        use crate::sequence::{SequencePriority, SequenceState};
+
+        let incoming = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)?;
+        if incoming.command != Command::Move || element_index == 0 {
+            return None;
+        }
+        let route_assert = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index - 1)?;
+        if route_assert.command != Command::AssertPosition
+            || route_assert.state != SequenceState::Terminated
+        {
+            return None;
+        }
+
+        let (blocker_sequence, blocker_index) = self.current_sequence_element_for_actor(owner)?;
+        let blocker = self
+            .orders
+            .sequence_manager
+            .get_element(blocker_sequence, blocker_index)?;
+        if blocker.command != Command::EquipBow
+            || blocker.priority != SequencePriority::PostponeEverythingButInjuries
+            || blocker_index == 0
+        {
+            return None;
+        }
+        let recovery_predecessor = self
+            .orders
+            .sequence_manager
+            .get_element(blocker_sequence, blocker_index - 1)?;
+        if recovery_predecessor.command != Command::SpeakHeroReachDestination
+            || recovery_predecessor.state != SequenceState::Terminated
+        {
+            return None;
+        }
+
+        let current_order_id = blocker.current_order()?.order_id;
+        let actor = self.get_entity(owner)?.actor_data()?;
+        (actor
+            .installed_order
+            .is_some_and(|order| order.order_id == current_order_id)
+            && actor.last_execute_order_id != Some(current_order_id))
+        .then_some((blocker_sequence, blocker_index))
+    }
+
     /// Retry the front of a PC's legacy shoot list through the same
     /// Actor::Instruct admission stages used by the manager dispatcher.
     /// Returns the boolean result that `ProcessShootList` uses to decide
@@ -322,14 +390,17 @@ impl EngineInner {
                         flags,
                     ) {
                         // Original resumes Translate after RefreshSeek's
-                        // no-order return, rewrites SEEK to MOVE, and then
-                        // Actor::Instruct publishes IN_PROGRESS before it
-                        // discovers the empty order list. It clears
-                        // mpSequenceElement before SetState(TERMINATED), so
-                        // this element's condolence must not erase the goal
-                        // retained from the movement it replaced
-                        // (`RHelementactor.cpp:965-990,3150-3182,6217-6241`).
-                        if let Some(element) = self
+                        // early return and rewrites SEEK to MOVE. The return
+                        // only leaves the movement body empty: transition
+                        // generation has already run before priority
+                        // arbitration and may have populated the order list
+                        // (`RHelementactor.cpp:1379-1479, 6758-6771`). In that
+                        // case Actor::Instruct installs the transition and
+                        // leaves the Move IN_PROGRESS while the target passes
+                        // its door. Only a genuinely orderless element takes
+                        // the mpSequenceElement-clear / TERMINATED path
+                        // (`RHelementactor.cpp:1479-1498`).
+                        let retained_transition = if let Some(element) = self
                             .orders
                             .sequence_manager
                             .get_element_mut(sequence_id, element_index)
@@ -339,16 +410,24 @@ impl EngineInner {
                                     crate::sequence::SequenceState::Todo
                                         | crate::sequence::SequenceState::Postponed
                                 )
-                            })
-                        {
+                            }) {
                             element.command = Command::Move;
-                            self.world
-                                .entities
-                                .get_mut(owner)
-                                .and_then(Entity::actor_data_mut)
-                                .expect("accepted empty building Seek lost its actor")
-                                .continuation
-                                .motion_state = crate::sprite::MotionState::InProgress;
+                            !element.orders.is_empty()
+                        } else {
+                            false
+                        };
+                        self.world
+                            .entities
+                            .get_mut(owner)
+                            .and_then(Entity::actor_data_mut)
+                            .expect("accepted same-sector Seek lost its actor")
+                            .continuation
+                            .motion_state = crate::sprite::MotionState::InProgress;
+                        if retained_transition {
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(sequence_id, element_index);
+                        } else {
                             self.orders.sequence_manager.set_translating_element(None);
                             self.orders
                                 .sequence_manager
@@ -788,6 +867,32 @@ impl EngineInner {
                                 .get_element_mut(seq_id, elem_idx)
                         {
                             element.priority = priority;
+                        }
+                        // A cross-sector player route can reach this FIFO
+                        // immediately after the preceding movement published
+                        // its EquipBow recovery. Original translates the Move
+                        // first, then lets the fresh recovery postpone it. Its
+                        // queued path is therefore cancelled as the retained
+                        // head and reports an invalid completion next frame
+                        // (`RHpathfinder.cpp:533-577, 705-743`). Preserve that
+                        // real request lifecycle instead of postponing an
+                        // untranslated Move and fabricating a recorder event.
+                        if let Some((blocker_seq, blocker_idx)) =
+                            self.fresh_recovery_blocker_after_route_assert(owner, seq_id, elem_idx)
+                        {
+                            self.orders.sequence_manager.set_translating_element(Some((
+                                owner,
+                                crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+                            )));
+                            let barrier = self.dispatch_ordered_move_seek_instruct(
+                                sim, assets, owner, seq_id, elem_idx,
+                            );
+                            self.orders.sequence_manager.set_translating_element(None);
+                            if barrier == OwnerActionBarrier::Reach {
+                                self.engine_postpone(blocker_seq, blocker_idx, seq_id, elem_idx);
+                            }
+                            self.dispatch_condolations(sim, assets);
+                            break 'action;
                         }
                         // A redundant EnterSwordfight still replaces and
                         // terminates the selected Wait element, but Original's

@@ -305,6 +305,26 @@ pub struct AiController {
     #[serde(skip)]
     #[state_hash(skip)]
     pub open_end_think_frames: u8,
+    /// Subset of `open_end_think_frames` whose completion verdict is still
+    /// owned by the engine-side movement drain.  Original constructs a path
+    /// inside `GoTo`, before `EndThink`; Rust releases the AI borrow first,
+    /// so an immediately rejected path otherwise makes `EndThink` unwind
+    /// before the matching recursive EVENT_COULDNT_REACHPOINT is known.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    pub engine_deferred_end_think_frames: u8,
+    /// Whether the engine has actually settled the movement/order verdict
+    /// owned by `engine_deferred_end_think_frames`.
+    ///
+    /// Owner-work drains can encounter a generic completion surface while a
+    /// caller-tail GoTo is temporarily detached from the AI outbox.  The
+    /// absence of a failure at that intermediate surface is not a successful
+    /// path verdict: Original has not returned from AppendMoveToSequence yet.
+    /// Keep this explicit transient handshake so only the engine operation
+    /// that consumed the order may close the deferred EndThink frames.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    pub engine_completion_verdict_resolved: bool,
 
     // -- Macro system --
     /// Macro bytecode (if any) currently being executed.
@@ -555,6 +575,8 @@ impl Default for AiController {
             stop_before_end_of_path_distance: 0,
             think_recursion_depth: 0,
             open_end_think_frames: 0,
+            engine_deferred_end_think_frames: 0,
+            engine_completion_verdict_resolved: false,
             macro_command: Vec::new(),
             macro_command_offset: 0,
             macro_command_waypoint: None,
@@ -2194,6 +2216,10 @@ impl AiController {
             // decrement, so the frame stays open until the cascade's
             // innermost Think unwinds (see `open_end_think_frames`).
             self.open_end_think_frames = self.open_end_think_frames.saturating_add(1);
+        } else if self.defer_end_think_for_engine_completion() {
+            // The engine-side drain will either surface the recursively
+            // delivered completion or close this frame after a successful
+            // path authorization.
         } else {
             // Innermost Think of the cascade: unwind this frame together
             // with every still-open ancestor frame.
@@ -2204,6 +2230,43 @@ impl AiController {
                 .saturating_sub(open);
         }
         true
+    }
+
+    /// Keep the current Think frame alive until a queued movement/turn
+    /// intent has received its engine-owned synchronous completion verdict.
+    pub(crate) fn defer_end_think_for_engine_completion(&mut self) -> bool {
+        if !self.completion_latch_inside_think || self.outbox.actor.orders.is_empty() {
+            return false;
+        }
+        self.open_end_think_frames = self.open_end_think_frames.saturating_add(1);
+        self.engine_deferred_end_think_frames =
+            self.engine_deferred_end_think_frames.saturating_add(1);
+        self.engine_completion_verdict_resolved = false;
+        true
+    }
+
+    /// Publish that the engine has consumed the order whose synchronous
+    /// result an open EndThink frame is awaiting.  This is deliberately
+    /// independent of success/failure: the ordinary completion latches carry
+    /// the result, while this bit distinguishes a successful result from an
+    /// intermediate drain that simply has no result yet.
+    pub(crate) fn resolve_engine_completion_verdict(&mut self) {
+        if self.engine_deferred_end_think_frames != 0 {
+            self.engine_completion_verdict_resolved = true;
+        }
+    }
+
+    /// Close every frame kept alive solely for an engine-side completion
+    /// verdict. Called only once the drain produced no recursive event.
+    pub(crate) fn close_engine_deferred_end_think_frames(&mut self) {
+        if self.engine_deferred_end_think_frames == 0 {
+            return;
+        }
+        let open = std::mem::take(&mut self.open_end_think_frames);
+        self.think_recursion_depth = self.think_recursion_depth.saturating_sub(open);
+        self.engine_deferred_end_think_frames = 0;
+        self.engine_completion_verdict_resolved = false;
+        self.completion_latch_inside_think = false;
     }
 
     /// Broadcast a facing direction to every member of this NPC's patrol
@@ -3415,6 +3478,13 @@ impl AiController {
         ctx: &AiContext,
     ) -> bool {
         ctx.position == *destination
+            // This projection only repairs the phase split where Rust still
+            // publishes the outgoing transition order while the actor state
+            // remains on the movement it terminates.  Once Execute has
+            // changed the actor to Waiting, Original GetAnimation() still
+            // observes that live transition and its close-point GoTo gate
+            // must not pretend that the idle successor is installed.
+            && ctx.self_action_state.is_moving()
             && ctx.self_animation_motion_state != crate::sprite::MotionState::Start
             && matches!(
                 ctx.self_animation,
@@ -3478,13 +3548,15 @@ impl AiController {
     ///
     /// `RHSequenceElementMovement::StopMovement` retains exactly three base
     /// movement actions by rewriting them to their transition-to-wait twins.
-    /// The twins can already be visible in the cloned AI context after an
-    /// earlier owner barrier, so they are retained here as well. Every other
-    /// interruptible action falls through to `RHSEQ_INTERRUPTED`; an upright
-    /// soldier's default Wait then exposes `WAITING_UPRIGHT`,
-    /// `WAITING_ALERTED`, or `NONANIMATION_END`. A second Halt interrupts any
-    /// transition installed by the first.
-    fn pending_halt_exposes_goto_idle(&self, ctx: &AiContext) -> bool {
+    /// An already-installed upright transition is not one of those switch
+    /// cases: it falls through to `RHSEQ_INTERRUPTED`, and the actor's
+    /// synchronous condolence installs its upright default Wait before the
+    /// following Original GoTo reads `GetAnimation()`. A crouched transition
+    /// instead resolves to a crouched Wait, which is not accepted by GoTo's
+    /// idle switch. Every other interruptible upright action likewise exposes
+    /// `WAITING_UPRIGHT`, `WAITING_ALERTED`, or `NONANIMATION_END`. A second
+    /// Halt interrupts any transition installed by the first.
+    pub(crate) fn pending_halt_exposes_goto_idle(&self, ctx: &AiContext) -> bool {
         let halt_count = self.pending_actor_halt_count();
         if halt_count == 0
             || ctx.posture != crate::element::Posture::Upright
@@ -3537,8 +3609,6 @@ impl AiController {
             crate::order::OrderType::WalkingUpright
                 | crate::order::OrderType::RunningUpright
                 | crate::order::OrderType::WalkingCrouched
-                | crate::order::OrderType::TransitionWalkingUprightWaitingUpright
-                | crate::order::OrderType::TransitionRunningUprightWaitingUpright
                 | crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched
         )
     }
@@ -3961,15 +4031,53 @@ impl AiController {
         self.use_max_norm_to_stop_before_end_of_path = !flags.contains(GotoFlags::USE_NORM);
         self.stop_before_end_of_path_distance = effective_distance as u16;
 
-        // The near-distance early-out also requires same-layer — a
-        // different-layer destination falls through to the full launch
-        // path. Apply that gate here before `go_to`'s own MaxNorm-5
-        // check fires, since `go_to`'s check has no layer guard and the
-        // tolerance argument we'd want isn't visible downstream.
+        // Preserve the GOTO_NEAR state which the ordinary GoTo overload
+        // observes after its generic close-idle shortcut.
         self.last_goto_destination = destination;
         self.last_goto_flags = flags | GotoFlags::NEAR;
         self.couldnt_reachpoint = false;
         self.completion_latch_inside_think = self.think_recursion_depth > 0;
+
+        // GoNear stores its stop distance and then calls the ordinary GoTo
+        // overload with GOTO_NEAR.  Consequently GoTo's five-pixel idle
+        // shortcut runs before the separate near-tolerance test
+        // (`RHArtificialintelligence.cpp:2344-2393`).  This is observable
+        // when a terminal movement card has detached the actor's order:
+        // GetAnimation() is NONANIMATION_END during the re-entrant Think, so
+        // even a zero-distance GoNear reports EVENT_REACHPOINT instead of
+        // launching a replacement Move.
+        let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
+            || Self::outgoing_wait_transition_at_exact_destination(&destination, ctx)
+            || (ctx.self_animation_reached_action_done
+                && matches!(
+                    ctx.self_animation,
+                    crate::order::OrderType::TransitionWalkingUprightWaitingUpright
+                        | crate::order::OrderType::TransitionRunningUprightWaitingUpright
+                        | crate::order::OrderType::TransitionWalkingAlertedWaitingAlerted
+                        | crate::order::OrderType::TransitionRunningAlertedWaitingAlerted
+                ))
+            || matches!(
+                ctx.self_animation,
+                crate::order::OrderType::WaitingUpright
+                    | crate::order::OrderType::WaitingAlerted
+                    | crate::order::OrderType::NonanimationEnd
+            );
+        let may_short_circuit =
+            idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
+        if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
+            self.finish_already_on_point();
+            if debug_decision_path {
+                eprintln!(
+                    "AIDECISION frame={} owner={} stage=go_near_result result=already_on_point effective_distance={} couldnt={} already={}",
+                    ctx.frame,
+                    self.me,
+                    effective_distance,
+                    self.couldnt_reachpoint,
+                    self.already_on_point,
+                );
+            }
+            return;
+        }
 
         let same_layer = destination.level == ctx.position.level;
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
@@ -4024,7 +4132,7 @@ impl AiController {
     /// at call sites that have a ctx.
     pub fn face_position(&mut self, pos: Position) {
         let mut intent = AiOrderIntent::face_toward(pos.x, pos.y);
-        intent.after_attentive_mode = self.outbox.actor.set_attentive_mode.is_some();
+        intent.after_attentive_mode = self.outbox.actor.has_pending_attentive_mode();
         self.outbox.actor.orders.push(intent);
     }
 
@@ -4080,7 +4188,7 @@ impl AiController {
             return;
         }
         let mut intent = AiOrderIntent::face_direction(target_dir);
-        intent.after_attentive_mode = self.outbox.actor.set_attentive_mode.is_some();
+        intent.after_attentive_mode = self.outbox.actor.has_pending_attentive_mode();
         intent.fast_turn = fast;
         self.outbox.actor.orders.push(intent);
     }
@@ -5736,6 +5844,32 @@ mod tests {
         ai.think_recursion_depth = 100;
         ai.already_on_point = true;
         assert!(!ai.end_think_completion_events());
+    }
+
+    #[test]
+    fn end_think_keeps_engine_deferred_goto_frame_open_until_authorized() {
+        let mut ai = AiController::new(17);
+        ai.think_recursion_depth = 1;
+        ai.completion_latch_inside_think = true;
+        ai.outbox.actor.orders.push(AiOrderIntent::new(
+            crate::order::OrderType::RunningUpright,
+            100.0,
+            200.0,
+        ));
+
+        assert!(ai.end_think_completion_events());
+        assert_eq!(ai.think_recursion_depth, 1);
+        assert_eq!(ai.open_end_think_frames, 1);
+        assert_eq!(ai.engine_deferred_end_think_frames, 1);
+
+        // The engine has consumed the intent and authorized it without an
+        // EVENT_* completion. Returning through the suspended Original
+        // EndThink closes the retained frame.
+        ai.outbox.actor.orders.clear();
+        ai.close_engine_deferred_end_think_frames();
+        assert_eq!(ai.think_recursion_depth, 0);
+        assert_eq!(ai.open_end_think_frames, 0);
+        assert_eq!(ai.engine_deferred_end_think_frames, 0);
     }
 
     #[test]
