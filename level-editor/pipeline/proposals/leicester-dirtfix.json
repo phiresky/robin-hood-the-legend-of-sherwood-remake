@@ -1,0 +1,23 @@
+{
+ "map": "Leicester",
+ "proposals": [
+  {
+   "name": "courtyard dirt swatch",
+   "id": "leicester-courtyard-dirt-swatch",
+   "bbox": [
+    1080,
+    960,
+    110,
+    90
+   ],
+   "mode": "crop",
+   "dedupe_iou": 1.1,
+   "tags": [
+    "terrain",
+    "dirt",
+    "ground"
+   ],
+   "scale_class": "texture"
+  }
+ ]
+}
