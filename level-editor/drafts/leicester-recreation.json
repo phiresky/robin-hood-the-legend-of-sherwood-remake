@@ -764,5 +764,61 @@
       ]
     }
   ],
+  "walls": [
+    {
+      "asset": "leicester-castle-wall-south",
+      "spacing": 0.4,
+      "points": [
+        [
+          320,
+          1150
+        ],
+        [
+          500,
+          1240
+        ],
+        [
+          640,
+          1300
+        ]
+      ]
+    },
+    {
+      "asset": "leicester-castle-wall-south",
+      "spacing": 0.4,
+      "points": [
+        [
+          860,
+          1330
+        ],
+        [
+          1040,
+          1380
+        ],
+        [
+          1220,
+          1360
+        ]
+      ]
+    },
+    {
+      "asset": "leicester-castle-wall-south",
+      "spacing": 0.4,
+      "points": [
+        [
+          1350,
+          1290
+        ],
+        [
+          1440,
+          1140
+        ],
+        [
+          1470,
+          1000
+        ]
+      ]
+    }
+  ],
   "notes": "Auto-generated litmus test: all 108 Leicester library assets at their source positions."
 }

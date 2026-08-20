@@ -7,7 +7,7 @@
 // for the caller to composite.
 import path from "node:path";
 import sharp from "sharp";
-import type { Point, ProtoLevel } from "@rle/shared";
+import type { Point, ProtoLevel, WallRun } from "@rle/shared";
 import { libraryDir } from "./env";
 
 export interface Swatch {
@@ -31,8 +31,18 @@ export interface Road {
   width: number;
 }
 
+export interface TerrainRegion {
+  /** which swatch layer this polygon adds to */
+  material: "grass" | "dirt" | "canopy" | "water";
+  polygon: Point[];
+}
+
 export interface TerrainSpec {
   roads?: Road[];
+  /** authored regions merged with the proto level's material sectors */
+  regions?: TerrainRegion[];
+  /** authored wall runs, copied into the generated draft and stitched */
+  walls?: WallRun[];
 }
 
 // --- noise -----------------------------------------------------------------
@@ -232,11 +242,14 @@ export async function renderTerrain(
 
   const sectorsOf = (materials: number[]) =>
     level.material_sectors.filter((ms) => materials.includes(ms.material));
+  const regionsOf = (material: TerrainRegion["material"]) =>
+    (spec.regions ?? []).filter((r) => r.material === material);
 
-  // dirt: Ground(0) + Stone(2) sectors, feathered
+  // dirt: Ground(0) + Stone(2) sectors plus authored dirt regions, feathered
   if (dirt) {
     const mask = new Float32Array(W * H);
     for (const ms of sectorsOf([0, 2])) fillPolyMask(mask, W, H, ms.polygon.points);
+    for (const r of regionsOf("dirt")) fillPolyMask(mask, W, H, r.polygon);
     boxBlur(mask, W, H, 6);
     blendLayer(canvas, W, H, mask, dirt);
   }
@@ -253,6 +266,7 @@ export async function renderTerrain(
   if (canopy) {
     const mask = new Float32Array(W * H);
     for (const ms of sectorsOf([4])) fillPolyMask(mask, W, H, ms.polygon.points);
+    for (const r of regionsOf("canopy")) fillPolyMask(mask, W, H, r.polygon);
     boxBlur(mask, W, H, 10);
     const displaced = new Float32Array(W * H);
     for (let y = 0; y < H; y++) {
@@ -268,14 +282,17 @@ export async function renderTerrain(
       const s = 0.86 + 0.28 * noise(x, y, 55);
       return [s, s, s];
     });
-    // scatter along the boundary band
-    for (let y = 0; y < H; y += 64) {
-      for (let x = 0; x < W; x += 64) {
+    // dense scatter inside the canopy plus a boundary band — the stamped
+    // trees are what makes the fill read as forest instead of texture
+    for (let y = 0; y < H; y += 88) {
+      for (let x = 0; x < W; x += 88) {
         const v = displaced[y * W + x]!;
-        if (v > 0.25 && v < 0.85 && hash2(x, y) < 0.6) {
+        const inside = v >= 0.85;
+        const edge = v > 0.25 && v < 0.85;
+        if ((inside && hash2(x, y) < 0.8) || (edge && hash2(x, y) < 0.55)) {
           scatterPoints.push([
-            x + Math.round((hash2(x + 7, y) - 0.5) * 56),
-            y + Math.round((hash2(x, y + 7) - 0.5) * 56),
+            x + Math.round((hash2(x + 7, y) - 0.5) * 80),
+            y + Math.round((hash2(x, y + 7) - 0.5) * 80),
           ]);
         }
       }
@@ -286,6 +303,7 @@ export async function renderTerrain(
   if (water) {
     const mask = new Float32Array(W * H);
     for (const ms of sectorsOf([5])) fillPolyMask(mask, W, H, ms.polygon.points);
+    for (const r of regionsOf("water")) fillPolyMask(mask, W, H, r.polygon);
     boxBlur(mask, W, H, 5);
     const interior = Float32Array.from(mask);
     boxBlur(interior, W, H, 22);

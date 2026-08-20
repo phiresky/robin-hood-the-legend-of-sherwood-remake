@@ -17,6 +17,15 @@ export interface Placement {
   flip_x?: boolean;
 }
 
+export interface WallRun {
+  /** library asset id of a spline-segment wall piece */
+  asset: string;
+  /** spline control points in world coords (piecewise linear for now) */
+  points: [number, number][];
+  /** stamp spacing as a fraction of the segment width, default 0.55 */
+  spacing?: number;
+}
+
 export interface MapDraft {
   version: 1;
   name: string;
@@ -29,5 +38,7 @@ export interface MapDraft {
   /** solid background fill until terrain painting exists */
   background_color?: string;
   placements: Placement[];
+  /** wall runs stitched from spline-segment assets */
+  walls?: WallRun[];
   notes?: string;
 }

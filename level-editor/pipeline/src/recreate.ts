@@ -11,6 +11,7 @@ import sharp from "sharp";
 import type { AssetDescriptor, LibraryIndexEntry, MapDraft, ProtoLevel } from "@rle/shared";
 import { datadirPath, editorRoot, libraryDir, workDir } from "./env";
 import { renderTerrain, type TerrainSpec } from "./terrain";
+import { expandWallRun } from "@rle/shared";
 
 
 async function main() {
@@ -41,40 +42,6 @@ async function main() {
   const W = meta.width!;
   const H = meta.height!;
 
-  // draft: every asset at its original source position
-  const draft: MapDraft = {
-    version: 1,
-    name: `${map} recreation`,
-    size: [W, H],
-    background_color: "#2a3324",
-    placements: assets.map((a) => ({ asset: a.id, pos: a.origin })),
-    notes: `Auto-generated litmus test: all ${assets.length} ${map} library assets at their source positions.`,
-  };
-  const draftsDir = path.join(editorRoot, "drafts");
-  await fs.mkdir(draftsDir, { recursive: true });
-  const draftPath = path.join(draftsDir, `${map.toLowerCase()}-recreation.json`);
-  await fs.writeFile(draftPath, JSON.stringify(draft, null, 2));
-  console.log(`draft: ${draftPath} (${assets.length} placements)`);
-
-  // offline composite in draw order: static cutouts first, then FX/patch
-  // sprites (in-game, patch roofs draw over the background/buildings), each
-  // group sorted ascending by world anchor Y
-  const byAnchorY = (a: AssetDescriptor, b: AssetDescriptor) =>
-    a.origin[1] + a.anchor[1] - (b.origin[1] + b.anchor[1]);
-  const ordered = [
-    ...assets.filter((a) => !a.fx).sort(byAnchorY),
-    ...assets.filter((a) => a.fx).sort(byAnchorY),
-  ];
-  const composite = ordered
-    .filter((a) => a.scale_class !== "texture") // swatches feed the terrain layer
-    .map((a) => ({
-      input: path.join(libraryDir, a.id, a.images.day),
-      left: a.origin[0],
-      top: a.origin[1],
-    }));
-  const level: ProtoLevel = JSON.parse(
-    await fs.readFile(path.join(levelsDir, `${map}.rhp.json`), "utf8"),
-  );
   let spec: TerrainSpec = {};
   try {
     spec = JSON.parse(
@@ -87,6 +54,79 @@ async function main() {
     // no authored terrain spec for this map yet
   }
   const prefix = map.toLowerCase();
+
+  // draft: every asset at its original source position, plus authored walls
+  const draft: MapDraft = {
+    version: 1,
+    name: `${map} recreation`,
+    size: [W, H],
+    background_color: "#2a3324",
+    placements: assets.map((a) => ({ asset: a.id, pos: a.origin })),
+    walls: spec.walls,
+    notes: `Auto-generated litmus test: all ${assets.length} ${map} library assets at their source positions.`,
+  };
+  const draftsDir = path.join(editorRoot, "drafts");
+  await fs.mkdir(draftsDir, { recursive: true });
+  const draftPath = path.join(draftsDir, `${map.toLowerCase()}-recreation.json`);
+  await fs.writeFile(draftPath, JSON.stringify(draft, null, 2));
+  console.log(`draft: ${draftPath} (${assets.length} placements)`);
+
+  // draw order: static cutouts and wall stamps interleaved by world anchor Y,
+  // then FX/patch sprites on top (in-game, patch roofs draw over buildings)
+  interface Item {
+    input: string;
+    left: number;
+    top: number;
+    sortY: number;
+  }
+  const byId = new Map(assets.map((a) => [a.id, a]));
+  const statics: Item[] = assets
+    .filter((a) => !a.fx && a.scale_class !== "texture")
+    .map((a) => ({
+      input: path.join(libraryDir, a.id, a.images.day),
+      left: a.origin[0],
+      top: a.origin[1],
+      sortY: a.origin[1] + a.anchor[1],
+    }));
+  for (const run of spec.walls ?? []) {
+    const wa = byId.get(run.asset);
+    if (!wa) {
+      console.warn(`wall run references unknown asset ${run.asset}`);
+      continue;
+    }
+    const stamps = expandWallRun(
+      run.points,
+      [wa.source.bbox[2], wa.source.bbox[3]],
+      wa.anchor,
+      run.spacing,
+    );
+    for (const s of stamps) {
+      statics.push({
+        input: path.join(libraryDir, wa.id, wa.images.day),
+        left: s.pos[0],
+        top: s.pos[1],
+        sortY: s.sortY,
+      });
+    }
+  }
+  statics.sort((a, b) => a.sortY - b.sortY);
+  const fxItems: Item[] = assets
+    .filter((a) => a.fx)
+    .sort((a, b) => a.origin[1] + a.anchor[1] - (b.origin[1] + b.anchor[1]))
+    .map((a) => ({
+      input: path.join(libraryDir, a.id, a.images.day),
+      left: a.origin[0],
+      top: a.origin[1],
+      sortY: 0,
+    }));
+  const composite = [...statics, ...fxItems].map(({ input, left, top }) => ({
+    input,
+    left,
+    top,
+  }));
+  const level: ProtoLevel = JSON.parse(
+    await fs.readFile(path.join(levelsDir, `${map}.rhp.json`), "utf8"),
+  );
   const terrain = await renderTerrain(level, W, H, spec, {
     grass: `${prefix}-grass-swatch`,
     dirt: `${prefix}-courtyard-dirt-swatch`,
@@ -95,23 +135,34 @@ async function main() {
     water: `${prefix}-moat-water-swatch`,
   });
 
-  // tree scatter along forest edges, behind everything else
-  const scatter: { input: Buffer; left: number; top: number }[] = [];
+  // tree scatter in and along forests, behind everything else, y-sorted with
+  // per-point variety (two tree assets, three sizes each)
+  const scatter: { input: Buffer; left: number; top: number; sortY: number }[] = [];
   if (terrain) {
-    try {
-      const treePng = await sharp(path.join(libraryDir, `${prefix}-orchard-tree-1`, "day.png"))
-        .resize({ width: 96 })
-        .png()
-        .toBuffer();
-      const tm = await sharp(treePng).metadata();
-      for (const [x, y] of terrain.scatterPoints) {
-        const left = Math.round(x - tm.width! / 2);
-        const top = Math.round(y - tm.height! + 8);
-        if (left < 0 || top < 0 || left + tm.width! > W || top + tm.height! > H) continue;
-        scatter.push({ input: treePng, left, top });
+    const variants: { png: Buffer; w: number; h: number }[] = [];
+    for (const id of [`${prefix}-orchard-tree-1`, `${prefix}-lone-tree`]) {
+      for (const width of [88, 116, 148]) {
+        try {
+          const png = await sharp(path.join(libraryDir, id, "day.png"))
+            .resize({ width })
+            .png()
+            .toBuffer();
+          const m = await sharp(png).metadata();
+          variants.push({ png, w: m.width!, h: m.height! });
+        } catch {
+          // asset missing
+        }
       }
-    } catch {
-      // no tree asset to scatter
+    }
+    if (variants.length > 0) {
+      terrain.scatterPoints.forEach(([x, y], i) => {
+        const v = variants[Math.abs(x * 31 + y * 17 + i) % variants.length]!;
+        const left = Math.round(x - v.w / 2);
+        const top = Math.round(y - v.h + 8);
+        if (left < 0 || top < 0 || left + v.w > W || top + v.h > H) return;
+        scatter.push({ input: v.png, left, top, sortY: y });
+      });
+      scatter.sort((a, b) => a.sortY - b.sortY);
     }
   }
 
@@ -120,7 +171,10 @@ async function main() {
     : sharp({
         create: { width: W, height: H, channels: 3, background: { r: 42, g: 51, b: 36 } },
       });
-  const recreated = await base.composite([...scatter, ...composite]).png().toBuffer();
+  const recreated = await base
+    .composite([...scatter.map(({ input, left, top }) => ({ input, left, top })), ...composite])
+    .png()
+    .toBuffer();
   const outPath = path.join(workDir, `${map.toLowerCase()}-recreated.png`);
   await fs.writeFile(outPath, recreated);
 
