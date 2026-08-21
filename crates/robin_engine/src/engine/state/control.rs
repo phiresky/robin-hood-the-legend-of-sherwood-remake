@@ -30,11 +30,12 @@ pub(crate) struct SimulationControl {
     /// Captured Original results for the stale-sprite `0xffff` action-point
     /// over-read. The C++ getter indexes beyond `auwDelay`, so this value is
     /// allocator residue rather than reproducible simulation state. Parity
-    /// replays may supply the observed wrapped `SWORD`, keyed by the target's
-    /// Original creation order, for the current frame only.
+    /// replays may supply the observed wrapped `SWORD`, keyed by the
+    /// proposer's and target's Original creation orders, for the current
+    /// frame only.
     #[serde(skip)]
     #[state_hash(skip)]
-    pub(crate) original_impossible_action_done_deadlines: BTreeMap<u32, VecDeque<i16>>,
+    pub(crate) original_impossible_action_done_deadlines: BTreeMap<(u32, u32), VecDeque<i16>>,
 }
 
 impl SimulationControl {

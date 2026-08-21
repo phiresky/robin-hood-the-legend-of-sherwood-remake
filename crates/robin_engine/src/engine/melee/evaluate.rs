@@ -135,6 +135,7 @@ impl EngineInner {
     /// state, so parity replays may provide the captured wrapped result.
     pub(super) fn opponent_sword_strike_time_limit_for_actor(
         &mut self,
+        proposer: EntityId,
         opponent: EntityId,
     ) -> Option<i16> {
         let (animation, timing, stale_impossible) = {
@@ -150,11 +151,14 @@ impl EngineInner {
             (animation, timing, stale_impossible)
         };
         let timing = if stale_impossible {
-            let creation_order = self.world.original_creation_order(opponent);
+            let key = (
+                self.world.original_creation_order(proposer),
+                self.world.original_creation_order(opponent),
+            );
             crate::sprite::ActionDoneTiming::Frames(
                 self.control
                     .original_impossible_action_done_deadlines
-                    .get_mut(&creation_order)
+                    .get_mut(&key)
                     .and_then(std::collections::VecDeque::pop_front)
                     // No event means Original did not reach the recorder's
                     // opponent-input site on this generic resolver call.
@@ -1253,7 +1257,7 @@ impl EngineInner {
                     "EvaluateSwordfight strike proposal PC {pc_id:?} target {target_id:?} is not an actor"
                 )
             });
-        let opponent_time_limit = self.opponent_sword_strike_time_limit_for_actor(target_id);
+        let opponent_time_limit = self.opponent_sword_strike_time_limit_for_actor(pc_id, target_id);
 
         // Build the nearby-victim list (same shape as the soldier path).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -1959,7 +1963,7 @@ impl EngineInner {
                 let principal_animation = self.live_actor_animation(target_id_for_nearby);
                 let raw_frames = debug.map(|_| sprite.frames_from_now_till_action_done());
                 let time_limit = self
-                    .opponent_sword_strike_time_limit_for_actor(target_id_for_nearby)
+                    .opponent_sword_strike_time_limit_for_actor(victim_id, target_id_for_nearby)
                     .unwrap_or(1000);
                 if let (Some(debug), Some(raw_frames)) = (debug, raw_frames) {
                     eprintln!(
@@ -2437,8 +2441,9 @@ impl EngineInner {
         // ProposeGoodSwordStrike always times the defender's principal
         // opponent, which need not be the hitter that triggered this
         // reactive warning.
-        let opponent_time_limit: Option<i16> = principal_opponent
-            .and_then(|opponent| self.opponent_sword_strike_time_limit_for_actor(opponent));
+        let opponent_time_limit: Option<i16> = principal_opponent.and_then(|opponent| {
+            self.opponent_sword_strike_time_limit_for_actor(victim_id, opponent)
+        });
 
         // Compute per-strike startup frames from the victim's sprite.
         let victim_sprite_frames: Option<[i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES]> = self

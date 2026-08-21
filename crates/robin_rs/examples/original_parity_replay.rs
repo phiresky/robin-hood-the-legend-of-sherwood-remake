@@ -3435,6 +3435,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 .filter(|event| event.phase == "opponent_inputs")
                 .map(|event| {
                     (
+                        event.actor_creation_order,
                         event.principal_opponent_creation_order.unwrap_or_else(|| {
                             panic!(
                                 "schema-16 frame {} opponent_inputs invocation {} lacks principal_opponent_creation_order",

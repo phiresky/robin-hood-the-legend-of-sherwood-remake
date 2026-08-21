@@ -2666,12 +2666,12 @@ impl Engine {
     /// the captured Original RNG stream; live simulation leaves it empty.
     pub fn set_original_impossible_action_done_deadlines(
         &mut self,
-        deadlines: impl IntoIterator<Item = (u32, i16)>,
+        deadlines: impl IntoIterator<Item = (u32, u32, i16)>,
     ) {
         let mut captured = std::collections::BTreeMap::new();
-        for (creation_order, deadline) in deadlines {
+        for (proposer_creation_order, target_creation_order, deadline) in deadlines {
             captured
-                .entry(creation_order)
+                .entry((proposer_creation_order, target_creation_order))
                 .or_insert_with(std::collections::VecDeque::new)
                 .push_back(deadline);
         }

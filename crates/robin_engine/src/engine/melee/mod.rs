@@ -3284,28 +3284,42 @@ mod tests {
         engine.publish_selected_order_as_installed(target);
 
         assert_eq!(
-            engine.opponent_sword_strike_time_limit_for_actor(target),
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
             Some(1000),
             "schema-15 replays without a captured UB value retain the historical permissive result"
         );
 
         let target_creation_order = engine.world.original_creation_order(target);
+        let other_proposer = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let other_creation_order = engine.world.original_creation_order(other_proposer);
         engine
             .control
             .original_impossible_action_done_deadlines
             .insert(
-                target_creation_order,
+                (target_creation_order, target_creation_order),
                 std::collections::VecDeque::from([-22478, 12]),
             );
+        engine
+            .control
+            .original_impossible_action_done_deadlines
+            .insert(
+                (other_creation_order, target_creation_order),
+                std::collections::VecDeque::from([30]),
+            );
         assert_eq!(
-            engine.opponent_sword_strike_time_limit_for_actor(target),
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
             Some(-22478),
             "schema-16 can carry the Original allocator-dependent wrapped SWORD"
         );
         assert_eq!(
-            engine.opponent_sword_strike_time_limit_for_actor(target),
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
             Some(12),
             "repeated proposals against one target consume captured deadlines in invocation order"
+        );
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(other_proposer, target),
+            Some(30),
+            "different proposers targeting the same actor keep independent occurrence queues"
         );
 
         let sprite = &mut engine
@@ -3316,7 +3330,7 @@ mod tests {
         sprite.last_processed_order_id = selected_order_id.get();
         sprite.action_done_frame = u16::MAX;
         assert_eq!(
-            engine.opponent_sword_strike_time_limit_for_actor(target),
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
             Some(i16::MIN),
             "the current sprite's impossible marker retains the strict S075 behavior"
         );

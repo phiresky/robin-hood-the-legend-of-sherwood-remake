@@ -2963,8 +2963,8 @@ impl EngineInner {
                     self.world.original_creation_order(attack.target_id),
                 )
             });
-            let selected_opponent_time_limit =
-                self.opponent_sword_strike_time_limit_for_actor(attack.target_id);
+            let selected_opponent_time_limit = self
+                .opponent_sword_strike_time_limit_for_actor(attack.soldier_id, attack.target_id);
             let opponent_time_limit: Option<i16> =
                 self.get_entity(attack.target_id).and_then(|e| {
                     let animation = self.live_actor_animation(attack.target_id)?;
