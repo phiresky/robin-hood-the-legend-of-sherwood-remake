@@ -784,11 +784,14 @@ impl EnemyAi {
                                 self.base.me, civilian
                             )
                         });
+                        // Original assigns mpAntagonist before deciding whether the
+                        // caller can be heard. A rejected civilian report therefore
+                        // still replaces the actor tracked by the current behavior.
+                        self.base.antagonist = civilian;
                         if caller.is_civilian() {
                             if self.base.current_state != AiState::Default {
                                 return false;
                             }
-                            self.base.antagonist = civilian;
                             // Original CALL_ALERT's civilian arm calls the actor's
                             // `Halt()` directly, not AI `StopAll()`.  The actor work
                             // must be interrupted before the state callback, while an
@@ -809,8 +812,6 @@ impl EnemyAi {
                             );
                             return true;
                         }
-
-                        self.base.antagonist = civilian;
                         match self.get_rank() {
                             ProfileRank::Soldier => {
                                 let react = matches!(
@@ -4248,6 +4249,39 @@ mod tests {
         );
         assert!(ai.base.timer_is_running);
         assert_eq!(ai.base.when_does_timer_ring, 9_788);
+    }
+
+    #[test]
+    fn rejected_civilian_call_alert_still_replaces_antagonist() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(44);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingRunningToOfficer;
+        ai.base.antagonist = 78;
+
+        let mut civilian = object_view(ObjectType::None);
+        civilian.kind = EntityKind::Civilian;
+        let mut views = AiEntityViewMap::new();
+        views.insert(91, civilian);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let accepted = ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::CallAlert, 91),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(!accepted);
+        assert_eq!(ai.base.antagonist, 91);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(ai.base.current_substate, Substate::SeekingRunningToOfficer);
     }
 
     #[test]
