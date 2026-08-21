@@ -10799,14 +10799,57 @@ impl EngineInner {
                 // distance, not on the length of the normalized map
                 // increment. With an exact-position transition target a
                 // nonzero sprite-frame distance therefore still reaches
-                // UpdatePositionAntiCollision/ComputePositionAll with a
-                // zero increment. Recompute the same map point so the
-                // terrain-plane rounding and IsMoving 3D latch match that
-                // call instead of leaving the save-loaded elevation
-                // untouched.
+                // UpdatePositionAntiCollision with a zero increment. That
+                // call is observable even though it cannot displace the
+                // actor: its empty-candidate recovery drops a preceding
+                // deviation latch before ComputePositionAll. Skipping the
+                // call left a stopping soldier in TurnAntiVibration on the
+                // following frame (Linux Savegame_036 replay-015, Soldier
+                // 144), delaying the visible counter-clockwise turn.
+                let recovered_from_deviation = if entity.position_iface().is_anti_collision_on()
+                    && let Some(mover_snap) = anti_snapshots
+                        .get(actor_id)
+                        .and_then(|slot| slot.as_ref())
+                        .filter(|snapshot| snapshot.active)
+                {
+                    let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                    let (move_box, half_diagonal) = {
+                        let pi = entity.position_iface();
+                        (*pi.get_move_box(), pi.get_half_diagonal())
+                    };
+                    let pi = entity.position_iface_mut();
+                    let was_deviated = pi.is_deviated();
+                    let mut state = super::anti_collision::AntiCollisionState {
+                        pi,
+                        move_box,
+                        half_diagonal,
+                        goal_map,
+                    };
+                    let step = apply_prepared_anti_collision_step(
+                        provenance_frame,
+                        mover_snap,
+                        anti_snapshots,
+                        &self.ai.global.repulsive_points,
+                        prepared,
+                        &self.world.fast_grid,
+                        &mut state,
+                        0.0,
+                        0.0,
+                        speed,
+                        true,
+                    );
+                    debug_assert_eq!(step, (0.0, 0.0));
+                    was_deviated && !state.pi.is_deviated()
+                } else {
+                    false
+                };
                 let position = entity.element_data().position_map();
                 let elem = entity.element_data_mut();
                 elem.set_position_map(position);
+                if recovered_from_deviation {
+                    elem.sprite.position_iface.reset_increment_computed();
+                    elem.sprite.position_iface.compute_increment_all(true);
+                }
                 elem.update_grid_cell();
                 // The same nonzero-animation-distance block ends with
                 // UpdateForecastedMovement even though the cached
@@ -19602,7 +19645,8 @@ mod line_jump_tests {
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 -4.0, -4.0, 4.0, 4.0,
             ));
-        element.sprite.position_iface.set_anti_collision_on(false);
+        element.sprite.position_iface.set_anti_collision_on(true);
+        element.sprite.position_iface.deviated = true;
         element.set_position_map(position);
         element
             .sprite
@@ -19670,6 +19714,14 @@ mod line_jump_tests {
                 .position_map(),
             position,
             "the forecast refresh must not move an actor already at the transition goal"
+        );
+        assert!(
+            !engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .is_deviated(),
+            "Original still runs zero-increment anti-collision recovery for a nonzero transition animation distance"
         );
     }
 
