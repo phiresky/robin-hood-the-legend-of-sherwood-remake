@@ -495,7 +495,18 @@ pub(super) fn determine_lift_movement_animation_for(
             let going_down = ladder_dx * movement_dx + ladder_dy * movement_dy >= 0.0;
             lift_type.translate_climb_action(action, going_down)
         }
-        _ => action,
+        // Original's default posture arm still applies the lift's upright
+        // action translation (RHelementactor.cpp:4735-4745). This matters for
+        // resumed PassDoor elements whose serialized transition result is a
+        // non-movement posture such as Lying: while the live actor is already
+        // upright in the lift, that dormant result remains stamped on the
+        // element and the stairs action must still be selected.
+        Posture::CarryingCorpse
+        | Posture::Crouched
+        | Posture::CarryingOnShoulders
+        | Posture::HelpingToClimb
+        | Posture::SimulatingBeggar => action,
+        _ => lift_type.translate_upright_action(action),
     }
 }
 
