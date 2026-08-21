@@ -10,6 +10,7 @@ workspace=${SCHEMA16_BRIDGE_WORKSPACE:-/home/phire/robinhood}
 corpus_root=${SCHEMA16_BRIDGE_CORPUS_ROOT:-$workspace/parity-save-replays/60s-random-input}
 runner=${SCHEMA16_BRIDGE_RUNNER:?SCHEMA16_BRIDGE_RUNNER must name a pinned parity runner}
 audit_dir=${SCHEMA16_BRIDGE_AUDIT_DIR:-$workspace/parity-save-replays/audits/schema16-ladder}
+permanent_eof_dir=${SCHEMA16_BRIDGE_PERMANENT_EOF_DIR:-$workspace/parity-save-replays/audits/permanent-eof}
 local_concurrency=${SCHEMA16_BRIDGE_LOCAL_CONCURRENCY:-2}
 local_slot_dir=${SCHEMA16_BRIDGE_LOCAL_SLOT_DIR:-$workspace/tmp/schema16-ladder-local-slots}
 poll_seconds=${SCHEMA16_BRIDGE_POLL_SECONDS:-10}
@@ -37,8 +38,34 @@ if [[ ! "$poll_seconds" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 
-mkdir -p -- "$audit_dir/status" "$audit_dir/logs" "$local_slot_dir" "${manifest%/*}"
+mkdir -p -- \
+    "$audit_dir/status" \
+    "$audit_dir/logs" \
+    "$permanent_eof_dir/status" \
+    "$local_slot_dir" \
+    "${manifest%/*}"
 cd -- "$workspace"
+
+promote_exact_eof_statuses() {
+    local status destination value
+
+    while IFS= read -r -d '' status; do
+        IFS= read -r value <"$status" || continue
+        [[ "$value" == 0 ]] || continue
+        destination="$permanent_eof_dir/status/${status##*/}"
+        [[ -e "$destination" ]] || cp -- "$status" "$destination"
+    done < <(find "$audit_dir/status" -type f -name '*.status' -print0)
+}
+
+seed_audit_from_permanent_eof() {
+    # Exact EOF is monotonic campaign evidence.  A later runner audits only
+    # unseen or previously nonzero traces, so permanent zeros intentionally
+    # replace any stale nonzero result in the runner-specific namespace.
+    rsync -a "$permanent_eof_dir/status/" "$audit_dir/status/"
+    rsync -a -e "ssh -F $ssh_config" \
+        "$permanent_eof_dir/status/" \
+        "$remote_host:$remote_audit/status/"
+}
 
 ladder_is_running() {
     tmux has-session -t "$ladder_session" 2>/dev/null
@@ -128,6 +155,8 @@ run_remote_sync() {
         printf 'error: unable to initialize remote audit directory\n' >&2
         return 1
     fi
+    promote_exact_eof_statuses
+    seed_audit_from_permanent_eof || return 1
 
     while ladder_is_running; do
         if ! campaign=$(active_campaign); then
@@ -175,6 +204,9 @@ run_remote_sync() {
         rsync -a --exclude='*.tmp.*' -e "ssh -F $ssh_config" \
             "$remote_host:$remote_audit/logs/" "$audit_dir/logs/" \
             || printf 'warning: could not pull remote logs\n' >&2
+        promote_exact_eof_statuses
+        seed_audit_from_permanent_eof \
+            || printf 'warning: could not seed permanent EOF statuses\n' >&2
         sleep "$poll_seconds"
     done
 }
