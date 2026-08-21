@@ -12646,7 +12646,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-        defer_turn_instruction: bool,
+        _defer_turn_instruction: bool,
         halt_already_applied: bool,
     ) {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
@@ -12937,7 +12937,7 @@ impl EngineInner {
                         intent.target_y,
                         retained_goal,
                     );
-                    if (defer_turn_instruction || intent.defer_instruction)
+                    if intent.defer_initial_turn_step
                         && let Some(element) = self
                             .orders
                             .sequence_manager

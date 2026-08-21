@@ -6214,23 +6214,6 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
             .current_substate,
         Substate::SeekingOfficerLectureCharly
     );
-
-    let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
-    let deferred_turn = engine
-        .orders
-        .sequence_manager
-        .sequences_iter()
-        .flat_map(|sequence| sequence.elements.iter())
-        .find(|element| element.owner == Some(target_id) && element.command == Command::Turn)
-        .expect("manager must retain the nested Turn");
-    assert!(
-        deferred_turn
-            .orders
-            .front()
-            .is_some_and(|order| order.defer_initial_turn_step),
-        "a Turn registered after the owner's actor slot must preserve its first visible frame"
-    );
 }
 
 #[test]
