@@ -3213,7 +3213,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_selected_strike_keeps_stale_sprite_action_done_timing() {
+    fn fresh_selected_strike_keeps_stale_impossible_deadline_strict() {
         let mut engine = make_engine();
         let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let selected_row = crate::sprite_script::SpriteScript {
@@ -3270,8 +3270,8 @@ mod tests {
 
         assert_eq!(
             engine.opponent_sword_strike_time_limit_for_actor(target),
-            Some(1000),
-            "GetAnimation's fresh strike must treat the unacknowledged sprite's impossible marker as stale -1 timing"
+            Some(i16::MIN),
+            "a fresh selected strike must not turn the stale sprite's impossible marker into permissive -1 timing"
         );
 
         let sprite = &mut engine

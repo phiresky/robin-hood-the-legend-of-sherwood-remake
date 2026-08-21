@@ -127,36 +127,21 @@ impl EngineInner {
     /// (`RHelementactorhuman.cpp:13010-13022`).
     ///
     /// Keep that stale-row boundary -- an ordinary `-1` means the prior
-    /// action point has passed and remains the permissive 1000 fallback. Only
-    /// the sprite's explicit impossible marker uses the deterministic strict
-    /// deadline required by the S075 frame-731 control.
+    /// action point has passed and remains the permissive 1000 fallback.  An
+    /// impossible marker is different even when the selected order is newer
+    /// than the sprite row: Original still walks the stale row's delay vector
+    /// to `0xffff`, overflows its `SWORD` accumulator, and produces a negative
+    /// deadline.  Use the same deterministic strict deadline as the processed
+    /// impossible-row case instead of turning it into ordinary `-1`.
     pub(super) fn opponent_sword_strike_time_limit_for_actor(
         &self,
         opponent: EntityId,
     ) -> Option<i16> {
         let animation = self.live_actor_animation(opponent)?;
         let entity = self.get_entity(opponent)?;
-        let actor = entity.actor_data()?;
+        entity.actor_data()?;
         let sprite = &entity.element_data().sprite;
-        let timing = match sprite.action_done_timing() {
-            crate::sprite::ActionDoneTiming::Impossible
-                if actor.installed_order.is_some_and(|order| {
-                    order.order_id.get() != sprite.last_processed_order_id
-                }) =>
-            {
-                // `GetAnimation()` has already switched to the newly
-                // published mpOrder, but PerformAction has not acknowledged
-                // it yet, so GetFramesFromNowTillActionDone still observes
-                // the previous sprite row.  Its unusable action point is a
-                // stale-row `-1` for this mixed read, which the Original
-                // proposal promotes to the permissive 1000 deadline.  Do not
-                // apply the current-order impossible-action rule until the
-                // sprite has processed the selected order.  This is the
-                // synchronous boundary in RHelementactorhuman.cpp:13010-22.
-                crate::sprite::ActionDoneTiming::Frames(-1)
-            }
-            timing => timing,
-        };
+        let timing = sprite.action_done_timing();
         Some(opponent_sword_strike_time_limit(Some(animation), || timing))
     }
 }
