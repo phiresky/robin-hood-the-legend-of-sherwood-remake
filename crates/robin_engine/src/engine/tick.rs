@@ -9458,6 +9458,53 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
+    fn position_assertion_context_accepts_nan_distance_like_original() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("test assertion owner")
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(f32::NAN, f32::NAN));
+        let mut assertion = SequenceElement::new_movement(
+            1,
+            Command::AssertPosition,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            destination,
+            tolerance,
+            ..
+        } = &mut assertion.data
+        {
+            *destination = crate::coordinates::MapPoint::new(362.0, 1535.0);
+            *tolerance = 10.0;
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(assertion);
+
+        let barrier = PositionAssertionContext {
+            entities: &engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Skip);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::Terminated,
+            "Original's `qNaN >= tolerance + 5` mismatch test is false"
+        );
+    }
+
+    #[test]
     fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();

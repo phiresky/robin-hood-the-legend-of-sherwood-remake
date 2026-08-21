@@ -230,28 +230,34 @@ impl PositionAssertionContext<'_> {
                 _ => None,
             });
 
-        let matches = movement.is_none_or(|(destination, expected_sector, tolerance)| {
+        let mismatches = movement.is_some_and(|(destination, expected_sector, tolerance)| {
             let entity = self.entities.get(owner);
             if let Some(expected_sector) = expected_sector {
-                entity.and_then(|entity| entity.element_data().sector()) == Some(expected_sector)
+                entity.and_then(|entity| entity.element_data().sector()) != Some(expected_sector)
             } else {
                 let position = entity
                     .map(|entity| entity.element_data().position_map())
                     .unwrap_or_default();
                 let delta_x = position.x - destination.x;
                 let delta_y = position.y - destination.y;
-                delta_x.abs().max(delta_y.abs()) < tolerance + 5.0
+                // Preserve Original's literal mismatch predicate from
+                // `RHElementActor::Translate`. Its `MaxNorm() >= limit`
+                // comparison is false for qNaN, so a route built from a
+                // transient qNaN source accepts the gate-entry assertion and
+                // continues to PassDoor. Rewriting this as the positive
+                // `< limit` test is not IEEE-equivalent.
+                delta_x.abs().max(delta_y.abs()) >= tolerance + 5.0
             }
         });
 
-        if matches {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
-        } else {
+        if mismatches {
             self.sequence_manager.element_interrupted(
                 seq_id,
                 elem_idx,
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
+        } else {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
         }
         // ASSERT_POSITION calls SetState directly from Translate. That
         // synchronous condolence clears Actor::mpSequenceElement, so
