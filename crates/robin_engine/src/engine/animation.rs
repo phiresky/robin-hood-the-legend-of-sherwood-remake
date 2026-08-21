@@ -956,9 +956,12 @@ mod tests {
     }
 
     #[test]
-    fn sword_combat_injury_start_sets_waiting_sword() {
+    fn sword_combat_injury_callback_retains_pre_perform_action_state() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+
+        let callback_action =
+            weak_stunned_start_action_before_perform(&entity, OrderType::BeingStunnedSword, true);
 
         // The sword-injury START states are shared human behavior, so they
         // live in the universal active-animation dispatcher rather than the
@@ -969,6 +972,7 @@ mod tests {
             MotionState::Start,
         );
 
+        assert_eq!(callback_action, Some(ActionState::Moving));
         assert_eq!(entity.element_data().posture, Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
@@ -1404,6 +1408,31 @@ mod tests {
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
         );
+    }
+
+    #[test]
+    fn harder_falling_hits_retain_injury_priority() {
+        // RHElementActorHuman::ExecuteFallingHit sets
+        // RHPRIORITY_NON_INTERRUPTABLE only in the !bHarder arm. A harder
+        // hit must therefore remain interruptible by a later injury, as in
+        // Save024 replay023 where an incoming sword strike replaces the
+        // still-playing harder hit and consumes its protection draws.
+        for ordinary in [
+            OrderType::FallingHitUpright,
+            OrderType::FallingHitWithBow,
+            OrderType::FallingHitWithSword,
+            OrderType::FallingHitCrouched,
+        ] {
+            assert!(anim_forces_non_interruptable_on_start(ordinary));
+        }
+        for harder in [
+            OrderType::FallingHitHarderUpright,
+            OrderType::FallingHitHarderWithBow,
+            OrderType::FallingHitHarderWithSword,
+            OrderType::FallingHitHarderCrouched,
+        ] {
+            assert!(!anim_forces_non_interruptable_on_start(harder));
+        }
     }
 
     #[test]
@@ -2332,7 +2361,11 @@ pub(super) struct ExecuteSideOutcomes {
     /// Humans whose weak/stunned sword animation just initialized, paired
     /// with the exact wrapper type. Both add the weak-stunned titbit and
     /// notify soldier opponents; only `BeingWeakSword` transfers initiative.
-    pub weak_stunned_start: Vec<(EntityId, OrderType)>,
+    /// Weak/stunned initialization callbacks run before `PerformAction` in
+    /// Original. Retain the actor action state from that pre-sprite boundary
+    /// so nested adversary AI sees the same target state even though Rust
+    /// drains the cross-entity callback after releasing the animation borrow.
+    pub weak_stunned_start: Vec<(EntityId, OrderType, ActionState)>,
     /// `(thief, victim)` — NPC-on-NPC pickpocket transfer on
     /// SEARCHING DONE: thief gains the victim's money and the victim
     /// is zeroed out.
@@ -2936,6 +2969,30 @@ fn apply_waking_up_done_side_effect(
     }
 }
 
+/// Capture the action-state view that Original exposes to the synchronous
+/// `EVENT_ADVERSARY_WEAK` callbacks at the start of weak/stunned sword work.
+/// The callback precedes `PerformAction`, whose START edge can change the
+/// actor to `WaitingSword` later in the same Execute call.
+fn weak_stunned_start_action_before_perform(
+    entity: &Entity,
+    anim_type: OrderType,
+    order_is_initialising: bool,
+) -> Option<ActionState> {
+    (order_is_initialising
+        && matches!(
+            anim_type,
+            OrderType::BeingWeakSword | OrderType::BeingStunnedSword
+        ))
+    .then(|| {
+        entity
+            .actor_data()
+            .unwrap_or_else(|| {
+                panic!("weak/stunned initialization owner is not an actor: {anim_type:?}")
+            })
+            .action_state
+    })
+}
+
 /// Universal active-animation START state changes shared by PCs and
 /// NPCs.  Mirrors the legacy implementation `RHMOTION_START` `SetStates(...)` side
 /// effects for active animation arms whose completion logic is handled
@@ -3368,7 +3425,7 @@ pub(crate) fn sprite_anim_for_order(
 /// `NonInterruptable`:
 /// - `FALLING_LADDER_WALL`
 /// - `ROLLING`
-/// - `FALLING_HIT_*`
+/// - ordinary (non-harder) `FALLING_HIT_*`
 /// - `FALLING_PUSHED_*`
 /// - `FALLING_SHOULDERS` (the priority is set when shoulder damage
 ///   is translated; we unify it into the start-side-effect set since
@@ -3376,9 +3433,11 @@ pub(crate) fn sprite_anim_for_order(
 ///
 /// These are the anims that unconditionally lift the parent element
 /// to non-interruptable so a fresh damage can't preempt the in-flight
-/// visual.  Other fall families (`FALLING_BACK_*`, `DYING_*`,
-/// `BEING_DEAD_*`) inherit their parent element's priority instead,
-/// so they're not in this list.
+/// visual. `ExecuteFallingHit` deliberately does this only in its
+/// non-harder arm; harder hits merely perform the action and retain the
+/// damage element's ordinary `Injury` priority. Other fall families
+/// (`FALLING_BACK_*`, `DYING_*`, `BEING_DEAD_*`) inherit their parent
+/// element's priority instead, so they're not in this list.
 fn anim_forces_non_interruptable_on_start(anim_type: OrderType) -> bool {
     matches!(
         anim_type,
@@ -3388,10 +3447,6 @@ fn anim_forces_non_interruptable_on_start(anim_type: OrderType) -> bool {
             | OrderType::FallingHitWithBow
             | OrderType::FallingHitWithSword
             | OrderType::FallingHitCrouched
-            | OrderType::FallingHitHarderUpright
-            | OrderType::FallingHitHarderWithBow
-            | OrderType::FallingHitHarderWithSword
-            | OrderType::FallingHitHarderCrouched
             | OrderType::FallingShoulders
             | OrderType::FallingPushedUpright
             | OrderType::FallingPushedWithBow
@@ -5788,6 +5843,12 @@ impl EngineInner {
                             direction_before_turn,
                             entity.element_data().direction() as u16,
                         );
+                        let weak_stunned_action_before_perform =
+                            weak_stunned_start_action_before_perform(
+                                entity,
+                                anim_type,
+                                order_is_initialising,
+                            );
                         let held_weak_sword = hold_weak_sword_at_action_done(entity, anim_type);
                         if held_weak_sword.is_some() {
                             weak_sword_held = true;
@@ -5990,16 +6051,14 @@ impl EngineInner {
                                 &mut motion_state,
                             );
                         }
-                        if order_is_initialising
-                            && matches!(
-                                anim_type,
-                                OrderType::BeingWeakSword | OrderType::BeingStunnedSword
-                            )
+                        if let Some(action_state_before_perform) =
+                            weak_stunned_action_before_perform
                         {
-                            completion_outcomes
-                                .execute_sides
-                                .weak_stunned_start
-                                .push((entity_id, anim_type));
+                            completion_outcomes.execute_sides.weak_stunned_start.push((
+                                entity_id,
+                                anim_type,
+                                action_state_before_perform,
+                            ));
                         }
                         motion_state
                     });
