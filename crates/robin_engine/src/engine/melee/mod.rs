@@ -2078,7 +2078,7 @@ fn collect_arc_victims(
             continue;
         }
         let distance = (dx * dx + dy * dy).sqrt();
-        if distance < min_distance || distance > max_distance {
+        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
             continue;
         }
         // Check if direction is within the arc
@@ -2130,7 +2130,7 @@ fn collect_lateral_strike_victims(
         let dy = (target_position.y - attacker_position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         let dz = target_position.z - attacker_position.z;
         let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-        if distance < min_distance || distance > max_distance {
+        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
             continue;
         }
 
@@ -2250,6 +2250,14 @@ fn full_circle_strike_distance_is_in_range(
     max_distance: f32,
 ) -> bool {
     let distance = full_circle_strike_distance(attacker, victim);
+    sword_strike_distance_is_in_range(distance, min_distance, max_distance)
+}
+
+fn sword_strike_distance_is_in_range(distance: f32, min_distance: f32, max_distance: f32) -> bool {
+    // Original's collectors spell this as a positive conjunction. That
+    // distinction matters for corrupt-but-loadable legacy actors whose
+    // position is NaN: both comparisons reject the actor in C++, while the
+    // negated form (`distance < min || distance > max`) admits it.
     distance >= min_distance && distance <= max_distance
 }
 
@@ -2295,7 +2303,7 @@ fn collect_lateral_warning_victims(
             continue;
         }
         let distance = (dx * dx + dy * dy).sqrt();
-        if distance < min_distance || distance > max_distance {
+        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
             continue;
         }
         let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
@@ -2933,6 +2941,13 @@ mod tests {
     }
 
     #[test]
+    fn sword_strike_range_rejects_nan_like_original_positive_comparisons() {
+        assert!(!sword_strike_distance_is_in_range(f32::NAN, 0.0, 65.0));
+        assert!(sword_strike_distance_is_in_range(0.0, 0.0, 65.0));
+        assert!(sword_strike_distance_is_in_range(65.0, 0.0, 65.0));
+    }
+
+    #[test]
     fn half_circle_done_seed_combines_3d_range_with_ground_space_sector() {
         let attacker = WorldPoint3D::ZERO;
         let elevated_same_map = WorldPoint3D::new(0.0, 10.0, 10.0);
@@ -3213,7 +3228,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_selected_strike_keeps_stale_impossible_deadline_strict() {
+    fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
         let mut engine = make_engine();
         let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let selected_row = crate::sprite_script::SpriteScript {
@@ -3270,8 +3285,29 @@ mod tests {
 
         assert_eq!(
             engine.opponent_sword_strike_time_limit_for_actor(target),
-            Some(i16::MIN),
-            "a fresh selected strike must not turn the stale sprite's impossible marker into permissive -1 timing"
+            Some(1000),
+            "schema-15 replays without a captured UB value retain the historical permissive result"
+        );
+
+        let target_creation_order = engine.world.original_creation_order(target);
+        engine
+            .control
+            .require_original_impossible_action_done_deadline = true;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                engine.opponent_sword_strike_time_limit_for_actor(target)
+            }))
+            .is_err(),
+            "schema-16 must fail loudly when its UB boundary value is absent"
+        );
+        engine
+            .control
+            .original_impossible_action_done_deadlines
+            .insert(target_creation_order, -22478);
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(target),
+            Some(-22478),
+            "schema-16 can carry the Original allocator-dependent wrapped SWORD"
         );
 
         let sprite = &mut engine
