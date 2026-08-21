@@ -4746,6 +4746,94 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
 }
 
 #[test]
+fn selected_beggar_entry_stop_leaves_transient_nonanimation_before_next_idle() {
+    use crate::element::{ActionState, Posture};
+    use crate::order::OrderType;
+    use crate::profiles::Action;
+    use crate::sequence::{SequenceId, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let pc = engine.add_entity(make_test_pc(Posture::SimulatingBeggar));
+    engine.players.seats[0].selection.push(pc);
+    engine.players.seats[0].selected_action = Action::Beggar;
+    {
+        let entity = engine.get_entity_mut(pc).unwrap();
+        entity.pc_data_mut().unwrap().current_action = Action::Beggar;
+        let actor = entity.actor_data_mut().unwrap();
+        actor.action_state = ActionState::Waiting;
+        actor.installed_order = None;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+    let mut assets = assets_with_test_pc_profile();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    // EnterBeggar DONE has already retired its transition before deferred
+    // Execute side effects are drained in Rust. Original still has that
+    // transition selected here: Wait is postponed behind it and the following
+    // selected-PC SelectAction(Beggar) Stop discards the Wait.
+    engine.drain_beggar_wait_handoffs(&sim, &assets, vec![(pc, true)]);
+
+    assert_eq!(
+        engine.actor_order_type(pc),
+        Some(OrderType::NonanimationEnd)
+    );
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(pc)
+            .is_none(),
+        "the callback Wait must not replace the finished entry transition in the same frame"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(SequenceId(1), 0)
+            .expect("the stopped callback Wait retains its allocated identity")
+            .state,
+        SequenceState::Interrupted
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(pc, |command| command
+                == crate::element::Command::Wait),
+        "the interrupted callback Wait must not survive as live actor work"
+    );
+
+    // Actor::Hourglass sees the null order on the following frame and creates
+    // the regular posture-derived Wait, which translates to beggar idle.
+    engine.ensure_wait_element(pc);
+    engine
+        .drain_script_registration_inline_actions(&sim, &assets, &mut Vec::new())
+        .unwrap();
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc)
+            .is_some_and(|(sequence, _, order)| {
+                sequence == SequenceId(2) && order.order_type == OrderType::SimulatingBeggar
+            }),
+        "the following actor frame must install the normal beggar idle"
+    );
+}
+
+#[test]
 fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     use crate::element::{ActionState, Command, Posture};
     use crate::sequence::{SequenceElement, SequenceState};

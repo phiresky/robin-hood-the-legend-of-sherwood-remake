@@ -7597,7 +7597,7 @@ impl EngineInner {
         }
     }
 
-    fn drain_beggar_wait_handoffs(
+    pub(super) fn drain_beggar_wait_handoffs(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -7607,10 +7607,18 @@ impl EngineInner {
             // RHElementActorPC::Execute calls Wait() inside both beggar
             // transition DONE arms. This occurs in the actor's live legacy
             // slot, before base Actor completion and the later
-            // SequenceManager::Hourglass drain. Keep it as a fresh launch:
-            // ensure_wait_element intentionally suppresses a wait while the
-            // finishing transition is still current.
-            self.actor_wait(pc_id);
+            // SequenceManager::Hourglass drain. It is normally a fresh
+            // launch: ensure_wait_element intentionally suppresses a wait
+            // while the finishing transition is still current. The selected
+            // entry exception below represents the fresh Wait that Original's
+            // immediately-following Stop discards before it can translate.
+            let wait_sequence = self.actor_wait(pc_id);
+            let selected_entry = entering && self.players.seats[0].selection.contains(&pc_id);
+            if selected_entry {
+                self.orders
+                    .sequence_manager
+                    .interrupt_just_registered_wait_before_instruct(pc_id, wait_sequence);
+            }
             // The next Original statement forwards MSG_SELECT_ACTION(BEGGAR).
             // When this PC is selected, RHEngine::SelectAction calls Stop at
             // Normal priority even if Beggar was already the current action;
@@ -7618,16 +7626,25 @@ impl EngineInner {
             // unselected PC, SelectAction only stores the action and the Wait
             // survives. Preserve that general message behavior and ordering.
             // WAIT-priority `RHSequenceElement::Go()` is synchronous in
-            // Original. Close that registration boundary before forwarding
-            // the following message: for a selected PC the message's Stop()
-            // must be able to see and interrupt this newly-postponed Wait
-            // through the transition's postponed pointer.
-            self.drain_script_registration_inline_actions(sim, assets, &mut Vec::new())
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "beggar transition Wait registration failed before action message for {pc_id:?}: {error:?}"
-                    )
-                });
+            // Original. During entry it is postponed behind the still-live
+            // noninterruptible EnterBeggar element, then the immediately
+            // forwarded selected-PC SelectAction calls Stop(Normal) and
+            // discards that postponed Wait (RHsequenceelement.cpp:509-558,
+            // RHengine.cpp:13017-13075). Rust drains this execute side effect
+            // after retiring the transition, so translating the Wait first
+            // would select it and Actor::Stop's default-Wait exclusion would
+            // preserve it. Suppress exactly that selected-entry Wait: the
+            // next actor Hourglass installs the ordinary beggar idle, after
+            // the same transient null-order frame as Original. Unselected
+            // entry and both leave paths still execute Wait synchronously.
+            if !selected_entry {
+                self.drain_script_registration_inline_actions(sim, assets, &mut Vec::new())
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "beggar transition Wait registration failed before action message for {pc_id:?}: {error:?}"
+                        )
+                    });
+            }
             if entering {
                 self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Beggar);
             } else if self.players.seats[0].selection.contains(&pc_id) {

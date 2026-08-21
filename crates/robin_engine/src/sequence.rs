@@ -3194,6 +3194,89 @@ impl SequenceManager {
         self.launch_sequence(seq)
     }
 
+    /// Interrupt one freshly launched actor Wait before its synchronous
+    /// `Go()` action reaches `Instruct`.
+    ///
+    /// This is deliberately identity-based rather than an owner/command scan:
+    /// EnterBeggar's DONE callback creates one Wait, postpones it behind the
+    /// still-selected noninterruptible transition, then selected-PC
+    /// `SelectAction(Beggar)` immediately stops that exact postponed element.
+    /// Rust replays the callback after retiring the transition, so its split
+    /// representation must remove the queued instruction before it can select
+    /// the Wait. Preserve the launch (and therefore sequence/element ID
+    /// consumption) while touching no older queued work for the same owner.
+    pub(crate) fn interrupt_just_registered_wait_before_instruct(
+        &mut self,
+        owner: EntityId,
+        sequence_id: SequenceId,
+    ) {
+        let element = self
+            .get_element(sequence_id, 0)
+            .unwrap_or_else(|| panic!("fresh Wait {sequence_id:?}/0 disappeared before Stop"));
+        assert_eq!(
+            element.owner,
+            Some(owner),
+            "fresh Wait {sequence_id:?}/0 changed owner before Stop"
+        );
+        assert_eq!(
+            element.command,
+            Command::Wait,
+            "selected beggar callback may discard only its fresh Wait"
+        );
+        assert_eq!(
+            element.priority,
+            SequencePriority::Wait,
+            "selected beggar callback Wait lost RHPRIORITY_WAIT"
+        );
+        assert_eq!(
+            element.state,
+            SequenceState::Todo,
+            "selected beggar callback Wait must be stopped before Instruct"
+        );
+        assert!(
+            element.orders.is_empty(),
+            "selected beggar callback Wait translated before its Stop"
+        );
+
+        let target = (sequence_id, 0);
+        let queued_actions = self
+            .pending_synchronous_actions
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    PendingSyncEntry::Action(SequenceAction::InstructOwner {
+                        owner: queued_owner,
+                        sequence_id: queued_sequence,
+                        element_index: 0,
+                    }) if *queued_owner == owner && *queued_sequence == sequence_id
+                )
+            })
+            .count();
+        assert_eq!(
+            queued_actions, 1,
+            "fresh Wait {sequence_id:?}/0 must have exactly one queued Go action"
+        );
+        self.pending_synchronous_actions.retain(|entry| {
+            !matches!(
+                entry,
+                PendingSyncEntry::Action(SequenceAction::InstructOwner {
+                    owner: queued_owner,
+                    sequence_id: queued_sequence,
+                    element_index: 0,
+                }) if *queued_owner == owner && *queued_sequence == sequence_id
+            )
+        });
+        assert!(
+            !self.elements_to_go.contains(&target),
+            "fresh RHPRIORITY_WAIT element unexpectedly entered the deferred manager FIFO"
+        );
+        assert!(
+            self.terminate_sequence(sequence_id),
+            "fresh Wait {sequence_id:?} disappeared before interruption"
+        );
+    }
+
     /// Launch a one-shot generic sequence carrying a single pre-built
     /// `Order` for `actor`, and immediately mark its element as
     /// `InProgress` so consumers (animation driver, AI peek-current)
