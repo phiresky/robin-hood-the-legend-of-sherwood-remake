@@ -2206,8 +2206,14 @@ impl EngineInner {
                     let actor = entity.actor_data_mut().unwrap();
                     actor.active_flight = None;
                     if flight.ladder_fall {
-                        // The countdown just hit zero.
+                        // The countdown just hit zero. Original stores the
+                        // ladder countdown and seek-refresh countdown in the
+                        // same `mulWaitTime` scalar, so landing overwrites the
+                        // dormant seek mirror too. Keep the retained seek
+                        // target/continuation themselves intact: only their
+                        // split Rust countdown copy has become stale.
                         actor.wait_time = 0;
+                        actor.seek_refresh_wait = 0;
                         ladder_arrivals.push(entity_id.into());
                     }
                 }
@@ -3857,6 +3863,45 @@ mod tests {
             order_id,
             order_type: OrderType::FallingLadderWall,
         });
+    }
+
+    #[test]
+    fn ladder_arrival_publishes_zero_wait_without_dropping_dormant_seek() {
+        let sim = crate::sim_rng::test_context();
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .characters
+            .push(crate::profiles::CharacterProfile::default());
+        profiles
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::default()
+        };
+        let mut engine = EngineInner::new();
+        let victim = engine.add_entity(falling_ladder_pc(200));
+        {
+            let actor = engine
+                .get_entity_mut(victim)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.wait_time = 1;
+            actor.seek_refresh_wait = 24;
+            actor.seek_target = Some(victim);
+            actor.post_seek_sequence = Some(Box::new(crate::sequence::Sequence::new()));
+        }
+        install_falling_ladder_order(&mut engine, victim);
+
+        engine.tick_push_flight_for_owner(&sim, &assets, victim);
+
+        let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
+        assert_eq!(actor.wait_time, 0);
+        assert_eq!(actor.seek_refresh_wait, 0);
+        assert_eq!(engine.actor_legacy_wait_time(victim), 0);
+        assert_eq!(actor.seek_target, Some(victim));
+        assert!(actor.post_seek_sequence.is_some());
     }
 
     #[test]
