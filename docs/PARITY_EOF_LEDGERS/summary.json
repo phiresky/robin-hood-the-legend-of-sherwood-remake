@@ -1,0 +1,19 @@
+{
+  "interactive": {
+    "eof": 2,
+    "planned": 12
+  },
+  "original": {
+    "eof": 4799,
+    "planned": 4800
+  },
+  "seed1000000": {
+    "eof": 2412,
+    "planned": 2430
+  },
+  "seed2000000": {
+    "captured": 4205,
+    "eof": 4189,
+    "planned": 9720
+  }
+}
