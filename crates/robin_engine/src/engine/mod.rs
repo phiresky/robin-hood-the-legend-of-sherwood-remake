@@ -2903,7 +2903,37 @@ impl EngineInner {
                     new_idx,
                     new_command,
                 );
+                // Human::Execute's WAITING_SWORD arm always returns
+                // RHMOTION_IN_PROGRESS after PerformAction/EvaluateSwordfight
+                // (RHelementactorhuman.cpp:3729-3750). If that evaluation
+                // synchronously installs an injury while WAIT_FREE_LIFT owns
+                // the WaitingSword order, a transient sprite-cycle Done must
+                // not trigger engine_postpone's usual done-order shortcut.
+                // The blocked lift waiter itself is what Original postpones.
+                // Keep the exception at this exact arbitration seam so every
+                // other done-order race, including WAIT_TIMER, is unchanged.
+                let preserve_waiting_sword_lift_wait = self
+                    .orders
+                    .sequence_manager
+                    .get_element(cur_seq, cur_idx)
+                    .is_some_and(|element| {
+                        element.command == crate::element::Command::WaitFreeLift
+                            && element.state == crate::sequence::SequenceState::InProgress
+                            && element.orders.back().is_some_and(|order| {
+                                order.order_type == crate::order::OrderType::WaitingSword
+                                    && order.done
+                            })
+                    });
                 self.stop_owner_active_mechanics(owner);
+                if preserve_waiting_sword_lift_wait
+                    && let Some(order) = self
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(cur_seq, cur_idx)
+                        .and_then(|element| element.orders.back_mut())
+                {
+                    order.done = false;
+                }
                 // Original assigns the incoming element to mpSequenceElement
                 // before postponing the outgoing one, so every condolence
                 // card raised from inside that postpone — including the

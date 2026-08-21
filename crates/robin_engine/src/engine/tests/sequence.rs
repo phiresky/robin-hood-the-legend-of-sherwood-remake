@@ -3574,6 +3574,66 @@ fn arbitration_ignores_serialized_order_ai_lock_like_original() {
 }
 
 #[test]
+fn injury_postpones_waiting_sword_lift_wait_despite_done_sprite_cycle() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    fn arbitrate_done_current(command: Command, order_type: OrderType) -> SequenceState {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+        let mut current = SequenceElement::new(1, command, Some(owner));
+        current.priority = SequencePriority::Normal;
+        let mut order = Order::test_new(order_type, 0.0, 0.0);
+        order.done = true;
+        current.orders.push_back(order);
+        let current_seq = engine.orders.sequence_manager.launch_element(current);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(current_seq, 0);
+
+        let mut injury = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
+        injury.priority = SequencePriority::Injury;
+        let injury_seq = engine.orders.sequence_manager.launch_element(injury);
+
+        assert!(engine.arbitrate_instruct(injury_seq, 0));
+        let current_state = engine
+            .orders
+            .sequence_manager
+            .get_element(current_seq, 0)
+            .expect("outgoing element remains inspectable")
+            .state;
+        let injury = engine
+            .orders
+            .sequence_manager
+            .get_element(injury_seq, 0)
+            .expect("incoming injury remains inspectable");
+        if command == Command::WaitFreeLift && order_type == OrderType::WaitingSword {
+            assert_eq!(injury.cross_postponed, Some((current_seq, 0)));
+        }
+        current_state
+    }
+
+    assert_eq!(
+        arbitrate_done_current(Command::WaitFreeLift, OrderType::WaitingSword),
+        SequenceState::Postponed,
+        "Original WaitingSword Execute returns InProgress, so injury postpones the blocked lift waiter itself"
+    );
+    assert_eq!(
+        arbitrate_done_current(Command::WaitFreeLift, OrderType::WaitingUpright),
+        SequenceState::Terminated,
+        "the exception must not suppress ordinary done-order termination"
+    );
+    assert_eq!(
+        arbitrate_done_current(Command::WaitTimer, OrderType::WaitingSword),
+        SequenceState::Terminated,
+        "WAIT_TIMER keeps the generic done-order arbitration semantics"
+    );
+}
+
+#[test]
 fn duplicate_instruct_does_not_arbitrate_an_element_against_itself() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
