@@ -301,6 +301,28 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn recorded_route_goal_remains_independent_of_coincident_selected_overlay() {
+        // Savegame_linux3/Profile003/Savegame008/replay018 frame 16221:
+        // the selected overlay resolves at the click independently, while
+        // RecordGroupMove's patch-aware pSectorGoal remains sector 288/L4.
+        // Losing the recorded identity turns the command into a same-sector
+        // move; preserving it reaches gate A*, whose failure leaves the old
+        // Wait sequence installed just as AppendMoveToSequence does.
+        let selected_overlay = Some(crate::sector::SectorNumber::new(33));
+        let recorded = Some((crate::sector::SectorNumber::new(288), 4));
+
+        assert_eq!(
+            group_move_route_goal(recorded, selected_overlay, 0),
+            (Some(crate::sector::SectorNumber::new(288)), 4)
+        );
+        assert_eq!(
+            group_move_sector_kinds(SectorType::MOTION),
+            (false, false, false),
+            "selected-sector semantics are still derived from the overlay"
+        );
+    }
+
+    #[test]
     fn player_group_move_uses_resolved_upright_click_action() {
         assert_eq!(player_group_move_action(false), OrderType::WalkingUpright);
         assert_eq!(player_group_move_action(true), OrderType::RunningUpright);
@@ -2823,6 +2845,17 @@ fn group_move_sector_kinds(sector_type: crate::sector::SectorType) -> (bool, boo
     )
 }
 
+#[inline]
+fn group_move_route_goal(
+    recorded_goal: Option<(crate::sector::SectorNumber, u16)>,
+    selected_sector: Option<crate::sector::SectorNumber>,
+    selected_layer: u16,
+) -> (Option<crate::sector::SectorNumber>, u16) {
+    recorded_goal
+        .map(|(sector, layer)| (Some(sector), layer))
+        .unwrap_or((selected_sector, selected_layer))
+}
+
 /// `PerformGroupMove` receives one resolved upright action from the click
 /// dispatcher. It does not infer sword movement from an actor's opponent list;
 /// `DetermineMovementAnimation` performs any live action-state adaptation when
@@ -4477,12 +4510,37 @@ impl EngineInner {
 
         // ── Unified sector hit-test ──
         //
-        // Top-down layer search to set the selected sector / layer /
-        // valid-for-move flags.  When `goal_override` is set, skip the
-        // spatial query: host-side hover already selected the authoritative
-        // sector/layer.  This mirrors C++ where `update_mouse` mutates
-        // `mpSelectedSector` / `muwSelectedLayer` before
-        // `PerformGroupMove` reads them.
+        // Top-down layer search reconstructs `mpSelectedSector`, whose sector
+        // kind drives the door/lift/jump semantics below.  It is deliberately
+        // independent of `goal_override`: Original `PerformGroupMove` can use
+        // a patch's sector as `pSectorGoal` while `mpSelectedSector` remains
+        // the coincident mouse-selection overlay (RHengine.cpp:5322-5337).
+        // RecordGroupMove stores that patch-aware route goal, not necessarily
+        // `mpSelectedSector`, so replay must preserve both identities.
+        let hit = self
+            .world
+            .fast_grid
+            .get_sector_screen(click_point, reference);
+        let selected_grid_sector = hit
+            .sector_idx
+            .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)));
+        let (is_lift_click, is_door_click_sector, is_jump_click) = selected_grid_sector
+            .map(|sector| group_move_sector_kinds(sector.sector_type))
+            .unwrap_or((false, false, false));
+        let jump_underlying_sector = selected_grid_sector
+            .filter(|sector| sector.sector_type.is_jump())
+            .and_then(|sector| sector.underlying_sector)
+            .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
+            .map(|sector| (sector.sector_number, sector.layer));
+        let clicked_sector_door_index = selected_grid_sector.and_then(|sector| sector.door_index);
+        let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
+            door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
+        });
+        let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
+        let is_door_click = is_door_click_sector || clicked_door_index.is_some();
+        let (route_goal_sector, route_goal_layer) =
+            group_move_route_goal(goal_override, hit.sector, hit.layer);
+
         let (
             goal_sector,
             effective_click,
@@ -4494,50 +4552,20 @@ impl EngineInner {
             clicked_jump_sector_idx,
             jump_underlying_sector,
             clicked_door_index,
-        ) = if let Some((override_sector, override_layer)) = goal_override {
-            // The recording carries the authoritative selected sector, not
-            // merely a motion-area destination. Resolve its kind exactly as
-            // the live cursor path does: Original PerformGroupMove reads
-            // IsLift/IsDoor from mpSelectedSector after recording the command.
-            let override_index = self
-                .world
-                .fast_grid
-                .level
-                .sector_number_map
-                .get(&override_sector)
-                .copied();
-            let override_grid_sector =
-                override_index.and_then(|index| self.world.fast_grid.level.sectors.get(index));
-            let (is_lift, is_door, is_jump) = override_grid_sector
-                .map(|sector| group_move_sector_kinds(sector.sector_type))
-                .unwrap_or((false, false, false));
-            let jump_underlying_sector = override_grid_sector
-                .filter(|sector| is_jump)
-                .and_then(|sector| sector.underlying_sector)
-                .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
-                .map(|sector| (sector.sector_number, sector.layer));
+        ) = if goal_override.is_some() {
             (
-                Some(override_sector),
+                route_goal_sector,
                 click_point,
-                override_layer,
+                route_goal_layer,
                 true,
-                is_lift,
-                is_door,
-                is_jump,
-                if is_jump {
-                    override_index
-                        .and_then(|index| crate::fast_find_grid::SectorIndex::new(index as u32))
-                } else {
-                    None
-                },
+                is_lift_click,
+                is_door_click,
+                is_jump_click,
+                if is_jump_click { hit.sector_idx } else { None },
                 jump_underlying_sector,
-                override_grid_sector.and_then(|sector| sector.door_index),
+                clicked_door_index,
             )
         } else {
-            let hit = self
-                .world
-                .fast_grid
-                .get_sector_screen(click_point, reference);
             let is_valid = hit.is_valid_for_move(&self.world.fast_grid);
 
             // ── Door/Drawbridge click shortcut ──
@@ -4548,39 +4576,9 @@ impl EngineInner {
             // door sector and the gate-A* path routes through the
             // door's entry point (the door sector itself is not a
             // motion area).
-            let selected_sector_kinds = hit
-                .sector_idx
-                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
-                .map(|sector| group_move_sector_kinds(sector.sector_type))
-                .unwrap_or((false, false, false));
-            let (is_lift_click, is_door_click_sector, is_jump_click) = selected_sector_kinds;
-            let jump_underlying_sector = hit
-                .sector_idx
-                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
-                .filter(|s| s.sector_type.is_jump())
-                .and_then(|s| s.underlying_sector)
-                .and_then(|i| {
-                    self.world
-                        .fast_grid
-                        .level
-                        .sectors
-                        .get(usize::from(i))
-                        .map(|s| (s.sector_number, s.layer))
-                });
-
             // Door index of the clicked door sector, if any.  Used to
             // route the per-PC gate search via `find_path_to_door` and
             // emit a `GoalShape::Door` terminal element.
-            let clicked_sector_door_index: Option<u32> = hit
-                .sector_idx
-                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
-                .and_then(|s| s.door_index);
-            let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
-                door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
-            });
-            let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
-            let is_door_click = is_door_click_sector || clicked_door_index.is_some();
-
             let (effective_click, effective_layer) = if is_valid || is_jump_click {
                 (click_point, hit.layer)
             } else {

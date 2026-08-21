@@ -1098,9 +1098,9 @@ impl TraceCommand {
             } => {
                 let destination: MapPoint = destination.into();
                 let goal_override = match entity_map
-                    .translate_position_sector(goal_sector, goal_layer)
+                    .translate_group_move_goal_sector(goal_sector, goal_layer)
                 {
-                    Some(goal) => {
+                    GroupMoveGoalTranslation::Runtime(goal) => {
                         engine
                             .fast_grid()
                             .level
@@ -1116,47 +1116,18 @@ impl TraceCommand {
                             });
                         Some(goal)
                     }
-                    None => {
-                        let raw_index = usize::try_from(goal_sector).unwrap_or_else(|_| {
-                            panic!("group-move has negative sector index {goal_sector}")
-                        });
-                        // RecordGroupMove writes RHSector::GetSectorNumber().
-                        // Motion/building identities have an exact translation
-                        // in EntityMap. Door and jump click sectors do not:
-                        // Rust intentionally represents those semantic overlays
-                        // outside the canonical position-sector id space, so
-                        // re-run the spatial selection only for such an overlay.
-                        let containing = engine
-                            .fast_grid()
-                            .level
-                            .sectors
-                            .iter()
-                            .filter(|sector| {
-                                sector.layer == goal_layer && sector.contains_point(destination)
-                            })
-                            .collect::<Vec<_>>();
-                        let has_semantic_overlay =
-                            containing.iter().any(|sector| {
-                                sector.sector_type.is_door() || sector.sector_type.is_jump()
-                            }) || engine.group_move_door_at(destination).is_some();
-                        if has_semantic_overlay {
-                            None
-                        } else {
-                            panic!(
-                                "group-move Original sector {raw_index} has no retained position-sector \
-                                 identity and no semantic overlay at {destination:?} on layer \
-                                 {goal_layer}; containing sectors: {:?}",
-                                containing
-                                    .iter()
-                                    .map(|sector| (
-                                        sector.sector_number,
-                                        sector.sector_type,
-                                        sector.underlying_sector,
-                                        sector.door_index,
-                                    ))
-                                    .collect::<Vec<_>>()
-                            )
-                        }
+                    GroupMoveGoalTranslation::RecordedUnmapped(goal) => {
+                        assert!(
+                            !engine
+                                .fast_grid()
+                                .level
+                                .sector_number_map
+                                .contains_key(&goal.0),
+                            "unmapped Original group-move sector {goal_sector} collides with Rust \
+                             runtime sector {}",
+                            goal.0
+                        );
+                        Some(goal)
                     }
                 };
                 PlayerCommand::GroupMove {
@@ -5914,19 +5885,30 @@ impl EntityMap {
             .unwrap_or_else(|| panic!("original entity {original:?} has no Rust correspondence"))
     }
 
-    /// Translate an Original `RHSector::GetSectorNumber()` into Rust's compact
-    /// canonical position-sector identity. Sparse door/jump/patch overlay
-    /// sectors deliberately return `None`; they are replayed through spatial
-    /// semantic selection instead.
-    fn translate_position_sector(&self, original: i16, layer: u16) -> Option<(SectorNumber, u16)> {
+    /// Preserve the patch-aware `pSectorGoal` recorded by PerformGroupMove.
+    /// A retained canonical position sector is translated normally. A true
+    /// unmapped constructor remains an authoritative route goal in Original's
+    /// sparse identity domain: keeping
+    /// its number forces the same AppendMoveToSequence gate search instead of
+    /// silently substituting Rust's coincident `mpSelectedSector` overlay.
+    fn translate_group_move_goal_sector(
+        &self,
+        original: i16,
+        layer: u16,
+    ) -> GroupMoveGoalTranslation {
         let original = u16::try_from(original)
-            .unwrap_or_else(|_| panic!("Original position sector is negative: {original}"));
-        self.sectors.get(&original).map(|&runtime| {
+            .unwrap_or_else(|_| panic!("Original group-move sector is negative: {original}"));
+        if let Some(&runtime) = self.sectors.get(&original) {
             let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
                 panic!("Rust position sector {runtime} exceeds its signed identity domain")
             });
-            (SectorNumber::new(runtime), layer)
-        })
+            GroupMoveGoalTranslation::Runtime((SectorNumber::new(runtime), layer))
+        } else {
+            let recorded = i16::try_from(original).unwrap_or_else(|_| {
+                panic!("Original group-move sector {original} exceeds its signed identity domain")
+            });
+            GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(recorded), layer))
+        }
     }
 
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
@@ -5936,6 +5918,12 @@ impl EntityMap {
     fn translate_sector(&self, original: u16) -> u16 {
         self.sectors.get(&original).copied().unwrap_or(original)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GroupMoveGoalTranslation {
+    Runtime((SectorNumber, u16)),
+    RecordedUnmapped((SectorNumber, u16)),
 }
 
 fn pair_runtime_identities_by_persistent_rank(
@@ -11021,10 +11009,18 @@ mod tests {
         // recorded waypoint may lie outside that sector's polygon. Translation
         // therefore depends only on retained construction topology.
         assert_eq!(
-            map.translate_position_sector(55, 0),
-            Some((SectorNumber::new(23), 0))
+            map.translate_group_move_goal_sector(55, 0),
+            GroupMoveGoalTranslation::Runtime((SectorNumber::new(23), 0))
         );
-        assert_eq!(map.translate_position_sector(56, 0), None);
+        assert_eq!(
+            map.translate_group_move_goal_sector(56, 0),
+            GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(56), 0))
+        );
+        assert_eq!(
+            map.translate_group_move_goal_sector(288, 4),
+            GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(288), 4)),
+            "a coincident overlay must not erase the recorded route goal"
+        );
     }
 
     #[test]
