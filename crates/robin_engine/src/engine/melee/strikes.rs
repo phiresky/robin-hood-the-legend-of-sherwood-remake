@@ -2288,39 +2288,20 @@ impl EngineInner {
             }
         }
 
-        // Landing-resolution second pass: apply the goal obstacle and
-        // footstep material. ReadyForTakeOff has already installed the goal
-        // obstacle before the flight starts. Original's terminal
-        // PerformFlight then publishes its authored 3D goal without
-        // reinstalling that same plane. Reinstalling it through Rust's eager
-        // `set_obstacle_and_material` reprojects Z from the rounded map-space
-        // Y and can move a sloped landing by several ULPs (seed-2M
-        // Savegame_023/replay-003). When the obstacle is already current,
-        // refresh only the material and preserve the exact flight goal.
+        // Landing-resolution second pass: apply a goal obstacle that was not
+        // already installed. Original ReadyForTakeOff calls SetObstacle (not
+        // SetObstacleAndMaterial) before the flight and terminal PerformFlight
+        // does not refresh the footstep material. Preserve both that material
+        // and the authored 3D goal when the obstacle is already current.
+        // Reinstalling the same plane would also reproject Z from rounded
+        // map-space Y and can move a sloped landing by several ULPs (seed-2M
+        // Savegame_023/replay-003).
         for &(flyer_id, obstacle) in &landings {
             let current_obstacle = self
                 .get_entity(flyer_id)
                 .and_then(|entity| entity.element_data().obstacle_index())
                 .map(|handle| handle.get());
-            if current_obstacle == obstacle {
-                let material = match obstacle {
-                    Some(index) => self
-                        .sight_obstacles(assets)
-                        .get(index as usize)
-                        .map(|source| {
-                            crate::element::GameMaterial::from_u32(source.material as u32)
-                        }),
-                    None => self.get_entity(flyer_id).map(|entity| {
-                        assets.material_sectors.material_at_layer(
-                            entity.element_data().position_map(),
-                            entity.element_data().layer(),
-                        )
-                    }),
-                };
-                if let (Some(entity), Some(material)) = (self.get_entity_mut(flyer_id), material) {
-                    entity.element_data_mut().set_material(material);
-                }
-            } else {
+            if current_obstacle != obstacle {
                 self.set_obstacle_and_material(assets, flyer_id, obstacle);
             }
         }
@@ -3895,6 +3876,9 @@ mod tests {
         let exact_goal = MapPoint::new(1142.2262, 1230.5006);
         let mut entity = falling_pushed_soldier(false);
         entity.set_posture(Posture::Lying);
+        entity
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Grass);
         entity.element_data_mut().set_position_map(near_goal);
         entity.position_iface_mut().new_move();
         let flight = entity
@@ -3922,11 +3906,16 @@ mod tests {
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
+        assert_eq!(
+            victim.element_data().material(),
+            crate::element::GameMaterial::Grass,
+            "terminal PerformFlight preserves the material held through flight"
+        );
         assert!(victim.actor_data().unwrap().active_flight.is_none());
     }
 
     #[test]
-    fn completed_combat_flight_preserves_authored_z_on_an_installed_slope() {
+    fn completed_combat_flight_preserves_authored_z_and_material_on_an_installed_slope() {
         let sim = crate::sim_rng::test_context();
         let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(1);
         obstacle.top_plane_points = [
@@ -3954,6 +3943,9 @@ mod tests {
 
         let mut entity = falling_pushed_soldier(false);
         entity.set_posture(Posture::Lying);
+        entity
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Leaves);
         entity.element_data_mut().set_obstacle_index(
             crate::position_interface::ObstacleHandle::new(0),
             Some(plane),
@@ -3992,7 +3984,11 @@ mod tests {
             victim.element_data().obstacle_index(),
             crate::position_interface::ObstacleHandle::new(0)
         );
-        assert_eq!(victim.element_data().material().as_u32(), 3);
+        assert_eq!(
+            victim.element_data().material(),
+            crate::element::GameMaterial::Leaves,
+            "ReadyForTakeOff installs the goal obstacle without changing material"
+        );
     }
 
     #[test]
