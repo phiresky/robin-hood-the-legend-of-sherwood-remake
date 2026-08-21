@@ -53,6 +53,34 @@ fn patrol_path_view_fields(
     }
 }
 
+/// Project the path iterator edge that Original exposes to another NPC while
+/// this actor is sitting on the terminal frame of its route-arrival
+/// transition.
+///
+/// Rust retires the selected MoveOk and drives the authored walking-to-waiting
+/// transition in two staged owner slots. During the slot between them,
+/// `PatrolPath::last_waypoint_index` still names the preceding point even
+/// though the transition has reached its terminal frame. Original completes
+/// that same actor edge before a synchronous Charly-reunion query observes
+/// `RHPath::GetLastWaypointIndex()`. Publish the just-reached current point in
+/// that narrow view window; the stored path iterator is left untouched.
+fn observable_last_waypoint_index(
+    current: u8,
+    last: u8,
+    substate: Substate,
+    animation: OrderType,
+    animation_frame_count: u16,
+) -> u8 {
+    if substate == Substate::DefaultEnroute
+        && animation == OrderType::TransitionWalkingUprightWaitingUpright
+        && animation_frame_count == 0
+    {
+        current
+    } else {
+        last
+    }
+}
+
 /// Snapshot of a single entity's AI-facing state at the top of the
 /// current tick.
 #[derive(
@@ -848,7 +876,7 @@ pub fn entity_view_from_entity(
     let (
         macro_in_progress,
         path_current_waypoint_index,
-        path_last_waypoint_index,
+        raw_path_last_waypoint_index,
         path_forward_movement,
         patrol_hiking_path_index,
     ) = match entity {
@@ -872,6 +900,13 @@ pub fn entity_view_from_entity(
             .unwrap_or((false, 0, 0, true, None)),
         _ => (false, 0, 0, true, None),
     };
+    let path_last_waypoint_index = observable_last_waypoint_index(
+        path_current_waypoint_index,
+        raw_path_last_waypoint_index,
+        ai_substate,
+        current_animation,
+        entity.sprite().frame_count,
+    );
 
     AiEntityView {
         original_creation_order,
@@ -967,6 +1002,42 @@ mod tests {
         assert_eq!(
             patrol_path_view_fields(&base),
             (4, 3, false, crate::ai::PathId::new(33))
+        );
+    }
+
+    #[test]
+    fn terminal_route_transition_publishes_reached_waypoint_as_last() {
+        assert_eq!(
+            observable_last_waypoint_index(
+                3,
+                2,
+                Substate::DefaultEnroute,
+                OrderType::TransitionWalkingUprightWaitingUpright,
+                0,
+            ),
+            3
+        );
+        assert_eq!(
+            observable_last_waypoint_index(
+                3,
+                2,
+                Substate::DefaultEnroute,
+                OrderType::TransitionWalkingUprightWaitingUpright,
+                1,
+            ),
+            2,
+            "an in-progress transition must not forecast the arrival"
+        );
+        assert_eq!(
+            observable_last_waypoint_index(
+                3,
+                2,
+                Substate::DefaultInMacroWaitingForDone,
+                OrderType::TransitionWalkingUprightWaitingUpright,
+                0,
+            ),
+            2,
+            "only the enroute arrival edge owns this projection"
         );
     }
 
