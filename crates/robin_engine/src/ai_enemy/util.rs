@@ -1271,11 +1271,13 @@ fn estimate_damage(
         let is_rank_soldier = attacker.rank == ProfileRank::Soldier && !attacker.is_pc;
         // `GetProtection(target, attacker, ...)` does not use the proposed
         // combat-position coordinates: it dereferences both actors and
-        // computes the defender-to-attacker sector from their *live* ground
-        // positions.  Range still uses the hypothetical coordinates above.
+        // computes the defender-to-attacker sector from their *live*
+        // `GetPositionGround()` coordinates. Rust stores projected map Y in
+        // `position`, so recover the Original world Y by adding elevation.
+        // Range still uses the hypothetical coordinates above.
         let target_to_attacker_sector = vec_to_sector(
             attacker.position.x - target.position.x,
-            attacker.position.y - target.position.y,
+            (attacker.position.y + attacker.elevation) - (target.position.y + target.elevation),
         ) as i16;
 
         use crate::weapons::SwordStrike;
@@ -1830,6 +1832,62 @@ mod required_combat_input_tests {
         assert_eq!(
             estimate_damage(1, &mut position, view(&fighters), &profiles, 0),
             10
+        );
+    }
+
+    #[test]
+    fn damage_protection_sector_uses_live_ground_y() {
+        use crate::profiles::{
+            HtHWeaponProfile, ThrustProfile, WeaponThrustDirection, WeaponThrustKind,
+        };
+
+        let mut weapon = HtHWeaponProfile {
+            // With Original ground coordinates the attacker is on the
+            // defender's protected left. Ignoring elevation instead puts the
+            // same two projected map positions directly in front.
+            protection_by_localization: [0, 0, 90, 0, 0],
+            ..HtHWeaponProfile::default()
+        };
+        weapon.thrusts[0] = ThrustProfile {
+            kind: WeaponThrustKind::Straight,
+            direction: WeaponThrustDirection::NonApplicable,
+            cutting: 90,
+            maximal_distance: 100,
+            ..ThrustProfile::default()
+        };
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.hth_weapons.push(weapon);
+
+        let attacker = FighterSnapshot {
+            position: Position {
+                x: 155.0,
+                y: 104.0,
+                ..Position::default()
+            },
+            elevation: 0.0,
+            ..fighter(1)
+        };
+        let target = FighterSnapshot {
+            position: Position::default(),
+            elevation: 150.0,
+            direction: 6,
+            ..fighter(2)
+        };
+        let fighters = [attacker, target];
+        let mut position = CombatPosition {
+            attacker: 1,
+            attacker_position: Position::default(),
+            target: 2,
+            target_position: Position {
+                x: 10.0,
+                ..Position::default()
+            },
+            ..CombatPosition::default()
+        };
+
+        assert_eq!(
+            estimate_damage(1, &mut position, view(&fighters), &profiles, 0),
+            1
         );
     }
 
