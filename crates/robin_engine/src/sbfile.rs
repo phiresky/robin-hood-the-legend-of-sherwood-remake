@@ -296,6 +296,15 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 // case-fold scan.
 pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
     let path_str = path.to_str()?;
+    if cfg!(windows) {
+        // The case-fold walk below cannot rebuild drive/verbatim prefixes
+        // (`C:\`, canonicalize's `\\?\C:\`), and Windows filesystems are
+        // case-insensitive already, so a direct probe is both sufficient
+        // and the only thing that works. Verbatim paths forbid forward
+        // slashes, so fold separators to backslashes first.
+        let backslashed = PathBuf::from(path_str.replace('/', "\\"));
+        return backslashed.exists().then_some(backslashed);
+    }
     let normalised = path_str.replace('\\', "/");
     let path = Path::new(&normalised);
     let mut components = path.components().peekable();

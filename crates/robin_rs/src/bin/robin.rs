@@ -1,8 +1,17 @@
 //! Main game binary for the Rust port of Robin Hood — The Legend of Sherwood.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+// GUI subsystem so Windows/Wine doesn't pop up a console window for the game.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    // The GUI subsystem detaches us from any console; re-attach to the
+    // parent's so stdout/stderr reach the terminal when launched from one.
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
     // Velopack may consume installer/update activation arguments and exit or
     // restart the process, so its startup hook must run before all game setup.
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]

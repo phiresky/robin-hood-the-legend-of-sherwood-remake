@@ -50,11 +50,15 @@ impl FrameState {
         self.push_implicit_base_quad();
         self.upload_queue_geometry(gpu);
 
-        // Acquire swapchain frame.
+        // Acquire swapchain frame. A suboptimal frame is still presented
+        // this cycle; the reconfigure must wait until the acquired texture
+        // has been handed back via `present` — configuring with an
+        // outstanding surface texture is a wgpu validation error.
+        let mut reconfigure_after_present = false;
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
             wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
-                self.reconfigure_surface(gpu);
+                reconfigure_after_present = true;
                 f
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -268,6 +272,9 @@ impl FrameState {
 
         gpu.queue.submit(Some(encoder.finish()));
         gpu.queue.present(frame);
+        if reconfigure_after_present {
+            self.reconfigure_surface(gpu);
+        }
 
         // Frame stats captured before the per-frame clears below.
         let draws_this_frame = self.queued.len();

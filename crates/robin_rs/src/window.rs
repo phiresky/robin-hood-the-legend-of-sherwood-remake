@@ -331,7 +331,7 @@ impl GameWindow {
                     events.push(GameEvent::Resized(width, height));
                 }
                 HostMsg::SurfaceReady { window } => {
-                    match self.gpu.instance.create_surface(window) {
+                    match create_surface_any_thread(&self.gpu.instance, window) {
                         Ok(surface) => {
                             self.surface.replace(surface);
                             self.surface
@@ -350,6 +350,7 @@ impl GameWindow {
         for ev in events.iter_mut() {
             match ev {
                 GameEvent::MouseMove { x, y, xrel, yrel } => {
+                    tracing::trace!("game-side MouseMove drained: ({x}, {y})");
                     let prev = self
                         .last_emitted_cursor
                         .unwrap_or((self.cursor_x, self.cursor_y));
@@ -490,6 +491,45 @@ impl GameWindow {
 
 type WindowReadyFn = Box<dyn FnMut(Arc<Window>) + 'static>;
 
+/// Create a wgpu surface for `window` from the game thread.
+///
+/// On Windows, winit only hands out the window handle on the event-loop
+/// thread, so the plain `create_surface` fails there. Use winit's
+/// documented any-thread escape hatch and build the surface from the raw
+/// handles; the `Arc<Window>` held by `GameWindow` keeps them valid for
+/// the surface's lifetime.
+#[cfg(target_os = "windows")]
+fn create_surface_any_thread(
+    instance: &wgpu::Instance,
+    window: Arc<Window>,
+) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
+    use winit::platform::windows::WindowExtWindows;
+    unsafe {
+        let window_handle = match window.window_handle_any_thread() {
+            Ok(handle) => handle.as_raw(),
+            Err(e) => {
+                // The zero-window sentinel never occurs for a live window,
+                // and a dead window means we're shutting down anyway.
+                panic!("window_handle_any_thread failed: {e}");
+            }
+        };
+        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: Some(winit::raw_window_handle::RawDisplayHandle::Windows(
+                winit::raw_window_handle::WindowsDisplayHandle::new(),
+            )),
+            raw_window_handle: window_handle,
+        })
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn create_surface_any_thread(
+    instance: &wgpu::Instance,
+    window: Arc<Window>,
+) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
+    instance.create_surface(window)
+}
+
 /// Async wgpu bring-up: runs on the game side after `resumed()` ships
 /// us the bare winit window.  `request_adapter` and `request_device`
 /// genuinely yield on wasm, so they have to live on the async path
@@ -509,6 +549,14 @@ async fn build_game_window_async(
     {
         instance_descriptor.backends = wgpu::Backends::PRIMARY;
     }
+    // The statically linked DXC shader compiler only exists for MSVC
+    // targets, and DX12's FXC fallback cannot compile our binding_array
+    // shaders (they need shader model 5.1+). Windows-gnu builds (used for
+    // local Wine testing) therefore go through Vulkan instead of DX12.
+    #[cfg(all(windows, target_env = "gnu"))]
+    {
+        instance_descriptor.backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
+    }
     #[cfg(target_arch = "wasm32")]
     {
         // wgpu 30 has a bug where mixing BROWSER_WEBGPU + GL causes
@@ -523,8 +571,7 @@ async fn build_game_window_async(
     }
     let instance = wgpu::Instance::new(instance_descriptor);
 
-    let surface = instance
-        .create_surface(window.clone())
+    let surface = create_surface_any_thread(&instance, window.clone())
         .map_err(|e| format!("create_surface: {e}"))?;
 
     let adapter = instance
@@ -926,6 +973,7 @@ impl ApplicationHandler for AppHandler {
             WindowEvent::CursorMoved { position, .. } => {
                 let x = position.x as i32;
                 let y = position.y as i32;
+                tracing::trace!("winit CursorMoved: ({x}, {y})");
                 self.last_cursor = (x, y);
                 let _ = self
                     .events_tx
