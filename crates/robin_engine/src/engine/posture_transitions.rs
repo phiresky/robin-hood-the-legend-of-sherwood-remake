@@ -214,6 +214,7 @@ impl EngineInner {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_fast(entity);
+            self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
                 self.orders
@@ -223,7 +224,6 @@ impl EngineInner {
             }
             self.make_active_door_pass_fast(entity);
             self.after_make_rewrite(sim, entity, selected_movement);
-            self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
             // Base SequenceElement::MakeFast still recurses into a same-owner
             // following/postponed movement even when the selected element is
@@ -242,6 +242,7 @@ impl EngineInner {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_slow(entity);
+            self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
                 self.orders
@@ -250,7 +251,6 @@ impl EngineInner {
                 return;
             }
             self.after_make_rewrite(sim, entity, selected_movement);
-            self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
             self.orders.sequence_manager.make_slow(entity);
         }
@@ -368,6 +368,7 @@ impl EngineInner {
             let selected_movement = self.selected_movement_element(entity);
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_upright(entity);
+            self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(selected_movement) = selected_movement {
                 if let Some(pathfinder_index) =
                     self.pending_pathfinder_index(entity, selected_movement)
@@ -378,7 +379,6 @@ impl EngineInner {
                     return;
                 }
                 self.after_make_rewrite(sim, entity, selected_movement);
-                self.synchronize_rewritten_selected_order(entity, action_before);
                 return;
             }
         }
@@ -400,6 +400,7 @@ impl EngineInner {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_crouched(entity);
+            self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
                 self.orders
@@ -408,7 +409,6 @@ impl EngineInner {
                 return;
             }
             self.after_make_rewrite(sim, entity, selected_movement);
-            self.synchronize_rewritten_selected_order(entity, action_before);
         } else {
             if self.selected_element(entity).is_some() {
                 // As in SequenceElement::MakeCrouched, recurse into its linked
@@ -1379,6 +1379,80 @@ mod tests {
         assert_eq!(
             actor.active_door_pass.as_ref().unwrap().current_action,
             OrderType::TransitionRunningUprightWalkingCrouched
+        );
+    }
+
+    #[test]
+    fn make_crouched_publishes_rewritten_walk_before_inserting_posture_transition() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData {
+                action_state: ActionState::Moving,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+        let walk_order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.orders.push_back(Order::new(
+            OrderType::WalkingUpright,
+            10.0,
+            20.0,
+            walk_order_id,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .expect("test PC")
+            .actor_data_mut()
+            .expect("test actor")
+            .installed_order = Some(InstalledActorOrder {
+            order_id: walk_order_id,
+            order_type: OrderType::WalkingUpright,
+        });
+
+        engine.actor_make_crouched(&crate::sim_rng::test_context(), owner);
+
+        let selected = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .expect("post-processed movement remains selected")
+            .2;
+        assert_eq!(
+            selected.order_type,
+            OrderType::TransitionWalkingUprightWalkingCrouched,
+            "PostProcessPath inserts the crouch transition after the rewritten walk"
+        );
+        assert_ne!(selected.order_id, walk_order_id);
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .expect("test PC")
+                .actor_data()
+                .expect("test actor")
+                .installed_order,
+            Some(InstalledActorOrder {
+                order_id: walk_order_id,
+                order_type: OrderType::WalkingCrouched,
+            }),
+            "the live installed order observes walk 6 -> crouched walk 16 before transition 81 is inserted"
         );
     }
 
