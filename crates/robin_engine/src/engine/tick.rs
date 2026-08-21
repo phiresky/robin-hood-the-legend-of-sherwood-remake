@@ -7525,15 +7525,62 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        weak_stunned_start: Vec<(EntityId, crate::order::OrderType)>,
+        weak_stunned_start: Vec<(
+            EntityId,
+            crate::order::OrderType,
+            crate::element::ActionState,
+        )>,
     ) {
-        for (entity_id, anim_type) in weak_stunned_start {
+        for (entity_id, anim_type, action_state_before_perform) in weak_stunned_start {
+            // RHElementActorHuman::Execute notifies every adversary before
+            // calling PerformAction. Rust has to defer the cross-entity Think
+            // until the animation borrow is released, by which point the
+            // START edge may already have installed WaitingSword. Temporarily
+            // expose the captured pre-PerformAction action state so nested
+            // ReconsiderSwordfight applies Original's honour/action gate.
+            let action_state_after_perform = {
+                let actor = self
+                    .world
+                    .entities
+                    .get_mut(entity_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "weak/stunned callback owner {} disappeared before drain",
+                            entity_id.index()
+                        )
+                    })
+                    .actor_data_mut()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "weak/stunned callback owner {} is not an actor",
+                            entity_id.index()
+                        )
+                    });
+                std::mem::replace(&mut actor.action_state, action_state_before_perform)
+            };
             self.add_weak_stunned_combat(
                 sim,
                 assets,
                 entity_id,
                 anim_type == crate::order::OrderType::BeingWeakSword,
             );
+            self.world
+                .entities
+                .get_mut(entity_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "weak/stunned callback owner {} disappeared during drain",
+                        entity_id.index()
+                    )
+                })
+                .actor_data_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "weak/stunned callback owner {} lost actor data during drain",
+                        entity_id.index()
+                    )
+                })
+                .action_state = action_state_after_perform;
         }
     }
 

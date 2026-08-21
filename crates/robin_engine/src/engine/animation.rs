@@ -5556,6 +5556,12 @@ impl EngineInner {
                             .position_iface_mut()
                             .set_map_goal(crate::coordinates::MapPoint::ZERO);
                     }
+                    let weak_stunned_action_before_perform =
+                        weak_stunned_start_action_before_perform(
+                            entity,
+                            anim_type,
+                            order_is_initialising,
+                        );
                     let motion = if is_turn {
                         let direction_before_turn = entity.element_data().direction() as u16;
                         let still_turning = turn_with_provenance(
@@ -5843,12 +5849,6 @@ impl EngineInner {
                             direction_before_turn,
                             entity.element_data().direction() as u16,
                         );
-                        let weak_stunned_action_before_perform =
-                            weak_stunned_start_action_before_perform(
-                                entity,
-                                anim_type,
-                                order_is_initialising,
-                            );
                         let held_weak_sword = hold_weak_sword_at_action_done(entity, anim_type);
                         if held_weak_sword.is_some() {
                             weak_sword_held = true;
