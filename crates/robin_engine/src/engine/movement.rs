@@ -12820,6 +12820,12 @@ impl EngineInner {
                 owner_work,
             );
         }
+        // Once an authorized GoTo has deferred the live path-waiter's tail
+        // Halt, later GoTo calls in the same authored batch observe the
+        // post-Halt state. The request drain preserves FIFO, so the marked
+        // first replacement is constructed and cancelled before those later
+        // moves are built.
+        let mut path_waiter_tail_deferred = false;
         for intent in intents {
             let is_movement = matches!(
                 intent.order_type,
@@ -12844,18 +12850,19 @@ impl EngineInner {
                 | OrderType::WalkingCrouched
                 | OrderType::WalkingAlerted
                 | OrderType::RiderCharging => {
-                    let was_computing_path = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(entity_id)
-                        .and_then(|(sequence_id, element_index)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(sequence_id, element_index)
-                        })
-                        .is_some_and(|element| {
-                            element.command == crate::element::Command::MoveWaiting
-                        });
+                    let was_computing_path = !path_waiter_tail_deferred
+                        && self
+                            .orders
+                            .sequence_manager
+                            .current_element_for_actor(entity_id)
+                            .and_then(|(sequence_id, element_index)| {
+                                self.orders
+                                    .sequence_manager
+                                    .get_element(sequence_id, element_index)
+                            })
+                            .is_some_and(|element| {
+                                element.command == crate::element::Command::MoveWaiting
+                            });
                     if was_computing_path {
                         let ai = self
                             .world
@@ -12928,7 +12935,18 @@ impl EngineInner {
                         self.set_ai_couldnt_reachpoint(entity_id);
                         self.resolve_ai_engine_completion_verdict(entity_id);
                     } else {
+                        // `launch_ai_move` only stages the intent; the actual
+                        // AppendMoveToSequence construction happens in the
+                        // pending-request drain below. Preserve the effective
+                        // GoTo tail until that drain so an existing
+                        // MOVE_WAITING does not erase the replacement before
+                        // its gate sequence (and building-exit random waits)
+                        // has been constructed. Original constructs and
+                        // launches first, then observes IsComputingPath and
+                        // Halts (`RHartificialintelligence.cpp:2538-2620`).
+                        intent.halt_after_launch_for_path_waiter = was_computing_path;
                         self.launch_ai_move(entity_id, &intent);
+                        path_waiter_tail_deferred |= was_computing_path;
                     }
                     if debug_decision_path {
                         let ai = self
@@ -12963,12 +12981,13 @@ impl EngineInner {
                     // StopNotYetLaunchedSequenceElements.
                     if was_computing_path {
                         self.check_shape1_contract(entity_id);
-                        self.halt_actor(entity_id);
-                        if !route_rejected_before_launch {
-                            // The authorized replacement is deliberately
-                            // cancelled by GoTo's IsComputingPath tail; its
-                            // synchronous verdict is nevertheless complete.
-                            self.resolve_ai_engine_completion_verdict(entity_id);
+                        if route_rejected_before_launch {
+                            // No replacement sequence exists on this branch,
+                            // so the tail can halt the outgoing waiter now.
+                            // Authorized routes carry the halt marker through
+                            // `do_launch_ai_move` and are halted immediately
+                            // after construction by the request drain.
+                            self.halt_actor(entity_id);
                         }
                     }
                 }

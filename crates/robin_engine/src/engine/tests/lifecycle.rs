@@ -2763,6 +2763,74 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
 }
 
 #[test]
+fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
+    use crate::element::{Command, Posture};
+    use crate::order::{AiOrderIntent, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+
+    let mut waiting = SequenceElement::new_movement(
+        1,
+        Command::MoveWaiting,
+        Some(owner),
+        OrderType::RunningUpright,
+    );
+    waiting.priority = SequencePriority::Normal;
+    let waiting_sequence = engine.orders.sequence_manager.launch_element(waiting);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(waiting_sequence, 0);
+
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .orders
+        .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
+
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+
+    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+    assert!(
+        engine.orders.pending_move_requests[0]
+            .1
+            .halt_after_launch_for_path_waiter,
+        "GoTo's tail halt must remain attached until the replacement sequence has been constructed"
+    );
+
+    let sequence_count_before_drain = engine.orders.sequence_manager.sequence_count();
+    engine.drain_pending_move_requests(&sim);
+
+    assert!(engine.orders.pending_move_requests.is_empty());
+    assert!(
+        engine.orders.sequence_manager.sequence_count() > sequence_count_before_drain,
+        "the replacement sequence must be constructed before GoTo applies its tail halt"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .pending_elements_for_owner(owner)
+            .iter()
+            .all(|(sequence_id, _)| *sequence_id == waiting_sequence),
+        "the post-construction GoTo tail must cancel the replacement before instruction; only the old waiter's stop transition may remain"
+    );
+}
+
+#[test]
 fn deferred_ai_move_skips_recursive_owner_drain_then_promotes_globally() {
     use crate::element::Posture;
     use crate::order::{AiOrderIntent, OrderType};
