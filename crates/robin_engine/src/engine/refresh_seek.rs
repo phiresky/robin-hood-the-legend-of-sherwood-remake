@@ -64,7 +64,7 @@ fn seek_refresh_wait_elapsed(wait: u32) -> bool {
 ///
 /// Returns `true` when this owner's selected movement is in that state.
 pub(super) fn perform_seek_lost_actor_target(
-    engine: &super::EngineInner,
+    engine: &mut super::EngineInner,
     owner: EntityId,
     selected: super::movement::MovementOwnerSelection,
 ) -> bool {
@@ -94,9 +94,33 @@ pub(super) fn perform_seek_lost_actor_target(
     // The seek wrapper is chosen per animation arm, not per element: wall and
     // ladder orders keep the SEEK flag while their Execute arms call
     // PerformMotion directly and never reach this guard.
-    element
+    let Some(order_type) = element
         .current_order()
-        .is_some_and(|order| super::movement::perform_seek_calls_per_execute(order.order_type) > 0)
+        .map(|order| order.order_type)
+        .filter(|order| super::movement::perform_seek_calls_per_execute(*order) > 0)
+    else {
+        return false;
+    };
+
+    // PerformSeek's null-target guard is only the nested motion producer.
+    // The surrounding Execute switch still receives TERMINATED and applies
+    // the selected animation arm's state effect before Actor::Hourglass runs
+    // DoNextOrder (RHelementactor.cpp:1690-1713, :7820-7826). Returning from
+    // the split Rust owner envelope without this step left a finished running
+    // stop transition in MovingFast even after its MoveOk element retired.
+    if let Some((posture, action_state)) =
+        super::movement::movement_execute_state_effect(order_type, MotionState::Terminated)
+    {
+        let entity = engine
+            .get_entity_mut(owner)
+            .unwrap_or_else(|| panic!("lost-target PerformSeek owner {owner:?} disappeared"));
+        entity.set_posture(posture);
+        entity
+            .actor_data_mut()
+            .expect("lost-target PerformSeek owner is not an actor")
+            .action_state = action_state;
+    }
+    true
 }
 
 /// `RHElementActor::PerformSeek` tests the live target tolerance before its
@@ -1099,6 +1123,97 @@ mod tests {
         assert!(seek_refresh_wait_elapsed(0));
         assert!(seek_refresh_wait_elapsed(u32::MAX));
         assert!(seek_refresh_wait_elapsed(i32::MIN as u32));
+    }
+
+    #[test]
+    fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff() {
+        let mut engine = crate::engine::EngineInner::new();
+        let mut owner_entity = test_pc_at(100.0, 100.0, 1);
+        {
+            let actor = owner_entity.actor_data_mut().unwrap();
+            actor.action_state = ActionState::MovingFast;
+            actor.seek_target = None;
+            actor.continuation.seek_to_point = false;
+        }
+        owner_entity.element_data_mut().sprite.last_action = OrderType::WalkingStairs;
+        let owner = engine.add_entity(owner_entity);
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        let SequenceElementData::Movement { flags, .. } = &mut movement.data else {
+            panic!("MoveOk fixture must be a movement element")
+        };
+        flags.insert(MoveFlags::SEEK);
+        let order_id = engine.orders.allocate_order_id();
+        movement.orders.push_back(crate::order::Order::new(
+            OrderType::TransitionRunningUprightWaitingUpright,
+            100.0,
+            100.0,
+            order_id,
+        ));
+        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.active_movement = ActiveMovement::new(sequence_id, 0);
+            actor.installed_order = Some(crate::element::InstalledActorOrder {
+                order_id,
+                order_type: OrderType::TransitionRunningUprightWaitingUpright,
+            });
+            actor.continuation.motion_state = MotionState::InProgress;
+        }
+
+        let mut tail_order = None;
+        engine.tick_actor_animation_action_change_slots_with_hooks(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            |_, _| {},
+            |_, _| {},
+            |engine, execute_owner, movement, _, _, _, _| {
+                assert_eq!(execute_owner, owner);
+                let movement = movement.expect("live MoveOk must own the actor Execute slot");
+                assert!(perform_seek_lost_actor_target(
+                    engine,
+                    execute_owner,
+                    movement,
+                ));
+                Some(MotionState::Terminated)
+            },
+            |_, tail_owner, order_type| {
+                assert_eq!(tail_owner, owner);
+                tail_order = Some(order_type);
+            },
+        );
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::Waiting
+        );
+        assert_eq!(
+            entity.element_data().sprite.last_action,
+            OrderType::WalkingStairs,
+            "the null-target PerformSeek branch never enters RHSprite; its surrounding Execute arm owns only SetStates"
+        );
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert_eq!(actor.installed_order, None);
+        assert_eq!(actor.continuation.motion_state, MotionState::Terminated);
+        assert_eq!(
+            tail_order,
+            Some(OrderType::NonanimationEnd),
+            "the exhausted live MoveOk publishes the null mpOrder tail as NONANIMATION_END"
+        );
     }
 
     fn test_pc_at(x: f32, y: f32, sector: u16) -> Entity {

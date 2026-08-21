@@ -1282,7 +1282,7 @@ fn combat_directional_animation(
     }
 }
 
-fn movement_execute_state_effect(
+pub(super) fn movement_execute_state_effect(
     order: OrderType,
     motion: MotionState,
 ) -> Option<(crate::element::Posture, crate::element::ActionState)> {
