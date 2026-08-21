@@ -27,6 +27,13 @@ pub(crate) struct SimulationControl {
     /// hourglass instead of mutating arrow sprites during their entity tick.
     #[serde(default)]
     pub(crate) arrow_refresh_pending: bool,
+    /// Universal frame of the most recently displayed popup scroll.
+    ///
+    /// Original's `RHMenuPopupScroll::ulLastFrame` suppresses the
+    /// colorized-background constructor (and therefore its nested Refresh)
+    /// for a second popup displayed in the same engine frame.
+    #[serde(default)]
+    pub(crate) popup_scroll_last_display_frame: Option<u32>,
     /// Captured Original results for the stale-sprite `0xffff` action-point
     /// over-read. The C++ getter indexes beyond `auwDelay`, so this value is
     /// allocator residue rather than reproducible simulation state. Parity
@@ -52,6 +59,7 @@ impl SimulationControl {
             mission_start_sim_config: sim_config,
             fast_forward: false,
             arrow_refresh_pending: false,
+            popup_scroll_last_display_frame: None,
             original_impossible_action_done_deadlines: BTreeMap::new(),
         }
     }
@@ -89,6 +97,14 @@ impl SimulationControl {
     pub(crate) fn consume_fade_freeze_frame(&mut self) -> bool {
         self.simulation_gates.consume_fade_freeze_frame()
     }
+
+    /// Record one completed popup-scroll display and report whether its menu
+    /// background takes Original's nested-Refresh path.
+    pub(crate) fn begin_popup_scroll_display(&mut self) -> bool {
+        let refresh = self.popup_scroll_last_display_frame != Some(self.frame_counter);
+        self.popup_scroll_last_display_frame = Some(self.frame_counter);
+        refresh
+    }
 }
 
 #[cfg(test)]
@@ -108,5 +124,17 @@ mod tests {
         assert_eq!(control.rng.seed(), 17);
         assert!(!control.fast_forward);
         assert!(!control.arrow_refresh_pending);
+        assert_eq!(control.popup_scroll_last_display_frame, None);
+    }
+
+    #[test]
+    fn popup_scroll_refreshes_only_once_per_universal_frame() {
+        let mut control = SimulationControl::new(17, SimConfig::default());
+
+        assert!(control.begin_popup_scroll_display());
+        assert!(!control.begin_popup_scroll_display());
+
+        control.frame_counter += 1;
+        assert!(control.begin_popup_scroll_display());
     }
 }

@@ -1004,12 +1004,36 @@ enum TraceAction {
 /// earlier Execute/PerformAction call.
 fn split_late_refresh_orientations(
     commands: Vec<TraceCommand>,
+    popup_nested_refresh: bool,
 ) -> (Vec<TraceCommand>, Vec<TraceCommand>) {
     let mut actions_selected_this_boundary = BTreeMap::new();
     let mut before_hourglass = Vec::with_capacity(commands.len());
     let mut after_hourglass = Vec::new();
 
-    for command in commands {
+    // A frame can contain both the ordinary refresh orientation left by the
+    // preceding host pass and a synchronous popup refresh reached during this
+    // Hourglass. Original records both into the same flat command stream. The
+    // popup refresh is later, so for each actor/action pair only its final
+    // resolved orientation belongs after Hourglass.
+    let mut final_popup_orientations = Vec::new();
+    if popup_nested_refresh {
+        for (index, command) in commands.iter().enumerate() {
+            if let TraceCommand::OrientActionAt { actor, action, .. } = command {
+                if let Some(entry) = final_popup_orientations
+                    .iter_mut()
+                    .find(|(known_actor, known_action, _)| {
+                        known_actor == actor && known_action == action
+                    })
+                {
+                    entry.2 = index;
+                } else {
+                    final_popup_orientations.push((*actor, *action, index));
+                }
+            }
+        }
+    }
+
+    for (index, command) in commands.into_iter().enumerate() {
         match &command {
             TraceCommand::SelectAction { pc, action } => {
                 actions_selected_this_boundary.insert(*pc, *action);
@@ -1021,7 +1045,14 @@ fn split_late_refresh_orientations(
                 actions_selected_this_boundary.clear();
             }
             TraceCommand::OrientActionAt { actor, action, .. }
-                if actions_selected_this_boundary.get(actor) == Some(action) =>
+                if actions_selected_this_boundary.get(actor) == Some(action)
+                    || final_popup_orientations.iter().any(
+                        |(known_actor, known_action, known_index)| {
+                            known_actor == actor
+                                && known_action == action
+                                && *known_index == index
+                        },
+                    ) =>
             {
                 after_hourglass.push(command);
                 continue;
@@ -3482,8 +3513,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             .collect();
         engine.queue_replay_resolved_exclamations(resolutions);
         engine.apply_replay_sound_boundary(&assets);
+        let popup_nested_refresh = frame.popup_events.as_deref().is_some_and(|events| {
+            events.iter().any(|event| {
+                event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true)
+            })
+        });
         let (commands_before_hourglass, commands_after_hourglass) =
-            split_late_refresh_orientations(std::mem::take(&mut frame.commands));
+            split_late_refresh_orientations(
+                std::mem::take(&mut frame.commands),
+                popup_nested_refresh,
+            );
         for command in commands_before_hourglass {
             if debug_stage_timing {
                 eprintln!(
@@ -10964,13 +11003,85 @@ mod tests {
             orientation(),
         ];
 
-        let (before, after) = split_late_refresh_orientations(commands);
+        let (before, after) = split_late_refresh_orientations(commands, false);
 
         assert_eq!(before.len(), 2);
         assert!(matches!(before[0], TraceCommand::OrientActionAt { .. }));
         assert!(matches!(before[1], TraceCommand::SelectAction { .. }));
         assert_eq!(after.len(), 1);
         assert!(matches!(after[0], TraceCommand::OrientActionAt { .. }));
+    }
+
+    #[test]
+    fn popup_nested_refresh_marks_only_final_purse_orientation_as_late() {
+        let pc = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 296,
+        };
+        let point = TracePoint {
+            x: TraceFloat { bits: 0 },
+            y: TraceFloat { bits: 0 },
+        };
+        let target = TracePoint3 {
+            x: TraceFloat { bits: 0 },
+            y: TraceFloat { bits: 0 },
+            z: TraceFloat { bits: 0 },
+        };
+        let orientation = || TraceCommand::OrientActionAt {
+            action: TraceAction::Purse,
+            actor: pc,
+            mouse_map: point,
+            target,
+        };
+
+        // The ordinary refresh record remains before Hourglass. The final
+        // duplicate was emitted by DisplayPopupText's nested refresh.
+        let (before, after) =
+            split_late_refresh_orientations(vec![orientation(), orientation()], true);
+
+        assert_eq!(before.len(), 1);
+        assert!(matches!(before[0], TraceCommand::OrientActionAt { .. }));
+        assert_eq!(after.len(), 1);
+        assert!(matches!(
+            after[0],
+            TraceCommand::OrientActionAt {
+                action: TraceAction::Purse,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn popup_nested_refresh_marks_single_bow_orientation_as_late() {
+        let pc = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 342,
+        };
+        let command = TraceCommand::OrientActionAt {
+            action: TraceAction::Bow,
+            actor: pc,
+            mouse_map: TracePoint {
+                x: TraceFloat { bits: 0 },
+                y: TraceFloat { bits: 0 },
+            },
+            target: TracePoint3 {
+                x: TraceFloat { bits: 0 },
+                y: TraceFloat { bits: 0 },
+                z: TraceFloat { bits: 0 },
+            },
+        };
+
+        let (before, after) = split_late_refresh_orientations(vec![command], true);
+
+        assert!(before.is_empty());
+        assert_eq!(after.len(), 1);
+        assert!(matches!(
+            after[0],
+            TraceCommand::OrientActionAt {
+                action: TraceAction::Bow,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -825,12 +825,17 @@ impl EngineInner {
             Some(
                 command @ (Command::DisplayMap | Command::PlayDialog | Command::DisplayPopupText),
             ) => {
-                // TODO(parity): DisplayPopupText also re-enters Refresh when
-                // RHMenuPopupScroll::NeededBkgndColorization accepts that
-                // universal frame. Model its static same-frame suppression
-                // when a trace exposes the presentation/RNG consequence.
                 let refreshes_during_dialogue =
                     command == Command::PlayDialog && !self.control.fast_forward;
+                // `RHMenuPopupScroll::Display` asks
+                // `NeededBkgndColorization` before constructing its
+                // RHMenuScreen. The first popup in a universal frame passes
+                // `bRemoveMouse=true`, so CreateBkgndColorized synchronously
+                // re-enters `RHGame::Refresh(false, false)`; later popups in
+                // that frame pass false and do not refresh.
+                let refreshes_during_popup = command == Command::DisplayPopupText
+                    && !self.control.fast_forward
+                    && self.control.begin_popup_scroll_display();
                 PresentationCommandContext {
                     display,
                     fast_forward: self.control.fast_forward,
@@ -839,11 +844,14 @@ impl EngineInner {
                     sequence_manager: &mut self.orders.sequence_manager,
                 }
                 .dispatch(command, seq_id, elem_idx);
-                if refreshes_during_dialogue {
+                if refreshes_during_dialogue || refreshes_during_popup {
                     // `RHMenuDialogue::Display` constructs an RHMenuScreen
-                    // inline. Its colorized-background constructor calls
+                    // inline; accepted popup scroll backgrounds take the same
+                    // path. Their constructor calls
                     // `RHGame::Refresh(false, false)` before returning to the
-                    // sequence manager, hence before RecordFrame.
+                    // sequence manager, hence before RecordFrame. Model only
+                    // the simulation-bearing arrow portion here; resolved PC
+                    // orientation is an explicit replay command.
                     self.refresh_arrows_for_presentation(sim);
                 }
             }

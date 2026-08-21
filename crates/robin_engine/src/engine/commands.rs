@@ -4855,6 +4855,55 @@ mod tests {
         assert_eq!(element.sprite.current_frame, 9);
     }
 
+    #[test]
+    fn late_popup_purse_orientation_preserves_the_pre_turn_sprite_row() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Purse, 3)]);
+        let entity = engine.get_entity_mut(pc_id).expect("popup purse PC");
+        entity
+            .position_iface_mut()
+            .set_direction_instantly(crate::position_interface::Direction::from_raw(1));
+        entity.element_data_mut().sprite.force_sprite_row_raw(1);
+
+        // Execute/PerformAction has already selected row 1. The popup's
+        // nested Refresh then turns once toward east without selecting a new
+        // animation row.
+        engine.perform_resolved_orientation(
+            &assets,
+            pc_id,
+            Action::Purse,
+            MapPoint::ZERO,
+            WorldPoint3D::new(100.0, 0.0, 0.0),
+        );
+
+        let entity = engine.get_entity(pc_id).expect("popup purse PC survives");
+        assert_eq!(u8::from(entity.position_iface().get_direction()), 2);
+        assert_eq!(entity.sprite().current_row, 1);
+    }
+
+    #[test]
+    fn late_popup_bow_orientation_preserves_the_old_direction_row() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 4)]);
+        let entity = engine.get_entity_mut(pc_id).expect("popup bow PC");
+        entity
+            .position_iface_mut()
+            .set_direction_instantly(crate::position_interface::Direction::from_raw(1));
+        // AimingWithBow's conversion base in the captured profile is 1664;
+        // PerformAction selected base + old direction before nested Refresh.
+        entity.element_data_mut().sprite.force_sprite_row_raw(1665);
+
+        engine.perform_resolved_orientation(
+            &assets,
+            pc_id,
+            Action::Bow,
+            MapPoint::ZERO,
+            WorldPoint3D::new(100.0, 0.0, 0.0),
+        );
+
+        let entity = engine.get_entity(pc_id).expect("popup bow PC survives");
+        assert_eq!(u8::from(entity.position_iface().get_direction()), 2);
+        assert_eq!(entity.sprite().current_row, 1665);
+    }
+
     fn setup_pc_engine_with_split_profile_and_status(
         actions: &[(Action, u16)],
     ) -> (EngineInner, LevelAssets, EntityId) {
