@@ -64,6 +64,16 @@ def update(name: str, discovered: set[str]) -> set[str]:
     return combined
 
 
+def campaign_environment(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw in path.read_text().splitlines():
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        values[key] = value
+    return values
+
+
 def main() -> None:
     cache_audits = Path("/home/phire/.cache/sccache/robinhood-parity-audits")
 
@@ -82,13 +92,40 @@ def main() -> None:
     one_m = update("seed1000000", exact_keys(one_sources, curated))
 
     local_audits = ROOT / "parity-save-replays" / "audits"
-    two_sources = [path for path in sorted(local_audits.iterdir()) if path.is_dir()]
-    two_discovered = {
-        key
-        for key in exact_keys(two_sources)
-        if "__schema16-seed2000000-20260820__" in key
-    }
-    two_m = update("seed2000000", two_discovered)
+    schema16_sources = [path for path in sorted(local_audits.iterdir()) if path.is_dir()]
+    all_schema16_exact = exact_keys(schema16_sources)
+    campaign_root = ROOT / "parity-save-replays" / "60s-random-input"
+    campaigns_by_seed: dict[int, Path] = {}
+    for campaign in sorted(campaign_root.glob("schema16-seed*-*")):
+        environment_path = campaign / "campaign.env"
+        if not environment_path.is_file():
+            continue
+        environment = campaign_environment(environment_path)
+        try:
+            seed_base = int(environment["PARITY_INPUT_SEED_BASE"])
+        except (KeyError, ValueError):
+            continue
+        # A later campaign directory for the same seed base supersedes an
+        # interrupted or replaced recording, while its old EOF keys remain in
+        # that old campaign's permanent snapshot history.
+        campaigns_by_seed[seed_base] = campaign
+
+    schema16_summaries: dict[str, dict[str, int]] = {}
+    for seed_base, campaign in sorted(campaigns_by_seed.items()):
+        group = f"seed{seed_base}"
+        campaign_key = str(campaign.relative_to(ROOT)).replace("/", "__")
+        discovered = {
+            key for key in all_schema16_exact if key.startswith(f"{campaign_key}__")
+        }
+        permanent = update(group, discovered)
+        environment = campaign_environment(campaign / "campaign.env")
+        planned = int(environment["EXPECTED_LOGICAL_REPLAYS"])
+        captured = len(list((campaign / "traces").rglob("*.jsonl.zst")))
+        schema16_summaries[group] = {
+            "eof": len(permanent),
+            "planned": planned,
+            "captured": captured,
+        }
 
     temporary_root = ROOT / ".codex-tmp"
     interactive_sources = [
@@ -101,16 +138,10 @@ def main() -> None:
     }
     interactive = update("interactive", interactive_discovered)
 
-    captured_two_m = len(
-        list(
-            (ROOT / "parity-save-replays/60s-random-input/schema16-seed2000000-20260820/traces")
-            .rglob("*.jsonl.zst")
-        )
-    )
     summary = {
         "original": {"eof": len(original), "planned": 4800},
         "seed1000000": {"eof": len(one_m), "planned": 2430},
-        "seed2000000": {"eof": len(two_m), "planned": 9720, "captured": captured_two_m},
+        **schema16_summaries,
         "interactive": {"eof": len(interactive), "planned": 12},
     }
     summary_path = OUTPUT / "summary.json"
