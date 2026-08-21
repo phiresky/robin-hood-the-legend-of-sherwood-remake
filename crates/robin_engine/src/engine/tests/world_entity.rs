@@ -6001,6 +6001,7 @@ fn resumed_return_to_duty_translates_its_goto_on_the_owner_work_boundary() {
         .owner_work
         .push(AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
             flags: DutyFlags::empty(),
+            defer_clear_patrol_close_post: false,
             owner_boundary_positions: vec![(
                 owner.index(),
                 crate::ai::Position {

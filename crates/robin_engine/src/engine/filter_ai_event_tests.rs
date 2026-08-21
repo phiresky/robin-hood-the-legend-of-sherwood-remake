@@ -481,7 +481,7 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     let mut assets = LevelAssets::new();
     let (mut engine, _, _, _) = build_engine();
     let member = engine.add_entity(make_scripted_civilian(""));
-    let member_at_post = engine.add_entity(make_scripted_civilian(""));
+    let member_at_post = engine.add_entity(make_scripted_soldier(""));
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let chief = engine
         .world
@@ -542,7 +542,13 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
         ai.patrol_chief = Some(chief);
     }
 
-    engine.script_remove_all_subordinates(&sim, &assets, chief);
+    let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+        engine.script_remove_all_subordinates(&sim, &assets, chief);
+    });
+    assert!(
+        !draws.contains(&crate::sim_rng::RngSite::AiRandomValueRectangle),
+        "ClearPatrol's close-post Enemy continuation must not reach GetBoredTime"
+    );
 
     let member_ai = engine
         .get_entity(member)

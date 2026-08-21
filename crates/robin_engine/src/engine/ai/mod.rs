@@ -12321,17 +12321,6 @@ impl EngineInner {
                 }
             }
 
-            // `RHArtificialIntelligence::ClearPatrol` calls
-            // `ForceReturnToDuty` directly for every default-state member.
-            // When that return's bare GoTo finds an idle member already at
-            // its post, the Original ClearPatrol/native boundary leaves the
-            // member in DEFAULT_GOTOPOST; it does not recursively surface the
-            // close-point EVENT_REACHPOINT while the native is still running.
-            // This is observable in Original saves as no Move registration
-            // and no GetBoredTime draw for that member. Rust represents the
-            // outside-Think callback as a queued self stimulus, so remove
-            // precisely that close-post callback before the generic direct
-            // drain can turn it into GOTOPOST_TURN -> ONPOST.
             {
                 let ai = self
                     .world
@@ -12339,13 +12328,12 @@ impl EngineInner {
                     .get_mut(member)
                     .and_then(Entity::ai_controller_mut)
                     .expect("RemoveAllSubordinates member lost its AI after ForceReturnToDuty");
-                if ai.current_state == crate::ai::AiState::Default
-                    && ai.current_substate == crate::ai::Substate::DefaultGotoPost
-                    && ai.outbox.actor.orders.is_empty()
-                    && ai.outbox.reentrant.self_stimuli.last()
-                        == Some(&crate::ai::StimulusType::EventReachPoint)
+                if let Some(crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
+                    defer_clear_patrol_close_post,
+                    ..
+                }) = ai.outbox.reentrant.owner_work.last_mut()
                 {
-                    ai.outbox.reentrant.self_stimuli.pop();
+                    *defer_clear_patrol_close_post = true;
                 }
             }
             self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);

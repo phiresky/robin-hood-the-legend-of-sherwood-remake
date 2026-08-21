@@ -4390,6 +4390,7 @@ impl EnemyAi {
         } else {
             AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,
+                defer_clear_patrol_close_post: false,
                 owner_boundary_positions,
             }
         };
@@ -6479,7 +6480,8 @@ mod tests {
             ai.base.outbox.reentrant.owner_work.as_slice(),
             [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,
-                owner_boundary_positions
+                owner_boundary_positions,
+                ..
             }] if flags.is_empty()
                 && owner_boundary_positions.is_empty()
         ));

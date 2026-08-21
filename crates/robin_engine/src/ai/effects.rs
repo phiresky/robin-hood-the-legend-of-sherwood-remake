@@ -211,6 +211,9 @@ pub enum AiOwnerWork {
     /// `InitializePatrol` engine callback has completed.
     ResumeReturnToDutyAfterPatrolInit {
         flags: DutyFlags,
+        /// `ClearPatrol`'s direct `ForceReturnToDuty` boundary does not
+        /// recursively surface the close-post reach-point callback.
+        defer_clear_patrol_close_post: bool,
         /// Original evaluates patrol geometry at this owner's legacy slot;
         /// later Rust entity slots may already have moved when the owner FIFO
         /// reaches the engine boundary.
