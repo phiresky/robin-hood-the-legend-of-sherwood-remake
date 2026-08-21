@@ -12714,6 +12714,23 @@ impl EngineInner {
         }
     }
 
+    fn register_synchronizing_actor(&mut self, target: u32, actor: u32) {
+        let target_id = EntityId::Soldier(SoldierId(target));
+        let entity = self
+            .world
+            .entities
+            .get_mut(target_id)
+            .unwrap_or_else(|| panic!("synchronization target soldier {target} is missing"));
+        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+            panic!("synchronization target soldier {target} has no AI controller")
+        });
+        // RHArtificialIntelligence::RegisterSynchronizingActor is a direct,
+        // unconditional InsertLast. In particular, the target can reach its
+        // waypoint in a later element Hourglass slot in this same frame and
+        // must observe this registration before dispatching EVENT_SYNC_CHARLY.
+        ai.synchronizing_actors.push(actor);
+    }
+
     pub(super) fn process_pending_cross_npc_actions(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -13149,19 +13166,7 @@ impl EngineInner {
                 }
 
                 crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
-                    // `register_synchronizing_actor` pushes the
-                    // calling NPC onto the target's
-                    // `synchronizing_actors` so the target's
-                    // macro-complete dispatch can wake all waiters.
-                    // Dedup the push for safety since the original
-                    // list pushes unconditionally.
-                    let target_id = EntityId::Soldier(SoldierId(target));
-                    if let Some(entity) = self.world.entities.get_mut(target_id)
-                        && let Some(ai) = entity.ai_controller_mut()
-                        && !ai.synchronizing_actors.contains(&actor)
-                    {
-                        ai.synchronizing_actors.push(actor);
-                    }
+                    self.register_synchronizing_actor(target, actor);
                 }
                 crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
                     panic!("synchronous officer report leaked into deferred cross-NPC actions")
@@ -13820,6 +13825,9 @@ impl EngineInner {
                                 )
                             });
                         enemy_ai.base.primary_target = primary_target;
+                    }
+                    crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
+                        self.register_synchronizing_actor(target, actor);
                     }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());

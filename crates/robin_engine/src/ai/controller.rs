@@ -1386,6 +1386,7 @@ impl AiController {
             if matches!(
                 action,
                 CrossNpcAction::SendStimulus { .. }
+                    | CrossNpcAction::RegisterSynchronizingActor { .. }
                     | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
                     | CrossNpcAction::RequestPatrolDispatch { .. }
                     | CrossNpcAction::RequestAlert { .. }
@@ -1426,6 +1427,7 @@ impl AiController {
                 matches!(
                     action,
                     CrossNpcAction::SendStimulus { .. }
+                        | CrossNpcAction::RegisterSynchronizingActor { .. }
                         | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
                         | CrossNpcAction::RequestPatrolDispatch { .. }
                         | CrossNpcAction::RequestAlert { .. }
@@ -6009,6 +6011,33 @@ mod tests {
             [CrossNpcAction::Say {
                 target: 23,
                 remark: Remark::ArchersBehindShieldBearers
+            }]
+        ));
+        assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
+    }
+
+    #[test]
+    fn synchronizer_registration_is_drained_before_later_owner_slots() {
+        // Original RegisterSynchronizingActor mutates the target inline. The
+        // target can reach its waypoint in a later element Hourglass slot in
+        // this same frame and must already see the waiter in its list.
+        let mut ai = AiController::new(89);
+        ai.outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::RegisterSynchronizingActor {
+                target: 96,
+                actor: 89,
+            });
+
+        assert!(ai.has_pending_synchronous_cross_npc_actions());
+        let actions = ai.take_pending_synchronous_cross_npc_actions();
+
+        assert!(matches!(
+            actions.as_slice(),
+            [CrossNpcAction::RegisterSynchronizingActor {
+                target: 96,
+                actor: 89
             }]
         ));
         assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
