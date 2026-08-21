@@ -134,32 +134,35 @@ impl EngineInner {
     /// running `SWORD`. That allocator residue is not reproducible from game
     /// state, so parity replays may provide the captured wrapped result.
     pub(super) fn opponent_sword_strike_time_limit_for_actor(
-        &self,
+        &mut self,
         opponent: EntityId,
     ) -> Option<i16> {
-        let animation = self.live_actor_animation(opponent)?;
-        let entity = self.get_entity(opponent)?;
-        let actor = entity.actor_data()?;
-        let sprite = &entity.element_data().sprite;
-        let timing = match sprite.action_done_timing() {
-            crate::sprite::ActionDoneTiming::Impossible
-                if actor.installed_order.is_some_and(|order| {
-                    order.order_id.get() != sprite.last_processed_order_id
-                }) =>
-            {
-                let creation_order = self.world.original_creation_order(opponent);
-                crate::sprite::ActionDoneTiming::Frames(
-                    self.control
-                        .original_impossible_action_done_deadlines
-                        .get(&creation_order)
-                        .copied()
-                        // No event means Original did not reach the recorder's
-                        // opponent-input site on this generic resolver call.
-                        // Historical schemas also lack this event boundary.
-                        .unwrap_or(-1),
-                )
-            }
-            timing => timing,
+        let (animation, timing, stale_impossible) = {
+            let animation = self.live_actor_animation(opponent)?;
+            let entity = self.get_entity(opponent)?;
+            let actor = entity.actor_data()?;
+            let sprite = &entity.element_data().sprite;
+            let timing = sprite.action_done_timing();
+            let stale_impossible = timing == crate::sprite::ActionDoneTiming::Impossible
+                && actor
+                    .installed_order
+                    .is_some_and(|order| order.order_id.get() != sprite.last_processed_order_id);
+            (animation, timing, stale_impossible)
+        };
+        let timing = if stale_impossible {
+            let creation_order = self.world.original_creation_order(opponent);
+            crate::sprite::ActionDoneTiming::Frames(
+                self.control
+                    .original_impossible_action_done_deadlines
+                    .get_mut(&creation_order)
+                    .and_then(std::collections::VecDeque::pop_front)
+                    // No event means Original did not reach the recorder's
+                    // opponent-input site on this generic resolver call.
+                    // Historical schemas also lack this event boundary.
+                    .unwrap_or(-1),
+            )
+        } else {
+            timing
         };
         Some(opponent_sword_strike_time_limit(Some(animation), || timing))
     }

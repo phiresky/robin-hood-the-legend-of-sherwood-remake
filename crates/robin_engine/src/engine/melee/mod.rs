@@ -3293,11 +3293,19 @@ mod tests {
         engine
             .control
             .original_impossible_action_done_deadlines
-            .insert(target_creation_order, -22478);
+            .insert(
+                target_creation_order,
+                std::collections::VecDeque::from([-22478, 12]),
+            );
         assert_eq!(
             engine.opponent_sword_strike_time_limit_for_actor(target),
             Some(-22478),
             "schema-16 can carry the Original allocator-dependent wrapped SWORD"
+        );
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(target),
+            Some(12),
+            "repeated proposals against one target consume captured deadlines in invocation order"
         );
 
         let sprite = &mut engine

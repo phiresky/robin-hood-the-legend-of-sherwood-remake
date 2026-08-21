@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::engine::{SimConfig, SimulationGateState, SimulationRng};
 
@@ -34,7 +34,7 @@ pub(crate) struct SimulationControl {
     /// Original creation order, for the current frame only.
     #[serde(skip)]
     #[state_hash(skip)]
-    pub(crate) original_impossible_action_done_deadlines: BTreeMap<u32, i16>,
+    pub(crate) original_impossible_action_done_deadlines: BTreeMap<u32, VecDeque<i16>>,
 }
 
 impl SimulationControl {

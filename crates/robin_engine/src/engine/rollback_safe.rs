@@ -2670,12 +2670,10 @@ impl Engine {
     ) {
         let mut captured = std::collections::BTreeMap::new();
         for (creation_order, deadline) in deadlines {
-            if let Some(previous) = captured.insert(creation_order, deadline) {
-                assert_eq!(
-                    previous, deadline,
-                    "conflicting Original strike deadlines for creation order {creation_order}"
-                );
-            }
+            captured
+                .entry(creation_order)
+                .or_insert_with(std::collections::VecDeque::new)
+                .push_back(deadline);
         }
         self.inner.control.original_impossible_action_done_deadlines = captured;
     }
