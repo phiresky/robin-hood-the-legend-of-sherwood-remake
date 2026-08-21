@@ -1881,12 +1881,20 @@ impl EnemyAi {
                         // applies whenever the attacker info was human,
                         // regardless of which sub-arm fired.
                         // Keep this on the owner FIFO: in the Original this
-                        // statement is the tail of EVENT_GOTHIT, after
-                        // StopAll()/AttackEnemy() have synchronously applied
-                        // their gaze effects.  The recovery slot is drained
-                        // before the actor-effect fixed point and would let
-                        // StopAll's deferred Unfocus overwrite this status
-                        // with LookForward afterward.
+                        // statement is the tail of EVENT_GOTHIT, after every
+                        // StopAll()/AttackEnemy() actor call has completed.
+                        // Close the actor prefix explicitly: AttackEnemy can
+                        // reach another StopAll whose deferred Halt condolence
+                        // produces Unfocus. Leaving that Halt in the ordinary
+                        // actor outbox would apply Unfocus after this tail and
+                        // restore LookForward.
+                        if self.base.outbox.actor.has_boundary_work() {
+                            self.base.outbox.reentrant.owner_work.push(
+                                crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                    &mut self.base.outbox.actor,
+                                )),
+                            );
+                        }
                         self.base.outbox.reentrant.owner_work.push(
                             crate::ai::AiOwnerWork::SetEyeStatus(
                                 crate::element::EyeStatus::DieOrGetUnconscious,
@@ -3594,10 +3602,11 @@ mod tests {
         ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
         let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Soldier;
+        attacker.kind = EntityKind::Pc;
         let mut views = AiEntityViewMap::new();
         views.insert(2, attacker);
         let ctx = AiContext {
+            camp: Camp::Lacklandists,
             is_swordfighting: false,
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
@@ -3613,9 +3622,19 @@ mod tests {
         );
 
         assert!(
-            ai.base.outbox.actor.halt,
-            "Original StopAll arm runs once the live opponent list is empty"
+            !ai.base.outbox.actor.has_boundary_work(),
+            "all actor calls authored before EVENT_GOTHIT's final SetViewStatus must be closed as a synchronous prefix"
         );
+        assert!(matches!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .rev()
+                .nth(1),
+            Some(crate::ai::AiOwnerWork::ActorEffects(effects)) if effects.halt
+        ));
         assert!(matches!(
             ai.base.outbox.reentrant.owner_work.last(),
             Some(crate::ai::AiOwnerWork::SetEyeStatus(
