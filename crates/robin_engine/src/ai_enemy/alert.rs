@@ -98,6 +98,31 @@ fn can_alert_officer(
     rank == ProfileRank::Officer && is_able_to_fight && state == AiState::Default && !script_locked
 }
 
+/// Substates for which Original's `AlertOfficer` scan treats a soldier as
+/// already reporting to an officer.
+///
+/// The global camp registry includes the caller itself.  Our
+/// `tick.camp_soldiers` snapshot deliberately omits the owner, so the owner
+/// gate must be evaluated separately before walking that snapshot.
+fn is_alerting_an_officer(substate: Substate) -> bool {
+    matches!(
+        substate,
+        Substate::SeekingSoldierCalledByOfficer
+            | Substate::SeekingSoldierGoToOfficer
+            | Substate::SeekingSoldierGetInstructedByOfficer
+            | Substate::SeekingSoldierReturnToOfficer
+            | Substate::SeekingSoldierGiveReportToOfficer
+            | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
+            | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
+            | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
+            | Substate::SeekingGroupCalledByOfficer
+            | Substate::SeekingGroupGoToOfficer
+            | Substate::SeekingGroupGetInstructedByOfficer
+            | Substate::SeekingRunningToOfficer
+            | Substate::SeekingRunningToOfficerSeen
+    )
+}
+
 /// Distance stored on each accepted soldier before Original inserts it into
 /// the officer's farthest-first alert list. `SquareDistance` reads literal 3D
 /// element positions, so projected map Y alone is insufficient on ramps.
@@ -1136,6 +1161,18 @@ impl EnemyAi {
         }
 
         if nearest_officer.is_none() {
+            // Original scans every same-camp soldier, including `mpMe`.
+            // A retry from RUNNING_TO_OFFICER therefore sees the caller as
+            // somebody already reporting and aborts the search.  Preserve
+            // the literal 360-degree query as well: besides the active /
+            // outside-building gates it contributes an authoritative
+            // visibility event.
+            if is_alerting_an_officer(self.base.current_substate)
+                && self.is_detecting_360_degrees(self.base.me, ctx)
+            {
+                return false;
+            }
+
             let mut max_distance = combat::MAX_ALERT_OFFICER_RADIUS as u32;
 
             for cs in &tick.camp_soldiers {
@@ -1175,27 +1212,12 @@ impl EnemyAi {
                     ProfileRank::Soldier => {
                         // Check if another soldier is already reporting to
                         // an officer — if so, don't duplicate the report.
-                        match cs.ai_substate {
-                            Substate::SeekingSoldierCalledByOfficer
-                            | Substate::SeekingSoldierGoToOfficer
-                            | Substate::SeekingSoldierGetInstructedByOfficer
-                            | Substate::SeekingSoldierReturnToOfficer
-                            | Substate::SeekingSoldierGiveReportToOfficer
-                            | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
-                            | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
-                            | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
-                            | Substate::SeekingGroupCalledByOfficer
-                            | Substate::SeekingGroupGoToOfficer
-                            | Substate::SeekingGroupGetInstructedByOfficer
-                            | Substate::SeekingRunningToOfficer
-                            | Substate::SeekingRunningToOfficerSeen
-                                if self.is_detecting_360_degrees(cs.handle, ctx) =>
-                            {
-                                // Another soldier is already alerting an
-                                // officer — abort.
-                                return false;
-                            }
-                            _ => {}
+                        if is_alerting_an_officer(cs.ai_substate)
+                            && self.is_detecting_360_degrees(cs.handle, ctx)
+                        {
+                            // Another soldier is already alerting an
+                            // officer — abort.
+                            return false;
                         }
                     }
                     _ => {}
@@ -1940,6 +1962,36 @@ mod tests {
             true,
             AiState::Default,
             false,
+        ));
+    }
+
+    #[test]
+    fn alert_officer_scan_includes_reporting_owner_substates() {
+        // Nescafe Savegame_001 replay-007, frame 1539: Soldier139 reaches a
+        // now-busy officer while already in RUNNING_TO_OFFICER. Original's
+        // global camp scan encounters Soldier139 itself and refuses to pick
+        // another officer; the owner-omitting Rust snapshot used to select
+        // Officer124 and launch an extra movement path instead.
+        for substate in [
+            Substate::SeekingSoldierCalledByOfficer,
+            Substate::SeekingSoldierGoToOfficer,
+            Substate::SeekingSoldierGetInstructedByOfficer,
+            Substate::SeekingSoldierReturnToOfficer,
+            Substate::SeekingSoldierGiveReportToOfficer,
+            Substate::SeekingSoldierGiveAlertingReportToOfficerStart,
+            Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
+            Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
+            Substate::SeekingGroupCalledByOfficer,
+            Substate::SeekingGroupGoToOfficer,
+            Substate::SeekingGroupGetInstructedByOfficer,
+            Substate::SeekingRunningToOfficer,
+            Substate::SeekingRunningToOfficerSeen,
+        ] {
+            assert!(is_alerting_an_officer(substate), "{substate:?}");
+        }
+        assert!(!is_alerting_an_officer(Substate::DefaultOnPost));
+        assert!(!is_alerting_an_officer(
+            Substate::SeekingOfficerWaitForInstructedSoldier
         ));
     }
 
