@@ -11328,8 +11328,7 @@ impl EngineInner {
                 // Retiring it through the ordinary order-pop path first
                 // creates a fallback Wait and leaves the post-seek action
                 // stranded on ActorData for one frame (or forever).
-                let final_point_post_seek_arrival = is_final_waypoint
-                    && movement_is_last_sequence_element
+                let final_point_post_seek_arrival = is_final_waypoint_after_transition_cleanup
                     && ft.target_id.is_none()
                     && prepass
                         .point_seek_post_sector
@@ -18423,6 +18422,7 @@ mod movement_transition_state_tests {
             .expect("Translate(SEEK) must launch a concrete MOVE|SEEK replacement");
         let transition = OrderType::TransitionWalkingUprightWaitingUpright;
         let order_id = engine.orders.allocate_order_id();
+        let follower_order_id = engine.orders.allocate_order_id();
         let movement = engine
             .orders
             .sequence_manager
@@ -18440,6 +18440,22 @@ mod movement_transition_state_tests {
             destination.y,
             order_id,
         ));
+        movement.orders.push_back(Order::new(
+            transition,
+            destination.x,
+            destination.y,
+            follower_order_id,
+        ));
+        // Point-target PerformSeek keys the terminal handoff on the absence
+        // of another movement order, not on this movement element being the
+        // final element of its sequence. Keep a later sibling present to
+        // cover that distinction.
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence_mut(movement_sequence)
+            .unwrap()
+            .append_element(SequenceElement::new(2, Command::Wait, Some(owner)));
         {
             let entity = engine.get_entity_mut(owner).unwrap();
             entity.actor_data_mut().unwrap().active_movement =
