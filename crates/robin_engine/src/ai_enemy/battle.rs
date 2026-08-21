@@ -2467,11 +2467,6 @@ impl EnemyAi {
                 self.base.outbox.reentrant.owner_work,
             );
         }
-        let standard_sword_range = self.sword_range as f32;
-        // sword_range = standard sword range + 10.
-        let sword_range: f32 = standard_sword_range + 10.0;
-        let mut run_distance = self.compute_enemy_run_distance() as f32;
-
         // Already swordfighting? stay.
         if ctx.is_swordfighting {
             self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
@@ -2483,6 +2478,24 @@ impl EnemyAi {
         if self.refresh_arrow_protection(false, ctx, tick, grid) {
             return;
         }
+
+        // Original reads `mpMe->GetStandardRangeSword()` from the actor's
+        // live RHSword here and again for each GoNear tolerance.  Do not use
+        // EnemyAi's compatibility cache: old replay/save snapshots can carry
+        // a range written with the former zero-based weapon-id convention.
+        let standard_sword_range = self
+            .find_fighter(self.base.me, tick)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ReconsiderEnemyApproach owner {} missing from fighter registry",
+                    self.base.me
+                )
+            })
+            .sword_range_default;
+        // sword_range = standard sword range + 10.
+        let sword_range: f32 = (standard_sword_range + 10) as f32;
+        let mut run_distance = self.compute_enemy_run_distance(standard_sword_range) as f32;
+        let standard_sword_range = standard_sword_range as f32;
 
         let mut b_reconsider = false;
 
@@ -4236,6 +4249,14 @@ mod tests {
         view
     }
 
+    fn add_owner_sword_range(tick: &mut AiPerTickData, owner: u32, range: u16) {
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: owner,
+            sword_range_default: range,
+            ..FighterSnapshot::default()
+        });
+    }
+
     #[test]
     fn attack_enemy_prefers_matching_position_snapshot_over_fighter_geometry() {
         // RHArtificialMalignity::AttackEnemy writes
@@ -4745,6 +4766,7 @@ mod tests {
         };
 
         let mut tick = AiPerTickData::stub();
+        add_owner_sword_range(&mut tick, 110, 50);
         tick.primary_target_snapshot_handle = 58;
         tick.primary_target_position = Some(Position {
             x: 712.0,
@@ -4820,6 +4842,7 @@ mod tests {
         );
 
         let mut tick = AiPerTickData::stub();
+        add_owner_sword_range(&mut tick, 84, 50);
         tick.owner_live_position = Some(ctx.position);
         tick.primary_target_snapshot_handle = 47;
         tick.primary_target_position = Some(Position {
@@ -4891,6 +4914,10 @@ mod tests {
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
+        // The serialized EnemyAi cache deliberately disagrees with the live
+        // actor weapon. Original asks RHSword for the latter on every
+        // ReconsiderEnemyApproach GoNear.
+        add_owner_sword_range(&mut tick, 84, 65);
         tick.primary_target_snapshot_handle = 47;
         tick.primary_target_position = Some(Position {
             x: 500.0,
@@ -4924,6 +4951,7 @@ mod tests {
         assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
         assert_eq!((order.target_x, order.target_y), (700.0, 0.0));
         assert_eq!(order.target_sector, ordinary_replacement.sector);
+        assert_eq!(order.tolerance, 65.0);
     }
 
     #[test]
@@ -4949,6 +4977,7 @@ mod tests {
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
+        add_owner_sword_range(&mut tick, 180, 50);
         tick.primary_target_snapshot_handle = 198;
         tick.primary_target_position = Some(target_position);
 
@@ -5064,6 +5093,7 @@ mod tests {
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
+        add_owner_sword_range(&mut tick, 180, 50);
         tick.primary_target_snapshot_handle = 198;
         tick.primary_target_position = Some(target_position);
 
@@ -5283,6 +5313,7 @@ mod tests {
         };
         let ctx = AiContext::default();
         let mut tick = AiPerTickData::stub();
+        add_owner_sword_range(&mut tick, 180, 150);
         tick.primary_target_snapshot_handle = 198;
         tick.primary_target_position = Some(target_position);
         // Preserve the charge branch past Original's intentionally broad

@@ -3030,10 +3030,10 @@ impl EnemyAi {
     }
 
     /// Compute how close to run towards the enemy before engaging.
-    fn compute_enemy_run_distance(&self) -> u16 {
+    fn compute_enemy_run_distance(&self, standard_sword_range: u16) -> u16 {
         let courage_distance = 2 * (100 - self.get_courage());
         // sword_distance = standard sword range + 10
-        let sword_distance: u16 = self.sword_range + 10;
+        let sword_distance: u16 = standard_sword_range + 10;
         if courage_distance < sword_distance {
             sword_distance
         } else {
