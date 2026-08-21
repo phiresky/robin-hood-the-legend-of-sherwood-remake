@@ -12926,7 +12926,7 @@ impl EngineInner {
                         intent.target_y,
                         retained_goal,
                     );
-                    if defer_turn_instruction
+                    if (defer_turn_instruction || intent.defer_instruction)
                         && let Some(element) = self
                             .orders
                             .sequence_manager

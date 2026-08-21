@@ -3228,7 +3228,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
+    fn fresh_selected_strike_keeps_stale_impossible_deadline_strict() {
         let mut engine = make_engine();
         let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let selected_row = crate::sprite_script::SpriteScript {
@@ -3285,29 +3285,8 @@ mod tests {
 
         assert_eq!(
             engine.opponent_sword_strike_time_limit_for_actor(target),
-            Some(1000),
-            "schema-15 replays without a captured UB value retain the historical permissive result"
-        );
-
-        let target_creation_order = engine.world.original_creation_order(target);
-        engine
-            .control
-            .require_original_impossible_action_done_deadline = true;
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                engine.opponent_sword_strike_time_limit_for_actor(target)
-            }))
-            .is_err(),
-            "schema-16 must fail loudly when its UB boundary value is absent"
-        );
-        engine
-            .control
-            .original_impossible_action_done_deadlines
-            .insert(target_creation_order, -22478);
-        assert_eq!(
-            engine.opponent_sword_strike_time_limit_for_actor(target),
-            Some(-22478),
-            "schema-16 can carry the Original allocator-dependent wrapped SWORD"
+            Some(i16::MIN),
+            "a fresh selected strike must not turn the stale sprite's impossible marker into permissive -1 timing"
         );
 
         let sprite = &mut engine
