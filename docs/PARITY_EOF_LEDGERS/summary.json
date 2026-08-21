@@ -8,12 +8,12 @@
     "planned": 4800
   },
   "seed1000000": {
-    "eof": 2412,
+    "eof": 2413,
     "planned": 2430
   },
   "seed2000000": {
-    "captured": 4293,
-    "eof": 4281,
+    "captured": 4326,
+    "eof": 4314,
     "planned": 9720
   }
 }
