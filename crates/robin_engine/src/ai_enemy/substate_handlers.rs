@@ -4510,17 +4510,25 @@ impl EnemyAi {
             }
             StimulusType::EventReachPoint => {
                 if self.gather_position_instructed {
-                    // Original reaches FaceTo while the completed GoTo still
-                    // presents its movement action state. Rust has already
-                    // staged Waiting in `ctx`, which would incorrectly take
-                    // FaceTo's same-direction shortcut and synchronously fire
-                    // EventDone. Author the Turn directly at this route-
-                    // arrival boundary instead.
-                    self.base
-                        .outbox
-                        .actor
-                        .orders
-                        .push(AiOrderIntent::face_direction(self.gather_direction as i16));
+                    if self.base.open_end_think_frames != 0 {
+                        // A GoTo which was already at its destination reaches
+                        // this handler recursively before Original unwinds the
+                        // calling Think. Original's actor still presents the
+                        // GoTo action there, so FaceTo authors a Turn even when
+                        // the directions match. Rust stages Waiting before it
+                        // surfaces that synchronous completion; preserve the
+                        // movement-state result explicitly for this route.
+                        self.base
+                            .outbox
+                            .actor
+                            .orders
+                            .push(AiOrderIntent::face_direction(self.gather_direction as i16));
+                    } else {
+                        // An ordinary movement completion arrives in its own
+                        // top-level Think. Match Original FaceTo, including its
+                        // same-direction Waiting shortcut to EventDone.
+                        self.base.face_direction(self.gather_direction, ctx);
+                    }
                 } else {
                     self.face_npc(self.base.antagonist, ctx);
                 }
@@ -11145,10 +11153,13 @@ mod tests {
     }
 
     #[test]
-    fn group_reachpoint_same_direction_still_authors_turn() {
+    fn group_synchronous_reachpoint_same_direction_still_authors_turn() {
         let mut ai = EnemyAi::new(53);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
+        // The already-at-destination GoTo completion is surfaced recursively
+        // while its calling EndThink frame remains open.
+        ai.base.open_end_think_frames = 1;
         ai.gather_position_instructed = true;
         ai.gather_direction = 8;
         let ctx = AiContext {
@@ -11170,6 +11181,36 @@ mod tests {
             panic!("group ReachPoint must author one Turn");
         };
         assert_eq!(turn.order_type, crate::order::OrderType::Turning);
+    }
+
+    #[test]
+    fn group_movement_reachpoint_same_direction_uses_waiting_shortcut() {
+        let mut ai = EnemyAi::new(171);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
+        ai.gather_position_instructed = true;
+        ai.gather_direction = 4;
+        let ctx = AiContext {
+            self_action_state: crate::element::ActionState::Waiting,
+            direction: 4,
+            ..AiContext::default()
+        };
+
+        ai.seeking_group_go_to_officer(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert!(
+            ai.base.outbox.actor.orders.is_empty(),
+            "a completed movement already facing the gather direction must not turn"
+        );
+        assert!(
+            ai.base.already_turned,
+            "FaceTo's shortcut must schedule the synchronous EventDone"
+        );
     }
 
     #[test]
