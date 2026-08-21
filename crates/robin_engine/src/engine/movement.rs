@@ -1456,12 +1456,15 @@ fn should_snap_arrival(
 /// Whether `PerformSeek` exposes a wrapped `PerformMotion` termination to
 /// `RHElementActorHuman::Execute`. A successful terminal entity seek without
 /// a post-seek sequence deliberately converts it back to IN_PROGRESS so it
-/// can wait/refresh in place.
-fn perform_seek_exposes_motion_termination(
+/// can wait/refresh in place. The termination side effects also belong only
+/// to Human's concrete sword-movement arms; a non-sword successor must not
+/// inherit them merely because the actor still has a sword action state.
+fn sword_movement_execute_exposes_motion_termination(
+    executes_sword_movement: bool,
     starts_post_seek: bool,
     final_entity_seek_arrival: Option<bool>,
 ) -> bool {
-    starts_post_seek || final_entity_seek_arrival != Some(true)
+    executes_sword_movement && (starts_post_seek || final_entity_seek_arrival != Some(true))
 }
 
 /// Does the step this Execute is about to commit satisfy `IsGoalReached`?
@@ -11796,12 +11799,11 @@ impl EngineInner {
                     start_post_seek
                 };
 
-                if is_sword_motion
-                    && perform_seek_exposes_motion_termination(
-                        start_post_seek,
-                        final_entity_seek_arrival,
-                    )
-                {
+                if sword_movement_execute_exposes_motion_termination(
+                    executes_sword_movement,
+                    start_post_seek,
+                    final_entity_seek_arrival,
+                ) {
                     deferred.sword_movement_terminations.push(entity_id);
                 }
 
@@ -18426,8 +18428,8 @@ mod movement_transition_state_tests {
 #[cfg(test)]
 mod arrival_snap_tests {
     use super::{
-        MovementDeferred, perform_seek_exposes_motion_termination,
-        queue_committed_arrival_crossing, should_snap_arrival,
+        MovementDeferred, queue_committed_arrival_crossing, should_snap_arrival,
+        sword_movement_execute_exposes_motion_termination,
     };
     use crate::coordinates::MapPoint;
     use crate::element::{EntityId, PcId};
@@ -18490,9 +18492,26 @@ mod arrival_snap_tests {
 
     #[test]
     fn entity_seek_wait_hides_wrapped_motion_termination() {
-        assert!(!perform_seek_exposes_motion_termination(false, Some(true)));
-        assert!(perform_seek_exposes_motion_termination(true, Some(true)));
-        assert!(perform_seek_exposes_motion_termination(false, None));
+        assert!(!sword_movement_execute_exposes_motion_termination(
+            true,
+            false,
+            Some(true)
+        ));
+        assert!(sword_movement_execute_exposes_motion_termination(
+            true,
+            true,
+            Some(true)
+        ));
+        assert!(sword_movement_execute_exposes_motion_termination(
+            true, false, None
+        ));
+    }
+
+    #[test]
+    fn stale_sword_state_does_not_expose_ordinary_successor_termination() {
+        assert!(!sword_movement_execute_exposes_motion_termination(
+            false, false, None
+        ));
     }
 }
 
