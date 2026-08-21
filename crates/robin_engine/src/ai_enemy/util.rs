@@ -1272,10 +1272,13 @@ fn estimate_damage(
         // `GetProtection(target, attacker, ...)` does not use the proposed
         // combat-position coordinates: it dereferences both actors and
         // computes the defender-to-attacker sector from their *live* ground
-        // positions.  Range still uses the hypothetical coordinates above.
+        // positions. Range still uses the hypothetical coordinates above.
+        // In particular, use the raw element position here: AI `Position()`
+        // may substitute a gate endpoint or carrier, while
+        // `RHSword::GetProtection` calls `GetPositionGround()` directly.
         let target_to_attacker_sector = vec_to_sector(
-            attacker.position.x - target.position.x,
-            attacker.position.y - target.position.y,
+            attacker.raw_position.x - target.raw_position.x,
+            attacker.raw_position.y - target.raw_position.y,
         ) as i16;
 
         use crate::weapons::SwordStrike;
@@ -1804,6 +1807,10 @@ mod required_combat_input_tests {
                 y: -10.0,
                 ..Position::default()
             },
+            raw_position: Position {
+                y: -10.0,
+                ..Position::default()
+            },
             ..fighter(1)
         };
         let target = FighterSnapshot {
@@ -1830,6 +1837,64 @@ mod required_combat_input_tests {
         assert_eq!(
             estimate_damage(1, &mut position, view(&fighters), &profiles, 0),
             10
+        );
+    }
+
+    #[test]
+    fn damage_protection_uses_raw_ground_positions_not_ai_substitutions() {
+        use crate::profiles::{
+            HtHWeaponProfile, ThrustProfile, WeaponThrustDirection, WeaponThrustKind,
+        };
+
+        let mut weapon = HtHWeaponProfile {
+            // Front is open, while the defender's left side absorbs 90%.
+            protection_by_localization: [0, 0, 90, 0, 0],
+            ..HtHWeaponProfile::default()
+        };
+        weapon.thrusts[0] = ThrustProfile {
+            kind: WeaponThrustKind::Straight,
+            direction: WeaponThrustDirection::NonApplicable,
+            cutting: 90,
+            maximal_distance: 100,
+            ..ThrustProfile::default()
+        };
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.hth_weapons.push(weapon);
+
+        let attacker = FighterSnapshot {
+            // AI Position() sees a substituted point north of the target,
+            // but the live body used by GetPositionGround() is west of it.
+            position: Position {
+                y: -10.0,
+                ..Position::default()
+            },
+            raw_position: Position {
+                x: -10.0,
+                ..Position::default()
+            },
+            ..fighter(1)
+        };
+        let target = FighterSnapshot {
+            direction: 0,
+            position: Position::default(),
+            raw_position: Position::default(),
+            ..fighter(2)
+        };
+        let fighters = [attacker, target];
+        let mut position = CombatPosition {
+            attacker: 1,
+            attacker_position: Position::default(),
+            target: 2,
+            target_position: Position {
+                x: 10.0,
+                ..Position::default()
+            },
+            ..CombatPosition::default()
+        };
+
+        assert_eq!(
+            estimate_damage(1, &mut position, view(&fighters), &profiles, 0),
+            1
         );
     }
 
