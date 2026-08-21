@@ -315,8 +315,13 @@ impl NativeContext<'_, '_> {
                 let direction = stack.pop_i32();
                 let loc = stack.pop_i32();
                 let actor = stack.pop_i32();
-                let Some(resolved_xy) = self.resolve_location_pos(loc) else {
+                let Some((post_x, post_y)) = self.resolve_location_pos(loc) else {
                     tracing::warn!("AssignPost: invalid location handle {loc}");
+                    return 0;
+                };
+                let Some((post_level, post_sector)) = self.resolve_location_layer_sector(loc)
+                else {
+                    tracing::warn!("AssignPost: location handle {loc} has no position topology");
                     return 0;
                 };
                 if !self
@@ -327,8 +332,10 @@ impl NativeContext<'_, '_> {
                 }
                 let request = crate::interp::SynchronousScriptRequest::AssignPost {
                     actor,
-                    post_x: resolved_xy.0,
-                    post_y: resolved_xy.1,
+                    post_x,
+                    post_y,
+                    post_sector,
+                    post_level,
                     direction,
                     native_return: 0,
                 };

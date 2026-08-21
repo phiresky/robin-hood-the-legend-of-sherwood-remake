@@ -718,6 +718,8 @@ impl EngineInner {
                 actor,
                 post_x,
                 post_y,
+                post_sector,
+                post_level,
                 direction,
                 ..
             } => {
@@ -726,18 +728,17 @@ impl EngineInner {
                         "AssignPost owner handle {actor} became stale at its synchronous barrier"
                     )
                 })?;
-                let entity = self.get_entity(owner).ok_or_else(|| {
+                self.get_entity(owner).ok_or_else(|| {
                     format!(
                         "AssignPost owner {} disappeared at its synchronous barrier",
                         owner.index()
                     )
                 })?;
-                let data = entity.element_data();
                 let post_position = crate::ai::Position {
                     x: post_x,
                     y: post_y,
-                    sector: data.sector(),
-                    level: data.layer(),
+                    sector: crate::position_interface::SectorHandle::new(post_sector),
+                    level: post_level,
                 };
                 let ai = self
                     .get_entity_mut(owner)

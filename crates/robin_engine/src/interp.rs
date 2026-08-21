@@ -124,6 +124,8 @@ pub enum SynchronousScriptRequest {
         actor: i32,
         post_x: f32,
         post_y: f32,
+        post_sector: u16,
+        post_level: u16,
         direction: i32,
         native_return: i32,
     },
