@@ -1,11 +1,40 @@
 //! Background Velopack updates for installed desktop builds.
 
+use std::sync::RwLock;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use velopack::{UpdateCheck, UpdateManager, VelopackAsset, sources::GithubSource};
 
 const GITHUB_REPOSITORY_URL: &str =
     "https://github.com/phiresky/robin-hood-the-legend-of-sherwood-remake";
+
+/// Progress of the background update download, for UI display (main menu).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateStatus {
+    /// An update was found on the release feed and is downloading.
+    Downloading { version: String },
+    /// The update is fully downloaded and will install after the game exits.
+    ReadyOnExit { version: String },
+}
+
+static UPDATE_STATUS: RwLock<Option<UpdateStatus>> = RwLock::new(None);
+
+/// Current background-update progress, if an update was found.
+///
+/// Written by the `github-auto-update` worker thread; safe to poll every
+/// frame from UI code.
+pub fn update_status() -> Option<UpdateStatus> {
+    UPDATE_STATUS
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+fn set_update_status(status: Option<UpdateStatus>) {
+    *UPDATE_STATUS
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = status;
+}
 
 /// A downloaded asset together with the manager that owns its package cache.
 pub type DownloadedUpdate = (UpdateManager, VelopackAsset);
@@ -72,10 +101,14 @@ pub fn start_github_auto_update() -> Option<Receiver<DownloadedUpdate>> {
                     }
                 };
 
+                let version = update.TargetFullRelease.Version.clone();
                 tracing::info!(
-                    version = %update.TargetFullRelease.Version,
+                    version = %version,
                     "Downloading a Velopack update from GitHub Releases"
                 );
+                set_update_status(Some(UpdateStatus::Downloading {
+                    version: version.clone(),
+                }));
                 thread_manager.download_updates(&update, None)?;
                 let asset = update.TargetFullRelease.clone();
                 sender.send((thread_manager, asset)).map_err(|_| {
@@ -83,11 +116,15 @@ pub fn start_github_auto_update() -> Option<Receiver<DownloadedUpdate>> {
                         "the game exited before the downloaded update could be queued".to_owned(),
                     )
                 })?;
+                set_update_status(Some(UpdateStatus::ReadyOnExit { version }));
                 tracing::info!("The update will be installed after the game exits");
                 Ok::<(), velopack::Error>(())
             })();
 
             if let Err(error) = result {
+                // Clear any stale "downloading" line so the menu doesn't
+                // advertise an update that will never arrive.
+                set_update_status(None);
                 tracing::warn!("GitHub auto-update failed: {error}");
             }
         })

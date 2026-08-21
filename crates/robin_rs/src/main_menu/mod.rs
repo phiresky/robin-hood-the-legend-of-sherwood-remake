@@ -746,6 +746,12 @@ fn render_text_layer(
         }
     }
 
+    // ── Auto-update status (bottom-left corner) ─────────────────────
+    if let (Some(line), Some(font)) = (update_status_line(), info_font) {
+        let y = MENU_H - font.height() as i32 - 4;
+        renderer.render_text_argb(font, &line, 8, y);
+    }
+
     // ── Button labels ───────────────────────────────────────────────
     for widget in frame.widgets() {
         let base = widget.base();
@@ -775,6 +781,27 @@ fn render_text_layer(
         // so no extra work here.
         let _ = keyboard_selection;
     }
+}
+
+/// Human-readable auto-update progress for the menu's bottom-left corner.
+///
+/// Desktop-only — Velopack updates don't exist on wasm/Android, so those
+/// targets never show a line.
+fn update_status_line() -> Option<String> {
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    {
+        use crate::auto_update::UpdateStatus;
+        return Some(match crate::auto_update::update_status()? {
+            UpdateStatus::Downloading { version } => {
+                format!("Downloading update v{version}...")
+            }
+            UpdateStatus::ReadyOnExit { version } => {
+                format!("Update v{version} will install on exit")
+            }
+        });
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 fn build_profile_info_lines(
