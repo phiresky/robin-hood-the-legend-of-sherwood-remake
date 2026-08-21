@@ -162,6 +162,18 @@ fn battle_friend_primary_target(
     (state == AiState::Attacking && primary_target != 0).then_some(primary_target)
 }
 
+/// Original `GetFighter(myCamp, i)` preserves the camp registry's append
+/// order, including PC/soldier interleaving. Keep the cheap pre-visibility
+/// predicates here; the soldier AI-state switch belongs after the 360 gate.
+fn battle_fighter_candidates(
+    fighters: &[FighterSnapshot],
+    me: HumanHandle,
+) -> impl Iterator<Item = &FighterSnapshot> {
+    fighters.iter().filter(move |fighter| {
+        fighter.handle != me && fighter.is_friendly && fighter.is_able_to_fight
+    })
+}
+
 #[track_caller]
 fn battle_friend_detected_360(
     ctx: &AiContext,
@@ -587,42 +599,65 @@ impl EnemyAi {
 
         self.base.list_us.clear();
         self.base.list_us.push(self.base.me);
-        for friend in &battle_tick.camp_soldiers {
-            if !friend.is_able_to_fight
-                || !matches!(
-                    friend.ai_state,
-                    AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
+        // GetFighter(myCamp, i) walks the camp's single append-only fighter
+        // registry. PCs and soldiers therefore have to remain interleaved:
+        // every admitted candidate performs an opaque visibility query, and
+        // changing that query order changes the FastFind visibility cache.
+        for fighter in battle_fighter_candidates(&battle_tick.fighter_registry, self.base.me) {
+            let target = ctx.entity_view(fighter.handle).unwrap_or_else(|| {
+                panic!(
+                    "BattleDecisions camp fighter {} is absent from the AI entity view",
+                    fighter.handle
                 )
-            {
-                tracing::trace!(
-                    frame = ctx.frame,
-                    me = self.base.me,
-                    friend = friend.handle,
-                    able_to_fight = friend.is_able_to_fight,
-                    ai_state = ?friend.ai_state,
-                    "BattleDecisions us-list candidate rejected before the 360 gate"
-                );
-                continue;
-            }
+            });
+            let (position_world, direction) = if fighter.is_soldier {
+                let friend = battle_tick
+                    .camp_soldiers
+                    .iter()
+                    .find(|friend| friend.handle == fighter.handle)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "able camp soldier {} is absent from camp_soldiers",
+                            fighter.handle
+                        )
+                    });
+                (friend.position_world, friend.direction)
+            } else {
+                (target.detection_position_world, target.direction)
+            };
             // Original evaluates `mpMe->IsDetecting360Degrees(pHuman)` here,
-            // after the cheap able-to-fight gate, and only when
+            // after the cheap able-to-fight gate and before the soldier-state
+            // switch, and only when
             // BattleDecisions actually runs. Do not use the historical
             // snapshot bit: populating it eagerly issued O(N²) opaque-LOS
             // queries on every RefreshDetection pass and changed both trace
             // ordering and the visibility cache before any battle decision.
-            let target = ctx.entity_view(friend.handle).unwrap_or_else(|| {
-                panic!(
-                    "BattleDecisions camp friend {} is absent from the AI entity view",
-                    friend.handle
-                )
-            });
             if !battle_friend_detected_360(
                 ctx,
                 self.base.me,
-                friend.handle,
-                friend.position_world,
-                friend.direction,
+                fighter.handle,
+                position_world,
+                direction,
                 target,
+            ) {
+                continue;
+            }
+            if fighter.is_pc {
+                self.base.list_us.push(fighter.handle);
+                if self.company_number > 0 {
+                    battle_tick.friends_lower_company =
+                        battle_tick.friends_lower_company.saturating_add(1);
+                }
+                continue;
+            }
+            let friend = battle_tick
+                .camp_soldiers
+                .iter()
+                .find(|friend| friend.handle == fighter.handle)
+                .expect("soldier metadata was resolved above");
+            if !matches!(
+                friend.ai_state,
+                AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
             ) {
                 continue;
             }
@@ -650,40 +685,6 @@ impl EnemyAi {
             battle_tick.us_battle_points += 100 + friend.pride as u32;
             battle_tick.simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
             battle_tick.has_officer_nearby |= friend.rank == ProfileRank::Officer;
-        }
-        // Same-side PCs pass through the same registry walk. Their arm
-        // does exactly two things: join the us-list, and bump the
-        // lower-company counter whenever this soldier carries a company
-        // number at all. They contribute no pride / rank aggregates —
-        // MakeBattlePredecisions later scores each PC in the us-list at
-        // a flat 100 points. Registry interleaving with the soldier
-        // entries is irrelevant: every us-list consumer aggregates
-        // order-insensitively.
-        for pc in &battle_tick.fighter_registry {
-            if !pc.is_pc || !pc.is_friendly || !pc.is_able_to_fight {
-                continue;
-            }
-            let view = ctx.entity_view(pc.handle).unwrap_or_else(|| {
-                panic!(
-                    "BattleDecisions camp PC {} is absent from the AI entity view",
-                    pc.handle
-                )
-            });
-            if !battle_friend_detected_360(
-                ctx,
-                self.base.me,
-                pc.handle,
-                view.detection_position_world,
-                view.direction,
-                view,
-            ) {
-                continue;
-            }
-            self.base.list_us.push(pc.handle);
-            if self.company_number > 0 {
-                battle_tick.friends_lower_company =
-                    battle_tick.friends_lower_company.saturating_add(1);
-            }
         }
         let tick = &battle_tick;
 
@@ -4475,6 +4476,33 @@ mod tests {
             target.direction,
             &target,
         ));
+    }
+
+    #[test]
+    fn battle_fighter_scan_preserves_interleaved_registry_order() {
+        let fighter = |handle, is_pc, is_friendly, is_able_to_fight| FighterSnapshot {
+            handle,
+            is_pc,
+            is_soldier: !is_pc,
+            is_friendly,
+            is_able_to_fight,
+            ..FighterSnapshot::default()
+        };
+        let registry = vec![
+            fighter(54, false, true, true),
+            fighter(47, false, true, true),
+            fighter(167, true, true, true),
+            fighter(48, false, true, true),
+            fighter(36, true, false, true),
+            fighter(49, false, true, false),
+        ];
+
+        assert_eq!(
+            battle_fighter_candidates(&registry, 54)
+                .map(|candidate| candidate.handle)
+                .collect::<Vec<_>>(),
+            vec![47, 167, 48],
+        );
     }
 
     #[test]
