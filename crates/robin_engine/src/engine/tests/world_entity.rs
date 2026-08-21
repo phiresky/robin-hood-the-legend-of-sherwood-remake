@@ -2813,6 +2813,48 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
 }
 
 #[test]
+fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let initiator = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let opponent = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let mut shot = crate::sequence::SequenceElement::new_interaction(
+        1,
+        crate::element::Command::ShootBow,
+        Some(initiator),
+        Some(opponent),
+    );
+    shot.priority = crate::sequence::SequencePriority::Preference;
+    let shot_seq = engine.orders.sequence_manager.launch_element(shot);
+    engine.orders.sequence_manager.postpone_element(shot_seq, 0);
+
+    let _ = engine.enter_swordfight(sim, &assets, initiator, opponent, false);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(shot_seq, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Postponed,
+        "Original ClearShootList removes the retained NPC pointer without interrupting its sequence"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .drain_pending_condolations()
+            .is_empty(),
+        "clearing an NPC shoot pointer must not invent EventDone"
+    );
+}
+
+#[test]
 fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
