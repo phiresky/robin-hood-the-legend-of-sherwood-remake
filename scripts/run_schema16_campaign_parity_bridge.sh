@@ -57,6 +57,20 @@ promote_exact_eof_statuses() {
     done < <(find "$audit_dir/status" -type f -name '*.status' -print0)
 }
 
+materialize_tracked_eof_ledger() {
+    local campaign=$1 seed_base ledger key destination
+    seed_base=$(sed -n 's/^PARITY_INPUT_SEED_BASE=//p' "$campaign/campaign.env" | head -n 1)
+    [[ "$seed_base" =~ ^[0-9]+$ ]] || return 1
+    ledger="$workspace/docs/PARITY_EOF_LEDGERS/seed${seed_base}.snapshot"
+    [[ -f "$ledger" ]] || return 0
+
+    while IFS= read -r key; do
+        [[ -n "$key" ]] || continue
+        destination="$permanent_eof_dir/status/$key.status"
+        [[ -e "$destination" ]] || printf '0\n' >"$destination"
+    done <"$ledger"
+}
+
 seed_audit_from_permanent_eof() {
     local campaign=$1 campaign_key
     campaign_key=${campaign#"$workspace/"}
@@ -171,6 +185,7 @@ run_remote_sync() {
         if [[ "$campaign" != "$previous_campaign" ]]; then
             printf '%s remote mirror following %s\n' "$(date -Is)" "$campaign"
             previous_campaign=$campaign
+            materialize_tracked_eof_ledger "$campaign" || return 1
             seed_audit_from_permanent_eof "$campaign" || return 1
         fi
         if ! write_complete_trace_manifest "$campaign" "$manifest"; then
