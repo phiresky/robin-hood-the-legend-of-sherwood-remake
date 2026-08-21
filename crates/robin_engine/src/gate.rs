@@ -1265,18 +1265,11 @@ pub fn find_path_gates(
         return None;
     }
     // ── A* main loop ──
-    let mut goal_gate: Option<DoorIndex> = None;
-    let mut best_goal_score = f32::INFINITY;
-
     while let Some(current_idx) = open.first().copied() {
         open.remove(0);
 
         let current = &doors[usize::from(current_idx)];
         let cur_state = state[usize::from(current_idx)];
-
-        if cur_state.score >= best_goal_score {
-            continue;
-        }
 
         // Goal test: does this gate exit into the goal sector?
         let exit_sector = if cur_state.direct {
@@ -1290,11 +1283,22 @@ pub fn find_path_gates(
             current.sector_in
         };
         if exit_sector == goal_sector {
-            if cur_state.score < best_goal_score {
-                best_goal_score = cur_state.score;
-                goal_gate = Some(current_idx);
+            // `RHFastFindGrid::FindPathGatesNodes` returns the first goal gate
+            // removed from the score-ordered open list.  This is also
+            // significant when a restored actor's source point is qNaN: the
+            // goal gate's score is NaN, but Original still accepts it.
+            let mut path: Vec<GatePathStep> = Vec::new();
+            let mut step = Some(current_idx);
+            while let Some(idx) = step {
+                let s = state[usize::from(idx)];
+                path.push(GatePathStep {
+                    door_index: idx,
+                    direct: s.direct,
+                });
+                step = s.prev_gate;
             }
-            continue;
+            path.reverse();
+            return Some(path);
         }
 
         // Expand neighbors via gate links.
@@ -1356,7 +1360,12 @@ pub fn find_path_gates(
                 cur_state.distance_from_source + link.distance + current.penalty;
 
             let next_state = state[usize::from(next_idx)];
-            if next_state.visited && next_state.distance_from_source <= new_dist_from_source {
+            // Preserve Original's literal
+            // `new_distance < previous_distance` test.  Rewriting its
+            // negation as `previous_distance <= new_distance` is not
+            // equivalent for NaN and repeatedly reopens every gate in a
+            // cyclic graph when a restored source position is qNaN.
+            if next_state.visited && !(new_dist_from_source < next_state.distance_from_source) {
                 continue;
             }
 
@@ -1378,20 +1387,7 @@ pub fn find_path_gates(
         }
     }
 
-    // ── Reconstruct path by backtracking via prev_gate chain ──
-    let goal_idx = goal_gate?;
-    let mut path: Vec<GatePathStep> = Vec::new();
-    let mut current = Some(goal_idx);
-    while let Some(idx) = current {
-        let s = state[usize::from(idx)];
-        path.push(GatePathStep {
-            door_index: idx,
-            direct: s.direct,
-        });
-        current = s.prev_gate;
-    }
-    path.reverse();
-    Some(path)
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,7 +1579,9 @@ pub fn find_path_into_door(
             let new_dist_from_source = cur_state.distance_from_source + link.distance;
 
             let next_state = state[usize::from(next_idx)];
-            if next_state.visited && next_state.distance_from_source <= new_dist_from_source {
+            // Match Original's ordered comparison exactly; see the
+            // sector-targeted search above for the NaN-sensitive rationale.
+            if next_state.visited && !(new_dist_from_source < next_state.distance_from_source) {
                 continue;
             }
 
@@ -1827,6 +1825,61 @@ mod tests {
         state[1].score = 570.0;
         add_to_open_gates_original(&mut open, &state, DoorIndex(1));
         assert_eq!(open, vec![DoorIndex(1), DoorIndex(0), DoorIndex(1)]);
+    }
+
+    #[test]
+    fn gate_path_with_nan_source_terminates_and_accepts_first_goal_like_original() {
+        // A three-sector cycle plus a goal branch reproduces the topology
+        // needed for the schema-16 Savegame_029 replay hang.  Restored
+        // Original actors can transiently have qNaN source coordinates;
+        // Original then marks the seeded NaN-distance gates visited and does
+        // not relax them again because `NaN < NaN` is false.
+        let mut doors = vec![
+            Door {
+                sector_out: SectorNumber::new(1),
+                sector_in: SectorNumber::new(2),
+                point_out: MapPoint::new(0.0, 0.0),
+                point_in: MapPoint::new(10.0, 0.0),
+                ..Door::default()
+            },
+            Door {
+                sector_out: SectorNumber::new(2),
+                sector_in: SectorNumber::new(3),
+                point_out: MapPoint::new(20.0, 0.0),
+                point_in: MapPoint::new(30.0, 0.0),
+                ..Door::default()
+            },
+            Door {
+                sector_out: SectorNumber::new(3),
+                sector_in: SectorNumber::new(1),
+                point_out: MapPoint::new(40.0, 0.0),
+                point_in: MapPoint::new(50.0, 0.0),
+                ..Door::default()
+            },
+            Door {
+                sector_out: SectorNumber::new(3),
+                sector_in: SectorNumber::new(4),
+                point_out: MapPoint::new(40.0, 10.0),
+                point_in: MapPoint::new(50.0, 10.0),
+                ..Door::default()
+            },
+        ];
+        build_gate_links(&mut doors);
+
+        let path = find_path_gates(
+            &doors,
+            (f32::NAN, f32::NAN),
+            1,
+            (50.0, 10.0),
+            4,
+            None,
+            false,
+            &|_| true,
+            &no_lift,
+        )
+        .expect("Original accepts the first goal gate even when its score is NaN");
+
+        assert_eq!(path.last().map(|step| step.door_index), Some(DoorIndex(3)));
     }
 
     #[test]
