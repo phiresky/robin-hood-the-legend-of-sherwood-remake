@@ -113,7 +113,16 @@ jobs:
           # -L from .cargo/config.toml is recomputed here; winpthread (pulled
           # in by the posix variant) is forced static as well so the exe has
           # no MinGW runtime DLL dependencies.
-          libdir="$(dirname "$(x86_64-w64-mingw32-g++-posix -print-file-name=libstdc++.a)")"
+          libfile="$(x86_64-w64-mingw32-g++-posix -print-file-name=libstdc++.a)"
+          if [[ ! -f "${libfile}" ]]; then
+            libfile="$(find /usr/lib/gcc /usr/x86_64-w64-mingw32 -name libstdc++.a 2>/dev/null | head -1)"
+          fi
+          if [[ ! -f "${libfile}" ]]; then
+            echo "libstdc++.a not found in the MinGW toolchain" >&2
+            exit 1
+          fi
+          libdir="$(dirname "${libfile}")"
+          echo "Static MinGW libstdc++: ${libfile}"
           {
             echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc-posix"
             echo "CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix"
