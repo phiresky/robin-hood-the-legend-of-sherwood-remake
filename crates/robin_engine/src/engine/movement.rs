@@ -12635,7 +12635,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-        _defer_turn_instruction: bool,
+        defer_turn_instruction: bool,
         halt_already_applied: bool,
     ) {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
@@ -12918,7 +12918,7 @@ impl EngineInner {
                         .entities
                         .get(entity_id)
                         .map(|entity| entity.position_iface().map_goal());
-                    self.launch_turn_sequence_deferred_no_transitions(
+                    let turn_sequence = self.launch_turn_sequence_deferred_no_transitions(
                         entity_id,
                         turn_command,
                         direction,
@@ -12926,6 +12926,17 @@ impl EngineInner {
                         intent.target_y,
                         retained_goal,
                     );
+                    if defer_turn_instruction
+                        && let Some(element) = self
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(turn_sequence, 0)
+                    {
+                        element.set_property(
+                            crate::sequence::Field::DeferredInitialTurnStep,
+                            crate::sequence::FieldValue::Bool(true),
+                        );
+                    }
                 }
                 _ => {
                     // Other order types go on their own single-order

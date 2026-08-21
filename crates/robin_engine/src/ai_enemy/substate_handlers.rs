@@ -4453,13 +4453,12 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             if self.gather_position_instructed {
-                self.go_to(
-                    self.base.current_state,
-                    self.base.current_substate,
-                    self.gather_position,
-                    GotoFlags::RUN,
-                    ctx,
-                );
+                // Original calls the raw GoTo first and performs exactly one
+                // SetState below.  Using EnemyAi::go_to here adds a hidden
+                // same-state SetState before the movement, which publishes a
+                // spurious attentive-mode request and changes the later
+                // ReachPoint -> Turn sequence ordering.
+                self.base.go_to(self.gather_position, GotoFlags::RUN, ctx);
             } else {
                 let officer_pos = tick
                     .camp_soldiers
@@ -4467,9 +4466,7 @@ impl EnemyAi {
                     .find(|cs| cs.handle == self.base.antagonist)
                     .map(|cs| cs.position)
                     .unwrap_or(self.gather_position);
-                self.go_near(
-                    self.base.current_state,
-                    self.base.current_substate,
+                self.base.go_near(
                     officer_pos,
                     parameters_ai::AI_TALK_DISTANCE,
                     GotoFlags::RUN,
@@ -11010,6 +11007,60 @@ mod tests {
         );
 
         assert_eq!(ai.base.current_substate, Substate::SeekingJustWatching);
+    }
+
+    #[test]
+    fn group_called_by_officer_moves_before_single_state_transition() {
+        let mut ai = EnemyAi::new(53);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGroupCalledByOfficer;
+        ai.base.antagonist = 60;
+        ai.attentive = true;
+        ai.will_be_attentive = true;
+        ai.gather_position_instructed = true;
+        ai.gather_position = Position {
+            x: 700.0,
+            y: 1800.0,
+            level: 0,
+            sector: crate::position_interface::SectorHandle::new(1),
+        };
+        let ctx = AiContext {
+            frame: 24_365,
+            position: Position {
+                x: 734.0,
+                y: 1796.0,
+                level: 0,
+                sector: crate::position_interface::SectorHandle::new(1),
+            },
+            self_layer: 0,
+            ..AiContext::default()
+        };
+
+        ai.seeking_group_called_by_officer(StimulusType::EventTimer, &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingGroupGoToOfficer);
+        let [crate::ai::AiOwnerWork::StateChange(notification)] =
+            ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!("group approach must publish exactly one SetState boundary");
+        };
+        let prefix = notification
+            .actor_effects_before_callback
+            .as_ref()
+            .expect("Original GoTo precedes SetState");
+        assert_eq!(prefix.orders.len(), 1, "GoTo belongs before SetState");
+        assert!(
+            prefix.set_attentive_mode.is_none() && prefix.additional_set_attentive_modes.is_empty(),
+            "the raw GoTo must not inject a same-state attentive request"
+        );
+        let requests = ai.base.outbox.actor.take_attentive_modes();
+        assert_eq!(
+            requests.len(),
+            1,
+            "only the explicit SetState may request attention"
+        );
+        assert!(requests[0].target);
+        assert!(!requests[0].fast_officer_variant);
     }
 
     #[test]

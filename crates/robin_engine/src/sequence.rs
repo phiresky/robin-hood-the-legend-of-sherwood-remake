@@ -545,6 +545,10 @@ pub enum Field {
     Scroll,
     ScrollReader,
     ScrollOwner,
+    /// Rust scheduling cache: the Turn was registered after this owner's
+    /// Original actor slot and must not execute its first direction step in
+    /// the same universal frame.
+    DeferredInitialTurnStep,
 }
 
 impl Field {
@@ -559,6 +563,7 @@ impl Field {
             Direction => 0,
             Event => 1,
             RetainedMovementGoal => return None,
+            DeferredInitialTurnStep => return None,
             Timer => 2,
             Message => 3,
             MessageArgument => 4,

@@ -981,6 +981,11 @@ impl TurnCommandContext<'_> {
                         crate::sequence::FieldValue::GeoPoint2D { x, y } => Some((*x, *y)),
                         _ => None,
                     });
+                let defer_initial_turn_step = element
+                    .and_then(|element| {
+                        element.get_property(crate::sequence::Field::DeferredInitialTurnStep)
+                    })
+                    .is_some_and(|value| matches!(value, crate::sequence::FieldValue::Bool(true)));
                 if let Some(entity) = self.entities.get_mut(owner) {
                     if let Some(direction) = explicit_direction {
                         entity.element_data_mut().set_direction_goal(direction);
@@ -1017,6 +1022,14 @@ impl TurnCommandContext<'_> {
                     }
                 }
                 self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, false);
+                if defer_initial_turn_step
+                    && let Some(order) = self
+                        .sequence_manager
+                        .get_element_mut(seq_id, elem_idx)
+                        .and_then(|element| element.orders.back_mut())
+                {
+                    order.defer_initial_turn_step = true;
+                }
             }
             Command::TurnElement => {
                 let antagonist = self
