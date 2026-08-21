@@ -42,6 +42,14 @@ const INTERSECT_SQ_DIST: f32 =
     4.0 * (RADIUS_CORPSE + ACTIONRADIUS_CORPSE) * (RADIUS_CORPSE + ACTIONRADIUS_CORPSE);
 
 impl EngineInner {
+    /// Reproduce `RHElementActorHuman::SetPosture` when the base element
+    /// rejects a Dead/DeadBack -> nonlying posture write. The visible posture
+    /// remains dead, but the human override compares the requested posture
+    /// and synchronously runs the corpse-removal callback anyway.
+    pub(crate) fn process_rejected_nonlying_posture_request_for(&mut self, id: EntityId) {
+        self.update_intersecting_corpses_with_snapshot(id, false, None);
+    }
+
     /// Close one human owner's `SetPosture` corpse-intersection boundary.
     ///
     /// Original performs this work synchronously from
@@ -424,10 +432,11 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use crate::element::{
-        ActorCivilian, ActorData, CivilianData, ElementData, ElementKind, Entity, HumanData,
-        NpcData, Posture,
+        ActorCivilian, ActorData, ActorPc, ActorSoldier, CivilianData, ElementData, ElementKind,
+        Entity, HumanData, NpcData, PcData, Posture, SoldierData,
     };
     use crate::engine::EngineInner;
+    use crate::engine::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
 
     fn civilian_at(x: f32, y: f32, posture: Posture, sector: u16) -> ActorCivilian {
         let mut element = ElementData {
@@ -445,6 +454,85 @@ mod tests {
             npc: NpcData::default(),
             civilian: CivilianData::default(),
         }
+    }
+
+    #[test]
+    fn rejected_dead_idle_posture_request_still_rechecks_intersecting_corpses() {
+        let mut engine = EngineInner::new();
+        let mut corpse_element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            posture: Posture::DeadBack,
+            ..ElementData::default()
+        };
+        corpse_element.set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+        corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
+        let mut corpse_human = HumanData::default();
+        corpse_human.small_repulsive_radius = true;
+        corpse_human.last_is_lying_for_corpse_intersection = Some(true);
+        let corpse = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: corpse_element,
+            actor: ActorData::default(),
+            human: corpse_human,
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        }));
+
+        let mut pc_element = ElementData {
+            kind: ElementKind::ActorPc,
+            posture: Posture::Lying,
+            ..ElementData::default()
+        };
+        pc_element.set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
+        pc_element.set_sector(crate::position_interface::SectorHandle::new(1));
+        let mut pc_human = HumanData::default();
+        pc_human.unconscious = true;
+        pc_human.small_repulsive_radius = true;
+        pc_human.last_is_lying_for_corpse_intersection = Some(true);
+        let pc = engine.add_entity(Entity::Pc(ActorPc {
+            element: pc_element,
+            actor: ActorData::default(),
+            human: pc_human,
+            pc: PcData::default(),
+        }));
+
+        engine
+            .get_entity_mut(corpse)
+            .unwrap()
+            .set_posture(Posture::Upright);
+        assert_eq!(
+            engine.get_entity(corpse).unwrap().element_data().posture,
+            Posture::DeadBack,
+            "the base element rejects the requested upright posture"
+        );
+
+        let outcomes = AnimCompletionOutcomes {
+            execute_sides: ExecuteSideOutcomes {
+                rejected_dead_idle_posture_requests: vec![corpse],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        engine.process_anim_completion_outcomes(
+            &crate::sim_rng::test_context(),
+            outcomes,
+            &crate::engine::types::LevelAssets::new(),
+        );
+
+        for id in [corpse, pc] {
+            assert!(
+                !engine
+                    .get_entity(id)
+                    .unwrap()
+                    .human_data()
+                    .unwrap()
+                    .small_repulsive_radius,
+                "the outer removal and recursive re-add leave both bodies at full radius"
+            );
+        }
+        assert_eq!(
+            engine.get_entity(corpse).unwrap().element_data().posture,
+            Posture::DeadBack
+        );
     }
 
     /// Stand up a default `EngineInner`, add two lying civilians within one

@@ -481,6 +481,7 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     let mut assets = LevelAssets::new();
     let (mut engine, _, _, _) = build_engine();
     let member = engine.add_entity(make_scripted_civilian(""));
+    let member_at_post = engine.add_entity(make_scripted_soldier(""));
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let chief = engine
         .world
@@ -515,9 +516,39 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
         .expect("patrol chief")
         .ai_controller_mut()
         .expect("chief AI")
-        .theoretical_patrol = vec![member];
+        .theoretical_patrol = vec![member, member_at_post];
 
-    engine.script_remove_all_subordinates(&sim, &assets, chief);
+    {
+        let entity = engine
+            .get_entity(member_at_post)
+            .expect("on-post civilian patrol member");
+        let position = entity.element_data().position();
+        let sector = entity.element_data().sector();
+        let level = entity.element_data().layer();
+        let ai = engine
+            .get_entity_mut(member_at_post)
+            .expect("on-post civilian patrol member")
+            .ai_controller_mut()
+            .expect("on-post civilian AI");
+        ai.me = member_at_post.index();
+        ai.current_state = crate::ai::AiState::Default;
+        ai.current_substate = crate::ai::Substate::DefaultOnPost;
+        ai.initial_position = crate::ai::Position {
+            x: position.x,
+            y: position.y,
+            sector,
+            level,
+        };
+        ai.patrol_chief = Some(chief);
+    }
+
+    let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+        engine.script_remove_all_subordinates(&sim, &assets, chief);
+    });
+    assert!(
+        !draws.contains(&crate::sim_rng::RngSite::AiRandomValueRectangle),
+        "ClearPatrol's close-post Enemy continuation must not reach GetBoredTime"
+    );
 
     let member_ai = engine
         .get_entity(member)
@@ -540,6 +571,22 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
             line.line_type == crate::ai::LogLineType::EventRefused && line.info == 2
         }),
         "the direct ForceReturnToDuty path must bypass StartThink's script-lock gate"
+    );
+
+    let on_post_ai = engine
+        .get_entity(member_at_post)
+        .expect("on-post civilian patrol member")
+        .ai_controller()
+        .expect("on-post civilian AI");
+    assert_eq!(on_post_ai.patrol_chief, None);
+    assert_eq!(
+        on_post_ai.current_substate,
+        crate::ai::Substate::DefaultGotoPost,
+        "ClearPatrol must not recursively complete an already-on-post ForceReturnToDuty"
+    );
+    assert!(
+        on_post_ai.outbox.reentrant.self_stimuli.is_empty(),
+        "the suppressed close-post callback must not leak into the member's later owner slot"
     );
 }
 

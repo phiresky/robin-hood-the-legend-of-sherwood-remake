@@ -1668,6 +1668,81 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
 }
 
 #[test]
+fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut blocker = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
+    blocker.priority = SequencePriority::Injury;
+    let blocker_sequence = engine.orders.sequence_manager.launch_element(blocker);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(blocker_sequence, 0);
+
+    let mut existing = SequenceElement::new(1, Command::StopParrySword, Some(owner));
+    existing.priority = SequencePriority::Preference;
+    let existing_sequence = engine.orders.sequence_manager.launch_element(existing);
+    engine
+        .orders
+        .sequence_manager
+        .postpone_element(existing_sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(blocker_sequence, 0)
+        .unwrap()
+        .cross_postponed = Some((existing_sequence, 0));
+
+    let mut waiter = SequenceElement::new(1, Command::WaitTimer, Some(owner));
+    waiter.priority = SequencePriority::Normal;
+    let waiter_sequence = engine.orders.sequence_manager.launch_element(waiter);
+
+    engine.engine_postpone(blocker_sequence, 0, waiter_sequence, 0);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(waiter_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Postponed
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(blocker_sequence, 0)
+            .unwrap()
+            .cross_postponed,
+        None,
+        "incoming waiter must stay invisible while the interrupted predecessor's card runs"
+    );
+
+    let mut pending = engine.orders.sequence_manager.drain_pending_condolations();
+    assert_eq!(pending.len(), 1);
+    engine
+        .orders
+        .sequence_manager
+        .finish_pending_condolation(pending.remove(0));
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(blocker_sequence, 0)
+            .unwrap()
+            .cross_postponed,
+        Some((waiter_sequence, 0)),
+        "outer priority arbitration must install its waiter after the card returns"
+    );
+}
+
+#[test]
 fn fresh_group_route_translates_before_unexecuted_posture_recovery() {
     use crate::element::{Command, InstalledActorOrder, Posture};
     use crate::order::{Order, OrderType};
@@ -3583,10 +3658,72 @@ fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
         SequenceState::InProgress
     );
 
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, incoming_sequence, 0),
+        "rejected recursive work must not supersede the incoming selection"
+    );
+}
+
+#[test]
+fn nested_instruct_callback_permanently_supersedes_its_parent_selection() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let outer = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::QuitSwordfight,
+            Some(owner),
+        ));
+    let nested = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
+
     engine
         .orders
         .sequence_manager
-        .end_instruct_callback(owner, incoming_sequence, 0);
+        .begin_instruct_callback(owner, outer, 0);
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, nested, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((nested, 0))
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, nested, 0),
+        "the recursive selection itself remains current"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        None,
+        "returning from recursive Instruct must not restore the overwritten parent pointer"
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .end_instruct_callback(owner, outer, 0),
+        "the outer Instruct must detect that recursive work superseded it"
+    );
 }
 
 #[test]
@@ -3793,6 +3930,16 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
             .unwrap()
             .state,
         SequenceState::Impossible
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_seq, 0)
+            .unwrap()
+            .priority,
+        SequencePriority::Normal,
+        "the retained shot must run Actor::DeterminePriority when readmitted"
     );
 }
 

@@ -1216,13 +1216,15 @@ pub fn begin_strangle(
         return BeginResult::Impossible;
     }
 
-    // Invalid-target rejection happens in
-    // `EngineInner::check_sequence_element_validity`, which runs before
-    // dispatch.  This helper just rejects any non-living-human-NPC.
+    // PC::Translate(STRANGLE) appends the order without revalidating the
+    // antagonist. A retained post-seek command can therefore become visible
+    // for one frame after its target dies; the first Strangling Execute runs
+    // CheckSequenceElementValidity and aborts it on the following owner slot.
+    // Keep only the type constraint needed by that Execute arm here.
     let target = entities
         .get(target_id)
         .unwrap_or_else(|| panic!("validated strangle target {target_id:?} vanished before begin"));
-    if !target.is_human() || target.is_dead() || target.is_pc() {
+    if !target.is_human() || target.is_pc() {
         return BeginResult::Impossible;
     }
     target.actor_data().unwrap_or_else(|| {
@@ -3618,7 +3620,7 @@ mod tests {
     }
 
     #[test]
-    fn strangle_translation_preserves_live_movement_state() {
+    fn strangle_translation_preserves_live_movement_state_for_stale_dead_target() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
             element: ElementData {
@@ -3644,6 +3646,11 @@ mod tests {
         })));
         let attacker = entities.id_at_legacy_slot(0).unwrap();
         let target = entities.id_at_legacy_slot(1).unwrap();
+        {
+            let target = entities.get_mut(target).unwrap();
+            target.element_data_mut().posture = Posture::Dead;
+            target.npc_data_mut().unwrap().life_points = 0;
+        }
         entities
             .get_mut(attacker)
             .unwrap()

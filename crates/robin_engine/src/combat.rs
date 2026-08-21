@@ -721,18 +721,13 @@ pub fn receive_hit_damage(
     human: &mut HumanData,
     life_points: i16,
     concussion: u16,
-    is_lacklandist: bool,
     ctx: &ConcussionContext,
 ) -> ConcussionOutcome {
-    // On Hard difficulty, scale concussion by HARD_ENEMY_LIFEPOINTS so
-    // knockout is still effective despite enemies having 1.5x HP.
-    let concussion = if is_lacklandist
-        && ctx.difficulty == crate::player_profile::DifficultyLevel::Hard
-    {
-        (concussion as f32 * crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS) as u16
-    } else {
-        concussion
-    };
+    // The damage element already carries the final concussion payload.
+    // Original applies Hard's 1.5 multiplier only while a PC authors a
+    // HITTING damage element; RHCOMMAND_RECEIVE_HIT_DAMAGE consumes the
+    // stored value verbatim. This also matters for NPC and domino-authored
+    // elements, which must never be reinterpreted based on the victim camp.
     add_concussion(human, concussion as i16, life_points, ctx)
 }
 
@@ -1140,7 +1135,13 @@ fn is_victim_in_strike_arc(
         // end = facing + initial. L→R: begin = facing - initial,
         // end = facing + final.
         WeaponThrustKind::Lateral => {
-            if max_norm >= 150.0 || victim.distance < min_d || victim.distance > max_d {
+            // Original enters the collector only when `MaxNorm() < 150`,
+            // then admits the victim only when both inclusive range
+            // comparisons succeed.  Keep that positive formulation: a
+            // session-restored actor can carry NaN coordinates, for which
+            // all three Original comparisons are false.  Negating the
+            // rejection predicates instead let NaN actors into the arc.
+            if !(max_norm < 150.0 && victim.distance >= min_d && victim.distance <= max_d) {
                 return false;
             }
             let dir_angle = sector_to_angle(attacker_direction);
@@ -1186,7 +1187,10 @@ fn is_victim_in_strike_arc(
         // benign; L→R uses `-initial` and the 180° arc extends in the +π
         // direction from there.
         WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
-            if max_norm >= 150.0 || victim.distance < min_d || victim.distance > max_d {
+            // GetPossibleVictimsOfHalfCircleSwordStrike uses the same
+            // positive MaxNorm/range guards as the lateral collector, with
+            // the same unordered-NaN behavior.
+            if !(max_norm < 150.0 && victim.distance >= min_d && victim.distance <= max_d) {
                 return false;
             }
             let dir_angle = sector_to_angle(attacker_direction);
@@ -1893,6 +1897,61 @@ mod tests {
     }
 
     #[test]
+    fn lateral_and_half_circle_collectors_reject_nan_positions() {
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::D as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Lateral,
+            direction: WeaponThrustDirection::RightToLeft,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            initial_angle: 45,
+            final_angle: 45,
+            ..Default::default()
+        };
+        profile.thrusts[SwordStrike::F as usize] = ThrustProfile {
+            kind: WeaponThrustKind::TrueHalfCircle,
+            direction: WeaponThrustDirection::RightToLeft,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            initial_angle: 45,
+            final_angle: 45,
+            ..Default::default()
+        };
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: f32::NAN,
+            dy_stretched: f32::NAN,
+            distance: f32::NAN,
+            direction_sector: 0,
+            camp: Camp::Lacklandists,
+            facing_direction: 0,
+            elevation: f32::NAN,
+            life_points: 100,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        // Both Original collectors are guarded by the positive expression
+        // `MaxNorm() < 150` followed by positive inclusive range checks.
+        // Every comparison with this restored qNaN position is false.
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::D,
+            0,
+            &victim,
+            true,
+        ));
+        assert!(!is_victim_in_strike_arc(
+            &profile,
+            SwordStrike::F,
+            0,
+            &victim,
+            true,
+        ));
+    }
+
+    #[test]
     fn push_estimation_keeps_literal_facing_side_boundary() {
         let mut profile = HtHWeaponProfile::default();
         profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
@@ -2223,10 +2282,23 @@ mod tests {
     fn hit_damage_concussion_only() {
         let mut h = make_human();
         let ctx = default_ctx();
-        let outcome = receive_hit_damage(&mut h, 100, 80, false, &ctx);
+        let outcome = receive_hit_damage(&mut h, 100, 80, &ctx);
         // 80 * 100 / 100 = 80 → exceeds threshold 70 → KO
         assert_eq!(outcome, ConcussionOutcome::WentUnconscious);
         assert!(h.unconscious);
+    }
+
+    #[test]
+    fn hit_damage_consumes_hard_difficulty_payload_verbatim() {
+        let mut h = make_human();
+        let mut ctx = default_ctx();
+        ctx.difficulty = crate::player_profile::DifficultyLevel::Hard;
+
+        let outcome = receive_hit_damage(&mut h, 53, 3, &ctx);
+
+        assert_eq!(outcome, ConcussionOutcome::NoChange);
+        // 3 * 100 / 53 = 5. Scaling the received payload again would yield 7.
+        assert_eq!(h.concussion_of_the_brain, 5);
     }
 
     // ── Generic damage ─────────────────────────────────────────────

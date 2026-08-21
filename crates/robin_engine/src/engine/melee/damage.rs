@@ -1693,6 +1693,19 @@ impl EngineInner {
         // as a non-overkill hit would.  `add_damage_number` no-ops on 0.
         self.add_damage_number(victim_id, damage);
 
+        // Human::TranslateArrowDamage opens with virtual SayOuch before its
+        // posture switch (RHelementactorhuman.cpp:2417-2424).  In particular,
+        // a living NPC that is already Lying/Flying/etc. still speaks before
+        // the damage element terminates without an order.  Keep PCs out of
+        // this call: PC::TranslateArrowDamage may take its shoulder override,
+        // and Human::SayOuch is a no-op for every PC path anyway.
+        if !self
+            .expect_entity(victim_id, "piercing-damage say-ouch")
+            .is_pc()
+        {
+            self.say_ouch(sim, assets, victim_id, Some(damage));
+        }
+
         // The ladder/wall translation is an arrow/stone hit reaction, not a
         // damage-immunity arm: ReceivePiercingDamage has already subtracted
         // life and applied concussion when Original gets here.
@@ -1791,15 +1804,6 @@ impl EngineInner {
         // falls through to the default damage path.
         if translation_posture == Posture::CarryingCorpse {
             self.force_drop_carried_corpse_instant(victim_id);
-        }
-
-        // `TranslateArrowDamage` opens with the virtual `SayOuch`, which only
-        // NPCs override; the PC edge already spoke above.
-        if !self
-            .expect_entity(victim_id, "piercing-damage say-ouch")
-            .is_pc()
-        {
-            self.say_ouch(sim, assets, victim_id, Some(damage));
         }
 
         // TranslateArrowDamage / TranslateDamage always select an authored
@@ -1913,18 +1917,13 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         let life_points = get_life_points(victim);
-        let is_lacklandist = victim.is_soldier()
-            && victim.soldier_data().map(|s| s.cached_camp)
-                == Some(crate::element::Camp::Lacklandists);
-
         let victim = self.expect_entity_mut(victim_id, "apply_hit_damage victim");
         let human = match victim.human_data_mut() {
             Some(h) => h,
             None => return,
         };
 
-        let outcome =
-            combat::receive_hit_damage(human, life_points, concussion, is_lacklandist, &ctx);
+        let outcome = combat::receive_hit_damage(human, life_points, concussion, &ctx);
         let went_unconscious = outcome == combat::ConcussionOutcome::WentUnconscious;
 
         // SetConcussionOfTheBrain performs the knockout transition inline:

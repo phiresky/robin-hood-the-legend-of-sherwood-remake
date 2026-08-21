@@ -734,17 +734,23 @@ impl EngineInner {
         // PC initiators clear shield-protection before entering the
         // fight to unlink any active shield-protection.  NPC
         // sword-fights don't carry the protection link.
-        if self
+        let initiator_is_pc = self
             .expect_entity(initiator, "enter_swordfight initiator")
-            .is_pc()
-        {
+            .is_pc();
+        if initiator_is_pc {
             self.set_shield_protected(initiator, None);
         }
 
         // C++ `EnterSwordFight` calls `ClearShootList()` before the
         // validity gates.
-        {
-            self.clear_pc_shoot_list(initiator);
+        self.clear_pc_shoot_list(initiator);
+        if initiator_is_pc {
+            // Repeated PC bow clicks have not necessarily reached the
+            // retained pointer FIFO yet, so remove their eager Rust manager
+            // registrations too. NPC ShootBow elements are different: they
+            // remain linked through the sequence's postponed pointer even
+            // after Original clears `mlpsequenceShootList`. Interrupting one
+            // here invents a condolation/EventDone and severs the link.
             let resolver = Self::priority_resolver(&self.world.entities);
             self.orders.sequence_manager.stop_pending_elements_matching(
                 initiator,

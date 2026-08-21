@@ -3928,6 +3928,7 @@ fn tick_arrows_matching(
         // step, so this snapshots that primer position exactly as Original's
         // explicit pre-add Hourglass does.
         proj.element.sprite.position_iface.new_move();
+        let hourglass_old_position = proj.element.position();
 
         // Distinct impact FX ids per projectile type.  Arrows play
         // their 510 only on shield deflection (which has its own
@@ -4113,11 +4114,12 @@ fn tick_arrows_matching(
         }
 
         let arrow_new = proj.element.position();
-        let arrow_old = primed_segment_start.unwrap_or(WorldPoint3D {
-            x: arrow_new.x - proj.projectile.velocity_increment.x,
-            y: arrow_new.y - proj.projectile.velocity_increment.y,
-            z: arrow_new.z - proj.projectile.velocity_increment.z,
-        });
+        // FindHumanVictim reads mpSprite->GetOldPosition(), which NewMove
+        // saved before UpdatePosition. Do not reconstruct that point as
+        // `arrow_new - increment`: f32 addition/subtraction is not reversible
+        // at large map coordinates, and a one-bit shift can reject a target
+        // exactly at the segment endpoint through the strict range gate.
+        let arrow_old = primed_segment_start.unwrap_or(hourglass_old_position);
 
         // ── Shield intersection check ─────────────────────────────
         // Before checking victim proximity, check if any shield blocks
@@ -4729,6 +4731,89 @@ mod tests {
                 ..SoldierData::default()
             },
         })
+    }
+
+    /// Savegame_Nescafe/Profile_002/Continue replay-007 reaches these exact
+    /// bits at Original frame 590. `new - increment` shifts the old X by one
+    /// bit and fails the strict range gate; NewMove's saved old position hits.
+    #[test]
+    fn existing_arrow_collision_uses_new_move_old_position() {
+        let mut victim = make_pc(1040.648_1, 1915.162_7);
+        victim
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(1040.648_1, 1915.162_7, 0.0));
+        let shooter = make_soldier_with_camp(772.0, 1796.0, crate::element::Camp::Lacklandists);
+
+        let mut element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..ElementData::default()
+        };
+        let saved_old = WorldPoint3D::new(987.105_4, 1922.524_8, 68.750_26);
+        element.set_position(saved_old);
+        element.set_position_map_preserving_3d(MapPoint::new(987.105_4, 1853.774_5));
+        let arrow = Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                associated_action: Action::Bow,
+                object_type: ObjectType::Arrow,
+                animation: Animation::ObjectFlying,
+                ..ObjectData::default()
+            },
+            projectile: ProjectileData {
+                flying: true,
+                trajectory_frame_count: 1,
+                trajectory: vec![TrajectoryPoint {
+                    position: WorldPoint3D::new(1070.693_6, 1911.031_5, 0.0),
+                    time: 1,
+                }],
+                velocity_increment: WorldVec3D::new(53.542_618, -7.362_060_5, -43.750_252),
+                damage: 10,
+                ..ProjectileData::default()
+            },
+        });
+        let mut entities = entity_table(vec![Some(victim), Some(shooter), Some(arrow)]);
+        let victim_id = entities.get_at_index(0).expect("victim slot").0;
+        let shooter_id = entities.get_at_index(1).expect("shooter slot").0;
+        let (_, arrow) = entities.get_mut_at_index(2).expect("arrow slot");
+        let Entity::Projectile(arrow) = arrow else {
+            panic!("arrow slot did not retain projectile")
+        };
+        arrow.object.reference = Some(victim_id);
+        arrow.projectile.shooter = Some(shooter_id);
+
+        let integrated = WorldPoint3D::new(
+            saved_old.x + arrow.projectile.velocity_increment.x,
+            saved_old.y + arrow.projectile.velocity_increment.y,
+            saved_old.z + arrow.projectile.velocity_increment.z,
+        );
+        let reconstructed_old = WorldPoint3D::new(
+            integrated.x - arrow.projectile.velocity_increment.x,
+            integrated.y - arrow.projectile.velocity_increment.y,
+            integrated.z - arrow.projectile.velocity_increment.z,
+        );
+        assert_ne!(
+            reconstructed_old.x, saved_old.x,
+            "fixture must exercise the non-reversible f32 boundary"
+        );
+        let norm = |from: WorldPoint3D, to: WorldPoint3D| {
+            let delta = to - from;
+            delta.norm()
+        };
+        let belt = WorldPoint3D::new(1040.648_1, 1915.162_7, 25.0);
+        assert!(norm(reconstructed_old, belt) > norm(reconstructed_old, integrated));
+        assert!(norm(saved_old, belt) <= norm(saved_old, integrated));
+
+        let results = tick_arrows(
+            &crate::sim_rng::test_context(),
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
+        assert!(
+            results
+                .iter()
+                .any(|result| result.hit_target == Some(victim_id))
+        );
     }
 
     fn make_arrow_target(x: f32, y: f32) -> Entity {

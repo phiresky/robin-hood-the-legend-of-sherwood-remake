@@ -5,6 +5,7 @@
 //! see the parent's private fields and helpers.
 
 use crate::ai::*;
+use crate::order::AiOrderIntent;
 use crate::parameters_ai;
 
 use super::util::{
@@ -4453,13 +4454,12 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             if self.gather_position_instructed {
-                self.go_to(
-                    self.base.current_state,
-                    self.base.current_substate,
-                    self.gather_position,
-                    GotoFlags::RUN,
-                    ctx,
-                );
+                // Original calls the raw GoTo first and performs exactly one
+                // SetState below.  Using EnemyAi::go_to here adds a hidden
+                // same-state SetState before the movement, which publishes a
+                // spurious attentive-mode request and changes the later
+                // ReachPoint -> Turn sequence ordering.
+                self.base.go_to(self.gather_position, GotoFlags::RUN, ctx);
             } else {
                 let officer_pos = tick
                     .camp_soldiers
@@ -4467,9 +4467,7 @@ impl EnemyAi {
                     .find(|cs| cs.handle == self.base.antagonist)
                     .map(|cs| cs.position)
                     .unwrap_or(self.gather_position);
-                self.go_near(
-                    self.base.current_state,
-                    self.base.current_substate,
+                self.base.go_near(
                     officer_pos,
                     parameters_ai::AI_TALK_DISTANCE,
                     GotoFlags::RUN,
@@ -4512,7 +4510,25 @@ impl EnemyAi {
             }
             StimulusType::EventReachPoint => {
                 if self.gather_position_instructed {
-                    self.base.face_direction(self.gather_direction, ctx);
+                    if self.base.open_end_think_frames != 0 {
+                        // A GoTo which was already at its destination reaches
+                        // this handler recursively before Original unwinds the
+                        // calling Think. Original's actor still presents the
+                        // GoTo action there, so FaceTo authors a Turn even when
+                        // the directions match. Rust stages Waiting before it
+                        // surfaces that synchronous completion; preserve the
+                        // movement-state result explicitly for this route.
+                        self.base
+                            .outbox
+                            .actor
+                            .orders
+                            .push(AiOrderIntent::face_direction(self.gather_direction as i16));
+                    } else {
+                        // An ordinary movement completion arrives in its own
+                        // top-level Think. Match Original FaceTo, including its
+                        // same-direction Waiting shortcut to EventDone.
+                        self.base.face_direction(self.gather_direction, ctx);
+                    }
                 } else {
                     self.face_npc(self.base.antagonist, ctx);
                 }
@@ -4618,23 +4634,20 @@ impl EnemyAi {
         match stimulus_type {
             StimulusType::EventTimer => {
                 // Check if officer has moved
-                if let Some(pos) = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
-                    .map(|cs| cs.position)
-                {
+                if let Some(antagonist) = ctx.entity_view(self.base.antagonist) {
+                    let pos = antagonist.position;
                     let dx = pos.x - self.gather_position.x;
                     let dy = pos.y - self.gather_position.y;
                     let talk_sq = (parameters_ai::AI_TALK_DISTANCE as f32)
                         * (parameters_ai::AI_TALK_DISTANCE as f32);
                     if dx * dx + dy * dy > talk_sq {
                         // Officer moved — update and retry
-                        self.gather_position = pos;
+                        let forecast = antagonist.forecasted_destination.resolve(sim).position;
+                        self.gather_position = forecast;
                         self.go_near(
                             self.base.current_state,
                             self.base.current_substate,
-                            pos,
+                            forecast,
                             parameters_ai::AI_TALK_DISTANCE,
                             GotoFlags::RUN,
                             ctx,
@@ -4644,10 +4657,7 @@ impl EnemyAi {
                 self.base.launch_timer(50, ctx.frame);
             }
             StimulusType::EventReachPoint => {
-                let ant = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == self.base.antagonist);
+                let ant = ctx.entity_view(self.base.antagonist);
                 let officer_ok = ant.is_some_and(|a| {
                     a.ai_state == AiState::Default
                         || a.ai_substate == Substate::SeekingOfficerWaitForInstructedSoldier
@@ -4662,11 +4672,12 @@ impl EnemyAi {
                         * (parameters_ai::AI_TALK_DISTANCE as f32);
                     if dx * dx + dy * dy > talk_sq {
                         // Too far — retry
-                        self.gather_position = officer_pos;
+                        let forecast = ant.unwrap().forecasted_destination.resolve(sim).position;
+                        self.gather_position = forecast;
                         self.go_near(
                             self.base.current_state,
                             self.base.current_substate,
-                            officer_pos,
+                            forecast,
                             parameters_ai::AI_TALK_DISTANCE,
                             GotoFlags::RUN,
                             ctx,
@@ -7188,12 +7199,12 @@ impl EnemyAi {
 
     fn attacking_door_fight_waiting(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
+        _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             if super::them_lifecycle_debug_matches(ctx) {
@@ -7206,8 +7217,12 @@ impl EnemyAi {
                     self.base.current_substate,
                 );
             }
-            self.reinitialize_them_list(ctx, tick);
-            self.battle_decisions(sim, global, ctx, tick, grid);
+            // Original resumes a door fight through GetBattleOverview: it
+            // rebuilds the enemy list and starts the left/right observation
+            // sequence. Going directly to BattleDecisions skips those
+            // observation states and can synchronously enter SeekArea,
+            // consuming selection RNG which Original has not requested yet.
+            self.get_battle_overview(0, ctx, tick);
         }
         false
     }
@@ -8659,6 +8674,33 @@ mod tests {
         view
     }
 
+    fn civilian_view(handle: u32, position: Position) -> crate::ai_entity_view::AiEntityView {
+        let entity = crate::element::Entity::Civilian(crate::element::ActorCivilian {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorCivilian,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            civilian: Default::default(),
+        });
+        let mut view = crate::ai_entity_view::entity_view_from_entity(
+            &entity,
+            handle,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        view.ai_state = AiState::Default;
+        view.ai_substate = Substate::DefaultOnPost;
+        view.position = position;
+        view.forecasted_destination =
+            crate::ai::PreparedForecastDestination::fixed(position, view.direction);
+        view
+    }
+
     #[test]
     fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() {
         let sim = crate::sim_rng::test_context();
@@ -9391,6 +9433,39 @@ mod tests {
     }
 
     #[test]
+    fn door_fight_wait_timer_starts_battle_overview() {
+        // Savegame_033 replay-024 frame 24033: entering BattleDecisions
+        // directly selected SeekArea and consumed an RNG draw that Original
+        // did not make. RHArtificialMalignity handles this timer by calling
+        // GetBattleOverview and beginning the observation sequence instead.
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(95);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingDoorFightWaiting;
+        ai.list_them.push(170);
+
+        ai.attacking_door_fight_waiting(
+            &sim,
+            StimulusType::EventTimer,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert!(ai.list_them.is_empty());
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(crate::ai::LookDirection::Left)
+        );
+    }
+
+    #[test]
     fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
         // Schema-14 seed 1000000, SuN1Sh1nE Savegame_024 replay-004
         // frame 1254. Soldier 46 is crossing a door: its AI Position() is
@@ -9872,11 +9947,21 @@ mod tests {
             eye_blind: false,
         });
 
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        let mut officer = soldier_view_with_substate(2, Substate::DefaultOnPost);
+        officer.ai_state = AiState::Default;
+        officer.position = Position::default();
+        views.insert(2, officer);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
         ai.think_expected_event(
             &sim,
             &Stimulus::new(StimulusType::EventReachPoint),
             &mut AiGlobalState::default(),
-            &AiContext::default(),
+            &ctx,
             &tick,
             None,
         );
@@ -9890,6 +9975,44 @@ mod tests {
             vec![StimulusType::EventReachPoint]
         );
         assert!(!ai.base.timer_is_running);
+    }
+
+    #[test]
+    fn running_to_officer_tracks_rejected_civilian_alert_antagonist() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Seeking, Substate::SeekingRunningToOfficer);
+        ai.base.antagonist = 2;
+        ai.gather_position = Position {
+            x: 964.0,
+            y: 2695.0,
+            ..Position::default()
+        };
+        let civilian_position = Position {
+            x: 847.573_975,
+            y: 2436.898_19,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(2, civilian_view(2, civilian_position));
+        let ctx = AiContext {
+            frame: 31_608,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.gather_position, civilian_position);
+        assert_eq!(ai.base.last_goto_destination, civilian_position);
+        assert_eq!(ai.base.when_does_timer_ring, 31_658);
     }
 
     #[test]
@@ -11010,6 +11133,121 @@ mod tests {
         );
 
         assert_eq!(ai.base.current_substate, Substate::SeekingJustWatching);
+    }
+
+    #[test]
+    fn group_called_by_officer_moves_before_single_state_transition() {
+        let mut ai = EnemyAi::new(53);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGroupCalledByOfficer;
+        ai.base.antagonist = 60;
+        ai.attentive = true;
+        ai.will_be_attentive = true;
+        ai.gather_position_instructed = true;
+        ai.gather_position = Position {
+            x: 700.0,
+            y: 1800.0,
+            level: 0,
+            sector: crate::position_interface::SectorHandle::new(1),
+        };
+        let ctx = AiContext {
+            frame: 24_365,
+            position: Position {
+                x: 734.0,
+                y: 1796.0,
+                level: 0,
+                sector: crate::position_interface::SectorHandle::new(1),
+            },
+            self_layer: 0,
+            ..AiContext::default()
+        };
+
+        ai.seeking_group_called_by_officer(StimulusType::EventTimer, &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingGroupGoToOfficer);
+        let [crate::ai::AiOwnerWork::StateChange(notification)] =
+            ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!("group approach must publish exactly one SetState boundary");
+        };
+        let prefix = notification
+            .actor_effects_before_callback
+            .as_ref()
+            .expect("Original GoTo precedes SetState");
+        assert_eq!(prefix.orders.len(), 1, "GoTo belongs before SetState");
+        assert!(
+            prefix.set_attentive_mode.is_none() && prefix.additional_set_attentive_modes.is_empty(),
+            "the raw GoTo must not inject a same-state attentive request"
+        );
+        let requests = ai.base.outbox.actor.take_attentive_modes();
+        assert_eq!(
+            requests.len(),
+            1,
+            "only the explicit SetState may request attention"
+        );
+        assert!(requests[0].target);
+        assert!(!requests[0].fast_officer_variant);
+    }
+
+    #[test]
+    fn group_synchronous_reachpoint_same_direction_still_authors_turn() {
+        let mut ai = EnemyAi::new(53);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
+        // The already-at-destination GoTo completion is surfaced recursively
+        // while its calling EndThink frame remains open.
+        ai.base.open_end_think_frames = 1;
+        ai.gather_position_instructed = true;
+        ai.gather_direction = 8;
+        let ctx = AiContext {
+            // Rust has already staged Waiting here, even though Original's
+            // FaceTo still observes the just-completed movement boundary.
+            self_action_state: crate::element::ActionState::Waiting,
+            direction: 8,
+            ..AiContext::default()
+        };
+
+        ai.seeking_group_go_to_officer(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        let [turn] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("group ReachPoint must author one Turn");
+        };
+        assert_eq!(turn.order_type, crate::order::OrderType::Turning);
+    }
+
+    #[test]
+    fn group_movement_reachpoint_same_direction_uses_waiting_shortcut() {
+        let mut ai = EnemyAi::new(171);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
+        ai.gather_position_instructed = true;
+        ai.gather_direction = 4;
+        let ctx = AiContext {
+            self_action_state: crate::element::ActionState::Waiting,
+            direction: 4,
+            ..AiContext::default()
+        };
+
+        ai.seeking_group_go_to_officer(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert!(
+            ai.base.outbox.actor.orders.is_empty(),
+            "a completed movement already facing the gather direction must not turn"
+        );
+        assert!(
+            ai.base.already_turned,
+            "FaceTo's shortcut must schedule the synchronous EventDone"
+        );
     }
 
     #[test]

@@ -3808,6 +3808,47 @@ impl EngineInner {
         // Build this for every Think boundary, not only RefreshDetection,
         // because timer/report callbacks also enter SeekArea synchronously.
         let doors = self.script_domains.interactables.doors.as_slice();
+        // ReconsiderSwordfight refreshes `primary_target` from the actor's
+        // principal opponent before it forecasts a lost opponent.  That
+        // principal can differ from the AI member captured above, so retain
+        // prepared forecasts by detectable handle as well as in the
+        // primary-target convenience slot.  Detection dispatch rebuilds this
+        // list with owner-boundary positions; timer/sequence dispatches still
+        // need the live variants populated here.
+        if build_forecasts {
+            for detectable in &soldier.npc.detectable_lists[enemy_idx] {
+                let Some(target_id) = detectable.element else {
+                    continue;
+                };
+                let target = self.world.entities.get(target_id).unwrap_or_else(|| {
+                    panic!(
+                        "NPC {} has Enemy detectable for missing actor {}",
+                        npc_id.index(),
+                        target_id.index()
+                    )
+                });
+                let input = extract_forecast_input(
+                    target,
+                    selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "NPC {} requires a destination forecast for non-actor {}",
+                        npc_id.index(),
+                        target_id.index()
+                    )
+                });
+                tick.enemy_detectable_forecasts.push((
+                    target_id.index(),
+                    crate::ai::prepare_forecast_destination_for_ia(
+                        &input,
+                        doors,
+                        &self.world.fast_grid.level.sectors,
+                        &self.world.fast_grid.level.sector_number_map,
+                    ),
+                ));
+            }
+        }
         let frame = self.frame_counter();
         // Keep the diagnostic entirely absent from the disabled path. In
         // particular, do not resolve Original identity for an observation
@@ -12279,6 +12320,22 @@ impl EngineInner {
                     ),
                 }
             }
+
+            {
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(member)
+                    .and_then(Entity::ai_controller_mut)
+                    .expect("RemoveAllSubordinates member lost its AI after ForceReturnToDuty");
+                if let Some(crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
+                    defer_clear_patrol_close_post,
+                    ..
+                }) = ai.outbox.reentrant.owner_work.last_mut()
+                {
+                    *defer_clear_patrol_close_post = true;
+                }
+            }
             self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
             self.drain_pending_move_requests_for_owner(sim, member);
         }
@@ -12671,6 +12728,23 @@ impl EngineInner {
                 ai.left_combat_neighbour = target;
             }
         }
+    }
+
+    fn register_synchronizing_actor(&mut self, target: u32, actor: u32) {
+        let target_id = EntityId::Soldier(SoldierId(target));
+        let entity = self
+            .world
+            .entities
+            .get_mut(target_id)
+            .unwrap_or_else(|| panic!("synchronization target soldier {target} is missing"));
+        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+            panic!("synchronization target soldier {target} has no AI controller")
+        });
+        // RHArtificialIntelligence::RegisterSynchronizingActor is a direct,
+        // unconditional InsertLast. In particular, the target can reach its
+        // waypoint in a later element Hourglass slot in this same frame and
+        // must observe this registration before dispatching EVENT_SYNC_CHARLY.
+        ai.synchronizing_actors.push(actor);
     }
 
     pub(super) fn process_pending_cross_npc_actions(
@@ -13108,19 +13182,7 @@ impl EngineInner {
                 }
 
                 crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
-                    // `register_synchronizing_actor` pushes the
-                    // calling NPC onto the target's
-                    // `synchronizing_actors` so the target's
-                    // macro-complete dispatch can wake all waiters.
-                    // Dedup the push for safety since the original
-                    // list pushes unconditionally.
-                    let target_id = EntityId::Soldier(SoldierId(target));
-                    if let Some(entity) = self.world.entities.get_mut(target_id)
-                        && let Some(ai) = entity.ai_controller_mut()
-                        && !ai.synchronizing_actors.contains(&actor)
-                    {
-                        ai.synchronizing_actors.push(actor);
-                    }
+                    self.register_synchronizing_actor(target, actor);
                 }
                 crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
                     panic!("synchronous officer report leaked into deferred cross-NPC actions")
@@ -13228,6 +13290,14 @@ impl EngineInner {
             defer_turn_instruction,
         );
         ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+
+        // StartThink applies SetViewStatus synchronously for
+        // LOSE_CONSCIOUSNESS, WASP, and NET. FITAGAIN can publish its
+        // resurrection work at this same boundary. The typed AI records
+        // those engine-owned writes while its controller is borrowed; commit
+        // them immediately after Think returns, before waypoint callbacks or
+        // any other pending/re-entrant work can observe stale NPC state.
+        self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
 
         // `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
         // waypoint VM directly from the active Think handler. Close that
@@ -13771,6 +13841,9 @@ impl EngineInner {
                                 )
                             });
                         enemy_ai.base.primary_target = primary_target;
+                    }
+                    crate::ai::CrossNpcAction::RegisterSynchronizingActor { target, actor } => {
+                        self.register_synchronizing_actor(target, actor);
                     }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
@@ -15413,6 +15486,13 @@ impl EngineInner {
                 let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
                 self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
             }
+
+            // This path deliberately uses the raw filtered dispatch to avoid
+            // recursively entering the outer fixed-point drain. Preserve the
+            // same immediate StartThink boundary as the top-level wrapper:
+            // publish eye/resurrection writes before waypoint or sibling
+            // self-stimulus work continues.
+            self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
 
             // A recursive Think can itself reach an authored waypoint. The
             // Original runs ReachPoint on this same call stack, before the

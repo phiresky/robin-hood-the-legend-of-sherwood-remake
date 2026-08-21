@@ -40,6 +40,16 @@ fn fighter_ai_position(
     })
 }
 
+fn apply_camp_soldier_boundary_position(
+    position: &mut crate::ai::Position,
+    position_world: &mut crate::coordinates::WorldPoint3D,
+    boundary: crate::entities::BoundaryPosition,
+) {
+    position.x = boundary.map.x;
+    position.y = boundary.map.y;
+    *position_world = boundary.world;
+}
+
 #[derive(Clone, Copy)]
 struct HearingGateDebugConfig {
     enabled: bool,
@@ -2220,10 +2230,18 @@ impl EngineInner {
                     soldier.handle
                 )
             });
-            let position =
-                self.position_at_owner_boundary(id, npc_id, positions_before_movement, true);
-            soldier.position.x = position.x;
-            soldier.position.y = position.y;
+            // BattleDecisions' IsDetecting360Degrees overload does not use
+            // AI Position(actor): it reads the friend's literal 3-D actor
+            // position to build ComputeDetectionPoint. Keep both coordinate
+            // spaces on the same creation-order boundary. Updating only the
+            // map point left the visibility ray at the once-per-frame world
+            // snapshot after an earlier-created friend had moved.
+            let boundary = self.boundary_position(id, npc_id, positions_before_movement, true);
+            apply_camp_soldier_boundary_position(
+                &mut soldier.position,
+                &mut soldier.position_world,
+                boundary,
+            );
         }
         self.prepare_detection_forecasts_for_owner(
             npc_id,
@@ -5535,6 +5553,30 @@ struct ViewContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camp_soldier_owner_boundary_updates_raw_world_position_with_map_position() {
+        // Savegame_035 replays 026/027: an earlier-created friend moved
+        // before the deciding soldier's slot. BattleDecisions consumes the
+        // raw world point for IsDetecting360Degrees, so retaining the frame
+        // snapshot here changed both the visibility query and mlistUs.
+        let mut position = crate::ai::Position {
+            x: 10.0,
+            y: 20.0,
+            sector: None,
+            level: 0,
+        };
+        let mut position_world = crate::coordinates::WorldPoint3D::new(10.0, 120.0, 100.0);
+        let boundary = crate::entities::BoundaryPosition {
+            map: crate::coordinates::MapPoint::new(30.0, 40.0),
+            world: crate::coordinates::WorldPoint3D::new(30.0, 240.0, 200.0),
+        };
+
+        apply_camp_soldier_boundary_position(&mut position, &mut position_world, boundary);
+
+        assert_eq!((position.x, position.y), (30.0, 40.0));
+        assert_eq!(position_world, boundary.world);
+    }
 
     #[test]
     fn tactical_fighter_snapshot_keeps_owner_boundary_door_position() {

@@ -2078,7 +2078,7 @@ fn collect_arc_victims(
             continue;
         }
         let distance = (dx * dx + dy * dy).sqrt();
-        if distance < min_distance || distance > max_distance {
+        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
             continue;
         }
         // Check if direction is within the arc
@@ -2130,7 +2130,7 @@ fn collect_lateral_strike_victims(
         let dy = (target_position.y - attacker_position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         let dz = target_position.z - attacker_position.z;
         let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-        if distance < min_distance || distance > max_distance {
+        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
             continue;
         }
 
@@ -2250,6 +2250,14 @@ fn full_circle_strike_distance_is_in_range(
     max_distance: f32,
 ) -> bool {
     let distance = full_circle_strike_distance(attacker, victim);
+    sword_strike_distance_is_in_range(distance, min_distance, max_distance)
+}
+
+fn sword_strike_distance_is_in_range(distance: f32, min_distance: f32, max_distance: f32) -> bool {
+    // Original's collectors spell this as a positive conjunction. That
+    // distinction matters for corrupt-but-loadable legacy actors whose
+    // position is NaN: both comparisons reject the actor in C++, while the
+    // negated form (`distance < min || distance > max`) admits it.
     distance >= min_distance && distance <= max_distance
 }
 
@@ -2295,7 +2303,7 @@ fn collect_lateral_warning_victims(
             continue;
         }
         let distance = (dx * dx + dy * dy).sqrt();
-        if distance < min_distance || distance > max_distance {
+        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
             continue;
         }
         let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
@@ -2933,6 +2941,13 @@ mod tests {
     }
 
     #[test]
+    fn sword_strike_range_rejects_nan_like_original_positive_comparisons() {
+        assert!(!sword_strike_distance_is_in_range(f32::NAN, 0.0, 65.0));
+        assert!(sword_strike_distance_is_in_range(0.0, 0.0, 65.0));
+        assert!(sword_strike_distance_is_in_range(65.0, 0.0, 65.0));
+    }
+
+    #[test]
     fn half_circle_done_seed_combines_3d_range_with_ground_space_sector() {
         let attacker = WorldPoint3D::ZERO;
         let elevated_same_map = WorldPoint3D::new(0.0, 10.0, 10.0);
@@ -3213,7 +3228,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_selected_strike_keeps_stale_sprite_action_done_timing() {
+    fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
         let mut engine = make_engine();
         let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let selected_row = crate::sprite_script::SpriteScript {
@@ -3269,9 +3284,42 @@ mod tests {
         engine.publish_selected_order_as_installed(target);
 
         assert_eq!(
-            engine.opponent_sword_strike_time_limit_for_actor(target),
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
             Some(1000),
-            "GetAnimation's fresh strike must treat the unacknowledged sprite's impossible marker as stale -1 timing"
+            "schema-15 replays without a captured UB value retain the historical permissive result"
+        );
+
+        let target_creation_order = engine.world.original_creation_order(target);
+        let other_proposer = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let other_creation_order = engine.world.original_creation_order(other_proposer);
+        engine
+            .control
+            .original_impossible_action_done_deadlines
+            .insert(
+                (target_creation_order, target_creation_order),
+                std::collections::VecDeque::from([-22478, 12]),
+            );
+        engine
+            .control
+            .original_impossible_action_done_deadlines
+            .insert(
+                (other_creation_order, target_creation_order),
+                std::collections::VecDeque::from([30]),
+            );
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
+            Some(-22478),
+            "schema-16 can carry the Original allocator-dependent wrapped SWORD"
+        );
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
+            Some(12),
+            "repeated proposals against one target consume captured deadlines in invocation order"
+        );
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(other_proposer, target),
+            Some(30),
+            "different proposers targeting the same actor keep independent occurrence queues"
         );
 
         let sprite = &mut engine
@@ -3282,7 +3330,7 @@ mod tests {
         sprite.last_processed_order_id = selected_order_id.get();
         sprite.action_done_frame = u16::MAX;
         assert_eq!(
-            engine.opponent_sword_strike_time_limit_for_actor(target),
+            engine.opponent_sword_strike_time_limit_for_actor(target, target),
             Some(i16::MIN),
             "the current sprite's impossible marker retains the strict S075 behavior"
         );
@@ -3897,6 +3945,13 @@ mod tests {
             (seq_id, 0),
         );
 
+        // EVENT_GOTHIT first runs StopAll (which queues Unfocus) and only
+        // then sets EYES_DIE_OR_GET_UNCONSCIOUS. Exercise the complete
+        // fixed-point drain: applying the tail eye write through the earlier
+        // recovery channel made this pass immediately after Translate but
+        // regress to LookForward once the queued Unfocus was drained.
+        engine.drain_pending_for_npc(&crate::sim_rng::test_context(), victim, &assets);
+
         let victim_entity = engine.get_entity(victim).unwrap();
         assert_eq!(
             victim_entity.npc_data().unwrap().eye_status,
@@ -3972,6 +4027,76 @@ mod tests {
         assert!(
             damage.orders.is_empty(),
             "an already-lying victim must not receive another fall order"
+        );
+    }
+
+    #[test]
+    fn lying_arrow_victim_speaks_before_posture_termination() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let lying = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        let upright = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 40.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(lying)
+            .unwrap()
+            .set_posture(Posture::Lying);
+        for victim in [lying, upright] {
+            engine
+                .get_entity_mut(victim)
+                .unwrap()
+                .enemy_ai_mut()
+                .unwrap()
+                .hth_weapon_id = 1;
+        }
+
+        let mut assets = assets_with_sword_profile(1, 50);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].exclamation_id =
+            0x5744_0000;
+
+        for victim in [lying, upright] {
+            let damage = crate::sequence::SequenceElement::new_damage(
+                1,
+                Command::ReceiveArrowDamage,
+                Some(victim),
+                Some(attacker),
+                1,
+                0,
+            );
+            let sequence = engine.launch_element(damage);
+            engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+        }
+
+        assert_eq!(
+            engine
+                .feedback
+                .sound_sim
+                .pending_exclamations
+                .iter()
+                .map(|pending| (pending.actor_id, pending.exclamation_id))
+                .collect::<Vec<_>>(),
+            vec![(lying.index(), crate::ai::Remark::Wounded as u16)],
+            "the lying actor speaks first and its type-wide Wounded forbid rejects the later actor"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(lying),
+            None,
+            "the lying damage element still terminates after SayOuch"
         );
     }
 

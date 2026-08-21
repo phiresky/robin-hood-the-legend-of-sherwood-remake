@@ -1372,7 +1372,11 @@ impl EnemyAi {
                             .map(|w| Position {
                                 x: w.x as f32,
                                 y: w.y as f32,
-                                sector: None,
+                                // `Position(RHWaypoint)` copies the authored
+                                // sector pointer as well as x/y/level.  A
+                                // missing sector makes an otherwise valid
+                                // SearchCharly GoTo fail before pathfinding.
+                                sector: crate::position_interface::SectorHandle::new(w.sector),
                                 level: w.level,
                             })
                             .collect();
@@ -1751,6 +1755,65 @@ mod tests {
         assert_eq!(ai.base.macro_command_offset, 23);
         assert_eq!(ai.base.number_of_remaining_macro_bytes, 0);
         assert_eq!(ai.base.current_state, AiState::Seeking);
+    }
+
+    #[test]
+    fn soldier_search_charly_preserves_authored_waypoint_sector() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(202);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultLookingForCharly;
+        ai.base.checkpoint_charly = 96;
+
+        let mut charly = charly_view();
+        charly.has_patrol_path = true;
+        charly.patrol_hiking_path_index = PathId::new(0);
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(96, charly);
+        let ctx = AiContext {
+            position: Position {
+                x: 10.0,
+                y: 20.0,
+                sector: crate::position_interface::SectorHandle::new(3),
+                level: 0,
+            },
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            hiking_paths: std::sync::Arc::new(vec![crate::level_data::RawHikingPath {
+                waypoints: vec![crate::level_data::RawWaypoint {
+                    x: 30,
+                    y: 40,
+                    sector: 77,
+                    level: 2,
+                    command: crate::level_data::WaypointCommand::None,
+                }],
+            }]),
+            ..AiContext::default()
+        };
+
+        ai.search_charly(
+            &sim,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.search_charly_way[0].sector.map(|sector| sector.get()),
+            Some(77)
+        );
+        assert_eq!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .last()
+                .expect("SearchCharly queues its first waypoint")
+                .target_sector
+                .map(|sector| sector.get()),
+            Some(77)
+        );
     }
 
     #[test]

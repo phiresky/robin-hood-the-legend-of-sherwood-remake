@@ -124,6 +124,29 @@ impl EngineInner {
         {
             return false;
         }
+        // Human::ProcessShootList re-enters the ordinary Actor::Instruct
+        // body. DeterminePriority therefore runs after transition generation
+        // and its terminal-state guard, before priority arbitration. The
+        // retained element deliberately kept NotYetSet while it was waiting
+        // in mShootList; do not let that sentinel become the live shot's
+        // interruption priority once it is finally admitted.
+        let resolved_priority = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .filter(|element| element.priority == crate::sequence::SequencePriority::NotYetSet)
+            .map(|element| {
+                let resolver = Self::priority_resolver(&self.world.entities);
+                resolver(element)
+            });
+        if let Some(priority) = resolved_priority
+            && let Some(element) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+        {
+            element.priority = priority;
+        }
         if !self.arbitrate_held_shoot_instruct(seq_id, elem_idx) {
             self.dispatch_condolations(sim, assets);
             return false;
@@ -133,9 +156,13 @@ impl EngineInner {
             .sequence_manager
             .begin_instruct_callback(owner, seq_id, elem_idx);
         self.dispatch_condolations(sim, assets);
-        self.orders
+        let still_selected = self
+            .orders
             .sequence_manager
             .end_instruct_callback(owner, seq_id, elem_idx);
+        if !still_selected {
+            return false;
+        }
 
         let target = self
             .orders
@@ -1017,9 +1044,18 @@ impl EngineInner {
                             .sequence_manager
                             .begin_instruct_callback(owner, seq_id, elem_idx);
                         self.dispatch_condolations(sim, assets);
-                        self.orders
+                        let still_selected = self
+                            .orders
                             .sequence_manager
                             .end_instruct_callback(owner, seq_id, elem_idx);
+                        if !still_selected {
+                            // A recursive Instruct accepted replacement work
+                            // while the outgoing element's condolence callback
+                            // ran. Original's post-callback pointer check sees
+                            // that `mpSequenceElement` no longer names this
+                            // incoming element and returns before Translate.
+                            break 'action;
+                        }
                         if trace_path_owner {
                             self.trace_path_owner_lifecycle(
                                 "after_instruct_callback",

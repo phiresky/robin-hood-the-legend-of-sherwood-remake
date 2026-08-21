@@ -784,11 +784,14 @@ impl EnemyAi {
                                 self.base.me, civilian
                             )
                         });
+                        // Original assigns mpAntagonist before deciding whether the
+                        // caller can be heard. A rejected civilian report therefore
+                        // still replaces the actor tracked by the current behavior.
+                        self.base.antagonist = civilian;
                         if caller.is_civilian() {
                             if self.base.current_state != AiState::Default {
                                 return false;
                             }
-                            self.base.antagonist = civilian;
                             // Original CALL_ALERT's civilian arm calls the actor's
                             // `Halt()` directly, not AI `StopAll()`.  The actor work
                             // must be interrupted before the state callback, while an
@@ -809,8 +812,6 @@ impl EnemyAi {
                             );
                             return true;
                         }
-
-                        self.base.antagonist = civilian;
                         match self.get_rank() {
                             ProfileRank::Soldier => {
                                 let react = matches!(
@@ -1880,8 +1881,26 @@ impl EnemyAi {
                         // SetViewStatus(EYES_DIE_OR_GET_UNCONSCIOUS)
                         // applies whenever the attacker info was human,
                         // regardless of which sub-arm fired.
-                        self.base.outbox.recovery.set_eye_status =
-                            Some(crate::element::EyeStatus::DieOrGetUnconscious);
+                        // Keep this on the owner FIFO: in the Original this
+                        // statement is the tail of EVENT_GOTHIT, after every
+                        // StopAll()/AttackEnemy() actor call has completed.
+                        // Close the actor prefix explicitly: AttackEnemy can
+                        // reach another StopAll whose deferred Halt condolence
+                        // produces Unfocus. Leaving that Halt in the ordinary
+                        // actor outbox would apply Unfocus after this tail and
+                        // restore LookForward.
+                        if self.base.outbox.actor.has_boundary_work() {
+                            self.base.outbox.reentrant.owner_work.push(
+                                crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                    &mut self.base.outbox.actor,
+                                )),
+                            );
+                        }
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::SetEyeStatus(
+                                crate::element::EyeStatus::DieOrGetUnconscious,
+                            ),
+                        );
                     } else {
                         // Non-human stimulus info — clear primary_target.
                         self.base.primary_target = 0;
@@ -3584,10 +3603,11 @@ mod tests {
         ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
         let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Soldier;
+        attacker.kind = EntityKind::Pc;
         let mut views = AiEntityViewMap::new();
         views.insert(2, attacker);
         let ctx = AiContext {
+            camp: Camp::Lacklandists,
             is_swordfighting: false,
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
@@ -3603,13 +3623,25 @@ mod tests {
         );
 
         assert!(
-            ai.base.outbox.actor.halt,
-            "Original StopAll arm runs once the live opponent list is empty"
+            !ai.base.outbox.actor.has_boundary_work(),
+            "all actor calls authored before EVENT_GOTHIT's final SetViewStatus must be closed as a synchronous prefix"
         );
-        assert_eq!(
-            ai.base.outbox.recovery.set_eye_status,
-            Some(crate::element::EyeStatus::DieOrGetUnconscious)
-        );
+        assert!(matches!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .rev()
+                .nth(1),
+            Some(crate::ai::AiOwnerWork::ActorEffects(effects)) if effects.halt
+        ));
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.last(),
+            Some(crate::ai::AiOwnerWork::SetEyeStatus(
+                crate::element::EyeStatus::DieOrGetUnconscious
+            ))
+        ));
     }
 
     #[test]
@@ -4217,6 +4249,39 @@ mod tests {
         );
         assert!(ai.base.timer_is_running);
         assert_eq!(ai.base.when_does_timer_ring, 9_788);
+    }
+
+    #[test]
+    fn rejected_civilian_call_alert_still_replaces_antagonist() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(44);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingRunningToOfficer;
+        ai.base.antagonist = 78;
+
+        let mut civilian = object_view(ObjectType::None);
+        civilian.kind = EntityKind::Civilian;
+        let mut views = AiEntityViewMap::new();
+        views.insert(91, civilian);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let accepted = ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::CallAlert, 91),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(!accepted);
+        assert_eq!(ai.base.antagonist, 91);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(ai.base.current_substate, Substate::SeekingRunningToOfficer);
     }
 
     #[test]

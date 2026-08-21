@@ -603,6 +603,7 @@ mod tests {
         let actor = engine.add_entity(weak_soldier_at_action_done(0));
         {
             let entity = engine.get_entity_mut(actor).expect("dead actor exists");
+            entity.element_data_mut().kind = ElementKind::ActorSoldier;
             entity
                 .npc_data_mut()
                 .expect("soldier has NPC data")
@@ -644,13 +645,18 @@ mod tests {
             .sequence_manager
             .element_in_progress(sequence, 0);
 
-        let (_, _, result) = engine.tick_actor_animation_for(
+        let (_, outcomes, result) = engine.tick_actor_animation_for(
             &crate::sim_rng::test_context(),
             &crate::engine::types::LevelAssets::new(),
             actor,
         );
 
         assert_eq!(result.map(|result| result.motion), Some(MotionState::Start));
+        assert_eq!(
+            outcomes.execute_sides.rejected_dead_idle_posture_requests,
+            vec![actor],
+            "the production Execute START boundary must preserve the rejected Upright request"
+        );
         let entity = engine.get_entity(actor).expect("dead actor remains live");
         assert_eq!(
             entity.element_data().sprite.last_action,
@@ -950,9 +956,12 @@ mod tests {
     }
 
     #[test]
-    fn sword_combat_injury_start_sets_waiting_sword() {
+    fn sword_combat_injury_callback_retains_pre_perform_action_state() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+
+        let callback_action =
+            weak_stunned_start_action_before_perform(&entity, OrderType::BeingStunnedSword, true);
 
         // The sword-injury START states are shared human behavior, so they
         // live in the universal active-animation dispatcher rather than the
@@ -963,6 +972,7 @@ mod tests {
             MotionState::Start,
         );
 
+        assert_eq!(callback_action, Some(ActionState::Moving));
         assert_eq!(entity.element_data().posture, Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
@@ -1398,6 +1408,31 @@ mod tests {
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
         );
+    }
+
+    #[test]
+    fn harder_falling_hits_retain_injury_priority() {
+        // RHElementActorHuman::ExecuteFallingHit sets
+        // RHPRIORITY_NON_INTERRUPTABLE only in the !bHarder arm. A harder
+        // hit must therefore remain interruptible by a later injury, as in
+        // Save024 replay023 where an incoming sword strike replaces the
+        // still-playing harder hit and consumes its protection draws.
+        for ordinary in [
+            OrderType::FallingHitUpright,
+            OrderType::FallingHitWithBow,
+            OrderType::FallingHitWithSword,
+            OrderType::FallingHitCrouched,
+        ] {
+            assert!(anim_forces_non_interruptable_on_start(ordinary));
+        }
+        for harder in [
+            OrderType::FallingHitHarderUpright,
+            OrderType::FallingHitHarderWithBow,
+            OrderType::FallingHitHarderWithSword,
+            OrderType::FallingHitHarderCrouched,
+        ] {
+            assert!(!anim_forces_non_interruptable_on_start(harder));
+        }
     }
 
     #[test]
@@ -2005,6 +2040,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dead_random_bored_start_reports_rejected_nonlying_posture_request() {
+        let mut entity = weak_soldier_at_action_done(0);
+        entity.element_data_mut().kind = ElementKind::ActorSoldier;
+        entity.set_posture(Posture::DeadBack);
+
+        assert!(rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUprightBoredRandom,
+            MotionState::Start,
+        ));
+        assert!(rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUpright,
+            MotionState::Start,
+        ));
+        assert!(rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUprightBored,
+            MotionState::Start,
+        ));
+        assert!(!rejected_dead_idle_posture_callback_required(
+            &entity,
+            OrderType::WaitingUprightBoredRandom,
+            MotionState::InProgress,
+        ));
+
+        apply_active_animation_start_state_side_effect(
+            &mut entity,
+            OrderType::WaitingUprightBoredRandom,
+            MotionState::Start,
+        );
+        assert_eq!(
+            entity.element_data().posture,
+            Posture::DeadBack,
+            "the callback is driven by the rejected Upright request, not an actual posture change"
+        );
+    }
+
     fn sequence_with_order(
         order_type: OrderType,
     ) -> (
@@ -2244,6 +2318,11 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
 /// etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct ExecuteSideOutcomes {
+    /// Dead/DeadBack humans whose idle START requested Upright. Original's
+    /// base `RHElement::SetPosture` rejects the write, but the human override
+    /// still fires the lying-to-nonlying corpse callback from the requested
+    /// posture.
+    pub rejected_dead_idle_posture_requests: Vec<EntityId>,
     /// Soldiers executing WAITING_UPRIGHT. Original's
     /// `RHElementActorSoldier::Execute` arm (`RHelementactorsoldier.cpp:753-759`)
     /// launches ENTER_ATTENTIVE_MODE when the requested attentive state is
@@ -2282,7 +2361,11 @@ pub(super) struct ExecuteSideOutcomes {
     /// Humans whose weak/stunned sword animation just initialized, paired
     /// with the exact wrapper type. Both add the weak-stunned titbit and
     /// notify soldier opponents; only `BeingWeakSword` transfers initiative.
-    pub weak_stunned_start: Vec<(EntityId, OrderType)>,
+    /// Weak/stunned initialization callbacks run before `PerformAction` in
+    /// Original. Retain the actor action state from that pre-sprite boundary
+    /// so nested adversary AI sees the same target state even though Rust
+    /// drains the cross-entity callback after releasing the animation borrow.
+    pub weak_stunned_start: Vec<(EntityId, OrderType, ActionState)>,
     /// `(thief, victim)` — NPC-on-NPC pickpocket transfer on
     /// SEARCHING DONE: thief gains the victim's money and the victim
     /// is zeroed out.
@@ -2886,6 +2969,30 @@ fn apply_waking_up_done_side_effect(
     }
 }
 
+/// Capture the action-state view that Original exposes to the synchronous
+/// `EVENT_ADVERSARY_WEAK` callbacks at the start of weak/stunned sword work.
+/// The callback precedes `PerformAction`, whose START edge can change the
+/// actor to `WaitingSword` later in the same Execute call.
+fn weak_stunned_start_action_before_perform(
+    entity: &Entity,
+    anim_type: OrderType,
+    order_is_initialising: bool,
+) -> Option<ActionState> {
+    (order_is_initialising
+        && matches!(
+            anim_type,
+            OrderType::BeingWeakSword | OrderType::BeingStunnedSword
+        ))
+    .then(|| {
+        entity
+            .actor_data()
+            .unwrap_or_else(|| {
+                panic!("weak/stunned initialization owner is not an actor: {anim_type:?}")
+            })
+            .action_state
+    })
+}
+
 /// Universal active-animation START state changes shared by PCs and
 /// NPCs.  Mirrors the legacy implementation `RHMOTION_START` `SetStates(...)` side
 /// effects for active animation arms whose completion logic is handled
@@ -3204,6 +3311,25 @@ fn apply_active_animation_start_state_side_effect(
     }
 }
 
+fn rejected_dead_idle_posture_callback_required(
+    entity: &Entity,
+    anim_type: OrderType,
+    motion: MotionState,
+) -> bool {
+    entity.is_human()
+        && motion == MotionState::Start
+        && matches!(
+            anim_type,
+            OrderType::WaitingUpright
+                | OrderType::WaitingUprightBored
+                | OrderType::WaitingUprightBoredRandom
+        )
+        && matches!(
+            entity.element_data().posture,
+            Posture::Dead | Posture::DeadBack
+        )
+}
+
 /// PC `Taking` / `TakingCrouched` Done handler — fires when a PC finishes the generic
 /// pickup animation for a scroll / bonus / landed projectile.
 ///
@@ -3299,7 +3425,7 @@ pub(crate) fn sprite_anim_for_order(
 /// `NonInterruptable`:
 /// - `FALLING_LADDER_WALL`
 /// - `ROLLING`
-/// - `FALLING_HIT_*`
+/// - ordinary (non-harder) `FALLING_HIT_*`
 /// - `FALLING_PUSHED_*`
 /// - `FALLING_SHOULDERS` (the priority is set when shoulder damage
 ///   is translated; we unify it into the start-side-effect set since
@@ -3307,9 +3433,11 @@ pub(crate) fn sprite_anim_for_order(
 ///
 /// These are the anims that unconditionally lift the parent element
 /// to non-interruptable so a fresh damage can't preempt the in-flight
-/// visual.  Other fall families (`FALLING_BACK_*`, `DYING_*`,
-/// `BEING_DEAD_*`) inherit their parent element's priority instead,
-/// so they're not in this list.
+/// visual. `ExecuteFallingHit` deliberately does this only in its
+/// non-harder arm; harder hits merely perform the action and retain the
+/// damage element's ordinary `Injury` priority. Other fall families
+/// (`FALLING_BACK_*`, `DYING_*`, `BEING_DEAD_*`) inherit their parent
+/// element's priority instead, so they're not in this list.
 fn anim_forces_non_interruptable_on_start(anim_type: OrderType) -> bool {
     matches!(
         anim_type,
@@ -3319,10 +3447,6 @@ fn anim_forces_non_interruptable_on_start(anim_type: OrderType) -> bool {
             | OrderType::FallingHitWithBow
             | OrderType::FallingHitWithSword
             | OrderType::FallingHitCrouched
-            | OrderType::FallingHitHarderUpright
-            | OrderType::FallingHitHarderWithBow
-            | OrderType::FallingHitHarderWithSword
-            | OrderType::FallingHitHarderCrouched
             | OrderType::FallingShoulders
             | OrderType::FallingPushedUpright
             | OrderType::FallingPushedWithBow
@@ -5149,7 +5273,6 @@ impl EngineInner {
                     order_completion,
                     order_tolerance,
                     order_target,
-                    defer_initial_turn_step,
                 ) = if let Some((seq_id, elem_idx, order)) = order_snapshot {
                     (
                         Some((seq_id, elem_idx)),
@@ -5159,7 +5282,6 @@ impl EngineInner {
                         Some(order.completion.clone()),
                         order.tolerance,
                         crate::coordinates::MapPoint::new(order.target_x, order.target_y),
-                        order.defer_initial_turn_step,
                     )
                 } else {
                     (
@@ -5170,7 +5292,6 @@ impl EngineInner {
                         None,
                         0.0,
                         crate::coordinates::MapPoint::ZERO,
-                        false,
                     )
                 };
                 if let Some((seq_id, elem_idx)) = order_seq_elem
@@ -5435,23 +5556,25 @@ impl EngineInner {
                             .position_iface_mut()
                             .set_map_goal(crate::coordinates::MapPoint::ZERO);
                     }
+                    let weak_stunned_action_before_perform =
+                        weak_stunned_start_action_before_perform(
+                            entity,
+                            anim_type,
+                            order_is_initialising,
+                        );
                     let motion = if is_turn {
                         let direction_before_turn = entity.element_data().direction() as u16;
-                        let still_turning = if order_is_initialising && defer_initial_turn_step {
-                            true
-                        } else {
-                            turn_with_provenance(
-                                entity,
-                                entity_id,
-                                self.control.frame_counter,
-                                if cur_command == Some(Command::TurnFast) {
-                                    "turn_order_fast"
-                                } else {
-                                    "turn_order"
-                                },
-                                cur_command == Some(Command::TurnFast),
-                            )
-                        };
+                        let still_turning = turn_with_provenance(
+                            entity,
+                            entity_id,
+                            self.control.frame_counter,
+                            if cur_command == Some(Command::TurnFast) {
+                                "turn_order_fast"
+                            } else {
+                                "turn_order"
+                            },
+                            cur_command == Some(Command::TurnFast),
+                        );
                         if !globally_frozen {
                             let direction_after_turn = entity.element_data().direction() as u16;
                             // Base Actor executes Turn before PerformAction,
@@ -5928,16 +6051,14 @@ impl EngineInner {
                                 &mut motion_state,
                             );
                         }
-                        if order_is_initialising
-                            && matches!(
-                                anim_type,
-                                OrderType::BeingWeakSword | OrderType::BeingStunnedSword
-                            )
+                        if let Some(action_state_before_perform) =
+                            weak_stunned_action_before_perform
                         {
-                            completion_outcomes
-                                .execute_sides
-                                .weak_stunned_start
-                                .push((entity_id, anim_type));
+                            completion_outcomes.execute_sides.weak_stunned_start.push((
+                                entity_id,
+                                anim_type,
+                                action_state_before_perform,
+                            ));
                         }
                         motion_state
                     });
@@ -6039,11 +6160,23 @@ impl EngineInner {
                         apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
                         super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
                         // Universal handlers (run for any actor type).
+                        let rejected_dead_idle_posture_request =
+                            rejected_dead_idle_posture_callback_required(
+                                entity,
+                                anim_type,
+                                motion_state,
+                            );
                         apply_active_animation_start_state_side_effect(
                             entity,
                             anim_type,
                             motion_state,
                         );
+                        if rejected_dead_idle_posture_request {
+                            completion_outcomes
+                                .execute_sides
+                                .rejected_dead_idle_posture_requests
+                                .push(entity_id);
+                        }
                         if forwards_pc_bow_action_on_start(
                             entity,
                             anim_type,

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::engine::{SimConfig, SimulationGateState, SimulationRng};
 
@@ -26,6 +27,15 @@ pub(crate) struct SimulationControl {
     /// hourglass instead of mutating arrow sprites during their entity tick.
     #[serde(default)]
     pub(crate) arrow_refresh_pending: bool,
+    /// Captured Original results for the stale-sprite `0xffff` action-point
+    /// over-read. The C++ getter indexes beyond `auwDelay`, so this value is
+    /// allocator residue rather than reproducible simulation state. Parity
+    /// replays may supply the observed wrapped `SWORD`, keyed by the
+    /// proposer's and target's Original creation orders, for the current
+    /// frame only.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    pub(crate) original_impossible_action_done_deadlines: BTreeMap<(u32, u32), VecDeque<i16>>,
 }
 
 impl SimulationControl {
@@ -42,6 +52,7 @@ impl SimulationControl {
             mission_start_sim_config: sim_config,
             fast_forward: false,
             arrow_refresh_pending: false,
+            original_impossible_action_done_deadlines: BTreeMap::new(),
         }
     }
 

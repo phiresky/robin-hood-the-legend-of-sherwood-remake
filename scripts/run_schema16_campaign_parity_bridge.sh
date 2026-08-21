@@ -10,6 +10,7 @@ workspace=${SCHEMA16_BRIDGE_WORKSPACE:-/home/phire/robinhood}
 corpus_root=${SCHEMA16_BRIDGE_CORPUS_ROOT:-$workspace/parity-save-replays/60s-random-input}
 runner=${SCHEMA16_BRIDGE_RUNNER:?SCHEMA16_BRIDGE_RUNNER must name a pinned parity runner}
 audit_dir=${SCHEMA16_BRIDGE_AUDIT_DIR:-$workspace/parity-save-replays/audits/schema16-ladder}
+permanent_eof_dir=${SCHEMA16_BRIDGE_PERMANENT_EOF_DIR:-$workspace/parity-save-replays/audits/permanent-eof}
 local_concurrency=${SCHEMA16_BRIDGE_LOCAL_CONCURRENCY:-2}
 local_slot_dir=${SCHEMA16_BRIDGE_LOCAL_SLOT_DIR:-$workspace/tmp/schema16-ladder-local-slots}
 poll_seconds=${SCHEMA16_BRIDGE_POLL_SECONDS:-10}
@@ -28,8 +29,8 @@ if [[ ! -r "$ssh_config" ]]; then
     printf 'error: SSH config is not readable: %s\n' "$ssh_config" >&2
     exit 2
 fi
-if [[ ! "$local_concurrency" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'error: SCHEMA16_BRIDGE_LOCAL_CONCURRENCY must be positive\n' >&2
+if [[ ! "$local_concurrency" =~ ^[0-9]+$ ]]; then
+    printf 'error: SCHEMA16_BRIDGE_LOCAL_CONCURRENCY must be a non-negative integer\n' >&2
     exit 2
 fi
 if [[ ! "$poll_seconds" =~ ^[1-9][0-9]*$ ]]; then
@@ -37,8 +38,54 @@ if [[ ! "$poll_seconds" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 
-mkdir -p -- "$audit_dir/status" "$audit_dir/logs" "$local_slot_dir" "${manifest%/*}"
+mkdir -p -- \
+    "$audit_dir/status" \
+    "$audit_dir/logs" \
+    "$permanent_eof_dir/status" \
+    "$local_slot_dir" \
+    "${manifest%/*}"
 cd -- "$workspace"
+
+promote_exact_eof_statuses() {
+    local status destination value
+
+    while IFS= read -r -d '' status; do
+        IFS= read -r value <"$status" || continue
+        [[ "$value" == 0 ]] || continue
+        destination="$permanent_eof_dir/status/${status##*/}"
+        [[ -e "$destination" ]] || cp -- "$status" "$destination"
+    done < <(find "$audit_dir/status" -type f -name '*.status' -print0)
+}
+
+materialize_tracked_eof_ledger() {
+    local campaign=$1 seed_base ledger key destination
+    seed_base=$(sed -n 's/^PARITY_INPUT_SEED_BASE=//p' "$campaign/campaign.env" | head -n 1)
+    [[ "$seed_base" =~ ^[0-9]+$ ]] || return 1
+    ledger="$workspace/docs/PARITY_EOF_LEDGERS/seed${seed_base}.snapshot"
+    [[ -f "$ledger" ]] || return 0
+
+    while IFS= read -r key; do
+        [[ -n "$key" ]] || continue
+        destination="$permanent_eof_dir/status/$key.status"
+        [[ -e "$destination" ]] || printf '0\n' >"$destination"
+    done <"$ledger"
+}
+
+seed_audit_from_permanent_eof() {
+    local campaign=$1 campaign_key
+    campaign_key=${campaign#"$workspace/"}
+    campaign_key=${campaign_key//\//__}
+
+    # Exact EOF is monotonic campaign evidence.  A later runner audits only
+    # unseen or previously nonzero traces, so permanent zeros intentionally
+    # replace any stale nonzero result in the runner-specific namespace.
+    rsync -a --include="${campaign_key}__*" --exclude='*' \
+        "$permanent_eof_dir/status/" "$audit_dir/status/"
+    rsync -a --include="${campaign_key}__*" --exclude='*' \
+        -e "ssh -F $ssh_config" \
+        "$permanent_eof_dir/status/" \
+        "$remote_host:$remote_audit/status/"
+}
 
 ladder_is_running() {
     tmux has-session -t "$ladder_session" 2>/dev/null
@@ -128,6 +175,7 @@ run_remote_sync() {
         printf 'error: unable to initialize remote audit directory\n' >&2
         return 1
     fi
+    promote_exact_eof_statuses
 
     while ladder_is_running; do
         if ! campaign=$(active_campaign); then
@@ -137,6 +185,8 @@ run_remote_sync() {
         if [[ "$campaign" != "$previous_campaign" ]]; then
             printf '%s remote mirror following %s\n' "$(date -Is)" "$campaign"
             previous_campaign=$campaign
+            materialize_tracked_eof_ledger "$campaign" || return 1
+            seed_audit_from_permanent_eof "$campaign" || return 1
         fi
         if ! write_complete_trace_manifest "$campaign" "$manifest"; then
             printf 'warning: could not refresh remote manifest for %s\n' "$campaign" >&2
@@ -158,12 +208,24 @@ run_remote_sync() {
             fi
         fi
 
-        rsync -a --ignore-existing -e "ssh -F $ssh_config" \
-            "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
-            || printf 'warning: could not pull remote statuses\n' >&2
-        rsync -a --ignore-existing -e "ssh -F $ssh_config" \
+        # Remote workers create the log before cache construction and replay
+        # finish.  Re-sync existing files so a prefix copied mid-run converges
+        # to the completed diagnostic instead of remaining permanently stale.
+        if (( local_concurrency == 0 )); then
+            # With remote-only validation these files are authoritative and
+            # may repair an older audit artifact created by a prior overlap.
+            rsync -a --exclude='*.tmp.*' -e "ssh -F $ssh_config" \
+                "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
+                || printf 'warning: could not pull remote statuses\n' >&2
+        else
+            rsync -a --ignore-existing --exclude='*.tmp.*' -e "ssh -F $ssh_config" \
+                "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
+                || printf 'warning: could not pull remote statuses\n' >&2
+        fi
+        rsync -a --exclude='*.tmp.*' -e "ssh -F $ssh_config" \
             "$remote_host:$remote_audit/logs/" "$audit_dir/logs/" \
             || printf 'warning: could not pull remote logs\n' >&2
+        promote_exact_eof_statuses
         sleep "$poll_seconds"
     done
 }
@@ -179,9 +241,15 @@ trap cleanup EXIT INT TERM
 
 printf 'schema16 campaign bridge started: audit=%s remote=%s:%s\n' \
     "$audit_dir" "$remote_host" "$remote_audit"
-run_local_watch &
-local_watch_pid=$!
+if (( local_concurrency > 0 )); then
+    run_local_watch &
+    local_watch_pid=$!
+else
+    printf 'local parity validation disabled; remote audit is authoritative\n'
+fi
 run_remote_sync
-wait "$local_watch_pid" 2>/dev/null || true
+if [[ -n "$local_watch_pid" ]]; then
+    wait "$local_watch_pid" 2>/dev/null || true
+fi
 local_watch_pid=
 printf 'schema16 campaign bridge stopped with ladder tmux %s\n' "$ladder_session"

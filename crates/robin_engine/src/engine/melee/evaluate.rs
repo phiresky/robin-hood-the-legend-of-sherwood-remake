@@ -127,35 +127,46 @@ impl EngineInner {
     /// (`RHelementactorhuman.cpp:13010-13022`).
     ///
     /// Keep that stale-row boundary -- an ordinary `-1` means the prior
-    /// action point has passed and remains the permissive 1000 fallback. Only
-    /// the sprite's explicit impossible marker uses the deterministic strict
-    /// deadline required by the S075 frame-731 control.
+    /// action point has passed and remains the permissive 1000 fallback.  An
+    /// impossible marker is different even when the selected order is newer
+    /// than the sprite row: Original still walks the stale row's delay vector
+    /// to `0xffff` through unchecked `std::vector::operator[]`, wrapping the
+    /// running `SWORD`. That allocator residue is not reproducible from game
+    /// state, so parity replays may provide the captured wrapped result.
     pub(super) fn opponent_sword_strike_time_limit_for_actor(
-        &self,
+        &mut self,
+        proposer: EntityId,
         opponent: EntityId,
     ) -> Option<i16> {
-        let animation = self.live_actor_animation(opponent)?;
-        let entity = self.get_entity(opponent)?;
-        let actor = entity.actor_data()?;
-        let sprite = &entity.element_data().sprite;
-        let timing = match sprite.action_done_timing() {
-            crate::sprite::ActionDoneTiming::Impossible
-                if actor.installed_order.is_some_and(|order| {
-                    order.order_id.get() != sprite.last_processed_order_id
-                }) =>
-            {
-                // `GetAnimation()` has already switched to the newly
-                // published mpOrder, but PerformAction has not acknowledged
-                // it yet, so GetFramesFromNowTillActionDone still observes
-                // the previous sprite row.  Its unusable action point is a
-                // stale-row `-1` for this mixed read, which the Original
-                // proposal promotes to the permissive 1000 deadline.  Do not
-                // apply the current-order impossible-action rule until the
-                // sprite has processed the selected order.  This is the
-                // synchronous boundary in RHelementactorhuman.cpp:13010-22.
-                crate::sprite::ActionDoneTiming::Frames(-1)
-            }
-            timing => timing,
+        let (animation, timing, stale_impossible) = {
+            let animation = self.live_actor_animation(opponent)?;
+            let entity = self.get_entity(opponent)?;
+            let actor = entity.actor_data()?;
+            let sprite = &entity.element_data().sprite;
+            let timing = sprite.action_done_timing();
+            let stale_impossible = timing == crate::sprite::ActionDoneTiming::Impossible
+                && actor
+                    .installed_order
+                    .is_some_and(|order| order.order_id.get() != sprite.last_processed_order_id);
+            (animation, timing, stale_impossible)
+        };
+        let timing = if stale_impossible {
+            let key = (
+                self.world.original_creation_order(proposer),
+                self.world.original_creation_order(opponent),
+            );
+            crate::sprite::ActionDoneTiming::Frames(
+                self.control
+                    .original_impossible_action_done_deadlines
+                    .get_mut(&key)
+                    .and_then(std::collections::VecDeque::pop_front)
+                    // No event means Original did not reach the recorder's
+                    // opponent-input site on this generic resolver call.
+                    // Historical schemas also lack this event boundary.
+                    .unwrap_or(-1),
+            )
+        } else {
+            timing
         };
         Some(opponent_sword_strike_time_limit(Some(animation), || timing))
     }
@@ -1246,7 +1257,7 @@ impl EngineInner {
                     "EvaluateSwordfight strike proposal PC {pc_id:?} target {target_id:?} is not an actor"
                 )
             });
-        let opponent_time_limit = self.opponent_sword_strike_time_limit_for_actor(target_id);
+        let opponent_time_limit = self.opponent_sword_strike_time_limit_for_actor(pc_id, target_id);
 
         // Build the nearby-victim list (same shape as the soldier path).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -1952,7 +1963,7 @@ impl EngineInner {
                 let principal_animation = self.live_actor_animation(target_id_for_nearby);
                 let raw_frames = debug.map(|_| sprite.frames_from_now_till_action_done());
                 let time_limit = self
-                    .opponent_sword_strike_time_limit_for_actor(target_id_for_nearby)
+                    .opponent_sword_strike_time_limit_for_actor(victim_id, target_id_for_nearby)
                     .unwrap_or(1000);
                 if let (Some(debug), Some(raw_frames)) = (debug, raw_frames) {
                     eprintln!(
@@ -2430,8 +2441,9 @@ impl EngineInner {
         // ProposeGoodSwordStrike always times the defender's principal
         // opponent, which need not be the hitter that triggered this
         // reactive warning.
-        let opponent_time_limit: Option<i16> = principal_opponent
-            .and_then(|opponent| self.opponent_sword_strike_time_limit_for_actor(opponent));
+        let opponent_time_limit: Option<i16> = principal_opponent.and_then(|opponent| {
+            self.opponent_sword_strike_time_limit_for_actor(victim_id, opponent)
+        });
 
         // Compute per-strike startup frames from the victim's sprite.
         let victim_sprite_frames: Option<[i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES]> = self

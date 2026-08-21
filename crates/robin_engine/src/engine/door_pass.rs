@@ -2676,6 +2676,64 @@ mod tests {
     }
 
     #[test]
+    fn indirect_stairs_pass_translates_dormant_lying_stamp_from_live_lift() {
+        let mut engine = EngineInner::new();
+        install_lift_sector(&mut engine, LiftType::Stairs);
+        let owner = engine.add_entity(make_pc(42));
+        let door = crate::gate::Door {
+            door_type: DoorType::LiftHigh,
+            sector_in: crate::sector::SectorNumber::new(42),
+            ..default_door()
+        };
+
+        let (barrier, seq_id) = dispatch_pass_with_transition_state(
+            &mut engine,
+            &[door],
+            owner,
+            OrderType::WalkingUpright,
+            crate::sequence::MoveFlags::empty(),
+            Posture::Lying,
+            crate::element::ActionState::Waiting,
+        );
+
+        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .expect("PassDoor element remains installed");
+        let SequenceElementData::Movement { action, .. } = &element.data else {
+            unreachable!()
+        };
+        assert_eq!(*action, OrderType::WalkingStairs);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::WalkingStairs),
+            "the inside rail must use the live stairs sector despite the dormant lying stamp"
+        );
+
+        let pass = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_door_pass
+            .as_ref()
+            .unwrap();
+        let remaining_walk_actions = pass
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                DoorPassStep::Walk { action, .. } => Some(*action),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(remaining_walk_actions, [OrderType::WalkingStairs]);
+    }
+
+    #[test]
     fn wall_transition_and_passing_door_use_separate_owner_slots() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_pc(7));

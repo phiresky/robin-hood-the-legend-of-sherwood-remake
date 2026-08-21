@@ -495,7 +495,18 @@ pub(super) fn determine_lift_movement_animation_for(
             let going_down = ladder_dx * movement_dx + ladder_dy * movement_dy >= 0.0;
             lift_type.translate_climb_action(action, going_down)
         }
-        _ => action,
+        // Original's default posture arm still applies the lift's upright
+        // action translation (RHelementactor.cpp:4735-4745). This matters for
+        // resumed PassDoor elements whose serialized transition result is a
+        // non-movement posture such as Lying: while the live actor is already
+        // upright in the lift, that dormant result remains stamped on the
+        // element and the stairs action must still be selected.
+        Posture::CarryingCorpse
+        | Posture::Crouched
+        | Posture::CarryingOnShoulders
+        | Posture::HelpingToClimb
+        | Posture::SimulatingBeggar => action,
+        _ => lift_type.translate_upright_action(action),
     }
 }
 
@@ -1440,6 +1451,29 @@ fn should_snap_arrival(
     deviated: bool,
 ) -> bool {
     arrived_after_committed_step && !tolerance_arrival && order_tolerance == 0.0 && !deviated
+}
+
+/// Whether `PerformSeek` exposes a wrapped `PerformMotion` termination to
+/// `RHElementActorHuman::Execute`. A successful terminal entity seek without
+/// a post-seek sequence deliberately converts it back to IN_PROGRESS so it
+/// can wait/refresh in place.
+fn perform_seek_exposes_motion_termination(
+    starts_post_seek: bool,
+    final_entity_seek_arrival: Option<bool>,
+) -> bool {
+    starts_post_seek || final_entity_seek_arrival != Some(true)
+}
+
+fn both_sword_ranges_contain_distance(
+    distance: f32,
+    my_maximal: u16,
+    my_uber: u16,
+    opponent_maximal: u16,
+    opponent_uber: u16,
+) -> bool {
+    let between =
+        |maximal: u16, uber: u16| f32::from(maximal) < distance && distance <= f32::from(uber);
+    between(my_maximal, my_uber) && between(opponent_maximal, opponent_uber)
 }
 
 /// Does the step this Execute is about to commit satisfy `IsGoalReached`?
@@ -3148,6 +3182,29 @@ struct MovementDeferred {
     executed_sword_movement: bool,
 }
 
+/// Preserve Actor::Hourglass' post-Execute line-crossing segment when a
+/// movement step reaches a seek arrival whose synchronous handoff returns
+/// before the ordinary movement tail. The segment endpoint is deliberately
+/// resolved later from the actor's live position, exactly like the common
+/// tail; only the outer pre-Execute position is retained here.
+fn queue_committed_arrival_crossing(
+    deferred: &mut MovementDeferred,
+    entity_id: EntityId,
+    old_pos: MapPoint,
+    layer: u16,
+    arrived_after_committed_step: bool,
+    eligible_for_crossing: bool,
+) -> bool {
+    if !arrived_after_committed_step || !eligible_for_crossing {
+        return false;
+    }
+    deferred.line_cross_checks.push((entity_id, old_pos, layer));
+    deferred
+        .non_elevation_cross_checks
+        .push((entity_id, old_pos, layer));
+    true
+}
+
 /// Argument plumbing shared by the two movement-Execute anti-collision
 /// dispatches (the transition fast-climb arm and the ordinary walk arm).
 /// A free function rather than a method: at both call sites the mover is
@@ -4107,17 +4164,17 @@ impl EngineInner {
         }
     }
 
-    fn maybe_provoke_after_sword_movement_terminated(
-        &mut self,
+    fn sword_movement_termination_warrants_provoke(
+        &self,
         assets: &crate::engine::LevelAssets,
         entity_id: EntityId,
-    ) {
+    ) -> bool {
         let principal_id = self
             .get_entity(entity_id)
             .and_then(|e| e.human_data())
             .and_then(|h| h.opponents.first().copied());
         let Some(principal_id) = principal_id else {
-            return;
+            return false;
         };
 
         let is_mutual = self
@@ -4127,7 +4184,7 @@ impl EngineInner {
             .map(|opp| opp == entity_id)
             .unwrap_or(false);
         if !is_mutual {
-            return;
+            return false;
         }
 
         let me = self.expect_entity(entity_id, "sword-movement provoke owner");
@@ -4143,38 +4200,45 @@ impl EngineInner {
             crate::engine::melee::get_hth_weapon_id_full(me, &assets.profile_manager)
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
         else {
-            return;
+            return false;
         };
         let Some(opponent_weapon) =
             crate::engine::melee::get_hth_weapon_id_full(opponent, &assets.profile_manager)
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
         else {
-            return;
+            return false;
         };
 
-        let between = |weapon: &crate::profiles::HtHWeaponProfile| {
-            let lo = weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32;
-            let hi = weapon.distance[crate::weapons::WeaponDistance::Uber as usize] as f32;
-            lo < distance && distance <= hi
-        };
+        let my_maximal = me_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize];
+        let my_uber = me_weapon.distance[crate::weapons::WeaponDistance::Uber as usize];
+        let opponent_maximal =
+            opponent_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize];
+        let opponent_uber = opponent_weapon.distance[crate::weapons::WeaponDistance::Uber as usize];
         tracing::trace!(
             ?entity_id,
             ?principal_id,
             distance,
-            my_maximal = me_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
-            my_uber = me_weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
-            opponent_maximal =
-                opponent_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
-            opponent_uber = opponent_weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
+            my_maximal,
+            my_uber,
+            opponent_maximal,
+            opponent_uber,
             "checking sword-movement termination Provoke"
         );
-        if between(me_weapon) && between(opponent_weapon) {
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                crate::element::Command::Provoke,
-                Some(entity_id),
-            ));
-        }
+        both_sword_ranges_contain_distance(
+            distance,
+            my_maximal,
+            my_uber,
+            opponent_maximal,
+            opponent_uber,
+        )
+    }
+
+    fn launch_sword_movement_termination_provoke(&mut self, entity_id: EntityId) {
+        self.launch_element(crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::Provoke,
+            Some(entity_id),
+        ));
     }
 
     // ─── Order system ─────────────────────────────────────────────
@@ -4821,12 +4885,7 @@ impl EngineInner {
                 let mut seq = crate::sequence::Sequence::new();
                 seq.append_element(move_elem);
                 if owner_is_pc {
-                    let speak = crate::sequence::SequenceElement::new(
-                        1,
-                        crate::element::Command::SpeakHeroReachDestination,
-                        Some(*pc_id),
-                    );
-                    seq.append_element(speak);
+                    append_arrival_speech(&mut seq, *pc_id);
                 }
                 self.append_posture_recovery(*pc_id, &mut seq);
                 self.launch_sequence(seq);
@@ -7519,55 +7578,6 @@ impl EngineInner {
             return false;
         }
 
-        // A sword movement may have been postponed by an explicit
-        // QuitSwordfight and selected again only after the lowering animation
-        // changed the actor back to an ordinary action state. Original
-        // retranslates that surviving movement as upright work. Rust retains
-        // the already-built order across postponement, so perform the
-        // equivalent rewrite here before the orphan guard decides whether the
-        // actor still needs to quit.
-        let fight_already_lowered = self
-            .world
-            .entities
-            .get(owner)
-            .and_then(|entity| entity.actor_data())
-            .is_some_and(|actor| !actor.action_state.is_sword());
-        if fight_already_lowered {
-            let element = self
-                .orders
-                .sequence_manager
-                .get_element_mut(selected.seq_id, selected.elem_idx)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "lowered sword movement owner {owner:?} lost selected element \
-                         ({:?}, {})",
-                        selected.seq_id, selected.elem_idx
-                    )
-                });
-            let order = element.orders.front_mut().unwrap_or_else(|| {
-                panic!(
-                    "lowered sword movement owner {owner:?} has no selected order in \
-                     ({:?}, {})",
-                    selected.seq_id, selected.elem_idx
-                )
-            });
-            let upright_action = match order.order_type {
-                OrderType::WalkingWithSword => OrderType::WalkingUpright,
-                OrderType::RunningWithSword => OrderType::RunningUpright,
-                other => {
-                    panic!("lowered sword movement owner {owner:?} has unexpected order {other:?}")
-                }
-            };
-            order.order_type = upright_action;
-            let crate::sequence::SequenceElementData::Movement { action, .. } = &mut element.data
-            else {
-                unreachable!("selected sword movement changed data kind during upright rewrite")
-            };
-            *action = upright_action;
-            element.action_state_after_transition = crate::element::ActionState::Waiting;
-            return false;
-        }
-
         // Human::Execute calls the selected movement element's virtual
         // Stop(Injury) before registering QuitSwordfight. That exact-root
         // stop follows only the element's linked successor/postponed graph;
@@ -8541,6 +8551,19 @@ impl EngineInner {
                 }
             }
         }
+        // Original evaluates the terminal sword-movement Provoke gate inside
+        // Human::Execute, before base Actor::Hourglass runs line-crossing
+        // callbacks. Those callbacks may project the actor onto a different
+        // elevation and move the live 3D position across a weapon-range
+        // boundary. Snapshot the complete mutual-opponent/range decision now;
+        // sequence registration remains deferred until the movement order has
+        // advanced below.
+        let sword_movement_provokes = sword_movement_terminations
+            .into_iter()
+            .filter(|&entity_id| {
+                self.sword_movement_termination_warrants_provoke(assets, entity_id)
+            })
+            .collect::<Vec<_>>();
         for entity_id in door_pass_transition_start_effects {
             self.apply_door_pass_transition_start_side_effects(assets, entity_id);
         }
@@ -8881,8 +8904,8 @@ impl EngineInner {
         // movement order has advanced. Launching before `do_next_order`
         // incorrectly compares the Wait-priority Provoke against the still
         // InProgress movement and abandons it.
-        for entity_id in sword_movement_terminations {
-            self.maybe_provoke_after_sword_movement_terminated(assets, entity_id);
+        for entity_id in sword_movement_provokes {
+            self.launch_sword_movement_termination_provoke(entity_id);
         }
 
         // Drain water-splash titbit emissions queued from the walk
@@ -10831,14 +10854,57 @@ impl EngineInner {
                 // distance, not on the length of the normalized map
                 // increment. With an exact-position transition target a
                 // nonzero sprite-frame distance therefore still reaches
-                // UpdatePositionAntiCollision/ComputePositionAll with a
-                // zero increment. Recompute the same map point so the
-                // terrain-plane rounding and IsMoving 3D latch match that
-                // call instead of leaving the save-loaded elevation
-                // untouched.
+                // UpdatePositionAntiCollision with a zero increment. That
+                // call is observable even though it cannot displace the
+                // actor: its empty-candidate recovery drops a preceding
+                // deviation latch before ComputePositionAll. Skipping the
+                // call left a stopping soldier in TurnAntiVibration on the
+                // following frame (Linux Savegame_036 replay-015, Soldier
+                // 144), delaying the visible counter-clockwise turn.
+                let recovered_from_deviation = if entity.position_iface().is_anti_collision_on()
+                    && let Some(mover_snap) = anti_snapshots
+                        .get(actor_id)
+                        .and_then(|slot| slot.as_ref())
+                        .filter(|snapshot| snapshot.active)
+                {
+                    let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                    let (move_box, half_diagonal) = {
+                        let pi = entity.position_iface();
+                        (*pi.get_move_box(), pi.get_half_diagonal())
+                    };
+                    let pi = entity.position_iface_mut();
+                    let was_deviated = pi.is_deviated();
+                    let mut state = super::anti_collision::AntiCollisionState {
+                        pi,
+                        move_box,
+                        half_diagonal,
+                        goal_map,
+                    };
+                    let step = apply_prepared_anti_collision_step(
+                        provenance_frame,
+                        mover_snap,
+                        anti_snapshots,
+                        &self.ai.global.repulsive_points,
+                        prepared,
+                        &self.world.fast_grid,
+                        &mut state,
+                        0.0,
+                        0.0,
+                        speed,
+                        true,
+                    );
+                    debug_assert_eq!(step, (0.0, 0.0));
+                    was_deviated && !state.pi.is_deviated()
+                } else {
+                    false
+                };
                 let position = entity.element_data().position_map();
                 let elem = entity.element_data_mut();
                 elem.set_position_map(position);
+                if recovered_from_deviation {
+                    elem.sprite.position_iface.reset_increment_computed();
+                    elem.sprite.position_iface.compute_increment_all(true);
+                }
                 elem.update_grid_cell();
                 // The same nonzero-animation-distance block ends with
                 // UpdateForecastedMovement even though the cached
@@ -11262,8 +11328,7 @@ impl EngineInner {
                 // Retiring it through the ordinary order-pop path first
                 // creates a fallback Wait and leaves the post-seek action
                 // stranded on ActorData for one frame (or forever).
-                let final_point_post_seek_arrival = is_final_waypoint
-                    && movement_is_last_sequence_element
+                let final_point_post_seek_arrival = is_final_waypoint_after_transition_cleanup
                     && ft.target_id.is_none()
                     && prepass
                         .point_seek_post_sector
@@ -11582,6 +11647,7 @@ impl EngineInner {
         // retaining (not recomputing) the pre-motion seek predicate.
         let mut post_step_arrival = dist <= f32::EPSILON || tolerance_arrival;
         let mut arrived_after_committed_step = false;
+        let mut arrival_crossing_queued = false;
         'arrival: loop {
             if post_step_arrival {
                 // Original PerformMotion/PerformSeek returns TERMINATED
@@ -11591,9 +11657,6 @@ impl EngineInner {
                 // Execute termination callback at the authoritative
                 // arrival boundary; it owns the range-based Provoke
                 // launched after sword movement.
-                if is_sword_motion {
-                    deferred.sword_movement_terminations.push(entity_id);
-                }
                 // Reached waypoint — snap to it and advance. Original's
                 // ordinary PerformMotion snap lives inside `if (bMoving)`;
                 // its TillLastFrame equivalent requires nonzero distance
@@ -11613,6 +11676,14 @@ impl EngineInner {
                         });
                 }
                 let eid = entity_id;
+                arrival_crossing_queued |= queue_committed_arrival_crossing(
+                    deferred,
+                    eid,
+                    crossing_old_pos,
+                    entity_layer,
+                    arrived_after_committed_step,
+                    eligible_for_crossing,
+                );
 
                 // A final concrete waypoint is only the position at
                 // which the target was observed when this Seek was
@@ -11756,6 +11827,15 @@ impl EngineInner {
                     start_post_seek
                 };
 
+                if is_sword_motion
+                    && perform_seek_exposes_motion_termination(
+                        start_post_seek,
+                        final_entity_seek_arrival,
+                    )
+                {
+                    deferred.sword_movement_terminations.push(entity_id);
+                }
+
                 // Waypoint reached — queue a `do_next_order` pop on
                 // the actor's Move element.
                 if start_post_seek {
@@ -11767,6 +11847,10 @@ impl EngineInner {
                 }
 
                 if start_post_seek {
+                    // StartPostSeekSequence makes PerformSeek return
+                    // TERMINATED, so Human::Execute observes the sword
+                    // movement completion before Actor::Hourglass advances
+                    // the selected element.
                     actor.clear_path();
                     // Original StartPostSeekSequence terminates the seek
                     // and launches the interaction without rewriting the
@@ -12268,7 +12352,7 @@ impl EngineInner {
             new_y = new_pos.y,
             "considered queuing elevation crossing"
         );
-        if eligible_for_crossing {
+        if eligible_for_crossing && !arrival_crossing_queued {
             deferred
                 .line_cross_checks
                 .push((entity_id, crossing_old_pos, entity_layer));
@@ -12736,6 +12820,12 @@ impl EngineInner {
                 owner_work,
             );
         }
+        // Once an authorized GoTo has deferred the live path-waiter's tail
+        // Halt, later GoTo calls in the same authored batch observe the
+        // post-Halt state. The request drain preserves FIFO, so the marked
+        // first replacement is constructed and cancelled before those later
+        // moves are built.
+        let mut path_waiter_tail_deferred = false;
         for intent in intents {
             let is_movement = matches!(
                 intent.order_type,
@@ -12760,18 +12850,19 @@ impl EngineInner {
                 | OrderType::WalkingCrouched
                 | OrderType::WalkingAlerted
                 | OrderType::RiderCharging => {
-                    let was_computing_path = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(entity_id)
-                        .and_then(|(sequence_id, element_index)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(sequence_id, element_index)
-                        })
-                        .is_some_and(|element| {
-                            element.command == crate::element::Command::MoveWaiting
-                        });
+                    let was_computing_path = !path_waiter_tail_deferred
+                        && self
+                            .orders
+                            .sequence_manager
+                            .current_element_for_actor(entity_id)
+                            .and_then(|(sequence_id, element_index)| {
+                                self.orders
+                                    .sequence_manager
+                                    .get_element(sequence_id, element_index)
+                            })
+                            .is_some_and(|element| {
+                                element.command == crate::element::Command::MoveWaiting
+                            });
                     if was_computing_path {
                         let ai = self
                             .world
@@ -12844,7 +12935,18 @@ impl EngineInner {
                         self.set_ai_couldnt_reachpoint(entity_id);
                         self.resolve_ai_engine_completion_verdict(entity_id);
                     } else {
+                        // `launch_ai_move` only stages the intent; the actual
+                        // AppendMoveToSequence construction happens in the
+                        // pending-request drain below. Preserve the effective
+                        // GoTo tail until that drain so an existing
+                        // MOVE_WAITING does not erase the replacement before
+                        // its gate sequence (and building-exit random waits)
+                        // has been constructed. Original constructs and
+                        // launches first, then observes IsComputingPath and
+                        // Halts (`RHartificialintelligence.cpp:2538-2620`).
+                        intent.halt_after_launch_for_path_waiter = was_computing_path;
                         self.launch_ai_move(entity_id, &intent);
+                        path_waiter_tail_deferred |= was_computing_path;
                     }
                     if debug_decision_path {
                         let ai = self
@@ -12879,12 +12981,13 @@ impl EngineInner {
                     // StopNotYetLaunchedSequenceElements.
                     if was_computing_path {
                         self.check_shape1_contract(entity_id);
-                        self.halt_actor(entity_id);
-                        if !route_rejected_before_launch {
-                            // The authorized replacement is deliberately
-                            // cancelled by GoTo's IsComputingPath tail; its
-                            // synchronous verdict is nevertheless complete.
-                            self.resolve_ai_engine_completion_verdict(entity_id);
+                        if route_rejected_before_launch {
+                            // No replacement sequence exists on this branch,
+                            // so the tail can halt the outgoing waiter now.
+                            // Authorized routes carry the halt marker through
+                            // `do_launch_ai_move` and are halted immediately
+                            // after construction by the request drain.
+                            self.halt_actor(entity_id);
                         }
                     }
                 }
@@ -14641,6 +14744,61 @@ impl EngineInner {
     }
 }
 
+/// Append the PC arrival bark after all movement at the next command level.
+///
+/// Original `PerformMove` passes `uwCount` by reference through
+/// `AppendMoveToSequence`; every appended movement consumes the current value
+/// and increments it before `SPEAK_HERO_REACH_DESTINATION` is constructed
+/// (`original-code/RHengine.cpp:10046-10052`,
+/// `original-code/RHsequence.cpp:657-661`). Keeping the bark parallel with a
+/// pathfinding Move makes its immediate termination complete the whole level,
+/// killing the new `MoveWaiting` and cancelling its queued request.
+fn append_arrival_speech(sequence: &mut crate::sequence::Sequence, owner: EntityId) {
+    let level = sequence
+        .last()
+        .unwrap_or_else(|| panic!("arrival speech requires a preceding movement element"))
+        .command_level
+        .saturating_add(1);
+    sequence.append_element(crate::sequence::SequenceElement::new(
+        level,
+        crate::element::Command::SpeakHeroReachDestination,
+        Some(owner),
+    ));
+}
+
+#[cfg(test)]
+mod arrival_speech_topology_tests {
+    use super::*;
+    use crate::element::Command;
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement};
+
+    #[test]
+    fn same_sector_arrival_speech_follows_move_instead_of_running_in_parallel() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(7));
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingUpright,
+        ));
+
+        append_arrival_speech(&mut sequence, owner);
+
+        assert_eq!(sequence.elements.len(), 2);
+        assert_eq!(sequence.elements[0].command_level, 1);
+        assert_eq!(
+            sequence.elements[1].command,
+            Command::SpeakHeroReachDestination
+        );
+        assert_eq!(
+            sequence.elements[1].command_level, 2,
+            "arrival speech must wait for the pathfinding Move to finish"
+        );
+    }
+}
+
 impl EngineInner {
     fn trace_selected_movement_order_pop(
         &self,
@@ -15482,6 +15640,89 @@ mod orphaned_sword_movement_tests {
         MapPoint,
     ) {
         install_sword_movement_for_kind(force, false)
+    }
+
+    #[test]
+    fn lowered_actor_still_aborts_unrewritten_resumed_sword_move() {
+        let (mut engine, owner, movement_sequence, order_id, _start) =
+            install_sword_movement(false);
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(movement_sequence, 0)
+            .unwrap();
+        movement.command = Command::MoveOk;
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::Waiting;
+
+        let aborted = engine.abort_orphaned_sword_movement(
+            &crate::sim_rng::test_context(),
+            &assets_with_test_pc_profile(),
+            owner,
+            MovementOwnerSelection {
+                seq_id: movement_sequence,
+                elem_idx: 0,
+                order_id,
+            },
+        );
+
+        assert!(
+            aborted,
+            "Human::Execute has no non-sword action-state exception for an unrewritten sword order"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible,
+            "the captured resumed MoveOk must be rejected after Execute returns ABORTED"
+        );
+    }
+
+    #[test]
+    fn evaluate_opponents_rewrite_survives_postpone_as_untranslated_upright_move() {
+        let (mut engine, owner, movement_sequence, _order_id, _start) =
+            install_sword_movement(false);
+        let sim = crate::sim_rng::test_context();
+        let assets = assets_with_test_pc_profile();
+
+        engine.evaluate_opponents(&sim, &assets, owner);
+
+        let quit_sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .find_map(|sequence| {
+                sequence.elements.first().and_then(|element| {
+                    (element.owner == Some(owner) && element.command == Command::QuitSwordfight)
+                        .then_some(sequence.id)
+                })
+            })
+            .expect("EvaluateOpponents must register QuitSwordfight");
+        engine.engine_postpone(quit_sequence, 0, movement_sequence, 0);
+
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .expect("rewritten movement must remain registered behind QuitSwordfight");
+        let SequenceElementData::Movement { action, .. } = movement.data else {
+            panic!("rewritten movement changed data kind")
+        };
+        assert_eq!(action, OrderType::WalkingUpright);
+        assert_eq!(movement.command, Command::Move);
+        assert_eq!(movement.state, SequenceState::Postponed);
+        assert!(
+            movement.orders.is_empty(),
+            "Original postponement deletes the old sword order so resume retranslates the rewritten upright action"
+        );
     }
 
     #[test]
@@ -18200,6 +18441,7 @@ mod movement_transition_state_tests {
             .expect("Translate(SEEK) must launch a concrete MOVE|SEEK replacement");
         let transition = OrderType::TransitionWalkingUprightWaitingUpright;
         let order_id = engine.orders.allocate_order_id();
+        let follower_order_id = engine.orders.allocate_order_id();
         let movement = engine
             .orders
             .sequence_manager
@@ -18217,6 +18459,22 @@ mod movement_transition_state_tests {
             destination.y,
             order_id,
         ));
+        movement.orders.push_back(Order::new(
+            transition,
+            destination.x,
+            destination.y,
+            follower_order_id,
+        ));
+        // Point-target PerformSeek keys the terminal handoff on the absence
+        // of another movement order, not on this movement element being the
+        // final element of its sequence. Keep a later sibling present to
+        // cover that distinction.
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence_mut(movement_sequence)
+            .unwrap()
+            .append_element(SequenceElement::new(2, Command::Wait, Some(owner)));
         {
             let entity = engine.get_entity_mut(owner).unwrap();
             entity.actor_data_mut().unwrap().active_movement =
@@ -18234,7 +18492,60 @@ mod movement_transition_state_tests {
 
 #[cfg(test)]
 mod arrival_snap_tests {
-    use super::should_snap_arrival;
+    use super::{
+        MovementDeferred, both_sword_ranges_contain_distance,
+        perform_seek_exposes_motion_termination, queue_committed_arrival_crossing,
+        should_snap_arrival,
+    };
+    use crate::coordinates::MapPoint;
+    use crate::element::{EntityId, PcId};
+
+    #[test]
+    fn committed_seek_arrival_retains_both_actor_crossing_passes() {
+        let mut deferred = MovementDeferred::default();
+        let owner = EntityId::Pc(PcId(252));
+        let old_pos = MapPoint::new(1284.826_3, 2277.009_3);
+
+        assert!(queue_committed_arrival_crossing(
+            &mut deferred,
+            owner,
+            old_pos,
+            0,
+            true,
+            true,
+        ));
+        assert_eq!(deferred.line_cross_checks, vec![(owner, old_pos, 0)]);
+        assert_eq!(
+            deferred.non_elevation_cross_checks,
+            vec![(owner, old_pos, 0)]
+        );
+    }
+
+    #[test]
+    fn stationary_or_ineligible_seek_arrival_does_not_queue_crossing() {
+        let mut deferred = MovementDeferred::default();
+        let owner = EntityId::Pc(PcId(252));
+        let old_pos = MapPoint::new(1284.826_3, 2277.009_3);
+
+        assert!(!queue_committed_arrival_crossing(
+            &mut deferred,
+            owner,
+            old_pos,
+            0,
+            false,
+            true,
+        ));
+        assert!(!queue_committed_arrival_crossing(
+            &mut deferred,
+            owner,
+            old_pos,
+            0,
+            true,
+            false,
+        ));
+        assert!(deferred.line_cross_checks.is_empty());
+        assert!(deferred.non_elevation_cross_checks.is_empty());
+    }
 
     #[test]
     fn exact_goal_without_a_committed_step_does_not_snap() {
@@ -18243,6 +18554,39 @@ mod arrival_snap_tests {
         assert!(!should_snap_arrival(true, true, 0.0, false));
         assert!(!should_snap_arrival(true, false, 1.0, false));
         assert!(!should_snap_arrival(true, false, 0.0, true));
+    }
+
+    #[test]
+    fn entity_seek_wait_hides_wrapped_motion_termination() {
+        assert!(!perform_seek_exposes_motion_termination(false, Some(true)));
+        assert!(perform_seek_exposes_motion_termination(true, Some(true)));
+        assert!(perform_seek_exposes_motion_termination(false, None));
+    }
+
+    #[test]
+    fn sword_provoke_range_is_snapshotted_before_line_crossing_projection() {
+        // Linux2/Profile002/Savegame_015/replay-016: Original evaluates the
+        // terminal gate inside Human::Execute at 89.7441025. Actor::Hourglass
+        // then projects the owner onto a crossed elevation line, where the
+        // same live-position calculation becomes 90.76145. The owner's
+        // MAXIMAL boundary is 90, so re-evaluating after crossing invents a
+        // Provoke that Original never registered.
+        let execute_distance = f32::from_bits(0x42b3_7cfb);
+        let after_crossing_distance = 90.76145_f32;
+        assert!(!both_sword_ranges_contain_distance(
+            execute_distance,
+            90,
+            150,
+            70,
+            150
+        ));
+        assert!(both_sword_ranges_contain_distance(
+            after_crossing_distance,
+            90,
+            150,
+            70,
+            150
+        ));
     }
 }
 
@@ -19479,7 +19823,8 @@ mod line_jump_tests {
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 -4.0, -4.0, 4.0, 4.0,
             ));
-        element.sprite.position_iface.set_anti_collision_on(false);
+        element.sprite.position_iface.set_anti_collision_on(true);
+        element.sprite.position_iface.deviated = true;
         element.set_position_map(position);
         element
             .sprite
@@ -19547,6 +19892,14 @@ mod line_jump_tests {
                 .position_map(),
             position,
             "the forecast refresh must not move an actor already at the transition goal"
+        );
+        assert!(
+            !engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .is_deviated(),
+            "Original still runs zero-increment anti-collision recovery for a nonzero transition animation distance"
         );
     }
 

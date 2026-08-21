@@ -98,6 +98,39 @@ fn can_alert_officer(
     rank == ProfileRank::Officer && is_able_to_fight && state == AiState::Default && !script_locked
 }
 
+/// Substates for which Original's `AlertOfficer` scan treats a soldier as
+/// already reporting to an officer.
+///
+/// The global camp registry includes the caller itself. Our
+/// `tick.camp_soldiers` snapshot deliberately omits the owner, so callers
+/// must splice the owner back into its stable handle-order slot.
+fn is_alerting_an_officer(substate: Substate) -> bool {
+    matches!(
+        substate,
+        Substate::SeekingSoldierCalledByOfficer
+            | Substate::SeekingSoldierGoToOfficer
+            | Substate::SeekingSoldierGetInstructedByOfficer
+            | Substate::SeekingSoldierReturnToOfficer
+            | Substate::SeekingSoldierGiveReportToOfficer
+            | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
+            | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
+            | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
+            | Substate::SeekingGroupCalledByOfficer
+            | Substate::SeekingGroupGoToOfficer
+            | Substate::SeekingGroupGetInstructedByOfficer
+            | Substate::SeekingRunningToOfficer
+            | Substate::SeekingRunningToOfficerSeen
+    )
+}
+
+fn sorted_owner_insertion_index<T>(
+    entries: &[T],
+    owner: NpcHandle,
+    handle: impl Fn(&T) -> NpcHandle,
+) -> usize {
+    entries.partition_point(|entry| handle(entry) < owner)
+}
+
 /// Distance stored on each accepted soldier before Original inserts it into
 /// the officer's farthest-first alert list. `SquareDistance` reads literal 3D
 /// element positions, so projected map Y alone is insufficient on ramps.
@@ -1137,8 +1170,30 @@ impl EnemyAi {
 
         if nearest_officer.is_none() {
             let mut max_distance = combat::MAX_ALERT_OFFICER_RADIUS as u32;
-
-            for cs in &tick.camp_soldiers {
+            // Original walks the complete same-camp registry in stable handle
+            // order. The tick snapshot omits the owner, so splice its literal
+            // self-detection check back into that order instead of checking it
+            // first. An earlier reporting friend must win and publish that
+            // friend's visibility query before the scan reaches `mpMe`.
+            let owner_index =
+                sorted_owner_insertion_index(&tick.camp_soldiers, self.base.me, |soldier| {
+                    soldier.handle
+                });
+            for registry_index in 0..=tick.camp_soldiers.len() {
+                if registry_index == owner_index {
+                    if is_alerting_an_officer(self.base.current_substate)
+                        && self.is_detecting_360_degrees(self.base.me, ctx)
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                let snapshot_index = if registry_index < owner_index {
+                    registry_index
+                } else {
+                    registry_index - 1
+                };
+                let cs = &tick.camp_soldiers[snapshot_index];
                 match cs.rank {
                     ProfileRank::Officer => {
                         // Candidate officer: must be able to fight, in DEFAULT
@@ -1175,27 +1230,12 @@ impl EnemyAi {
                     ProfileRank::Soldier => {
                         // Check if another soldier is already reporting to
                         // an officer — if so, don't duplicate the report.
-                        match cs.ai_substate {
-                            Substate::SeekingSoldierCalledByOfficer
-                            | Substate::SeekingSoldierGoToOfficer
-                            | Substate::SeekingSoldierGetInstructedByOfficer
-                            | Substate::SeekingSoldierReturnToOfficer
-                            | Substate::SeekingSoldierGiveReportToOfficer
-                            | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
-                            | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
-                            | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
-                            | Substate::SeekingGroupCalledByOfficer
-                            | Substate::SeekingGroupGoToOfficer
-                            | Substate::SeekingGroupGetInstructedByOfficer
-                            | Substate::SeekingRunningToOfficer
-                            | Substate::SeekingRunningToOfficerSeen
-                                if self.is_detecting_360_degrees(cs.handle, ctx) =>
-                            {
-                                // Another soldier is already alerting an
-                                // officer — abort.
-                                return false;
-                            }
-                            _ => {}
+                        if is_alerting_an_officer(cs.ai_substate)
+                            && self.is_detecting_360_degrees(cs.handle, ctx)
+                        {
+                            // Another soldier is already alerting an
+                            // officer — abort.
+                            return false;
                         }
                     }
                     _ => {}
@@ -1941,6 +1981,56 @@ mod tests {
             AiState::Default,
             false,
         ));
+    }
+
+    #[test]
+    fn alert_officer_scan_includes_reporting_owner_substates() {
+        // Nescafe Savegame_001 replay-007, frame 1539: Soldier139 reaches a
+        // now-busy officer while already in RUNNING_TO_OFFICER. Original's
+        // global camp scan encounters Soldier139 itself and refuses to pick
+        // another officer; the owner-omitting Rust snapshot used to select
+        // Officer124 and launch an extra movement path instead.
+        for substate in [
+            Substate::SeekingSoldierCalledByOfficer,
+            Substate::SeekingSoldierGoToOfficer,
+            Substate::SeekingSoldierGetInstructedByOfficer,
+            Substate::SeekingSoldierReturnToOfficer,
+            Substate::SeekingSoldierGiveReportToOfficer,
+            Substate::SeekingSoldierGiveAlertingReportToOfficerStart,
+            Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
+            Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
+            Substate::SeekingGroupCalledByOfficer,
+            Substate::SeekingGroupGoToOfficer,
+            Substate::SeekingGroupGetInstructedByOfficer,
+            Substate::SeekingRunningToOfficer,
+            Substate::SeekingRunningToOfficerSeen,
+        ] {
+            assert!(is_alerting_an_officer(substate), "{substate:?}");
+        }
+        assert!(!is_alerting_an_officer(Substate::DefaultOnPost));
+        assert!(!is_alerting_an_officer(
+            Substate::SeekingOfficerWaitForInstructedSoldier
+        ));
+    }
+
+    #[test]
+    fn alert_officer_splices_owner_into_registry_order() {
+        // Linux3/Profile003/Save019/r003 frame 18995: reporting Soldier100
+        // precedes the evaluating Soldier101. Original observes Soldier100's
+        // visibility query and aborts before it ever reaches the owner.
+        let without_owner = [100_u32, 102];
+        assert_eq!(
+            sorted_owner_insertion_index(&without_owner, 101, |handle| *handle),
+            1
+        );
+        assert_eq!(
+            sorted_owner_insertion_index(&without_owner, 99, |handle| *handle),
+            0
+        );
+        assert_eq!(
+            sorted_owner_insertion_index(&without_owner, 103, |handle| *handle),
+            2
+        );
     }
 
     #[test]

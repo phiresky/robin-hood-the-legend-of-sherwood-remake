@@ -6830,6 +6830,7 @@ impl EngineInner {
             execute_sides,
         } = outcomes;
         let super::animation::ExecuteSideOutcomes {
+            rejected_dead_idle_posture_requests,
             waiting_upright,
             waiting_alerted,
             drop_ale_done,
@@ -6868,6 +6869,9 @@ impl EngineInner {
         self.drain_next_jump_step(assets, next_jump_step);
         self.drain_select_hulk(select_hulk);
         self.drain_resume_door_pass(sim, assets, resume_door_pass);
+        for entity_id in rejected_dead_idle_posture_requests {
+            self.process_rejected_nonlying_posture_request_for(entity_id);
+        }
         self.drain_waiting_upright(waiting_upright);
         self.drain_waiting_alerted(sim, assets, waiting_alerted);
         // Soldier `Execute` cross-entity side effects, collected by the
@@ -7521,15 +7525,62 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        weak_stunned_start: Vec<(EntityId, crate::order::OrderType)>,
+        weak_stunned_start: Vec<(
+            EntityId,
+            crate::order::OrderType,
+            crate::element::ActionState,
+        )>,
     ) {
-        for (entity_id, anim_type) in weak_stunned_start {
+        for (entity_id, anim_type, action_state_before_perform) in weak_stunned_start {
+            // RHElementActorHuman::Execute notifies every adversary before
+            // calling PerformAction. Rust has to defer the cross-entity Think
+            // until the animation borrow is released, by which point the
+            // START edge may already have installed WaitingSword. Temporarily
+            // expose the captured pre-PerformAction action state so nested
+            // ReconsiderSwordfight applies Original's honour/action gate.
+            let action_state_after_perform = {
+                let actor = self
+                    .world
+                    .entities
+                    .get_mut(entity_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "weak/stunned callback owner {} disappeared before drain",
+                            entity_id.index()
+                        )
+                    })
+                    .actor_data_mut()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "weak/stunned callback owner {} is not an actor",
+                            entity_id.index()
+                        )
+                    });
+                std::mem::replace(&mut actor.action_state, action_state_before_perform)
+            };
             self.add_weak_stunned_combat(
                 sim,
                 assets,
                 entity_id,
                 anim_type == crate::order::OrderType::BeingWeakSword,
             );
+            self.world
+                .entities
+                .get_mut(entity_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "weak/stunned callback owner {} disappeared during drain",
+                        entity_id.index()
+                    )
+                })
+                .actor_data_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "weak/stunned callback owner {} lost actor data during drain",
+                        entity_id.index()
+                    )
+                })
+                .action_state = action_state_after_perform;
         }
     }
 
@@ -9450,6 +9501,53 @@ mod bow_command_body_parity_tests {
                 .state,
             SequenceState::Interrupted,
             "RHelementactor.cpp uses >= tolerance + 5 for the max-norm mismatch"
+        );
+    }
+
+    #[test]
+    fn position_assertion_context_accepts_nan_distance_like_original() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("test assertion owner")
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(f32::NAN, f32::NAN));
+        let mut assertion = SequenceElement::new_movement(
+            1,
+            Command::AssertPosition,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            destination,
+            tolerance,
+            ..
+        } = &mut assertion.data
+        {
+            *destination = crate::coordinates::MapPoint::new(362.0, 1535.0);
+            *tolerance = 10.0;
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(assertion);
+
+        let barrier = PositionAssertionContext {
+            entities: &engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Skip);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::Terminated,
+            "Original's `qNaN >= tolerance + 5` mismatch test is false"
         );
     }
 

@@ -718,6 +718,8 @@ impl EngineInner {
                 actor,
                 post_x,
                 post_y,
+                post_sector,
+                post_level,
                 direction,
                 ..
             } => {
@@ -726,18 +728,17 @@ impl EngineInner {
                         "AssignPost owner handle {actor} became stale at its synchronous barrier"
                     )
                 })?;
-                let entity = self.get_entity(owner).ok_or_else(|| {
+                self.get_entity(owner).ok_or_else(|| {
                     format!(
                         "AssignPost owner {} disappeared at its synchronous barrier",
                         owner.index()
                     )
                 })?;
-                let data = entity.element_data();
                 let post_position = crate::ai::Position {
                     x: post_x,
                     y: post_y,
-                    sector: data.sector(),
-                    level: data.layer(),
+                    sector: crate::position_interface::SectorHandle::new(post_sector),
+                    level: post_level,
                 };
                 let ai = self
                     .get_entity_mut(owner)
@@ -4036,6 +4037,7 @@ impl EngineInner {
                 }
                 crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                     flags,
+                    defer_clear_patrol_close_post,
                     owner_boundary_positions,
                 } => {
                     self.resume_return_to_duty_after_patrol_init_for_npc(
@@ -4046,17 +4048,36 @@ impl EngineInner {
                         false,
                         &owner_boundary_positions,
                     );
-                    // Original resumes ReturnToDutyCommonStuff on the same
-                    // call stack after InitializePatrol.  Its GoTo is
-                    // therefore translated (including any building-exit
-                    // route waits) before the owner boundary returns.
-                    self.drain_direct_ai_owner_boundary_mode(
-                        sim,
-                        owner,
-                        assets,
-                        owner_local_no_forecast,
-                        defer_turn_instruction,
-                    );
+                    if defer_clear_patrol_close_post {
+                        // ClearPatrol's ForceReturnToDuty leaves a close idle
+                        // member in DEFAULT_GOTOPOST at this native boundary:
+                        // Original records neither a Move nor the nested
+                        // EVENT_REACHPOINT/EVENT_DONE/GetBoredTime chain.
+                        let ai = self
+                            .world
+                            .entities
+                            .get_mut(owner)
+                            .and_then(crate::element::Entity::ai_controller_mut)
+                            .expect("ClearPatrol return continuation lost its AI owner");
+                        if ai.current_state == crate::ai::AiState::Default
+                            && ai.current_substate == crate::ai::Substate::DefaultGotoPost
+                            && ai.outbox.actor.orders.is_empty()
+                            && ai.outbox.reentrant.self_stimuli.last()
+                                == Some(&crate::ai::StimulusType::EventReachPoint)
+                        {
+                            ai.outbox.reentrant.self_stimuli.pop();
+                        }
+                    } else {
+                        // Ordinary ReturnToDuty resumes on the same call stack
+                        // and recursively closes its completion callbacks.
+                        self.drain_direct_ai_owner_boundary_mode(
+                            sim,
+                            owner,
+                            assets,
+                            owner_local_no_forecast,
+                            defer_turn_instruction,
+                        );
+                    }
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {

@@ -3030,10 +3030,10 @@ impl EnemyAi {
     }
 
     /// Compute how close to run towards the enemy before engaging.
-    fn compute_enemy_run_distance(&self) -> u16 {
+    fn compute_enemy_run_distance(&self, standard_sword_range: u16) -> u16 {
         let courage_distance = 2 * (100 - self.get_courage());
         // sword_distance = standard sword range + 10
-        let sword_distance: u16 = self.sword_range + 10;
+        let sword_distance: u16 = standard_sword_range + 10;
         if courage_distance < sword_distance {
             sword_distance
         } else {
@@ -4390,6 +4390,7 @@ impl EnemyAi {
         } else {
             AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,
+                defer_clear_patrol_close_post: false,
                 owner_boundary_positions,
             }
         };
@@ -4753,7 +4754,7 @@ impl EnemyAi {
                 }
 
                 Question::ShallISendOutSoldier => {
-                    self.soldier_profile_initiative < 50 || !self.base.theoretical_patrol.is_empty()
+                    self.soldier_profile_initiative < 50 || !self.base.patrol.is_empty()
                 }
             };
         }
@@ -6479,7 +6480,8 @@ mod tests {
             ai.base.outbox.reentrant.owner_work.as_slice(),
             [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,
-                owner_boundary_positions
+                owner_boundary_positions,
+                ..
             }] if flags.is_empty()
                 && owner_boundary_positions.is_empty()
         ));
@@ -7239,6 +7241,30 @@ mod tests {
         ai.base.current_state = AiState::Default;
         ai.minimal_task_priority = task_priority::NONE;
         assert!(ai.answer_question(Question::HasTheNewTaskPriority, &ctx));
+    }
+
+    #[test]
+    fn send_out_soldier_uses_live_patrol_not_theoretical_patrol() {
+        let ctx = AiContext {
+            self_is_active: true,
+            in_building: false,
+            ..AiContext::default()
+        };
+        let mut ai = EnemyAi::new(1);
+        ai.soldier_profile_initiative = 60;
+
+        // RHArtificialMalignity::AnswerQuestion checks mlistPatrol here.
+        // A save may retain a theoretical patrol after its live patrol has
+        // emptied; that must not make the officer delegate body examination.
+        ai.base
+            .theoretical_patrol
+            .push(EntityId::Soldier(crate::entity_id::SoldierId(2)));
+        assert!(!ai.answer_question(Question::ShallISendOutSoldier, &ctx));
+
+        ai.base
+            .patrol
+            .push(EntityId::Soldier(crate::entity_id::SoldierId(2)));
+        assert!(ai.answer_question(Question::ShallISendOutSoldier, &ctx));
     }
 
     #[test]

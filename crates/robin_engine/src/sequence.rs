@@ -1958,6 +1958,13 @@ pub struct StateChangeEffects {
     /// interrupted — the sequence manager takes this (seq_id, elem_idx)
     /// pair and registers it back on the `elements_to_go` queue.
     pub resume_cross_postponed: Option<(SequenceId, usize)>,
+    /// Cross-sequence postponed link whose installation belongs after this
+    /// element's synchronous `SendCondolationCard` callback. Actor priority
+    /// arbitration can interrupt an existing postponed successor while an
+    /// incoming element is still inside `Instruct`; Original does not expose
+    /// that incoming element through the blocker's postponed pointer until
+    /// the interrupted successor's callback returns.
+    pub install_cross_postponed_after_card: Option<(SequenceId, usize, SequenceId, usize)>,
     /// Owner entity to notify via `SendCondolationCard`.
     pub notify_owner: Option<EntityId>,
     /// Full condolation record (owner + command + terminal state) —
@@ -1997,6 +2004,7 @@ impl Sequence {
             signal_ready: false,
             start_postponed: None,
             resume_cross_postponed: None,
+            install_cross_postponed_after_card: None,
             notify_owner: None,
             condolation: None,
             increment_in_progress: false,
@@ -2617,7 +2625,7 @@ pub struct SequenceManager {
     /// `InProgress` yet. Entries only exist inside that callback boundary and
     /// are empty at stable frame/save boundaries.
     #[serde(default)]
-    actor_instructing: BTreeMap<EntityId, Vec<SequenceElementRef>>,
+    actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
 
     /// Actor selection held across the accepted element's command
     /// translation.
@@ -2935,6 +2943,44 @@ impl SequenceManager {
         self.halt_pending = was_halt_pending;
     }
 
+    /// Suspend a cross-postponed replacement at the same callback boundary as
+    /// an interrupted predecessor. This is the continuation of the outer
+    /// Actor::Instruct priority arbitration, not a successor released by the
+    /// interrupted element itself.
+    pub fn install_cross_postponed_after_condolation(
+        &mut self,
+        interrupted: (SequenceId, usize),
+        blocker: (SequenceId, usize),
+        waiter: (SequenceId, usize),
+    ) {
+        let pending = self
+            .pending_condolations
+            .iter_mut()
+            .rev()
+            .find(|pending| {
+                pending.card.seq_id == interrupted.0
+                    && usize::from(pending.card.elem_idx) == interrupted.1
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "interrupted postponed element {:?}/{} produced no condolence continuation",
+                    interrupted.0, interrupted.1
+                )
+            });
+        assert!(
+            pending
+                .effects_after_card
+                .install_cross_postponed_after_card
+                .is_none(),
+            "interrupted postponed element {:?}/{} already has a deferred cross install",
+            interrupted.0,
+            interrupted.1
+        );
+        pending
+            .effects_after_card
+            .install_cross_postponed_after_card = Some((blocker.0, blocker.1, waiter.0, waiter.1));
+    }
+
     /// Number of active sequences.
     pub fn sequence_count(&self) -> usize {
         self.sequences.len()
@@ -3223,7 +3269,7 @@ impl SequenceManager {
         actor: I,
     ) -> Option<(SequenceId, usize)> {
         let actor = actor.into();
-        if let Some(elem_ref) = self
+        if let Some((elem_ref, false)) = self
             .actor_instructing
             .get(&actor)
             .and_then(|stack| stack.last())
@@ -3298,34 +3344,42 @@ impl SequenceManager {
     }
 
     /// Select an incoming element while the outgoing element's synchronous
-    /// interruption callback runs. Nested Instruct calls use a stack because
-    /// Original temporarily replaces the actor pointer at each recursive
-    /// boundary.
+    /// interruption callback runs.
+    ///
+    /// Original stores this selection in one raw `mpSequenceElement` pointer
+    /// (`RHelementactor.cpp:1451-1456`). A recursively accepted `Instruct`
+    /// overwrites that pointer permanently; returning from the recursive call
+    /// does not restore its caller's selection. Keep the stack only to pair
+    /// Rust callback scopes, and mark the parent superseded whenever a nested
+    /// selection is installed.
     pub(crate) fn begin_instruct_callback(
         &mut self,
         owner: EntityId,
         sequence_id: SequenceId,
         element_index: usize,
     ) {
-        self.actor_instructing
-            .entry(owner)
-            .or_default()
-            .push(SequenceElementRef::new(sequence_id, element_index));
+        let stack = self.actor_instructing.entry(owner).or_default();
+        if let Some((_, superseded)) = stack.last_mut() {
+            *superseded = true;
+        }
+        stack.push((SequenceElementRef::new(sequence_id, element_index), false));
     }
 
-    /// Close a matching [`Self::begin_instruct_callback`] boundary.
+    /// Close a matching [`Self::begin_instruct_callback`] boundary, returning
+    /// whether recursive work left this element selected. This is Original's
+    /// post-priority callback pointer check (`RHelementactor.cpp:1473-1479`).
     pub(crate) fn end_instruct_callback(
         &mut self,
         owner: EntityId,
         sequence_id: SequenceId,
         element_index: usize,
-    ) {
+    ) -> bool {
         let expected = SequenceElementRef::new(sequence_id, element_index);
         let stack = self
             .actor_instructing
             .get_mut(&owner)
             .unwrap_or_else(|| panic!("missing Instruct callback selection for {owner:?}"));
-        let selected = stack
+        let (selected, superseded) = stack
             .pop()
             .expect("Instruct callback selection stack is empty");
         assert_eq!(
@@ -3335,6 +3389,7 @@ impl SequenceManager {
         if stack.is_empty() {
             self.actor_instructing.remove(&owner);
         }
+        !superseded
     }
 
     /// Find the first in-progress element owned by `actor` that
@@ -4674,6 +4729,7 @@ impl SequenceManager {
         seq_id: SequenceId,
         effects: StateChangeEffects,
     ) {
+        let install_cross_postponed_after_card = effects.install_cross_postponed_after_card;
         // Process cascading state changes
         for (cascade_elem_idx, cascade_state, cascade_flags) in effects.cascade {
             let sub_effects = {
@@ -4744,6 +4800,36 @@ impl SequenceManager {
             effects.start_postponed,
             effects.resume_cross_postponed,
         );
+
+        if let Some((blocker_seq, blocker_idx, waiter_seq, waiter_idx)) =
+            install_cross_postponed_after_card
+        {
+            let waiter_state = self
+                .get_element(waiter_seq, waiter_idx)
+                .map(|element| element.state)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "deferred cross-postponed waiter {waiter_seq:?}/{waiter_idx} disappeared"
+                    )
+                });
+            assert_eq!(
+                waiter_state,
+                SequenceState::Postponed,
+                "deferred cross-postponed waiter {waiter_seq:?}/{waiter_idx} is not postponed"
+            );
+            let blocker = self
+                .get_element_mut(blocker_seq, blocker_idx)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} disappeared"
+                    )
+                });
+            assert!(
+                blocker.cross_postponed.is_none(),
+                "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} acquired another waiter"
+            );
+            blocker.cross_postponed = Some((waiter_seq, waiter_idx));
+        }
     }
 
     fn resume_postponed_effects(

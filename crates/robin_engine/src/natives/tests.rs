@@ -1952,6 +1952,41 @@ fn assign_path_yields_until_return_to_duty_finishes() {
 }
 
 #[test]
+fn assign_post_yield_preserves_the_script_points_position_topology() {
+    let mut host = BoundScriptEffects::new();
+    host.entities.push(Some(native_test_soldier()));
+    host.bindings.script_location_count = 1;
+    host.bindings.script_point_count = 1;
+    host.bindings.location_positions = std::sync::Arc::new(vec![(1231.0, 1065.0)]);
+    host.bindings.location_layers = std::sync::Arc::new(vec![0]);
+    host.bindings.location_sectors = std::sync::Arc::new(vec![7]);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let point = ScriptHandleCodec::location_handle_from_index(0);
+
+    let mut assign = NativeStack::default();
+    assign.push_i32(actor);
+    assign.push_i32(point);
+    assign.push_i32(3);
+    assert!(matches!(
+        HostFunctions::call(&mut host, NativeFn::AssignPost as u32, &mut assign),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::AssignPost {
+                    actor: yielded_actor,
+                    post_x: 1231.0,
+                    post_y: 1065.0,
+                    post_sector: 7,
+                    post_level: 0,
+                    direction: 3,
+                    native_return: 0,
+                },
+            ),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        }) if yielded_actor == actor
+    ));
+}
+
+#[test]
 fn thanx_launches_into_the_live_sequence_manager_before_returning() {
     let mut host = BoundScriptEffects::new();
     let simulation = crate::sim_rng::test_context();

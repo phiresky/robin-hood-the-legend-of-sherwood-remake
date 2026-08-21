@@ -3235,7 +3235,7 @@ fn dispatch_ai_stimulus_intentionally_ignores_pcs() {
 #[test]
 fn wake_prefix_preserves_existing_stimulus_fifo() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
-    use crate::element::{Camp, Entity};
+    use crate::element::{Camp, Entity, EyeStatus};
 
     let mut engine = EngineInner::new();
     let npc_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
@@ -3275,6 +3275,60 @@ fn wake_prefix_preserves_existing_stimulus_fifo() {
         ai.current_substate,
         Substate::SleepingAwakening,
         "LOSE_CONSCIOUSNESS must run before FITAGAIN; plucking FITAGAIN first would leave the NPC unconscious"
+    );
+    assert_eq!(
+        ai.outbox.recovery.set_eye_status, None,
+        "each synchronous Think in the restored FIFO prefix must commit its eye write inline"
+    );
+    assert_eq!(
+        engine
+            .get_entity(npc_id)
+            .and_then(Entity::npc_data)
+            .unwrap()
+            .eye_status,
+        EyeStatus::LookForward,
+        "LOSE_CONSCIOUSNESS and the following FITAGAIN must publish their SetViewStatus writes in FIFO order"
+    );
+}
+
+#[test]
+fn restored_quit_lose_quit_fifo_commits_unconscious_eyes_inline() {
+    use crate::ai::{Stimulus, StimulusType};
+    use crate::element::{Camp, Entity, EyeStatus};
+
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(npc_id)
+        .and_then(Entity::ai_controller_mut)
+        .unwrap();
+    ai.outbox.detection.stimuli = vec![
+        Stimulus::new(StimulusType::EventQuitSwordfight),
+        Stimulus::new(StimulusType::EventLoseConsciousness),
+        Stimulus::new(StimulusType::EventQuitSwordfight),
+    ];
+
+    crate::sim_rng::with_seed(0xA013_105E, |sim| {
+        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, &assets, None, None)
+    });
+
+    let entity = engine.get_entity(npc_id).unwrap();
+    assert_eq!(
+        entity.npc_data().unwrap().eye_status,
+        EyeStatus::DieOrGetUnconscious,
+        "the middle LOSE_CONSCIOUSNESS Think must publish its eye write despite the surrounding restored FIFO prefix/suffix"
+    );
+    assert_eq!(
+        entity
+            .ai_controller()
+            .unwrap()
+            .outbox
+            .recovery
+            .set_eye_status,
+        None,
+        "the restored FIFO must not strand its synchronous SetViewStatus write"
     );
 }
 
