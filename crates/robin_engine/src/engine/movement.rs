@@ -3110,6 +3110,11 @@ struct MovementDeferred {
     door_pass_transition_start_effects: Vec<EntityId>,
     door_pass_transition_done_effects: Vec<EntityId>,
     door_pass_transition_completion_effects: Vec<(EntityId, OrderType)>,
+    /// Final door-pass goals retired by the terminal Execute arm. Original
+    /// clears these through DoNextOrder/condolation only after
+    /// Actor::CheckForLineCrossing has had a chance to rebuild the cached
+    /// increment against the still-live destination.
+    terminal_door_pass_goal_clears: Vec<EntityId>,
     post_seek_arrivals: Vec<(EntityId, crate::sequence::SequenceId, usize)>,
     /// Terminal state effect from a movement transition whose `PerformSeek`
     /// pre-motion tolerance arm launched a post-seek sequence. Original
@@ -3203,6 +3208,12 @@ fn queue_committed_arrival_crossing(
         .non_elevation_cross_checks
         .push((entity_id, old_pos, layer));
     true
+}
+
+fn clear_terminal_door_pass_goal(entity: &mut Entity) {
+    entity
+        .position_iface_mut()
+        .set_map_goal(crate::coordinates::MapPoint::ZERO);
 }
 
 /// Argument plumbing shared by the two movement-Execute anti-collision
@@ -8488,6 +8499,7 @@ impl EngineInner {
             door_pass_transition_start_effects,
             door_pass_transition_done_effects,
             door_pass_transition_completion_effects,
+            terminal_door_pass_goal_clears,
             post_seek_arrivals,
             post_seek_terminal_state_effects,
             sequence_seek_terminal_state_effects,
@@ -8705,6 +8717,26 @@ impl EngineInner {
             self.check_for_non_elevation_line_crossing(
                 sim, assets, entity_id, old_pos, new_pos, layer,
             );
+        }
+
+        // RHElementActor::Hourglass dispatches CheckForLineCrossing before
+        // its TERMINATED arm calls DoNextOrder. The latter can synchronously
+        // retire the completed door pass and clear its movement goal. Keep
+        // that ordering: an elevation crossing must recompute the increment
+        // from the live destination, not from the cleared (0, 0) sentinel.
+        for entity_id in terminal_door_pass_goal_clears {
+            let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+                panic!(
+                    "terminal door-pass goal owner {entity_id:?} disappeared after line crossing"
+                )
+            });
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                owner = ?entity_id,
+                goal = ?entity.position_iface().map_goal(),
+                "door-pass stop transition clearing movement goal after line crossing"
+            );
+            clear_terminal_door_pass_goal(entity);
         }
 
         // These calls are inside the Human/PC sword movement Execute arms,
@@ -11502,19 +11534,7 @@ impl EngineInner {
                         }
                     }
                     if clear_completed_movement_goal {
-                        tracing::trace!(
-                            target: "parity_owner_handoff",
-                            owner = ?eid,
-                            goal = ?entity.position_iface().map_goal(),
-                            "door-pass stop transition clearing movement goal"
-                        );
-                        // Actor::SendCondolationCard runs synchronously
-                        // when this retained stop transition completes and
-                        // clears the selected movement's sprite goal before
-                        // NPC callbacks can select replacement work.
-                        entity
-                            .position_iface_mut()
-                            .set_map_goal(crate::coordinates::MapPoint::ZERO);
+                        deferred.terminal_door_pass_goal_clears.push(eid);
                     }
                 }
             }
@@ -17775,6 +17795,60 @@ mod movement_transition_state_tests {
             i16::from(entity.position_iface().get_direction_goal()),
             7,
             "new-order ComputeIncrementAll must replace rather than restore the stale goal"
+        );
+    }
+
+    #[test]
+    fn terminal_door_pass_goal_clear_follows_crossing_recompute() {
+        let mut entity = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        let destination = MapPoint::new(1447.3046, 620.1602);
+        let terminal_position = MapPoint::new(1446.2887, 620.40155);
+        {
+            let pi = entity.position_iface_mut();
+            pi.set_map_position(terminal_position);
+            pi.set_map_goal(destination);
+            // CrossElevationLine invalidates the cached trajectory before
+            // Actor::CheckForLineCrossing rebuilds it against mpOrder's live
+            // destination.
+            pi.compute_increment_all(true);
+        }
+        let crossing_increment = entity.position_iface().get_increment_map();
+        assert!(
+            crossing_increment.x > 0.9 && crossing_increment.y < -0.2,
+            "fixture must retain Save042's eastward terminal trajectory"
+        );
+
+        clear_terminal_door_pass_goal(&mut entity);
+
+        assert_eq!(entity.position_iface().map_goal(), MapPoint::ZERO);
+        assert_eq!(
+            entity.position_iface().raw_increment_map(),
+            crossing_increment,
+            "terminal condolation clears the goal only after crossing has rebuilt the cached increment"
+        );
+        assert!(
+            !entity.position_iface().is_increment_map_computed(),
+            "clearing the completed goal must invalidate, but not overwrite, Original's cached increment"
+        );
+        let origin_length = (terminal_position.x * terminal_position.x
+            + terminal_position.y * terminal_position.y)
+            .sqrt();
+        let origin_increment = MapVec::new(
+            -terminal_position.x / origin_length,
+            -terminal_position.y / origin_length,
+        );
+        assert_ne!(
+            crossing_increment, origin_increment,
+            "crossing must not rebuild the trajectory from the cleared (0, 0) sentinel"
         );
     }
 
