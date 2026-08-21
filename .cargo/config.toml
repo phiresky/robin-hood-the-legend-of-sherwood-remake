@@ -18,6 +18,25 @@ rustflags = [
     "-C", "target-cpu=x86-64-v3",
 ]
 
+# Static MinGW runtime so C++ deps (vendored Luau via mlua; glslang/SPIRV-Cross
+# when `retroarch-shaders` is on) don't make the exe depend on libstdc++-6.dll.
+# The link-args cover the g++ driver's implicit runtime libs; the CXXSTDLIB env
+# below covers build scripts (luau0-src, cc) that emit an explicit
+# `cargo:rustc-link-lib=stdc++`, which those driver flags do not affect —
+# `static=stdc++` makes rustc wrap it in -Bstatic so ld picks libstdc++.a over
+# the DLL import library.
+[target.x86_64-pc-windows-gnu]
+rustflags = [
+    "-C", "link-args=-static-libstdc++ -static-libgcc",
+    # rustc verifies `-l static=stdc++` against its own search paths, which do
+    # not include the mingw toolchain's lib dir (standard location for the
+    # mingw-w64 distro packages).
+    "-L", "native=/usr/x86_64-w64-mingw32/lib",
+]
+
+[env]
+"CXXSTDLIB_x86_64-pc-windows-gnu" = "static=stdc++"
+
 [unstable]
 codegen-backend = true
 

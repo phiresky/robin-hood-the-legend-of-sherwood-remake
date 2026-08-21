@@ -57,7 +57,10 @@ gilrs = "0.11"
 # GPU.  `webgl` enables wgpu's WebGL2 backend so wasm builds work on
 # browsers that don't yet expose WebGPU (most non-Chrome desktops as
 # of 2026).  Adds a few KiB to native; harmless to keep on.
-wgpu = { version = "30", features = ["webgl", "glsl"] }
+# `static-dxc` links DXC into the exe so the DX12 backend can compile
+# shader-model-6 features (our binding_array needs SM5.1+, which the FXC
+# fallback cannot do); only affects Windows targets.
+wgpu = { version = "30", features = ["webgl", "glsl", "static-dxc"] }
 pollster = "1.0"
 
 # Audio
@@ -80,7 +83,7 @@ web-time = "1"
 # Native-only: tiny blocking HTTP server for the script-RPC endpoint.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 fs2 = "0.4"
-librashader = { git = "https://github.com/SnowflakePowered/librashader.git", rev = "87e8a97b50516d997defeaa168173dcd185d4022", default-features = false, features = ["presets", "runtime-wgpu", "stable"] }
+librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
 tiny_http = "0.12"
 # Multiplayer transport: peer-to-peer QUIC with relay fallback and
 # hole punching.  Peers are addressed by their public-key endpoint id,
@@ -113,6 +116,11 @@ semver = "1"
 velopack = "1.2.0"
 # Native folder-picker / message dialogs for the startup datadir selector.
 rfd = "0.15"
+
+# GUI-subsystem binaries have no console; re-attach to the parent process
+# console so logs still reach the terminal when launched from one.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Direct JNI calls let android_main ask the Java Activity to leave the
@@ -163,6 +171,10 @@ video = ["dep:ffmpeg-next", "audio"]
 # `dirs` crate.  Disabled on wasm where saves/replays go through a
 # browser-side mechanism instead of OS data dirs.
 native-fs = ["dep:dirs"]
+# RetroArch .slangp shader-preset support via librashader.  Off by default:
+# librashader pulls in glslang + SPIRV-Cross (C++), which on windows-gnu
+# makes the exe depend on libstdc++-6.dll.
+retroarch-shaders = ["dep:librashader"]
 
 [[bin]]
 name = "robin"

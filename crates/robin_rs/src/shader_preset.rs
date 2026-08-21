@@ -1,28 +1,28 @@
 //! WGPU integration for RetroArch `.slangp` shader presets.
 
-#[cfg(not(target_arch = "wasm32"))]
 use robin_engine::graphic_config::TextureScaleMode;
+#[cfg(feature = "retroarch-shaders")]
 use std::collections::{HashMap, HashSet};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 use std::fs;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 use std::path::{Path, PathBuf};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 use std::sync::LazyLock;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 use librashader::presets::{ShaderFeatures, ShaderPreset};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 use librashader::runtime::{Size, Viewport};
 
 use crate::window::GpuContext;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 static REPO_ROOT: LazyLock<PathBuf> =
     LazyLock::new(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 static SLANG_SHADER_ROOT: LazyLock<PathBuf> =
     LazyLock::new(|| REPO_ROOT.join("third_party/slang-shaders"));
 
@@ -32,30 +32,30 @@ pub struct RetroArchPresetInfo {
     pub label: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 static RETROARCH_PRESETS: LazyLock<Vec<RetroArchPresetInfo>> =
     LazyLock::new(discover_retroarch_presets_uncached);
 
 pub fn is_shader_preset_mode(mode: TextureScaleMode) -> bool {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(not(feature = "retroarch-shaders"))]
     {
         let _ = mode;
         false
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "retroarch-shaders")]
     matches!(mode, TextureScaleMode::RetroArch)
 }
 
 pub fn retroarch_presets() -> &'static [RetroArchPresetInfo] {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(not(feature = "retroarch-shaders"))]
     {
         &[]
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "retroarch-shaders")]
     &RETROARCH_PRESETS
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 pub struct ShaderPresetRenderer {
     gpu: GpuContext,
     chains: HashMap<String, FilterChain>,
@@ -63,10 +63,10 @@ pub struct ShaderPresetRenderer {
     frame_count: usize,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(feature = "retroarch-shaders"))]
 pub struct ShaderPresetRenderer;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 impl ShaderPresetRenderer {
     pub fn new(gpu: GpuContext) -> Self {
         Self {
@@ -164,7 +164,7 @@ impl ShaderPresetRenderer {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(feature = "retroarch-shaders"))]
 impl ShaderPresetRenderer {
     pub fn new(_gpu: GpuContext) -> Self {
         Self
@@ -187,7 +187,7 @@ impl ShaderPresetRenderer {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Option<String> {
     match mode {
         TextureScaleMode::RetroArch => retroarch_preset
@@ -202,12 +202,12 @@ fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Option<
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 fn preset_path(key: &str) -> PathBuf {
     SLANG_SHADER_ROOT.join(key)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "retroarch-shaders")]
 fn discover_retroarch_presets_uncached() -> Vec<RetroArchPresetInfo> {
     fn visit(root: &Path, dir: &Path, out: &mut Vec<RetroArchPresetInfo>) {
         let Ok(entries) = fs::read_dir(dir) else {
