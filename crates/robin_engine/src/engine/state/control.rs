@@ -35,9 +35,6 @@ pub(crate) struct SimulationControl {
     #[serde(skip)]
     #[state_hash(skip)]
     pub(crate) original_impossible_action_done_deadlines: BTreeMap<u32, i16>,
-    #[serde(skip)]
-    #[state_hash(skip)]
-    pub(crate) require_original_impossible_action_done_deadline: bool,
 }
 
 impl SimulationControl {
@@ -55,7 +52,6 @@ impl SimulationControl {
             fast_forward: false,
             arrow_refresh_pending: false,
             original_impossible_action_done_deadlines: BTreeMap::new(),
-            require_original_impossible_action_done_deadline: false,
         }
     }
 

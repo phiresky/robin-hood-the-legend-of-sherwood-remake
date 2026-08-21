@@ -2666,7 +2666,6 @@ impl Engine {
     /// the captured Original RNG stream; live simulation leaves it empty.
     pub fn set_original_impossible_action_done_deadlines(
         &mut self,
-        required: bool,
         deadlines: impl IntoIterator<Item = (u32, i16)>,
     ) {
         let mut captured = std::collections::BTreeMap::new();
@@ -2679,9 +2678,6 @@ impl Engine {
             }
         }
         self.inner.control.original_impossible_action_done_deadlines = captured;
-        self.inner
-            .control
-            .require_original_impossible_action_done_deadline = required;
     }
 
     /// Replace and rewind the raw Original RNG stream used by parity tools.

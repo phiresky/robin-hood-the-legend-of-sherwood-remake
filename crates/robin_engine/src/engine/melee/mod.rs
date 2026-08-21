@@ -3294,9 +3294,6 @@ mod tests {
             .control
             .original_impossible_action_done_deadlines
             .insert(target_creation_order, -22478);
-        engine
-            .control
-            .require_original_impossible_action_done_deadline = true;
         assert_eq!(
             engine.opponent_sword_strike_time_limit_for_actor(target),
             Some(-22478),
@@ -3315,14 +3312,6 @@ mod tests {
             Some(i16::MIN),
             "the current sprite's impossible marker retains the strict S075 behavior"
         );
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "schema-16 frame 38623 is missing the captured stale-sprite strike deadline for target creation order 201"
-    )]
-    fn schema16_missing_stale_impossible_deadline_fails_loudly() {
-        evaluate::captured_stale_impossible_deadline(None, true, 38623, 201);
     }
 
     fn empty_mission_script() -> crate::engine::types::MissionScript {

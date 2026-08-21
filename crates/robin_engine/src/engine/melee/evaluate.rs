@@ -119,23 +119,6 @@ pub(super) fn opponent_sword_strike_time_limit(
     }
 }
 
-pub(super) fn captured_stale_impossible_deadline(
-    captured: Option<i16>,
-    required: bool,
-    frame: u32,
-    creation_order: u32,
-) -> i16 {
-    captured.unwrap_or_else(|| {
-        assert!(
-            !required,
-            "schema-16 frame {frame} is missing the captured stale-sprite strike deadline for target creation order {creation_order}"
-        );
-        // Historical schemas did not record the undefined read and observed
-        // -1 at their known boundary.
-        -1
-    })
-}
-
 impl EngineInner {
     /// Return the proposal deadline using Original's deliberately mixed view:
     /// `RHElementActor::GetAnimation()` exposes the live selected order, while
@@ -165,16 +148,16 @@ impl EngineInner {
                 }) =>
             {
                 let creation_order = self.world.original_creation_order(opponent);
-                crate::sprite::ActionDoneTiming::Frames(captured_stale_impossible_deadline(
+                crate::sprite::ActionDoneTiming::Frames(
                     self.control
                         .original_impossible_action_done_deadlines
                         .get(&creation_order)
-                        .copied(),
-                    self.control
-                        .require_original_impossible_action_done_deadline,
-                    self.control.frame_counter,
-                    creation_order,
-                ))
+                        .copied()
+                        // No event means Original did not reach the recorder's
+                        // opponent-input site on this generic resolver call.
+                        // Historical schemas also lack this event boundary.
+                        .unwrap_or(-1),
+                )
             }
             timing => timing,
         };

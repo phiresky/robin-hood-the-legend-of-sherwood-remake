@@ -3427,7 +3427,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &assets, &frame));
         map.refresh_trace_indices(&frame);
         engine.set_original_impossible_action_done_deadlines(
-            header.schema == 16,
             frame
                 .strike_proposal_events
                 .as_deref()
