@@ -4030,6 +4030,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lying_arrow_victim_speaks_before_posture_termination() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let lying = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        let upright = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 40.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(lying)
+            .unwrap()
+            .set_posture(Posture::Lying);
+        for victim in [lying, upright] {
+            engine
+                .get_entity_mut(victim)
+                .unwrap()
+                .enemy_ai_mut()
+                .unwrap()
+                .hth_weapon_id = 1;
+        }
+
+        let mut assets = assets_with_sword_profile(1, 50);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].exclamation_id =
+            0x5744_0000;
+
+        for victim in [lying, upright] {
+            let damage = crate::sequence::SequenceElement::new_damage(
+                1,
+                Command::ReceiveArrowDamage,
+                Some(victim),
+                Some(attacker),
+                1,
+                0,
+            );
+            let sequence = engine.launch_element(damage);
+            engine.dispatch_receive_damage(&sim, &assets, victim, sequence, 0);
+        }
+
+        assert_eq!(
+            engine
+                .feedback
+                .sound_sim
+                .pending_exclamations
+                .iter()
+                .map(|pending| (pending.actor_id, pending.exclamation_id))
+                .collect::<Vec<_>>(),
+            vec![(lying.index(), crate::ai::Remark::Wounded as u16)],
+            "the lying actor speaks first and its type-wide Wounded forbid rejects the later actor"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(lying),
+            None,
+            "the lying damage element still terminates after SayOuch"
+        );
+    }
+
     fn assets_with_sword_profile(energy: u16, max_distance: u16) -> LevelAssets {
         assets_with_sword_profile_effects(energy, max_distance, 4, 0)
     }
