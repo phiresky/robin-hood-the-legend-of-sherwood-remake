@@ -2009,7 +2009,7 @@ impl EngineInner {
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
-            let flight = match flight_info {
+            let mut flight = match flight_info {
                 Some(f) => f,
                 None => continue,
             };
@@ -2084,6 +2084,26 @@ impl EngineInner {
                 });
             let mut raw_post = None;
             let mut snapped_to_goal = false;
+
+            // RHSprite::PerformFlight clears its increment after PerformAction
+            // reaches the final sprite frame, before ApplyDominoEffect and
+            // UpdatePosition.  The flight countdown is only our surrogate for
+            // that sprite-owned lifetime, so retire it at the same boundary.
+            let sprite = entity.sprite();
+            if flight.antagonist.is_some()
+                && !flight.ladder_fall
+                && perform_flight_stops_before_position_update(
+                    sprite.frame_count,
+                    sprite.current_frame,
+                    sprite.num_frames_for_row(sprite.current_row),
+                )
+            {
+                flight.frames_remaining = 0;
+                flight.increment_x = 0.0;
+                flight.increment_y = 0.0;
+                flight.increment_z = 0.0;
+                entity.actor_data_mut().unwrap().active_flight = Some(flight);
+            }
 
             // Capture the domino-sweep request *before* clearing the
             // flight on the final frame.  An exact zero increment
@@ -3675,6 +3695,15 @@ impl EngineInner {
     }
 }
 
+#[inline]
+fn perform_flight_stops_before_position_update(
+    frame_count: u16,
+    current_frame: u16,
+    row_frames: u16,
+) -> bool {
+    frame_count == 0 && current_frame + 1 == row_frames
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3685,6 +3714,13 @@ mod tests {
     };
     use crate::position_interface::SectorHandle;
     use crate::sequence::SequenceElement;
+
+    #[test]
+    fn perform_flight_stops_on_first_tick_of_final_sprite_frame() {
+        assert!(perform_flight_stops_before_position_update(0, 6, 7));
+        assert!(!perform_flight_stops_before_position_update(1, 6, 7));
+        assert!(!perform_flight_stops_before_position_update(0, 5, 7));
+    }
 
     #[test]
     fn stopped_rolling_materializes_zero_map_increment() {
