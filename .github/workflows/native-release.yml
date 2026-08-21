@@ -73,26 +73,58 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The Windows binary is cross-compiled from Linux with the
+          # windows-gnu toolchain (MinGW), matching local release builds.
           - name: Windows x86-64
-            os: windows-2022
+            target: x86_64-pc-windows-gnu
             runtime: win-x64
             executable: robin.exe
             artifact: robin-windows-x86_64
           - name: Linux x86-64
-            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             runtime: linux-x64
             executable: robin
             artifact: robin-linux-x86_64
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
+        if: matrix.runtime == 'linux-x64'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang libasound2-dev libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config
+
+      - name: Install MinGW cross toolchain
+        if: matrix.runtime == 'win-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64 zip
+          rustup target add x86_64-pc-windows-gnu
+          # The posix-threads MinGW variant provides the C++ std threading
+          # primitives the vendored C++ deps (Luau) may use.
+          #
+          # A per-target RUSTFLAGS is required because the job-level RUSTFLAGS
+          # below would otherwise override the checked-in
+          # `[target.x86_64-pc-windows-gnu]` rustflags entirely (env beats
+          # config, no merging), losing the static-MinGW-runtime link flags.
+          # Ubuntu keeps mingw's libstdc++.a in a gcc-versioned dir, so the
+          # -L from .cargo/config.toml is recomputed here; winpthread (pulled
+          # in by the posix variant) is forced static as well so the exe has
+          # no MinGW runtime DLL dependencies.
+          libdir="$(dirname "$(x86_64-w64-mingw32-g++-posix -print-file-name=libstdc++.a)")"
+          {
+            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc-posix"
+            echo "CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix"
+            echo "CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++-posix"
+            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-C target-cpu=x86-64-v2 -C link-arg=-static-libstdc++ -C link-arg=-static-libgcc -L native=${libdir} -C link-arg=-Wl,-Bstatic -C link-arg=-lwinpthread -C link-arg=-Wl,-Bdynamic"
+          } >> "${GITHUB_ENV}"
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact }}
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -133,13 +165,13 @@ jobs:
         run: |
           # TODO: Bundle FFmpeg DLLs on Windows, then restore the default
           # `video` feature for packaged builds.
-          cargo build --locked --release --no-default-features --features native-fs,audio -p robin_rs --bin robin
+          cargo build --locked --release --no-default-features --features native-fs,audio -p robin_rs --bin robin --target ${{ matrix.target }}
 
       - name: Stage package input
         shell: bash
         run: |
           mkdir -p target/package-input target/release-assets
-          cp "target/release/${{ matrix.executable }}" target/package-input/
+          cp "target/${{ matrix.target }}/release/${{ matrix.executable }}" target/package-input/
           cp README.md target/package-input/
           # Engine-shipped overlay datadirs, resolved relative to the
           # executable at runtime: the core overlay (bitmap fonts, UI
@@ -152,21 +184,21 @@ jobs:
           fi
 
       - name: Create Windows standalone binary
-        if: runner.os == 'Windows'
-        shell: pwsh
+        if: matrix.runtime == 'win-x64'
         run: |
-          Compress-Archive -Path target/package-input/* -DestinationPath target/release-assets/robin-windows-x86_64.zip
+          (cd target/package-input && zip -r ../release-assets/robin-windows-x86_64.zip .)
 
       - name: Create Linux standalone binary
-        if: runner.os == 'Linux'
+        if: matrix.runtime == 'linux-x64'
         run: tar -C target/package-input -czf target/release-assets/robin-linux-x86_64.tar.gz .
 
       - name: Build Windows Velopack installers
-        if: runner.os == 'Windows'
-        shell: bash
+        if: matrix.runtime == 'win-x64'
         run: |
           # TODO: Add Authenticode signing when repository signing credentials
           # are provisioned; unsigned public installers trigger OS warnings.
+          # No --msi: WiX-based MSI creation requires a Windows runner; the
+          # cross-built package ships the Setup.exe installer only.
           vpk pack \
             --packId io.github.phiresky.robinhood \
             --packVersion "${{ steps.version.outputs.version }}" \
@@ -174,12 +206,11 @@ jobs:
             --mainExe robin.exe \
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime win-x64 \
-            --msi \
             --outputDir target/velopack
           cp target/velopack/* target/release-assets/
 
       - name: Build Linux Velopack AppImage
-        if: runner.os == 'Linux'
+        if: matrix.runtime == 'linux-x64'
         run: |
           vpk pack \
             --packId io.github.phiresky.robinhood \
