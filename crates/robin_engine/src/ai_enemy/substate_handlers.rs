@@ -4626,23 +4626,20 @@ impl EnemyAi {
         match stimulus_type {
             StimulusType::EventTimer => {
                 // Check if officer has moved
-                if let Some(pos) = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
-                    .map(|cs| cs.position)
-                {
+                if let Some(antagonist) = ctx.entity_view(self.base.antagonist) {
+                    let pos = antagonist.position;
                     let dx = pos.x - self.gather_position.x;
                     let dy = pos.y - self.gather_position.y;
                     let talk_sq = (parameters_ai::AI_TALK_DISTANCE as f32)
                         * (parameters_ai::AI_TALK_DISTANCE as f32);
                     if dx * dx + dy * dy > talk_sq {
                         // Officer moved — update and retry
-                        self.gather_position = pos;
+                        let forecast = antagonist.forecasted_destination.resolve(sim).position;
+                        self.gather_position = forecast;
                         self.go_near(
                             self.base.current_state,
                             self.base.current_substate,
-                            pos,
+                            forecast,
                             parameters_ai::AI_TALK_DISTANCE,
                             GotoFlags::RUN,
                             ctx,
@@ -4652,10 +4649,7 @@ impl EnemyAi {
                 self.base.launch_timer(50, ctx.frame);
             }
             StimulusType::EventReachPoint => {
-                let ant = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == self.base.antagonist);
+                let ant = ctx.entity_view(self.base.antagonist);
                 let officer_ok = ant.is_some_and(|a| {
                     a.ai_state == AiState::Default
                         || a.ai_substate == Substate::SeekingOfficerWaitForInstructedSoldier
@@ -4670,11 +4664,12 @@ impl EnemyAi {
                         * (parameters_ai::AI_TALK_DISTANCE as f32);
                     if dx * dx + dy * dy > talk_sq {
                         // Too far — retry
-                        self.gather_position = officer_pos;
+                        let forecast = ant.unwrap().forecasted_destination.resolve(sim).position;
+                        self.gather_position = forecast;
                         self.go_near(
                             self.base.current_state,
                             self.base.current_substate,
-                            officer_pos,
+                            forecast,
                             parameters_ai::AI_TALK_DISTANCE,
                             GotoFlags::RUN,
                             ctx,
@@ -8667,6 +8662,33 @@ mod tests {
         view
     }
 
+    fn civilian_view(handle: u32, position: Position) -> crate::ai_entity_view::AiEntityView {
+        let entity = crate::element::Entity::Civilian(crate::element::ActorCivilian {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorCivilian,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            civilian: Default::default(),
+        });
+        let mut view = crate::ai_entity_view::entity_view_from_entity(
+            &entity,
+            handle,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        view.ai_state = AiState::Default;
+        view.ai_substate = Substate::DefaultOnPost;
+        view.position = position;
+        view.forecasted_destination =
+            crate::ai::PreparedForecastDestination::fixed(position, view.direction);
+        view
+    }
+
     #[test]
     fn civilian_report_alert_officer_route_failure_seeks_retained_report_position() {
         let sim = crate::sim_rng::test_context();
@@ -9880,11 +9902,21 @@ mod tests {
             eye_blind: false,
         });
 
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        let mut officer = soldier_view_with_substate(2, Substate::DefaultOnPost);
+        officer.ai_state = AiState::Default;
+        officer.position = Position::default();
+        views.insert(2, officer);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
         ai.think_expected_event(
             &sim,
             &Stimulus::new(StimulusType::EventReachPoint),
             &mut AiGlobalState::default(),
-            &AiContext::default(),
+            &ctx,
             &tick,
             None,
         );
@@ -9898,6 +9930,44 @@ mod tests {
             vec![StimulusType::EventReachPoint]
         );
         assert!(!ai.base.timer_is_running);
+    }
+
+    #[test]
+    fn running_to_officer_tracks_rejected_civilian_alert_antagonist() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Seeking, Substate::SeekingRunningToOfficer);
+        ai.base.antagonist = 2;
+        ai.gather_position = Position {
+            x: 964.0,
+            y: 2695.0,
+            ..Position::default()
+        };
+        let civilian_position = Position {
+            x: 847.573_975,
+            y: 2436.898_19,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(2, civilian_view(2, civilian_position));
+        let ctx = AiContext {
+            frame: 31_608,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.gather_position, civilian_position);
+        assert_eq!(ai.base.last_goto_destination, civilian_position);
+        assert_eq!(ai.base.when_does_timer_ring, 31_658);
     }
 
     #[test]
