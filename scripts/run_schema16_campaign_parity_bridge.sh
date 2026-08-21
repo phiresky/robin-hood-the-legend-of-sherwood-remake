@@ -164,15 +164,15 @@ run_remote_sync() {
         if (( local_concurrency == 0 )); then
             # With remote-only validation these files are authoritative and
             # may repair an older audit artifact created by a prior overlap.
-            rsync -a -e "ssh -F $ssh_config" \
+            rsync -a --exclude='*.tmp.*' -e "ssh -F $ssh_config" \
                 "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
                 || printf 'warning: could not pull remote statuses\n' >&2
         else
-            rsync -a --ignore-existing -e "ssh -F $ssh_config" \
+            rsync -a --ignore-existing --exclude='*.tmp.*' -e "ssh -F $ssh_config" \
                 "$remote_host:$remote_audit/status/" "$audit_dir/status/" \
                 || printf 'warning: could not pull remote statuses\n' >&2
         fi
-        rsync -a -e "ssh -F $ssh_config" \
+        rsync -a --exclude='*.tmp.*' -e "ssh -F $ssh_config" \
             "$remote_host:$remote_audit/logs/" "$audit_dir/logs/" \
             || printf 'warning: could not pull remote logs\n' >&2
         sleep "$poll_seconds"
