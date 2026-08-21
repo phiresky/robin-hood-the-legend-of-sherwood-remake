@@ -930,33 +930,18 @@ impl PortraitCache {
         const NAME_COUNT: usize = 22;
         const MAX_ATTEMPTS: usize = 10;
 
-        let table_ids = [
-            MENU_TEXT_TABLE_ID,
-            MENU_TEXT_TABLE_ID_DEMO,
-            MENU_TEXT_TABLE_ID_DEMO2,
-        ];
         let peasants = [
             CharacterKind::MerryManA,
             CharacterKind::MerryManB,
             CharacterKind::MerryManC,
         ];
 
-        // Helper: fetch a string from the first available table.
-        let get_str = |res: &mut ResourceManager, sub_id: usize| -> Option<String> {
-            for &tid in &table_ids {
-                if let Ok(s) = res.get_string(tid, sub_id) {
-                    return Some(s.to_string());
-                }
-            }
-            None
-        };
-
         // Pre-load all available first/last names.
         let firstnames: Vec<String> = (0..NAME_COUNT)
-            .filter_map(|i| get_str(res, FIRSTNAME_BASE + i))
+            .filter_map(|i| menu_text_string(res, FIRSTNAME_BASE + i).map(|(s, _, _)| s))
             .collect();
         let surnames: Vec<String> = (0..NAME_COUNT)
-            .filter_map(|i| get_str(res, SURNAME_BASE + i))
+            .filter_map(|i| menu_text_string(res, SURNAME_BASE + i).map(|(s, _, _)| s))
             .collect();
 
         if firstnames.is_empty() || surnames.is_empty() {
@@ -1583,31 +1568,83 @@ fn render_allied_portrait(
 pub fn load_localized_character_names(
     text_res: &mut ResourceManager,
 ) -> [Option<String>; CharacterKind::COUNT] {
+    let mut out: [Option<String>; CharacterKind::COUNT] = [const { None }; CharacterKind::COUNT];
+    let mut loaded = 0usize;
+    for kind in CharacterKind::VARIANTS {
+        // Display names are generated once at gang-creation time from the
+        // campaign character profile, which is always forest Robin; the
+        // per-level forest/town profile swap never regenerates the name.
+        // "Robin Town" (id 145) is therefore never shown — both Robin
+        // variants display the forest name.
+        let str_id = match (CharacterKind::RobinHood { is_town: false })
+            .localized_name_string_id()
+            .filter(|_| kind.is_robin())
+            .or_else(|| kind.localized_name_string_id())
+        {
+            Some(id) => id,
+            None => continue,
+        };
+        if let Some((localized, table_id, sub_id)) = menu_text_string(text_res, str_id) {
+            tracing::info!(
+                "Localized name for {kind:?}: {localized:?} (table {table_id}, sub {sub_id})"
+            );
+            out[kind.as_index()] = Some(localized);
+            loaded += 1;
+        }
+    }
+    tracing::info!("Loaded {loaded} localized character names");
+    out
+}
+
+/// String ids whose position shifted between the original retail demo's
+/// menu-text table and the final layout (see [`menu_text_string`]).
+const MENU_TEXT_OLD_DEMO_SHIFT_RANGE: std::ops::RangeInclusive<usize> = 54..=166;
+
+/// True when the attached full-game menu-text table uses the original
+/// retail demo's layout.
+///
+/// That build predates the "3D sound" audio option: its table
+/// (`MENU_TEXT_TABLE_ID`) is missing that entry at index 53, so every
+/// string id in `54..=166` sits one position lower than in the final
+/// layout (the window closes at 167 because the final layout in turn
+/// dropped the old "Display entrances to houses" entry — the tables have
+/// equal length). The probe keys on the "3D" substring, which appears in
+/// the option label in every shipped localization.
+fn menu_text_old_demo_layout(res: &mut ResourceManager) -> bool {
+    match res.get_string(MENU_TEXT_TABLE_ID, 53) {
+        Ok(s) => !s.contains("3D"),
+        Err(_) => false,
+    }
+}
+
+/// Fetch a menu-text string by final-layout id, trying the full-game
+/// table first and falling back to the two demo tables.  Old-demo
+/// full-game tables (see [`menu_text_old_demo_layout`]) get the shifted
+/// id transparently remapped.  Returns the string plus the table id and
+/// sub id it was actually read from (for logging).
+pub(crate) fn menu_text_string(
+    res: &mut ResourceManager,
+    sub_id: usize,
+) -> Option<(String, ResourceId, usize)> {
     let table_ids = [
         MENU_TEXT_TABLE_ID,
         MENU_TEXT_TABLE_ID_DEMO,
         MENU_TEXT_TABLE_ID_DEMO2,
     ];
-    let mut out: [Option<String>; CharacterKind::COUNT] = [const { None }; CharacterKind::COUNT];
-    let mut loaded = 0usize;
-    for kind in CharacterKind::VARIANTS {
-        let str_id = match kind.localized_name_string_id() {
-            Some(id) => id,
-            None => continue,
+    for &table_id in &table_ids {
+        let effective_sub_id = if table_id == MENU_TEXT_TABLE_ID
+            && MENU_TEXT_OLD_DEMO_SHIFT_RANGE.contains(&sub_id)
+            && menu_text_old_demo_layout(res)
+        {
+            sub_id - 1
+        } else {
+            sub_id
         };
-        for &table_id in &table_ids {
-            if let Ok(localized) = text_res.get_string(table_id, str_id) {
-                tracing::info!(
-                    "Localized name for {kind:?}: {localized:?} (table {table_id}, sub {str_id})"
-                );
-                out[kind.as_index()] = Some(localized.to_string());
-                loaded += 1;
-                break;
-            }
+        if let Ok(s) = res.get_string(table_id, effective_sub_id) {
+            return Some((s.to_string(), table_id, effective_sub_id));
         }
     }
-    tracing::info!("Loaded {loaded} localized character names");
-    out
+    None
 }
 
 /// Render the health gauge (two-parchment composite) at the given position.

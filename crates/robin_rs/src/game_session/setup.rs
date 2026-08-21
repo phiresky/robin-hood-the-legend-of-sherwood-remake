@@ -1111,28 +1111,15 @@ pub(super) fn extract_titbit_row_frame_counts(cursor_res: &mut ResourceManager) 
 /// hold firstnames, 122-143 surnames, under one of three menu text
 /// tables (full / demo / demo2).
 pub fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<String>) {
-    use crate::ui_panel::{MENU_TEXT_TABLE_ID, MENU_TEXT_TABLE_ID_DEMO, MENU_TEXT_TABLE_ID_DEMO2};
+    use crate::ui_panel::menu_text_string;
     const FIRSTNAME_BASE: usize = 100;
     const SURNAME_BASE: usize = 122;
     const NAME_COUNT: usize = 22;
-    let table_ids = [
-        MENU_TEXT_TABLE_ID,
-        MENU_TEXT_TABLE_ID_DEMO,
-        MENU_TEXT_TABLE_ID_DEMO2,
-    ];
-    let fetch = |res: &mut ResourceManager, sub_id: usize| -> Option<String> {
-        for &tid in &table_ids {
-            if let Ok(s) = res.get_string(tid, sub_id) {
-                return Some(s.to_string());
-            }
-        }
-        None
-    };
     let firstnames: Vec<String> = (0..NAME_COUNT)
-        .filter_map(|i| fetch(text_res, FIRSTNAME_BASE + i))
+        .filter_map(|i| menu_text_string(text_res, FIRSTNAME_BASE + i).map(|(s, _, _)| s))
         .collect();
     let surnames: Vec<String> = (0..NAME_COUNT)
-        .filter_map(|i| fetch(text_res, SURNAME_BASE + i))
+        .filter_map(|i| menu_text_string(text_res, SURNAME_BASE + i).map(|(s, _, _)| s))
         .collect();
     (firstnames, surnames)
 }
@@ -1143,7 +1130,7 @@ pub fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, V
 pub fn load_fixed_vip_name_map(
     text_res: &mut ResourceManager,
 ) -> std::collections::BTreeMap<String, String> {
-    use crate::ui_panel::{MENU_TEXT_TABLE_ID, MENU_TEXT_TABLE_ID_DEMO, MENU_TEXT_TABLE_ID_DEMO2};
+    use crate::ui_panel::menu_text_string;
     const VIP_NAME_BASE: usize = 144;
     const PROFILE_NAMES: [&str; 7] = [
         "Robin des bois",
@@ -1154,22 +1141,13 @@ pub fn load_fixed_vip_name_map(
         "Lady Marianne",
         "Stutely",
     ];
-    let table_ids = [
-        MENU_TEXT_TABLE_ID,
-        MENU_TEXT_TABLE_ID_DEMO,
-        MENU_TEXT_TABLE_ID_DEMO2,
-    ];
 
     PROFILE_NAMES
         .into_iter()
         .enumerate()
         .filter_map(|(offset, profile_name)| {
-            table_ids.iter().find_map(|&table_id| {
-                text_res
-                    .get_string(table_id, VIP_NAME_BASE + offset)
-                    .ok()
-                    .map(|localized| (profile_name.to_owned(), localized.to_string()))
-            })
+            menu_text_string(text_res, VIP_NAME_BASE + offset)
+                .map(|(localized, _, _)| (profile_name.to_owned(), localized))
         })
         .collect()
 }
