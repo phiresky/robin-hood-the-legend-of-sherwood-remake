@@ -1442,6 +1442,17 @@ fn should_snap_arrival(
     arrived_after_committed_step && !tolerance_arrival && order_tolerance == 0.0 && !deviated
 }
 
+/// Whether `PerformSeek` exposes a wrapped `PerformMotion` termination to
+/// `RHElementActorHuman::Execute`. A successful terminal entity seek without
+/// a post-seek sequence deliberately converts it back to IN_PROGRESS so it
+/// can wait/refresh in place.
+fn perform_seek_exposes_motion_termination(
+    starts_post_seek: bool,
+    final_entity_seek_arrival: Option<bool>,
+) -> bool {
+    starts_post_seek || final_entity_seek_arrival != Some(true)
+}
+
 /// Does the step this Execute is about to commit satisfy `IsGoalReached`?
 ///
 /// `PerformMotion` moves first and only then asks the position interface
@@ -11542,9 +11553,6 @@ impl EngineInner {
                 // Execute termination callback at the authoritative
                 // arrival boundary; it owns the range-based Provoke
                 // launched after sword movement.
-                if is_sword_motion {
-                    deferred.sword_movement_terminations.push(entity_id);
-                }
                 // Reached waypoint — snap to it and advance. Original's
                 // ordinary PerformMotion snap lives inside `if (bMoving)`;
                 // its TillLastFrame equivalent requires nonzero distance
@@ -11707,6 +11715,15 @@ impl EngineInner {
                     start_post_seek
                 };
 
+                if is_sword_motion
+                    && perform_seek_exposes_motion_termination(
+                        start_post_seek,
+                        final_entity_seek_arrival,
+                    )
+                {
+                    deferred.sword_movement_terminations.push(entity_id);
+                }
+
                 // Waypoint reached — queue a `do_next_order` pop on
                 // the actor's Move element.
                 if start_post_seek {
@@ -11718,6 +11735,10 @@ impl EngineInner {
                 }
 
                 if start_post_seek {
+                    // StartPostSeekSequence makes PerformSeek return
+                    // TERMINATED, so Human::Execute observes the sword
+                    // movement completion before Actor::Hourglass advances
+                    // the selected element.
                     actor.clear_path();
                     // Original StartPostSeekSequence terminates the seek
                     // and launches the interaction without rewriting the
@@ -18268,7 +18289,7 @@ mod movement_transition_state_tests {
 
 #[cfg(test)]
 mod arrival_snap_tests {
-    use super::should_snap_arrival;
+    use super::{perform_seek_exposes_motion_termination, should_snap_arrival};
 
     #[test]
     fn exact_goal_without_a_committed_step_does_not_snap() {
@@ -18277,6 +18298,13 @@ mod arrival_snap_tests {
         assert!(!should_snap_arrival(true, true, 0.0, false));
         assert!(!should_snap_arrival(true, false, 1.0, false));
         assert!(!should_snap_arrival(true, false, 0.0, true));
+    }
+
+    #[test]
+    fn entity_seek_wait_hides_wrapped_motion_termination() {
+        assert!(!perform_seek_exposes_motion_termination(false, Some(true)));
+        assert!(perform_seek_exposes_motion_termination(true, Some(true)));
+        assert!(perform_seek_exposes_motion_termination(false, None));
     }
 }
 
