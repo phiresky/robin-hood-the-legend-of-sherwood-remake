@@ -721,18 +721,13 @@ pub fn receive_hit_damage(
     human: &mut HumanData,
     life_points: i16,
     concussion: u16,
-    is_lacklandist: bool,
     ctx: &ConcussionContext,
 ) -> ConcussionOutcome {
-    // On Hard difficulty, scale concussion by HARD_ENEMY_LIFEPOINTS so
-    // knockout is still effective despite enemies having 1.5x HP.
-    let concussion = if is_lacklandist
-        && ctx.difficulty == crate::player_profile::DifficultyLevel::Hard
-    {
-        (concussion as f32 * crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS) as u16
-    } else {
-        concussion
-    };
+    // The damage element already carries the final concussion payload.
+    // Original applies Hard's 1.5 multiplier only while a PC authors a
+    // HITTING damage element; RHCOMMAND_RECEIVE_HIT_DAMAGE consumes the
+    // stored value verbatim. This also matters for NPC and domino-authored
+    // elements, which must never be reinterpreted based on the victim camp.
     add_concussion(human, concussion as i16, life_points, ctx)
 }
 
@@ -2287,10 +2282,23 @@ mod tests {
     fn hit_damage_concussion_only() {
         let mut h = make_human();
         let ctx = default_ctx();
-        let outcome = receive_hit_damage(&mut h, 100, 80, false, &ctx);
+        let outcome = receive_hit_damage(&mut h, 100, 80, &ctx);
         // 80 * 100 / 100 = 80 → exceeds threshold 70 → KO
         assert_eq!(outcome, ConcussionOutcome::WentUnconscious);
         assert!(h.unconscious);
+    }
+
+    #[test]
+    fn hit_damage_consumes_hard_difficulty_payload_verbatim() {
+        let mut h = make_human();
+        let mut ctx = default_ctx();
+        ctx.difficulty = crate::player_profile::DifficultyLevel::Hard;
+
+        let outcome = receive_hit_damage(&mut h, 53, 3, &ctx);
+
+        assert_eq!(outcome, ConcussionOutcome::NoChange);
+        // 3 * 100 / 53 = 5. Scaling the received payload again would yield 7.
+        assert_eq!(h.concussion_of_the_brain, 5);
     }
 
     // ── Generic damage ─────────────────────────────────────────────

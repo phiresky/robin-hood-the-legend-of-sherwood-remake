@@ -1917,18 +1917,13 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         let life_points = get_life_points(victim);
-        let is_lacklandist = victim.is_soldier()
-            && victim.soldier_data().map(|s| s.cached_camp)
-                == Some(crate::element::Camp::Lacklandists);
-
         let victim = self.expect_entity_mut(victim_id, "apply_hit_damage victim");
         let human = match victim.human_data_mut() {
             Some(h) => h,
             None => return,
         };
 
-        let outcome =
-            combat::receive_hit_damage(human, life_points, concussion, is_lacklandist, &ctx);
+        let outcome = combat::receive_hit_damage(human, life_points, concussion, &ctx);
         let went_unconscious = outcome == combat::ConcussionOutcome::WentUnconscious;
 
         // SetConcussionOfTheBrain performs the knockout transition inline:

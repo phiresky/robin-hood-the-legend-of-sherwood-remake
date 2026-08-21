@@ -5437,14 +5437,14 @@ impl EngineInner {
                         continue;
                     }
 
-                    // Resolve base concussion from attacker profile:
+                    // Resolve the final concussion payload from the attacker:
                     //   if PC has HitHard action → 150,
                     //   else PC → 80,
                     //   else NPC hitter → 40.
-                    // The Hard-difficulty scaling is re-applied
-                    // consumer-side in `apply_hit_damage` via
-                    // `combat::receive_hit_damage` when the victim is a
-                    // Lacklandist, so we pass the un-scaled base here.
+                    // RHElementActorHuman::Execute(HITTING) applies Hard's
+                    // enemy-life-point multiplier here, while the PC authors
+                    // the damage element. The receive side consumes this
+                    // stored payload verbatim, including NPC/domino hits.
                     let (concussion, is_harder_hit) = {
                         let attacker = self.get_entity(actor_id);
                         if attacker.is_some_and(|e| e.kind().is_pc()) {
@@ -5453,10 +5453,22 @@ impl EngineInner {
                                 .map(|pc| pc.profile_index)
                                 .and_then(|idx| assets.profile_manager.get_character(idx))
                                 .is_some_and(|cp| cp.has_action(crate::profiles::Action::HitHard));
-                            if has_hit_hard {
+                            let base = if has_hit_hard {
                                 (150u16, true)
                             } else {
                                 (80u16, false)
+                            };
+                            if self.control.sim_config.difficulty
+                                == crate::player_profile::DifficultyLevel::Hard
+                            {
+                                (
+                                    (base.0 as f32
+                                        * crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS)
+                                        as u16,
+                                    base.1,
+                                )
+                            } else {
+                                base
                             }
                         } else {
                             (40u16, false)
