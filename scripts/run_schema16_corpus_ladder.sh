@@ -196,7 +196,7 @@ while [[ ! -e "$stop_file" ]]; do
 
     complete=$(completed_replays "$campaign")
     if (( complete < expected_replays )); then
-        if [[ "$capture_externally" == 1 ]]; then
+        if [[ "$capture_externally" == 1 && "$seed_base" == "$first_seed_base" ]]; then
             printf '%s seed=%s external capture=%s/%s; waiting\n' \
                 "$(date -Is)" "$seed_base" "$complete" "$expected_replays"
             sleep "$poll_seconds"
