@@ -4843,12 +4843,7 @@ impl EngineInner {
                 let mut seq = crate::sequence::Sequence::new();
                 seq.append_element(move_elem);
                 if owner_is_pc {
-                    let speak = crate::sequence::SequenceElement::new(
-                        1,
-                        crate::element::Command::SpeakHeroReachDestination,
-                        Some(*pc_id),
-                    );
-                    seq.append_element(speak);
+                    append_arrival_speech(&mut seq, *pc_id);
                 }
                 self.append_posture_recovery(*pc_id, &mut seq);
                 self.launch_sequence(seq);
@@ -14621,6 +14616,61 @@ impl EngineInner {
             .element_in_progress(seq_id, elem_idx);
 
         MovePathOutcome::Success
+    }
+}
+
+/// Append the PC arrival bark after all movement at the next command level.
+///
+/// Original `PerformMove` passes `uwCount` by reference through
+/// `AppendMoveToSequence`; every appended movement consumes the current value
+/// and increments it before `SPEAK_HERO_REACH_DESTINATION` is constructed
+/// (`original-code/RHengine.cpp:10046-10052`,
+/// `original-code/RHsequence.cpp:657-661`). Keeping the bark parallel with a
+/// pathfinding Move makes its immediate termination complete the whole level,
+/// killing the new `MoveWaiting` and cancelling its queued request.
+fn append_arrival_speech(sequence: &mut crate::sequence::Sequence, owner: EntityId) {
+    let level = sequence
+        .last()
+        .unwrap_or_else(|| panic!("arrival speech requires a preceding movement element"))
+        .command_level
+        .saturating_add(1);
+    sequence.append_element(crate::sequence::SequenceElement::new(
+        level,
+        crate::element::Command::SpeakHeroReachDestination,
+        Some(owner),
+    ));
+}
+
+#[cfg(test)]
+mod arrival_speech_topology_tests {
+    use super::*;
+    use crate::element::Command;
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement};
+
+    #[test]
+    fn same_sector_arrival_speech_follows_move_instead_of_running_in_parallel() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(7));
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingUpright,
+        ));
+
+        append_arrival_speech(&mut sequence, owner);
+
+        assert_eq!(sequence.elements.len(), 2);
+        assert_eq!(sequence.elements[0].command_level, 1);
+        assert_eq!(
+            sequence.elements[1].command,
+            Command::SpeakHeroReachDestination
+        );
+        assert_eq!(
+            sequence.elements[1].command_level, 2,
+            "arrival speech must wait for the pathfinding Move to finish"
+        );
     }
 }
 
