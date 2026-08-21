@@ -238,10 +238,10 @@ collect() {
             -newer '${relative}/.distributed-remote-start' -printf '%p\\n'; \
         find '${relative}/logs' -type f -name '*.log' \
             -newer '${relative}/.distributed-remote-start' -printf '%p\\n'; \
-    } | sort -u" >"$available"
-    sort -u "$imported" >"$imported_tmp"
+    } | LC_ALL=C sort -u" >"$available"
+    LC_ALL=C sort -u "$imported" >"$imported_tmp"
     mv -f -- "$imported_tmp" "$imported"
-    comm -23 "$available" "$imported" >"$pending"
+    LC_ALL=C comm -23 "$available" "$imported" >"$pending"
     if [[ ! -s "$pending" ]]; then
         rm -f -- "$available" "$pending"
         exec {lock_fd}>&-
@@ -262,7 +262,7 @@ collect() {
         fi
         printf '%s\n' "$rel" >>"$imported"
     done <"$pending"
-    sort -u "$imported" >"$imported_tmp"
+    LC_ALL=C sort -u "$imported" >"$imported_tmp"
     mv -f -- "$imported_tmp" "$imported"
     rm -f -- "$available" "$pending"
     exec {lock_fd}>&-
