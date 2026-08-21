@@ -2204,6 +2204,14 @@ pub fn tick_ability(
         let order_id = ability.order_id;
 
         let motion = if sprite_frozen {
+            // Original `RHSprite::PerformAction` returns IN_PROGRESS while
+            // FreezeAll is active (`RHsprite.cpp:1124-1127`), and the PC
+            // Execute wrapper publishes that return through Actor::Hourglass
+            // without advancing any sprite operand. The specialized Rust
+            // owner reads this transient field after `tick_ability` returns,
+            // so replace a stale pre-freeze DONE edge explicitly.
+            entity.element_data_mut().sprite.last_motion_state =
+                Some(SpriteMotionState::InProgress);
             SpriteMotionState::InProgress
         } else {
             let elem = entity.element_data_mut();
@@ -4009,6 +4017,90 @@ mod tests {
                 .active_ability
                 .order_id,
             Some(actual[0].1)
+        );
+    }
+
+    #[test]
+    fn frozen_listen_entry_publishes_in_progress_without_advancing_sprite() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })));
+        let owner = entities.id_at_legacy_slot(0).unwrap();
+        let mut manager = SequenceManager::new();
+        let seq_id =
+            launch_ability_element(&mut manager, crate::element::Command::EnterListen, owner);
+        let mut next_id = 200;
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            actions: [
+                crate::profiles::Action::Listen,
+                crate::profiles::Action::NoAction,
+                crate::profiles::Action::NoAction,
+            ],
+            ..Default::default()
+        });
+        assert_eq!(
+            begin_listen(
+                &mut entities,
+                &profiles,
+                &mut manager,
+                owner,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started
+        );
+
+        let sprite = &mut entities.get_mut(owner).unwrap().element_data_mut().sprite;
+        sprite.current_row = 1876;
+        sprite.current_frame = 2;
+        sprite.frame_count = 2;
+        sprite.action_done_frame = 2;
+        sprite.action_done_counter = 2;
+        sprite.last_motion_state = Some(SpriteMotionState::Done);
+        let operands_before = (
+            sprite.current_row,
+            sprite.current_frame,
+            sprite.frame_count,
+            sprite.action_done_frame,
+            sprite.action_done_counter,
+        );
+
+        assert!(
+            tick_ability(
+                &crate::sim_rng::test_context(),
+                &mut entities,
+                &manager,
+                owner,
+                true,
+            )
+            .is_empty()
+        );
+
+        let sprite = &entities.get(owner).unwrap().element_data().sprite;
+        assert_eq!(
+            (
+                sprite.current_row,
+                sprite.current_frame,
+                sprite.frame_count,
+                sprite.action_done_frame,
+                sprite.action_done_counter,
+            ),
+            operands_before,
+            "FreezeAll must not advance the action-point sprite operands"
+        );
+        assert_eq!(
+            sprite.last_motion_state,
+            Some(SpriteMotionState::InProgress),
+            "the Listen owner envelope must not retain the pre-freeze DONE edge"
         );
     }
 
