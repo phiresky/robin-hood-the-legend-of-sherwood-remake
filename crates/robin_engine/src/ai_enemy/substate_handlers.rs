@@ -8293,7 +8293,13 @@ impl EnemyAi {
             if self.base.primary_target != 0
                 && self.is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
             {
-                self.base.face_entity(self.base.primary_target, ctx);
+                let target_position = ctx
+                    .expect_entity_view(
+                        self.base.primary_target,
+                        "detected avenger-on-roof primary target",
+                    )
+                    .position;
+                self.base.face_position_3d_with_ctx(target_position, ctx);
                 self.base.launch_timer(30, ctx.frame);
             } else {
                 self.seek_area(
@@ -9005,6 +9011,73 @@ mod tests {
         assert!(
             ai.my_seek_points.iter().any(|&id| id < 3),
             "live-center seek must select one of the nearby authored points"
+        );
+    }
+
+    #[test]
+    fn avenger_roof_timeout_refaces_detected_target_and_rearms_thirty_ticks() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(236);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
+        ai.base.primary_target = 295;
+
+        // Keep the target visibly in front of the actor at direction 6 so
+        // detection succeeds.  The inline `Face(element)` overload would
+        // also measure this map-space vector, see direction 6 already held,
+        // and synchronously short-circuit without authoring a Turn.
+        let [target_dx, target_dy] = crate::position_interface::sector_to_vector_iso(6);
+        let target_position = Position {
+            x: target_dx * 10.0,
+            y: target_dy * 10.0,
+            ..Position::default()
+        };
+        // Original calls `Face(Position(mpPrimaryTarget))`.  That overload
+        // subtracts the actor's raw body point, which is deliberately offset
+        // here so the resulting vector is direction 1.  This distinguishes
+        // it from `Face(element)` even though both inspect the same target.
+        let [face_dx, face_dy] = crate::position_interface::sector_to_vector_iso(1);
+        let body_position = crate::coordinates::WorldPoint3D::new(
+            target_position.x - face_dx * 10.0,
+            target_position.y - face_dy * 10.0,
+            0.0,
+        );
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(
+            236,
+            soldier_view_with_substate(236, Substate::AttackingWaitForAvengerOnRoof),
+        );
+        views.insert(295, civilian_view(295, target_position));
+        let ctx = AiContext {
+            frame: 30_055,
+            direction: 6,
+            self_action_state: crate::element::ActionState::Waiting,
+            self_body_position_world: body_position,
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        let [turn] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("detected avenger must receive exactly one authored Face turn");
+        };
+        assert_eq!(turn.order_type, crate::order::OrderType::Turning);
+        assert_eq!(turn.explicit_direction, Some(1));
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 30_085);
+        assert_eq!(
+            ai.base.substate_at_last_timer_launch,
+            Substate::AttackingWaitForAvengerOnRoof
         );
     }
 
