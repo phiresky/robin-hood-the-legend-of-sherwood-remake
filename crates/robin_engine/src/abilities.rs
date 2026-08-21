@@ -302,10 +302,10 @@ pub enum AbilityTickResult {
     /// A PC finished the `ClimbingUpOnShoulders` animation.  By the time
     /// the engine handler runs the postures are already paired
     /// (`OnShoulders` on the climber, `CarryingOnShoulders` on the
-    /// helper) — `begin_climb_on_shoulders` did the latch on init so
-    /// that pairing exists from frame 1.  The handler terminates the
-    /// driving sequence element and parks the helper on a low-priority
-    /// Wait so its AI re-enters the idle loop while frozen-on-shoulders.
+    /// helper) — the first Execute of the climbing order did the latch so
+    /// that pairing exists while the animation runs.  The handler terminates
+    /// the driving sequence element and parks the helper on a low-priority Wait
+    /// so its AI re-enters the idle loop while frozen-on-shoulders.
     ClimbOnShouldersDone {
         /// The PC that climbed up (executor of the order).
         climber_id: EntityId,
@@ -601,25 +601,12 @@ pub enum ClimbResult {
 /// shoulders.
 ///
 /// Called when `Command::ClimbUpOnShoulders` is dispatched.  Headroom
-/// check, posture latching, pair-state setup, and order push all happen
-/// here at init — there is no separate Instruct phase.
+/// check and order creation happen while the interaction is instructed.
+/// Posture/link/position setup is deferred to the climbing order's first
+/// Execute, matching `RHANIMATION_CLIMBING_UP_ON_SHOULDERS` initialization.
 ///
-/// The order is pushed on the *climber*'s sequence element.  The helper
-/// is paired into the climber via `HumanData.carrier`, and the carry
-/// back-reference goes the same direction as a corpse-carry: the helper
-/// records `PcData.carried = climber_id`, with
-/// `carried_posture = OnShoulders` so [`sync_carried_positions`] can
-/// distinguish a shoulder-mount from a corpse-carry and drive the
-/// helper's animation in lockstep with the climber.
-///
-/// ## Known gaps
-///
-/// - **Per-frame turn**: the climber's direction is set once at init.
-///   The helper's direction doesn't change while frozen, so a per-frame
-///   recompute would be a no-op anyway.
-/// - **Display-order pin**: pinning the climber's draw order in front
-///   of the helper is handled by `sync_carried_positions` setting
-///   `display_order_ref = helper`.
+/// The order is pushed on the *climber*'s sequence element.  The first
+/// Execute later calls [`initialize_climb_on_shoulders_relationship`].
 #[allow(clippy::too_many_arguments)]
 pub fn begin_climb_on_shoulders(
     entities: &mut Entities,
@@ -677,17 +664,6 @@ pub fn begin_climb_on_shoulders(
     {
         return ClimbResult::Impossible;
     }
-    // Latch both posture and the carrier back-reference NOW (not on
-    // Done) so `sync_carried_positions` starts driving position/anim
-    // from frame 1.
-    climber.set_posture(Posture::OnShoulders);
-    if let Some(human) = climber.human_data_mut() {
-        human.carrier = Some(helper_id);
-    }
-    // Climber snaps onto the helper before the climb anim plays.
-    // `sync_carried_positions` will re-stamp every subsequent frame.
-    climber.element_data_mut().set_position_map(helper_pos_map);
-
     let order_id = alloc_order_id(order_id_counter);
     let actor = climber.actor_data_mut().unwrap();
     actor.active_ability = ActiveAbility {
@@ -702,22 +678,9 @@ pub fn begin_climb_on_shoulders(
     actor.clear_path();
     actor.action_state = ActionState::Waiting;
 
-    // Climber direction is the reverse of the helper's (sector + 8).
-    // Helper hasn't been touched yet, so read its direction here and
-    // mirror it onto the climber for the lifetime of the climb.
-    let helper_dir = entities
-        .get(helper_id)
-        .map(|e| e.element_data().direction())
-        .unwrap_or(0);
-    if let Some(climber) = entities.get_mut(climber_id) {
-        climber
-            .element_data_mut()
-            .set_direction_instantly((helper_dir + 8) & 15);
-    }
-
     // Push the climbing animation order on the climber's sequence
-    // element.  Direction is locked (already faced manually above) and
-    // the helper is the antagonist.
+    // element. Direction and the carrier relationship are initialized by
+    // the order's first Execute, not by this translation/instruction pass.
     let mut order = Order::new(
         OrderType::ClimbingUpOnShoulders,
         helper_pos_map.x,
@@ -729,36 +692,83 @@ pub fn begin_climb_on_shoulders(
 
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
-    // Pair the helper: posture → CarryingOnShoulders, latch
-    // `pc.carried = climber` so `sync_carried_positions` can drive the
-    // helper's TransitionHelpingClimbingUp sync each frame.  Also face
-    // the climber.
-    let helper = match entities.get_mut(helper_id) {
-        Some(e) => e,
-        None => return ClimbResult::Impossible,
-    };
-    helper.set_posture(Posture::CarryingOnShoulders);
-    if let Some(actor) = helper.actor_data_mut() {
-        actor.action_state = ActionState::Waiting;
-    }
-    if let Some(pc) = helper.pc_data_mut() {
+    ClimbResult::Started
+}
+
+/// Apply the one-shot relationship setup performed by Original when the
+/// `ClimbingUpOnShoulders` order first executes.
+///
+/// `RHElementActorPC::Translate` only appends the order. Its Execute arm later
+/// links the pair, aims the helper from the climber's pre-snap position, flips
+/// both postures, and finally snaps the climber onto the helper. Keeping that
+/// ordering matters: sampling the climber after the snap collapses the facing
+/// vector to zero.
+pub(crate) fn initialize_climb_on_shoulders_relationship(
+    entities: &mut Entities,
+    climber_id: EntityId,
+    helper_id: EntityId,
+) {
+    let climber_pos = entities
+        .get(climber_id)
+        .unwrap_or_else(|| panic!("climb-on-shoulders climber {climber_id:?} disappeared"))
+        .element_data()
+        .position_map();
+    let helper_pos = entities
+        .get(helper_id)
+        .unwrap_or_else(|| panic!("climb-on-shoulders helper {helper_id:?} disappeared"))
+        .element_data()
+        .position_map();
+    let helper_facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+        climber_pos.x - helper_pos.x,
+        climber_pos.y - helper_pos.y,
+    );
+
+    {
+        let helper = entities
+            .get_mut(helper_id)
+            .expect("validated climb-on-shoulders helper disappeared during initialization");
+        let pc = helper
+            .pc_data_mut()
+            .expect("climb-on-shoulders helper is not a PC");
         pc.carried = Some(climber_id);
         pc.set_live_carried_posture(Posture::OnShoulders);
     }
-    // Snapshot climber pos for the facing computation.
-    let climber_pos = entities
-        .get(climber_id)
-        .map(|e| e.element_data().position_map())
-        .unwrap_or(helper_pos_map);
-    if let Some(helper) = entities.get_mut(helper_id) {
-        let dx = climber_pos.x - helper_pos_map.x;
-        let dy = climber_pos.y - helper_pos_map.y;
-        helper.element_data_mut().set_direction_instantly(
-            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-        );
+    entities
+        .get_mut(climber_id)
+        .expect("validated climb-on-shoulders climber disappeared during initialization")
+        .human_data_mut()
+        .expect("climb-on-shoulders climber is not human")
+        .carrier = Some(helper_id);
+    entities
+        .get_mut(helper_id)
+        .expect("validated climb-on-shoulders helper disappeared before facing setup")
+        .element_data_mut()
+        .set_direction_goal(helper_facing);
+    {
+        let climber = entities
+            .get_mut(climber_id)
+            .expect("validated climb-on-shoulders climber disappeared before posture setup");
+        climber.set_posture(Posture::OnShoulders);
+        climber
+            .actor_data_mut()
+            .expect("climb-on-shoulders climber lost actor state")
+            .action_state = ActionState::Waiting;
     }
-
-    ClimbResult::Started
+    {
+        let helper = entities
+            .get_mut(helper_id)
+            .expect("validated climb-on-shoulders helper disappeared before posture setup");
+        helper.set_posture(Posture::CarryingOnShoulders);
+        helper
+            .actor_data_mut()
+            .expect("climb-on-shoulders helper lost actor state")
+            .action_state = ActionState::Waiting;
+    }
+    entities
+        .get_mut(climber_id)
+        .expect("validated climb-on-shoulders climber disappeared before snap")
+        .element_data_mut()
+        .set_position_map(helper_pos);
 }
 
 /// Start the dismount animation for a PC currently `OnShoulders`.
@@ -767,9 +777,9 @@ pub fn begin_climb_on_shoulders(
 ///
 /// The order is pushed on the *climber*'s sequence element.  The helper
 /// (carrier) is identified via the climber's `human.carrier`
-/// back-reference latched in [`begin_climb_on_shoulders`].  Posture
-/// reset, carrier-link severance and landing-position resolution happen
-/// in the [`AbilityTickResult::ClimbDownFromShouldersDone`] consumer
+/// back-reference latched by [`initialize_climb_on_shoulders_relationship`].
+/// Posture reset, carrier-link severance and landing-position resolution
+/// happen in the [`AbilityTickResult::ClimbDownFromShouldersDone`] consumer
 /// after the animation reaches its terminated state.
 pub fn begin_climb_down_from_shoulders(
     entities: &mut Entities,
@@ -2123,6 +2133,26 @@ pub fn tick_ability(
         }
     }
 
+    if kind == AbilityKind::ClimbOnShoulders {
+        let helper_id = ability
+            .target
+            .expect("active ClimbOnShoulders ability must retain its helper");
+        let helper_direction = entities
+            .get(helper_id)
+            .unwrap_or_else(|| {
+                panic!("climb-on-shoulders helper {helper_id:?} vanished during Execute")
+            })
+            .element_data()
+            .direction();
+        // Original reissues this progressive facing goal before Turn on every
+        // Execute of RHANIMATION_CLIMBING_UP_ON_SHOULDERS.
+        entities
+            .get_mut(requested_actor)
+            .expect("climb-on-shoulders owner vanished before facing update")
+            .element_data_mut()
+            .set_direction_goal((helper_direction + 8) & 15);
+    }
+
     if kind == AbilityKind::Carry && !sprite_frozen {
         let order_id = ability.order_id.expect("active Carry ability order");
         let target_id = ability.target.expect("active Carry ability target");
@@ -2772,6 +2802,10 @@ struct CarrierSnapshot {
     target_last_action: OrderType,
     target_frame: u16,
     target_frame_count: u16,
+    /// The climber is still executing the animation that owns helper-side
+    /// synchronization. A stale sprite row is not enough: Original performs
+    /// SynchronizeAnim only from the live climbing Execute arm.
+    target_live_shoulder_ability: bool,
 }
 
 /// Keep carried entities positioned on top of their carrier and drive
@@ -2819,13 +2853,27 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         // branch can sync the helper's `TransitionHelpingClimbingUp` to
         // the climber's `ClimbingUpOnShoulders`.  For corpse-carry this is
         // unused; the carrier-driven path overwrites these fields anyway.
-        let (target_last_action, target_frame, target_frame_count) = entities
-            .get(target_id)
-            .map(|e| {
-                let s = &e.element_data().sprite;
-                (s.last_action, s.current_frame, s.frame_count)
-            })
-            .unwrap_or((OrderType::WaitingUpright, 0, 0));
+        let (target_last_action, target_frame, target_frame_count, target_live_shoulder_ability) =
+            entities
+                .get(target_id)
+                .map(|e| {
+                    let s = &e.element_data().sprite;
+                    let live_shoulder_ability = e.actor_data().is_some_and(|actor| {
+                        matches!(
+                            actor.active_ability.kind,
+                            Some(
+                                AbilityKind::ClimbOnShoulders | AbilityKind::ClimbDownFromShoulders
+                            )
+                        )
+                    });
+                    (
+                        s.last_action,
+                        s.current_frame,
+                        s.frame_count,
+                        live_shoulder_ability,
+                    )
+                })
+                .unwrap_or((OrderType::WaitingUpright, 0, 0, false));
 
         snapshots.push(CarrierSnapshot {
             carrier_id,
@@ -2843,6 +2891,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             target_last_action,
             target_frame,
             target_frame_count,
+            target_live_shoulder_ability,
         });
     }
 
@@ -2930,17 +2979,12 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             let carried_anim = match snap.carrier_last_action {
                 // Helper walking with PC on shoulders — climber rides idle.
                 OrderType::WalkingCarryingOnShoulders => Some(OrderType::WaitingOnShoulders),
-                // Climber's own active climb anim is driven by tick_ability;
-                // do NOT override it here.  Anything else (idle helper) →
-                // climber settles into WaitingOnShoulders synced to helper.
-                _ if matches!(
-                    snap.target_last_action,
-                    OrderType::ClimbingUpOnShoulders | OrderType::ClimbingDownFromShoulders
-                ) =>
-                {
-                    None
-                }
-                _ => Some(OrderType::WaitingOnShoulders),
+                // A live climb is driven by tick_ability. Once both PCs are
+                // idle, the rider's own WaitingOnShoulders Execute owns its
+                // independent PerformAction timer; Original does not sync it
+                // to WaitingCarryingOnShoulders (RHelementactorpc.cpp:
+                // 4648-4687).
+                _ => None,
             };
             if let Some(anim) = carried_anim {
                 let sprite = &mut target.element_data_mut().sprite;
@@ -2949,6 +2993,11 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
                     OrderType::WalkingCarryingOnShoulders
                 );
                 if is_walking {
+                    // TODO(original-parity): WalkingCarryingOnShoulders does
+                    // ForceAnimation + ResetSpriteFrame only on initialization,
+                    // then calls the rider's PerformAction every frame
+                    // (RHelementactorpc.cpp:3724-3751). This per-frame force
+                    // remains a separate walking-ownership gap.
                     sprite.force_animation(anim, carried_dir_u16);
                 } else {
                     sprite.force_sprite_row(anim, carried_dir_u16);
@@ -2964,13 +3013,18 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             // `ClimbingDownFromShoulders`, force the helper to the
             // matching `TransitionHelpingClimbing*` row synchronized to
             // the climber's frame.
-            let helper_anim = match snap.target_last_action {
-                OrderType::ClimbingUpOnShoulders => Some(OrderType::TransitionHelpingClimbingUp),
-                OrderType::ClimbingDownFromShoulders => {
-                    Some(OrderType::TransitionHelpingClimbingDown)
-                }
-                _ => None,
-            };
+            let helper_anim = snap
+                .target_live_shoulder_ability
+                .then(|| match snap.target_last_action {
+                    OrderType::ClimbingUpOnShoulders => {
+                        Some(OrderType::TransitionHelpingClimbingUp)
+                    }
+                    OrderType::ClimbingDownFromShoulders => {
+                        Some(OrderType::TransitionHelpingClimbingDown)
+                    }
+                    _ => None,
+                })
+                .flatten();
             if let Some(anim) = helper_anim
                 && let Some(helper) = entities.get_mut(snap.carrier_id)
             {
@@ -4226,5 +4280,206 @@ mod tests {
             z: 0.0,
         };
         assert!(can_carry_on_shoulders(pos, list));
+    }
+
+    #[test]
+    fn climb_translation_defers_posture_snap_and_orientation_until_execute_initialization() {
+        let mut entities = Entities::new();
+        let mut climber = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        climber.element.set_position_map(MapPoint::new(10.0, 20.0));
+        climber.element.set_direction_instantly(3);
+        let mut helper = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::HelpingToClimb,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        helper.element.set_position_map(MapPoint::new(30.0, 40.0));
+        helper.element.set_direction_instantly(10);
+        entities.push(Some(Entity::Pc(climber)));
+        entities.push(Some(Entity::Pc(helper)));
+        let climber_id = entities.id_at_legacy_slot(0).unwrap();
+        let helper_id = entities.id_at_legacy_slot(1).unwrap();
+
+        let mut manager = SequenceManager::new();
+        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+            2,
+            Command::ClimbUpOnShoulders,
+            Some(climber_id),
+            Some(helper_id),
+        ));
+        manager.element_in_progress(seq_id, 0);
+        let mut next_order_id = 1;
+        let result = begin_climb_on_shoulders(
+            &mut entities,
+            &mut manager,
+            climber_id,
+            helper_id,
+            seq_id,
+            0,
+            &mut next_order_id,
+            ObstacleList {
+                static_obstacles: &[],
+                dynamic_obstacles: &[],
+                static_active: &[],
+            },
+        );
+        assert!(matches!(result, ClimbResult::Started));
+
+        let climber = entities.get(climber_id).unwrap();
+        assert_eq!(climber.element_data().posture, Posture::Upright);
+        assert_eq!(
+            climber.element_data().position_map(),
+            MapPoint::new(10.0, 20.0)
+        );
+        assert_eq!(climber.element_data().direction(), 3);
+        assert_eq!(i16::from(climber.position_iface().get_direction_goal()), 3);
+        assert_eq!(climber.human_data().unwrap().carrier, None);
+        let helper = entities.get(helper_id).unwrap();
+        assert_eq!(helper.element_data().posture, Posture::HelpingToClimb);
+        assert_eq!(helper.element_data().direction(), 10);
+        assert_eq!(helper.pc_data().unwrap().carried, None);
+
+        let expected_helper_goal =
+            crate::position_interface::vector_to_sector_0_to_15_iso(10.0 - 30.0, 20.0 - 40.0);
+        initialize_climb_on_shoulders_relationship(&mut entities, climber_id, helper_id);
+
+        let climber = entities.get(climber_id).unwrap();
+        assert_eq!(climber.element_data().posture, Posture::OnShoulders);
+        assert_eq!(
+            climber.element_data().position_map(),
+            MapPoint::new(30.0, 40.0)
+        );
+        assert_eq!(climber.human_data().unwrap().carrier, Some(helper_id));
+        let helper = entities.get(helper_id).unwrap();
+        assert_eq!(helper.element_data().posture, Posture::CarryingOnShoulders);
+        assert_eq!(helper.element_data().direction(), 10);
+        assert_eq!(
+            i16::from(helper.position_iface().get_direction_goal()),
+            expected_helper_goal
+        );
+        assert_eq!(helper.pc_data().unwrap().carried, Some(climber_id));
+    }
+
+    #[test]
+    fn terminal_shoulder_sync_does_not_restore_stale_helper_transition() {
+        let mut entities = Entities::new();
+        let mut climber = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::OnShoulders,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        climber.element.sprite.last_action = OrderType::ClimbingUpOnShoulders;
+        climber.element.sprite.current_frame = 5;
+        climber.element.sprite.frame_count = 1;
+
+        let mut helper = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::CarryingOnShoulders,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        helper.element.sprite.last_action = OrderType::WaitingCarryingOnShoulders;
+        helper.element.sprite.current_row = 777;
+        helper.element.sprite.current_frame = 0;
+        helper.element.sprite.frame_count = u16::MAX;
+        let mut helper_conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        helper_conversion[OrderType::TransitionHelpingClimbingUp as usize] = 100;
+        helper.element.sprite.conversion = std::sync::Arc::new(helper_conversion);
+        let mut helper_scripts = vec![crate::sprite_script::SpriteScript::default(); 116];
+        helper_scripts[100].frame_ids = vec![0, 1, 2, 3, 4, 5];
+        helper.element.sprite.scripts = std::sync::Arc::new(helper_scripts);
+
+        entities.push(Some(Entity::Pc(helper)));
+        entities.push(Some(Entity::Pc(climber)));
+        let helper_id = entities.id_at_legacy_slot(0).unwrap();
+        let climber_id = entities.id_at_legacy_slot(1).unwrap();
+        {
+            let helper = entities.get_mut(helper_id).unwrap().pc_data_mut().unwrap();
+            helper.carried = Some(climber_id);
+            helper.set_live_carried_posture(Posture::OnShoulders);
+        }
+        entities
+            .get_mut(climber_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(helper_id);
+
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+
+        let helper = entities.get(helper_id).unwrap().element_data();
+        assert_eq!(
+            (
+                helper.sprite.last_action,
+                helper.sprite.current_row,
+                helper.sprite.current_frame,
+                helper.sprite.frame_count,
+            ),
+            (OrderType::WaitingCarryingOnShoulders, 777, 0, u16::MAX),
+            "a terminated climber's stale sprite action must not overwrite the helper's new idle"
+        );
+
+        {
+            let rider = entities.get_mut(climber_id).unwrap().element_data_mut();
+            rider.sprite.last_action = OrderType::WaitingOnShoulders;
+            rider.sprite.current_frame = 2;
+            rider.sprite.frame_count = u16::MAX;
+        }
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        let rider = entities.get(climber_id).unwrap().element_data();
+        assert_eq!(
+            (
+                rider.sprite.last_action,
+                rider.sprite.current_frame,
+                rider.sprite.frame_count,
+            ),
+            (OrderType::WaitingOnShoulders, 2, u16::MAX),
+            "idle shoulder sync must preserve the rider's independently driven PerformAction timer"
+        );
+
+        {
+            let climber = entities.get_mut(climber_id).unwrap();
+            let sprite = &mut climber.element_data_mut().sprite;
+            sprite.last_action = OrderType::ClimbingUpOnShoulders;
+            sprite.current_frame = 5;
+            sprite.frame_count = 1;
+            climber.actor_data_mut().unwrap().active_ability.kind =
+                Some(AbilityKind::ClimbOnShoulders);
+        }
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        let helper = entities.get(helper_id).unwrap().element_data();
+        assert_eq!(
+            helper.sprite.last_action,
+            OrderType::TransitionHelpingClimbingUp,
+            "a live climb ability must retain helper-side synchronization"
+        );
+        assert_eq!(
+            (helper.sprite.current_frame, helper.sprite.frame_count),
+            (5, 1)
+        );
     }
 }

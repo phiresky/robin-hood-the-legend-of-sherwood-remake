@@ -4511,6 +4511,10 @@ pub(super) struct AnimCompletionOutcomes {
     /// calls `DropCorpse` inside that exact Execute arm, before Actor::Hourglass
     /// advances to the following order.
     pub corpse_drop_done: Vec<EntityId>,
+    /// Carried PCs woken by the first Execute of their carrier's
+    /// `WaitingCarryingOnShoulders` idle. Original calls `mpCarried->Wait()`
+    /// from that initialization arm (RHelementactorpc.cpp:4648-4658).
+    pub shoulder_carried_waits: Vec<EntityId>,
     /// Soldier-style side effects that touch other entities —
     /// accumulated from `apply_soldier_execute_side_effects`.
     pub execute_sides: ExecuteSideOutcomes,
@@ -5457,6 +5461,12 @@ impl EngineInner {
                     // Execute path below.
                     let jump_airborne_step = super::jump::jump_step_is_airborne(entity, anim_type);
                     let order_is_initialising = actor.execute_order_initialising;
+                    if order_is_initialising
+                        && anim_type == OrderType::WaitingCarryingOnShoulders
+                        && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
+                    {
+                        completion_outcomes.shoulder_carried_waits.push(carried_id);
+                    }
                     if let Some(direction) = waiting_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
@@ -6646,6 +6656,113 @@ mod soldier_take_drink_parity_tests {
         assert_eq!(
             sprite_anim_for_order(&available, OrderType::BeggarShowingFace, false),
             OrderType::BeggarShowingFace
+        );
+    }
+}
+
+#[cfg(test)]
+mod shoulder_idle_initialization_tests {
+    use super::*;
+    use crate::element::{ActorPc, ElementData, ElementKind, Entity, HumanData, PcData, Posture};
+    use crate::order::Order;
+    use crate::sequence::{SequenceElement, SequencePriority};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    #[test]
+    fn waiting_carrying_on_shoulders_initialization_idles_carried_once() {
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::types::LevelAssets::new();
+        let mut engine = EngineInner::new();
+
+        let mut helper = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::CarryingOnShoulders,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WaitingCarryingOnShoulders as usize] = 0;
+        let script = SpriteScript {
+            action_id: OrderType::WaitingCarryingOnShoulders as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        helper.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+        let helper_id = engine.add_entity(helper);
+        let climber_id = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::OnShoulders,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+        engine
+            .get_entity_mut(helper_id)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .carried = Some(climber_id);
+
+        let mut wait = SequenceElement::new(1, Command::Wait, Some(helper_id));
+        wait.priority = SequencePriority::Wait;
+        wait.orders.push_back(Order::test_new(
+            OrderType::WaitingCarryingOnShoulders,
+            0.0,
+            0.0,
+        ));
+        let helper_wait = engine.orders.sequence_manager.launch_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(helper_wait, 0);
+
+        let (_, outcomes, _) = engine.tick_actor_animation_for(&sim, &assets, helper_id);
+        assert_eq!(outcomes.shoulder_carried_waits, vec![climber_id]);
+        engine.process_anim_completion_outcomes(&sim, outcomes, &assets);
+        engine
+            .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
+            .expect("carried Wait should install synchronously");
+
+        let (_, _, order) = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(climber_id)
+            .expect("helper idle initialization must wake the carried PC");
+        assert_eq!(order.order_type, OrderType::WaitingOnShoulders);
+        let climber = engine.get_entity(climber_id).unwrap().actor_data().unwrap();
+        assert_eq!(
+            climber.installed_order.map(|order| order.order_type),
+            Some(OrderType::WaitingOnShoulders)
+        );
+        assert_eq!(climber.continuation.motion_state, MotionState::InProgress);
+
+        engine
+            .get_entity_mut(helper_id)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = false;
+        let (_, next_outcomes, _) = engine.tick_actor_animation_for(&sim, &assets, helper_id);
+        assert!(
+            next_outcomes.shoulder_carried_waits.is_empty(),
+            "the carried Wait is an initialization-only side effect"
         );
     }
 }

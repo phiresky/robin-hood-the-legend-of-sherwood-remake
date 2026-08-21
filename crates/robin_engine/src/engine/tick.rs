@@ -6827,6 +6827,7 @@ impl EngineInner {
             next_jump_step,
             play_anim_frozen,
             corpse_drop_done,
+            shoulder_carried_waits,
             execute_sides,
         } = outcomes;
         let super::animation::ExecuteSideOutcomes {
@@ -6860,6 +6861,9 @@ impl EngineInner {
         // reorder these calls.
         self.drain_non_interruptable_lifts(non_interruptable_lifts);
         self.drain_corpse_drop_done(assets, corpse_drop_done);
+        for carried_id in shoulder_carried_waits {
+            self.actor_wait(carried_id);
+        }
         self.drain_seq_advance(seq_advance);
         self.drain_wasp_next_cycle(wasp_next_cycle);
         self.drain_seq_terminate(seq_terminate);

@@ -3250,12 +3250,10 @@ impl EngineInner {
             None => return,
         };
 
-        let action_distance = match self
-            .actor_action_distance(actor, crate::order::OrderType::ClimbingUpOnShoulders)
-        {
-            Some(distance) => distance,
-            None => return,
-        };
+        // RHElementActorPC::MouseClicked authors this point seek with the
+        // literal tolerance 8.f.  This interaction does not use the sprite
+        // action point distance used by the generic interaction helper.
+        let action_distance = 8.0;
 
         let action_style = if running {
             crate::order::OrderType::RunningUpright
@@ -6927,7 +6925,7 @@ mod tests {
     }
 
     #[test]
-    fn climb_on_shoulders_seek_tolerance_uses_sprite_action_distance() {
+    fn climb_on_shoulders_seek_tolerance_matches_original_literal() {
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Climb, 0)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
@@ -6945,7 +6943,7 @@ mod tests {
 
         engine.apply_climb_on_shoulders_with_seek(pc_id, target_id, false);
 
-        assert!((first_seek_tolerance(&engine) - 11.0).abs() < 0.001);
+        assert!((first_seek_tolerance(&engine) - 8.0).abs() < 0.001);
     }
 
     #[test]

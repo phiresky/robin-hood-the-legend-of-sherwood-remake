@@ -2310,9 +2310,6 @@ impl EngineInner {
                                         self.orders
                                             .sequence_manager
                                             .element_in_progress(seq_id, elem_idx);
-                                        // Helper is frozen for the
-                                        // duration of the climb.
-                                        self.actor_freeze_execution(helper_id);
                                     }
                                     crate::abilities::ClimbResult::Impossible => {
                                         self.orders

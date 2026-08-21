@@ -4388,6 +4388,32 @@ impl EngineInner {
             self.apply_carry_building_hulk(actor_id, target_id);
         }
 
+        let pending_climb_on_shoulders_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::ClimbOnShoulders)
+                    && actor.execute_order_initialising
+                    && actor.installed_order.is_some_and(|installed| {
+                        installed.order_type == crate::order::OrderType::ClimbingUpOnShoulders
+                    }))
+                .then_some(ability.target)
+                .flatten()
+            });
+        if let Some(helper_id) = pending_climb_on_shoulders_init {
+            // Translate only appends the climbing order. Original links the
+            // pair, changes posture, snaps the climber, and freezes the helper
+            // when that order reaches its first Execute in the climber's later
+            // owner slot (RHelementactorpc.cpp:4692-4716).
+            crate::abilities::initialize_climb_on_shoulders_relationship(
+                &mut self.world.entities,
+                actor_id,
+                helper_id,
+            );
+            self.actor_freeze_execution(helper_id);
+        }
+
         let pending_heal_facing = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
