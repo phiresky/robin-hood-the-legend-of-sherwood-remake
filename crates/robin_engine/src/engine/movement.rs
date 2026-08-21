@@ -3170,6 +3170,29 @@ struct MovementDeferred {
     executed_sword_movement: bool,
 }
 
+/// Preserve Actor::Hourglass' post-Execute line-crossing segment when a
+/// movement step reaches a seek arrival whose synchronous handoff returns
+/// before the ordinary movement tail. The segment endpoint is deliberately
+/// resolved later from the actor's live position, exactly like the common
+/// tail; only the outer pre-Execute position is retained here.
+fn queue_committed_arrival_crossing(
+    deferred: &mut MovementDeferred,
+    entity_id: EntityId,
+    old_pos: MapPoint,
+    layer: u16,
+    arrived_after_committed_step: bool,
+    eligible_for_crossing: bool,
+) -> bool {
+    if !arrived_after_committed_step || !eligible_for_crossing {
+        return false;
+    }
+    deferred.line_cross_checks.push((entity_id, old_pos, layer));
+    deferred
+        .non_elevation_cross_checks
+        .push((entity_id, old_pos, layer));
+    true
+}
+
 /// Argument plumbing shared by the two movement-Execute anti-collision
 /// dispatches (the transition fast-climb arm and the ordinary walk arm).
 /// A free function rather than a method: at both call sites the mover is
@@ -11593,6 +11616,7 @@ impl EngineInner {
         // retaining (not recomputing) the pre-motion seek predicate.
         let mut post_step_arrival = dist <= f32::EPSILON || tolerance_arrival;
         let mut arrived_after_committed_step = false;
+        let mut arrival_crossing_queued = false;
         'arrival: loop {
             if post_step_arrival {
                 // Original PerformMotion/PerformSeek returns TERMINATED
@@ -11621,6 +11645,14 @@ impl EngineInner {
                         });
                 }
                 let eid = entity_id;
+                arrival_crossing_queued |= queue_committed_arrival_crossing(
+                    deferred,
+                    eid,
+                    crossing_old_pos,
+                    entity_layer,
+                    arrived_after_committed_step,
+                    eligible_for_crossing,
+                );
 
                 // A final concrete waypoint is only the position at
                 // which the target was observed when this Seek was
@@ -12289,7 +12321,7 @@ impl EngineInner {
             new_y = new_pos.y,
             "considered queuing elevation crossing"
         );
-        if eligible_for_crossing {
+        if eligible_for_crossing && !arrival_crossing_queued {
             deferred
                 .line_cross_checks
                 .push((entity_id, crossing_old_pos, entity_layer));
@@ -18393,7 +18425,59 @@ mod movement_transition_state_tests {
 
 #[cfg(test)]
 mod arrival_snap_tests {
-    use super::{perform_seek_exposes_motion_termination, should_snap_arrival};
+    use super::{
+        MovementDeferred, perform_seek_exposes_motion_termination,
+        queue_committed_arrival_crossing, should_snap_arrival,
+    };
+    use crate::coordinates::MapPoint;
+    use crate::element::{EntityId, PcId};
+
+    #[test]
+    fn committed_seek_arrival_retains_both_actor_crossing_passes() {
+        let mut deferred = MovementDeferred::default();
+        let owner = EntityId::Pc(PcId(252));
+        let old_pos = MapPoint::new(1284.826_3, 2277.009_3);
+
+        assert!(queue_committed_arrival_crossing(
+            &mut deferred,
+            owner,
+            old_pos,
+            0,
+            true,
+            true,
+        ));
+        assert_eq!(deferred.line_cross_checks, vec![(owner, old_pos, 0)]);
+        assert_eq!(
+            deferred.non_elevation_cross_checks,
+            vec![(owner, old_pos, 0)]
+        );
+    }
+
+    #[test]
+    fn stationary_or_ineligible_seek_arrival_does_not_queue_crossing() {
+        let mut deferred = MovementDeferred::default();
+        let owner = EntityId::Pc(PcId(252));
+        let old_pos = MapPoint::new(1284.826_3, 2277.009_3);
+
+        assert!(!queue_committed_arrival_crossing(
+            &mut deferred,
+            owner,
+            old_pos,
+            0,
+            false,
+            true,
+        ));
+        assert!(!queue_committed_arrival_crossing(
+            &mut deferred,
+            owner,
+            old_pos,
+            0,
+            true,
+            false,
+        ));
+        assert!(deferred.line_cross_checks.is_empty());
+        assert!(deferred.non_elevation_cross_checks.is_empty());
+    }
 
     #[test]
     fn exact_goal_without_a_committed_step_does_not_snap() {
