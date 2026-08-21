@@ -3856,6 +3856,16 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
             .state,
         SequenceState::Impossible
     );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_seq, 0)
+            .unwrap()
+            .priority,
+        SequencePriority::Normal,
+        "the retained shot must run Actor::DeterminePriority when readmitted"
+    );
 }
 
 #[test]
