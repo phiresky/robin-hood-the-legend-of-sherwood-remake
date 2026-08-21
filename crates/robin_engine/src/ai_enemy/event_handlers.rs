@@ -1880,8 +1880,18 @@ impl EnemyAi {
                         // SetViewStatus(EYES_DIE_OR_GET_UNCONSCIOUS)
                         // applies whenever the attacker info was human,
                         // regardless of which sub-arm fired.
-                        self.base.outbox.recovery.set_eye_status =
-                            Some(crate::element::EyeStatus::DieOrGetUnconscious);
+                        // Keep this on the owner FIFO: in the Original this
+                        // statement is the tail of EVENT_GOTHIT, after
+                        // StopAll()/AttackEnemy() have synchronously applied
+                        // their gaze effects.  The recovery slot is drained
+                        // before the actor-effect fixed point and would let
+                        // StopAll's deferred Unfocus overwrite this status
+                        // with LookForward afterward.
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::SetEyeStatus(
+                                crate::element::EyeStatus::DieOrGetUnconscious,
+                            ),
+                        );
                     } else {
                         // Non-human stimulus info — clear primary_target.
                         self.base.primary_target = 0;
@@ -3606,10 +3616,12 @@ mod tests {
             ai.base.outbox.actor.halt,
             "Original StopAll arm runs once the live opponent list is empty"
         );
-        assert_eq!(
-            ai.base.outbox.recovery.set_eye_status,
-            Some(crate::element::EyeStatus::DieOrGetUnconscious)
-        );
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.last(),
+            Some(crate::ai::AiOwnerWork::SetEyeStatus(
+                crate::element::EyeStatus::DieOrGetUnconscious
+            ))
+        ));
     }
 
     #[test]

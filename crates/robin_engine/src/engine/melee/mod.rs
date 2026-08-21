@@ -3897,6 +3897,13 @@ mod tests {
             (seq_id, 0),
         );
 
+        // EVENT_GOTHIT first runs StopAll (which queues Unfocus) and only
+        // then sets EYES_DIE_OR_GET_UNCONSCIOUS. Exercise the complete
+        // fixed-point drain: applying the tail eye write through the earlier
+        // recovery channel made this pass immediately after Translate but
+        // regress to LookForward once the queued Unfocus was drained.
+        engine.drain_pending_for_npc(&crate::sim_rng::test_context(), victim, &assets);
+
         let victim_entity = engine.get_entity(victim).unwrap();
         assert_eq!(
             victim_entity.npc_data().unwrap().eye_status,
