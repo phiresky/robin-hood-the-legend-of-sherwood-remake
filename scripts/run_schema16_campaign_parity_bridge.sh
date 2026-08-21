@@ -58,11 +58,17 @@ promote_exact_eof_statuses() {
 }
 
 seed_audit_from_permanent_eof() {
+    local campaign=$1 campaign_key
+    campaign_key=${campaign#"$workspace/"}
+    campaign_key=${campaign_key//\//__}
+
     # Exact EOF is monotonic campaign evidence.  A later runner audits only
     # unseen or previously nonzero traces, so permanent zeros intentionally
     # replace any stale nonzero result in the runner-specific namespace.
-    rsync -a "$permanent_eof_dir/status/" "$audit_dir/status/"
-    rsync -a -e "ssh -F $ssh_config" \
+    rsync -a --include="${campaign_key}__*" --exclude='*' \
+        "$permanent_eof_dir/status/" "$audit_dir/status/"
+    rsync -a --include="${campaign_key}__*" --exclude='*' \
+        -e "ssh -F $ssh_config" \
         "$permanent_eof_dir/status/" \
         "$remote_host:$remote_audit/status/"
 }
@@ -156,7 +162,6 @@ run_remote_sync() {
         return 1
     fi
     promote_exact_eof_statuses
-    seed_audit_from_permanent_eof || return 1
 
     while ladder_is_running; do
         if ! campaign=$(active_campaign); then
@@ -166,6 +171,7 @@ run_remote_sync() {
         if [[ "$campaign" != "$previous_campaign" ]]; then
             printf '%s remote mirror following %s\n' "$(date -Is)" "$campaign"
             previous_campaign=$campaign
+            seed_audit_from_permanent_eof "$campaign" || return 1
         fi
         if ! write_complete_trace_manifest "$campaign" "$manifest"; then
             printf 'warning: could not refresh remote manifest for %s\n' "$campaign" >&2
@@ -205,8 +211,6 @@ run_remote_sync() {
             "$remote_host:$remote_audit/logs/" "$audit_dir/logs/" \
             || printf 'warning: could not pull remote logs\n' >&2
         promote_exact_eof_statuses
-        seed_audit_from_permanent_eof \
-            || printf 'warning: could not seed permanent EOF statuses\n' >&2
         sleep "$poll_seconds"
     done
 }
