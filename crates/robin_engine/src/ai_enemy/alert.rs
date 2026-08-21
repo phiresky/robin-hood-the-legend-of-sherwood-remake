@@ -101,9 +101,9 @@ fn can_alert_officer(
 /// Substates for which Original's `AlertOfficer` scan treats a soldier as
 /// already reporting to an officer.
 ///
-/// The global camp registry includes the caller itself.  Our
-/// `tick.camp_soldiers` snapshot deliberately omits the owner, so the owner
-/// gate must be evaluated separately before walking that snapshot.
+/// The global camp registry includes the caller itself. Our
+/// `tick.camp_soldiers` snapshot deliberately omits the owner, so callers
+/// must splice the owner back into its stable handle-order slot.
 fn is_alerting_an_officer(substate: Substate) -> bool {
     matches!(
         substate,
@@ -121,6 +121,14 @@ fn is_alerting_an_officer(substate: Substate) -> bool {
             | Substate::SeekingRunningToOfficer
             | Substate::SeekingRunningToOfficerSeen
     )
+}
+
+fn sorted_owner_insertion_index<T>(
+    entries: &[T],
+    owner: NpcHandle,
+    handle: impl Fn(&T) -> NpcHandle,
+) -> usize {
+    entries.partition_point(|entry| handle(entry) < owner)
 }
 
 /// Distance stored on each accepted soldier before Original inserts it into
@@ -1161,21 +1169,31 @@ impl EnemyAi {
         }
 
         if nearest_officer.is_none() {
-            // Original scans every same-camp soldier, including `mpMe`.
-            // A retry from RUNNING_TO_OFFICER therefore sees the caller as
-            // somebody already reporting and aborts the search.  Preserve
-            // the literal 360-degree query as well: besides the active /
-            // outside-building gates it contributes an authoritative
-            // visibility event.
-            if is_alerting_an_officer(self.base.current_substate)
-                && self.is_detecting_360_degrees(self.base.me, ctx)
-            {
-                return false;
-            }
-
             let mut max_distance = combat::MAX_ALERT_OFFICER_RADIUS as u32;
-
-            for cs in &tick.camp_soldiers {
+            // Original walks the complete same-camp registry in stable handle
+            // order. The tick snapshot omits the owner, so splice its literal
+            // self-detection check back into that order instead of checking it
+            // first. An earlier reporting friend must win and publish that
+            // friend's visibility query before the scan reaches `mpMe`.
+            let owner_index =
+                sorted_owner_insertion_index(&tick.camp_soldiers, self.base.me, |soldier| {
+                    soldier.handle
+                });
+            for registry_index in 0..=tick.camp_soldiers.len() {
+                if registry_index == owner_index {
+                    if is_alerting_an_officer(self.base.current_substate)
+                        && self.is_detecting_360_degrees(self.base.me, ctx)
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                let snapshot_index = if registry_index < owner_index {
+                    registry_index
+                } else {
+                    registry_index - 1
+                };
+                let cs = &tick.camp_soldiers[snapshot_index];
                 match cs.rank {
                     ProfileRank::Officer => {
                         // Candidate officer: must be able to fight, in DEFAULT
@@ -1993,6 +2011,26 @@ mod tests {
         assert!(!is_alerting_an_officer(
             Substate::SeekingOfficerWaitForInstructedSoldier
         ));
+    }
+
+    #[test]
+    fn alert_officer_splices_owner_into_registry_order() {
+        // Linux3/Profile003/Save019/r003 frame 18995: reporting Soldier100
+        // precedes the evaluating Soldier101. Original observes Soldier100's
+        // visibility query and aborts before it ever reaches the owner.
+        let without_owner = [100_u32, 102];
+        assert_eq!(
+            sorted_owner_insertion_index(&without_owner, 101, |handle| *handle),
+            1
+        );
+        assert_eq!(
+            sorted_owner_insertion_index(&without_owner, 99, |handle| *handle),
+            0
+        );
+        assert_eq!(
+            sorted_owner_insertion_index(&without_owner, 103, |handle| *handle),
+            2
+        );
     }
 
     #[test]
