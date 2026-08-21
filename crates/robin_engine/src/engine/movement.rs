@@ -1464,6 +1464,18 @@ fn perform_seek_exposes_motion_termination(
     starts_post_seek || final_entity_seek_arrival != Some(true)
 }
 
+fn both_sword_ranges_contain_distance(
+    distance: f32,
+    my_maximal: u16,
+    my_uber: u16,
+    opponent_maximal: u16,
+    opponent_uber: u16,
+) -> bool {
+    let between =
+        |maximal: u16, uber: u16| f32::from(maximal) < distance && distance <= f32::from(uber);
+    between(my_maximal, my_uber) && between(opponent_maximal, opponent_uber)
+}
+
 /// Does the step this Execute is about to commit satisfy `IsGoalReached`?
 ///
 /// `PerformMotion` moves first and only then asks the position interface
@@ -4152,17 +4164,17 @@ impl EngineInner {
         }
     }
 
-    fn maybe_provoke_after_sword_movement_terminated(
-        &mut self,
+    fn sword_movement_termination_warrants_provoke(
+        &self,
         assets: &crate::engine::LevelAssets,
         entity_id: EntityId,
-    ) {
+    ) -> bool {
         let principal_id = self
             .get_entity(entity_id)
             .and_then(|e| e.human_data())
             .and_then(|h| h.opponents.first().copied());
         let Some(principal_id) = principal_id else {
-            return;
+            return false;
         };
 
         let is_mutual = self
@@ -4172,7 +4184,7 @@ impl EngineInner {
             .map(|opp| opp == entity_id)
             .unwrap_or(false);
         if !is_mutual {
-            return;
+            return false;
         }
 
         let me = self.expect_entity(entity_id, "sword-movement provoke owner");
@@ -4188,38 +4200,45 @@ impl EngineInner {
             crate::engine::melee::get_hth_weapon_id_full(me, &assets.profile_manager)
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
         else {
-            return;
+            return false;
         };
         let Some(opponent_weapon) =
             crate::engine::melee::get_hth_weapon_id_full(opponent, &assets.profile_manager)
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
         else {
-            return;
+            return false;
         };
 
-        let between = |weapon: &crate::profiles::HtHWeaponProfile| {
-            let lo = weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32;
-            let hi = weapon.distance[crate::weapons::WeaponDistance::Uber as usize] as f32;
-            lo < distance && distance <= hi
-        };
+        let my_maximal = me_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize];
+        let my_uber = me_weapon.distance[crate::weapons::WeaponDistance::Uber as usize];
+        let opponent_maximal =
+            opponent_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize];
+        let opponent_uber = opponent_weapon.distance[crate::weapons::WeaponDistance::Uber as usize];
         tracing::trace!(
             ?entity_id,
             ?principal_id,
             distance,
-            my_maximal = me_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
-            my_uber = me_weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
-            opponent_maximal =
-                opponent_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
-            opponent_uber = opponent_weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
+            my_maximal,
+            my_uber,
+            opponent_maximal,
+            opponent_uber,
             "checking sword-movement termination Provoke"
         );
-        if between(me_weapon) && between(opponent_weapon) {
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                crate::element::Command::Provoke,
-                Some(entity_id),
-            ));
-        }
+        both_sword_ranges_contain_distance(
+            distance,
+            my_maximal,
+            my_uber,
+            opponent_maximal,
+            opponent_uber,
+        )
+    }
+
+    fn launch_sword_movement_termination_provoke(&mut self, entity_id: EntityId) {
+        self.launch_element(crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::Provoke,
+            Some(entity_id),
+        ));
     }
 
     // ─── Order system ─────────────────────────────────────────────
@@ -8532,6 +8551,19 @@ impl EngineInner {
                 }
             }
         }
+        // Original evaluates the terminal sword-movement Provoke gate inside
+        // Human::Execute, before base Actor::Hourglass runs line-crossing
+        // callbacks. Those callbacks may project the actor onto a different
+        // elevation and move the live 3D position across a weapon-range
+        // boundary. Snapshot the complete mutual-opponent/range decision now;
+        // sequence registration remains deferred until the movement order has
+        // advanced below.
+        let sword_movement_provokes = sword_movement_terminations
+            .into_iter()
+            .filter(|&entity_id| {
+                self.sword_movement_termination_warrants_provoke(assets, entity_id)
+            })
+            .collect::<Vec<_>>();
         for entity_id in door_pass_transition_start_effects {
             self.apply_door_pass_transition_start_side_effects(assets, entity_id);
         }
@@ -8872,8 +8904,8 @@ impl EngineInner {
         // movement order has advanced. Launching before `do_next_order`
         // incorrectly compares the Wait-priority Provoke against the still
         // InProgress movement and abandons it.
-        for entity_id in sword_movement_terminations {
-            self.maybe_provoke_after_sword_movement_terminated(assets, entity_id);
+        for entity_id in sword_movement_provokes {
+            self.launch_sword_movement_termination_provoke(entity_id);
         }
 
         // Drain water-splash titbit emissions queued from the walk
@@ -18426,8 +18458,9 @@ mod movement_transition_state_tests {
 #[cfg(test)]
 mod arrival_snap_tests {
     use super::{
-        MovementDeferred, perform_seek_exposes_motion_termination,
-        queue_committed_arrival_crossing, should_snap_arrival,
+        MovementDeferred, both_sword_ranges_contain_distance,
+        perform_seek_exposes_motion_termination, queue_committed_arrival_crossing,
+        should_snap_arrival,
     };
     use crate::coordinates::MapPoint;
     use crate::element::{EntityId, PcId};
@@ -18493,6 +18526,32 @@ mod arrival_snap_tests {
         assert!(!perform_seek_exposes_motion_termination(false, Some(true)));
         assert!(perform_seek_exposes_motion_termination(true, Some(true)));
         assert!(perform_seek_exposes_motion_termination(false, None));
+    }
+
+    #[test]
+    fn sword_provoke_range_is_snapshotted_before_line_crossing_projection() {
+        // Linux2/Profile002/Savegame_015/replay-016: Original evaluates the
+        // terminal gate inside Human::Execute at 89.7441025. Actor::Hourglass
+        // then projects the owner onto a crossed elevation line, where the
+        // same live-position calculation becomes 90.76145. The owner's
+        // MAXIMAL boundary is 90, so re-evaluating after crossing invents a
+        // Provoke that Original never registered.
+        let execute_distance = f32::from_bits(0x42b3_7cfb);
+        let after_crossing_distance = 90.76145_f32;
+        assert!(!both_sword_ranges_contain_distance(
+            execute_distance,
+            90,
+            150,
+            70,
+            150
+        ));
+        assert!(both_sword_ranges_contain_distance(
+            after_crossing_distance,
+            90,
+            150,
+            70,
+            150
+        ));
     }
 }
 
