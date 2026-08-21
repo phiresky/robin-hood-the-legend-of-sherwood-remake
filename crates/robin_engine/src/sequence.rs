@@ -1958,6 +1958,13 @@ pub struct StateChangeEffects {
     /// interrupted — the sequence manager takes this (seq_id, elem_idx)
     /// pair and registers it back on the `elements_to_go` queue.
     pub resume_cross_postponed: Option<(SequenceId, usize)>,
+    /// Cross-sequence postponed link whose installation belongs after this
+    /// element's synchronous `SendCondolationCard` callback. Actor priority
+    /// arbitration can interrupt an existing postponed successor while an
+    /// incoming element is still inside `Instruct`; Original does not expose
+    /// that incoming element through the blocker's postponed pointer until
+    /// the interrupted successor's callback returns.
+    pub install_cross_postponed_after_card: Option<(SequenceId, usize, SequenceId, usize)>,
     /// Owner entity to notify via `SendCondolationCard`.
     pub notify_owner: Option<EntityId>,
     /// Full condolation record (owner + command + terminal state) —
@@ -1997,6 +2004,7 @@ impl Sequence {
             signal_ready: false,
             start_postponed: None,
             resume_cross_postponed: None,
+            install_cross_postponed_after_card: None,
             notify_owner: None,
             condolation: None,
             increment_in_progress: false,
@@ -2933,6 +2941,44 @@ impl SequenceManager {
         self.halt_pending |= pending.card.from_halt;
         self.process_effects_after_condolation(pending.card.seq_id, pending.effects_after_card);
         self.halt_pending = was_halt_pending;
+    }
+
+    /// Suspend a cross-postponed replacement at the same callback boundary as
+    /// an interrupted predecessor. This is the continuation of the outer
+    /// Actor::Instruct priority arbitration, not a successor released by the
+    /// interrupted element itself.
+    pub fn install_cross_postponed_after_condolation(
+        &mut self,
+        interrupted: (SequenceId, usize),
+        blocker: (SequenceId, usize),
+        waiter: (SequenceId, usize),
+    ) {
+        let pending = self
+            .pending_condolations
+            .iter_mut()
+            .rev()
+            .find(|pending| {
+                pending.card.seq_id == interrupted.0
+                    && usize::from(pending.card.elem_idx) == interrupted.1
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "interrupted postponed element {:?}/{} produced no condolence continuation",
+                    interrupted.0, interrupted.1
+                )
+            });
+        assert!(
+            pending
+                .effects_after_card
+                .install_cross_postponed_after_card
+                .is_none(),
+            "interrupted postponed element {:?}/{} already has a deferred cross install",
+            interrupted.0,
+            interrupted.1
+        );
+        pending
+            .effects_after_card
+            .install_cross_postponed_after_card = Some((blocker.0, blocker.1, waiter.0, waiter.1));
     }
 
     /// Number of active sequences.
@@ -4683,6 +4729,7 @@ impl SequenceManager {
         seq_id: SequenceId,
         effects: StateChangeEffects,
     ) {
+        let install_cross_postponed_after_card = effects.install_cross_postponed_after_card;
         // Process cascading state changes
         for (cascade_elem_idx, cascade_state, cascade_flags) in effects.cascade {
             let sub_effects = {
@@ -4753,6 +4800,36 @@ impl SequenceManager {
             effects.start_postponed,
             effects.resume_cross_postponed,
         );
+
+        if let Some((blocker_seq, blocker_idx, waiter_seq, waiter_idx)) =
+            install_cross_postponed_after_card
+        {
+            let waiter_state = self
+                .get_element(waiter_seq, waiter_idx)
+                .map(|element| element.state)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "deferred cross-postponed waiter {waiter_seq:?}/{waiter_idx} disappeared"
+                    )
+                });
+            assert_eq!(
+                waiter_state,
+                SequenceState::Postponed,
+                "deferred cross-postponed waiter {waiter_seq:?}/{waiter_idx} is not postponed"
+            );
+            let blocker = self
+                .get_element_mut(blocker_seq, blocker_idx)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} disappeared"
+                    )
+                });
+            assert!(
+                blocker.cross_postponed.is_none(),
+                "deferred cross-postponed blocker {blocker_seq:?}/{blocker_idx} acquired another waiter"
+            );
+            blocker.cross_postponed = Some((waiter_seq, waiter_idx));
+        }
     }
 
     fn resume_postponed_effects(

@@ -3211,18 +3211,14 @@ impl EngineInner {
                 }
                 PriorityDecision::InterruptCurrent => {
                     // waiter inherits existing's postponed chain;
-                    // existing becomes Interrupted.  Then install
-                    // waiter in blocker's slot.
+                    // existing becomes Interrupted. Original SetState calls
+                    // SendCondolationCard synchronously before the outer
+                    // Instruct resumes and installs waiter in blocker's slot.
                     self.orders.sequence_manager.take_over_postponed(
                         waiter_seq,
                         waiter_idx,
                         existing_seq,
                         existing_idx,
-                    );
-                    self.orders.sequence_manager.element_interrupted(
-                        existing_seq,
-                        existing_idx,
-                        crate::sequence::CascadeFlags::NEXT_LEVEL,
                     );
                     if let Some(b) = self
                         .orders
@@ -3231,6 +3227,20 @@ impl EngineInner {
                     {
                         b.cross_postponed = None;
                     }
+                    self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
+                    self.orders.sequence_manager.element_interrupted(
+                        existing_seq,
+                        existing_idx,
+                        crate::sequence::CascadeFlags::NEXT_LEVEL,
+                    );
+                    self.orders
+                        .sequence_manager
+                        .install_cross_postponed_after_condolation(
+                            (existing_seq, existing_idx),
+                            (blocker_seq, blocker_idx),
+                            (waiter_seq, waiter_idx),
+                        );
+                    return;
                 }
             }
         }
@@ -3284,7 +3294,21 @@ impl EngineInner {
         {
             b.cross_postponed = Some((waiter_seq, waiter_idx));
         }
+        self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
+        tracing::trace!(
+            target: "parity_launch",
+            depth,
+            blocker = ?(blocker_seq, blocker_idx),
+            waiter = ?(waiter_seq, waiter_idx),
+            "engine_postpone exit"
+        );
+    }
 
+    fn prepare_cross_postponed_waiter(
+        &mut self,
+        waiter_seq: crate::sequence::SequenceId,
+        waiter_idx: usize,
+    ) {
         // RHSequenceElementMovement::SetState(RHSEQ_POSTPONED) restores a
         // translated movement element to its untranslated command before the
         // common sequence-state transition runs. A resumed element is sent
@@ -3345,13 +3369,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .postpone_element(waiter_seq, waiter_idx);
-        tracing::trace!(
-            target: "parity_launch",
-            depth,
-            blocker = ?(blocker_seq, blocker_idx),
-            waiter = ?(waiter_seq, waiter_idx),
-            "engine_postpone exit"
-        );
     }
 
     /// Cancel any active pathfinder request / active-movement / active-
