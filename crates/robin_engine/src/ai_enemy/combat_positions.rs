@@ -3024,12 +3024,31 @@ impl EnemyAi {
         }
         if !detects_primary {
             // Lost sight: forecast their direction and abandon the fight.
-            if let Some(prepared) = &tick.primary_target_forecast {
-                let forecast =
-                    prepared.resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
-                self.base.seek_position = forecast.position;
-                self.pc_gone_away_in_this_direction = forecast.direction;
-            }
+            // `primary_target` may just have changed to the actor's principal
+            // opponent. Never apply the tick's old primary-target forecast to
+            // that replacement: Original refreshes mpPrimaryTarget first and
+            // calls ForecastDestinationForIA on the refreshed pointer.
+            let prepared = tick
+                .enemy_detectable_forecasts
+                .iter()
+                .find_map(|(handle, forecast)| {
+                    (*handle == self.base.primary_target).then_some(forecast)
+                })
+                .or_else(|| {
+                    (tick.primary_target_snapshot_handle == self.base.primary_target)
+                        .then_some(tick.primary_target_forecast.as_ref())
+                        .flatten()
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "ReconsiderSwordfight refreshed primary target {} without a matching destination forecast",
+                        self.base.primary_target
+                    )
+                });
+            let forecast =
+                prepared.resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
+            self.base.seek_position = forecast.position;
+            self.pc_gone_away_in_this_direction = forecast.direction;
             self.missed_pc = self.base.primary_target;
             self.pc_missed = true;
             self.end_swordfight(ctx, tick);
@@ -3038,9 +3057,16 @@ impl EnemyAi {
             self.base.outbox.actor.set_unfocus();
 
             // Chase or overview depending on target type and personality.
-            if tick.primary_target_is_pc
-                && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
-            {
+            let missed_is_pc = ctx
+                .entity_view(self.missed_pc)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "ReconsiderSwordfight lost refreshed target {} without an entity view",
+                        self.missed_pc
+                    )
+                })
+                .is_pc;
+            if missed_is_pc && self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
                 self.base.say(Remark::HuntsEnemy);
                 self.seek_area(
                     sim,
@@ -5271,6 +5297,7 @@ mod tests {
             is_friendly: true,
             ..FighterSnapshot::default()
         });
+        tick.primary_target_snapshot_handle = TARGET;
         tick.primary_target_is_pc = true;
         tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
             position(0.0, 100.0),
@@ -5347,6 +5374,46 @@ mod tests {
         assert_eq!(ai.base.outbox.actor.set_direction_instantly, None);
         assert_eq!(ai.seek_center, position(0.0, 100.0));
         assert_eq!(ai.base.current_state, AiState::Seeking);
+    }
+
+    #[test]
+    fn lost_enemy_refreshes_forecast_with_swordfight_principal() {
+        // Savegame_029 replay-032 frame 5296: the AI member still named PC
+        // 168, while GetPrincipalOpponent returned PC 169. The old forecast
+        // centered SeekArea on 168 and changed its RNG draw count.
+        const OLD_TARGET: u32 = 20;
+        const NEW_PRINCIPAL: u32 = 22;
+        let (mut ai, mut ctx, mut tick) = lost_enemy_reconsider_fixture(0);
+        debug_assert_eq!(ai.base.primary_target, OLD_TARGET);
+
+        let old_view = ctx.entity_view(OLD_TARGET).unwrap().clone();
+        let mut new_view = old_view.clone();
+        new_view.position = position(300.0, 400.0);
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(OLD_TARGET, old_view);
+        views.insert(NEW_PRINCIPAL, new_view);
+        ctx.entity_views = crate::ai_entity_view::shared_entity_views(views);
+
+        tick.fighter_registry[0].principal_opponent = NEW_PRINCIPAL;
+        let refreshed_forecast = position(500.0, 600.0);
+        tick.enemy_detectable_forecasts.push((
+            NEW_PRINCIPAL,
+            crate::ai::PreparedForecastDestination::fixed(refreshed_forecast, 7),
+        ));
+
+        let sim = SimulationContext::with_seed(0);
+        ai.reconsider_swordfight(
+            &sim,
+            false,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.missed_pc, NEW_PRINCIPAL);
+        assert_eq!(ai.seek_center, refreshed_forecast);
+        assert_ne!(ai.seek_center, position(0.0, 100.0));
     }
 
     #[test]

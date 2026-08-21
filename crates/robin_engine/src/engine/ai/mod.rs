@@ -3808,6 +3808,47 @@ impl EngineInner {
         // Build this for every Think boundary, not only RefreshDetection,
         // because timer/report callbacks also enter SeekArea synchronously.
         let doors = self.script_domains.interactables.doors.as_slice();
+        // ReconsiderSwordfight refreshes `primary_target` from the actor's
+        // principal opponent before it forecasts a lost opponent.  That
+        // principal can differ from the AI member captured above, so retain
+        // prepared forecasts by detectable handle as well as in the
+        // primary-target convenience slot.  Detection dispatch rebuilds this
+        // list with owner-boundary positions; timer/sequence dispatches still
+        // need the live variants populated here.
+        if build_forecasts {
+            for detectable in &soldier.npc.detectable_lists[enemy_idx] {
+                let Some(target_id) = detectable.element else {
+                    continue;
+                };
+                let target = self.world.entities.get(target_id).unwrap_or_else(|| {
+                    panic!(
+                        "NPC {} has Enemy detectable for missing actor {}",
+                        npc_id.index(),
+                        target_id.index()
+                    )
+                });
+                let input = extract_forecast_input(
+                    target,
+                    selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "NPC {} requires a destination forecast for non-actor {}",
+                        npc_id.index(),
+                        target_id.index()
+                    )
+                });
+                tick.enemy_detectable_forecasts.push((
+                    target_id.index(),
+                    crate::ai::prepare_forecast_destination_for_ia(
+                        &input,
+                        doors,
+                        &self.world.fast_grid.level.sectors,
+                        &self.world.fast_grid.level.sector_number_map,
+                    ),
+                ));
+            }
+        }
         let frame = self.frame_counter();
         // Keep the diagnostic entirely absent from the disabled path. In
         // particular, do not resolve Original identity for an observation
