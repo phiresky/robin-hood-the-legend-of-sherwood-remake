@@ -5558,7 +5558,23 @@ impl AiController {
 
             Substate::FleeingHiding => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                    // Original calls the virtual ReturnToDuty here
+                    // (RHArtificialIntelligence.cpp:1950-1955).  Friendly's
+                    // override clears muwFleeingSeenEnemyCounter before
+                    // entering the common tail; bypassing it can permanently
+                    // suppress later EVENT_VIEW panic refreshes once the
+                    // counter has reached its cap.
+                    self.outbox
+                        .reentrant
+                        .owner_work
+                        .push(AiOwnerWork::VirtualReturnToDuty {
+                            flags: DutyFlags::empty(),
+                            owner_boundary_positions: ctx
+                                .entity_views
+                                .iter()
+                                .map(|(&handle, view)| (handle, view.position))
+                                .collect(),
+                        });
                 }
             }
 

@@ -3053,7 +3053,7 @@ mod tests {
     }
 
     #[test]
-    fn fleeing_event_view_uses_directed_panic_from_human_position() {
+    fn hiding_timer_uses_virtual_return_before_fleeing_event_view_panics() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         // EVENT_VIEW while fleeing must fire a *directed* panic
@@ -3065,6 +3065,41 @@ mod tests {
         use crate::element::{Camp, Posture};
         use crate::order::OrderType;
         let mut ai = FriendlyAi::new(1);
+
+        // RHArtificialIntelligence's hiding-timer arm calls the virtual
+        // ReturnToDuty.  The engine drains this owner work through
+        // FriendlyAi::return_to_duty, whose override resets the capped
+        // fleeing-view counter before running the ordinary common tail.
+        ai.fleeing_seen_enemy_counter = 7;
+        ai.set_state(AiState::Fleeing, Substate::FleeingHiding);
+        ai.think_expected_event(
+            sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &FriendlyPerTickData::without_patrol_chief(),
+            None,
+            None,
+        );
+        assert_eq!(ai.fleeing_seen_enemy_counter, 7);
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, Substate::FleeingHiding);
+        let work = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .pop()
+            .expect("hiding timer must invoke virtual ReturnToDuty");
+        assert!(matches!(
+            work,
+            crate::ai::AiOwnerWork::VirtualReturnToDuty { .. }
+        ));
+        ai.return_to_duty(sim, DutyFlags::empty(), &AiContext::default());
+        assert_eq!(ai.fleeing_seen_enemy_counter, 0);
+        assert_eq!(ai.base.current_state, AiState::Default);
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+
         ai.set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
 
         let human_handle: u32 = 42;
