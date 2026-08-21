@@ -5,6 +5,7 @@
 //! see the parent's private fields and helpers.
 
 use crate::ai::*;
+use crate::order::AiOrderIntent;
 use crate::parameters_ai;
 
 use super::util::{
@@ -4510,7 +4511,17 @@ impl EnemyAi {
             StimulusType::EventReachPoint => {
                 let first_new_order = self.base.outbox.actor.orders.len();
                 if self.gather_position_instructed {
-                    self.base.face_direction(self.gather_direction, ctx);
+                    // Original reaches FaceTo while the completed GoTo still
+                    // presents its movement action state. Rust has already
+                    // staged Waiting in `ctx`, which would incorrectly take
+                    // FaceTo's same-direction shortcut and synchronously fire
+                    // EventDone. Author the Turn directly at this route-
+                    // arrival boundary instead.
+                    self.base
+                        .outbox
+                        .actor
+                        .orders
+                        .push(AiOrderIntent::face_direction(self.gather_direction as i16));
                 } else {
                     self.face_npc(self.base.antagonist, ctx);
                 }
@@ -11077,9 +11088,11 @@ mod tests {
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
         ai.gather_position_instructed = true;
-        ai.gather_direction = 9;
+        ai.gather_direction = 8;
         let ctx = AiContext {
-            self_action_state: crate::element::ActionState::Moving,
+            // Rust has already staged Waiting here, even though Original's
+            // FaceTo still observes the just-completed movement boundary.
+            self_action_state: crate::element::ActionState::Waiting,
             direction: 8,
             ..AiContext::default()
         };
