@@ -5218,7 +5218,6 @@ impl EngineInner {
                     order_completion,
                     order_tolerance,
                     order_target,
-                    defer_initial_turn_step,
                 ) = if let Some((seq_id, elem_idx, order)) = order_snapshot {
                     (
                         Some((seq_id, elem_idx)),
@@ -5228,7 +5227,6 @@ impl EngineInner {
                         Some(order.completion.clone()),
                         order.tolerance,
                         crate::coordinates::MapPoint::new(order.target_x, order.target_y),
-                        order.defer_initial_turn_step,
                     )
                 } else {
                     (
@@ -5239,7 +5237,6 @@ impl EngineInner {
                         None,
                         0.0,
                         crate::coordinates::MapPoint::ZERO,
-                        false,
                     )
                 };
                 if let Some((seq_id, elem_idx)) = order_seq_elem
@@ -5506,21 +5503,17 @@ impl EngineInner {
                     }
                     let motion = if is_turn {
                         let direction_before_turn = entity.element_data().direction() as u16;
-                        let still_turning = if order_is_initialising && defer_initial_turn_step {
-                            true
-                        } else {
-                            turn_with_provenance(
-                                entity,
-                                entity_id,
-                                self.control.frame_counter,
-                                if cur_command == Some(Command::TurnFast) {
-                                    "turn_order_fast"
-                                } else {
-                                    "turn_order"
-                                },
-                                cur_command == Some(Command::TurnFast),
-                            )
-                        };
+                        let still_turning = turn_with_provenance(
+                            entity,
+                            entity_id,
+                            self.control.frame_counter,
+                            if cur_command == Some(Command::TurnFast) {
+                                "turn_order_fast"
+                            } else {
+                                "turn_order"
+                            },
+                            cur_command == Some(Command::TurnFast),
+                        );
                         if !globally_frozen {
                             let direction_after_turn = entity.element_data().direction() as u16;
                             // Base Actor executes Turn before PerformAction,

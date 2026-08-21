@@ -4509,7 +4509,6 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventReachPoint => {
-                let first_new_order = self.base.outbox.actor.orders.len();
                 if self.gather_position_instructed {
                     // Original reaches FaceTo while the completed GoTo still
                     // presents its movement action state. Rust has already
@@ -4524,13 +4523,6 @@ impl EnemyAi {
                         .push(AiOrderIntent::face_direction(self.gather_direction as i16));
                 } else {
                     self.face_npc(self.base.antagonist, ctx);
-                }
-                // EndThink reaches this nested handler only after the actor's
-                // Original Hourglass slot. The manager may still instruct the
-                // authored Turn this frame, but its first Execute belongs to
-                // the next one.
-                if let Some(turn) = self.base.outbox.actor.orders.get_mut(first_new_order) {
-                    turn.defer_initial_turn_step = true;
                 }
             }
             StimulusType::EventDone => {
@@ -11083,7 +11075,7 @@ mod tests {
     }
 
     #[test]
-    fn group_reachpoint_turn_waits_for_next_actor_slot() {
+    fn group_reachpoint_same_direction_still_authors_turn() {
         let mut ai = EnemyAi::new(53);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
@@ -11108,7 +11100,6 @@ mod tests {
             panic!("group ReachPoint must author one Turn");
         };
         assert_eq!(turn.order_type, crate::order::OrderType::Turning);
-        assert!(turn.defer_initial_turn_step);
     }
 
     #[test]

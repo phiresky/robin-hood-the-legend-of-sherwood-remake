@@ -521,11 +521,6 @@ pub struct Order {
     pub target_actor: Option<u32>,
     /// Whether to compute facing direction from movement.
     pub compute_direction: bool,
-    /// Compatibility tag for AI turns queued during mission construction.
-    /// Those orders are already visible before Rust's first Hourglass, while
-    /// the original queues them during that first frame, so their first
-    /// visible Execute must not advance the body yet.
-    pub defer_initial_turn_step: bool,
     /// This PC distance order is the copy which finishes the unreached target
     /// of an exhausted `TillLastFrame` transition. Original exposes its first
     /// walking tick as `RHMOTION_IN_PROGRESS`, so the walking START action
@@ -599,7 +594,6 @@ impl Order {
             target_y: y,
             target_actor: None,
             compute_direction: true,
-            defer_initial_turn_step: false,
             transition_distance_continuation: false,
             deferred_movement_state_start: false,
             tolerance: 0.0,
@@ -721,7 +715,6 @@ pub struct AiOrderIntent {
     pub source_target_sector_identity_differs: bool,
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
-    pub defer_initial_turn_step: bool,
     /// Keep this ordinary actor command on `SequenceManager`'s deferred
     /// instruction queue. Common AI handlers launch these turns inline in
     /// C++, but `LaunchSequenceElement` does not call `Go` until the manager's
@@ -829,7 +822,6 @@ impl AiOrderIntent {
             source_target_sector_identity_differs: false,
             target_actor: None,
             compute_direction: true,
-            defer_initial_turn_step: false,
             defer_instruction: false,
             halt_after_launch_for_path_waiter: false,
             not_before_frame: None,
@@ -876,7 +868,6 @@ impl AiOrderIntent {
             target_y: self.target_y,
             target_actor: self.target_actor,
             compute_direction: self.compute_direction,
-            defer_initial_turn_step: self.defer_initial_turn_step,
             transition_distance_continuation: false,
             deferred_movement_state_start: false,
             tolerance: self.tolerance,
