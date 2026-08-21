@@ -5,7 +5,6 @@
 //! see the parent's private fields and helpers.
 
 use crate::ai::*;
-use crate::order::AiOrderIntent;
 use crate::parameters_ai;
 
 use super::util::{
@@ -4510,25 +4509,13 @@ impl EnemyAi {
             }
             StimulusType::EventReachPoint => {
                 if self.gather_position_instructed {
-                    if self.base.open_end_think_frames != 0 {
-                        // A GoTo which was already at its destination reaches
-                        // this handler recursively before Original unwinds the
-                        // calling Think. Original's actor still presents the
-                        // GoTo action there, so FaceTo authors a Turn even when
-                        // the directions match. Rust stages Waiting before it
-                        // surfaces that synchronous completion; preserve the
-                        // movement-state result explicitly for this route.
-                        self.base
-                            .outbox
-                            .actor
-                            .orders
-                            .push(AiOrderIntent::face_direction(self.gather_direction as i16));
-                    } else {
-                        // An ordinary movement completion arrives in its own
-                        // top-level Think. Match Original FaceTo, including its
-                        // same-direction Waiting shortcut to EventDone.
-                        self.base.face_direction(self.gather_direction, ctx);
-                    }
+                    // Original FaceTo keys its same-direction shortcut on the
+                    // actor's live action state, independently of whether the
+                    // ReachPoint arrived recursively. In particular, a GoTo
+                    // which was already at its destination retains either the
+                    // pre-existing Waiting state (shortcut to EventDone) or a
+                    // non-waiting state (author a Turn).
+                    self.base.face_direction(self.gather_direction, ctx);
                 } else {
                     self.face_npc(self.base.antagonist, ctx);
                 }
@@ -11194,15 +11181,14 @@ mod tests {
         let mut ai = EnemyAi::new(53);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
-        // The already-at-destination GoTo completion is surfaced recursively
-        // while its calling EndThink frame remains open.
+        // A non-waiting actor does not qualify for Original FaceTo's
+        // same-direction shortcut, even when the already-at-destination GoTo
+        // completion is surfaced recursively.
         ai.base.open_end_think_frames = 1;
         ai.gather_position_instructed = true;
         ai.gather_direction = 8;
         let ctx = AiContext {
-            // Rust has already staged Waiting here, even though Original's
-            // FaceTo still observes the just-completed movement boundary.
-            self_action_state: crate::element::ActionState::Waiting,
+            self_action_state: crate::element::ActionState::Moving,
             direction: 8,
             ..AiContext::default()
         };
@@ -11221,10 +11207,14 @@ mod tests {
     }
 
     #[test]
-    fn group_movement_reachpoint_same_direction_uses_waiting_shortcut() {
+    fn group_synchronous_reachpoint_retained_waiting_uses_same_direction_shortcut() {
         let mut ai = EnemyAi::new(171);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
+        // GoTo accepted an already-at-destination request without replacing
+        // the actor's pre-existing Wait action. FaceTo therefore observes
+        // Waiting while the recursive ReachPoint frame is still open.
+        ai.base.open_end_think_frames = 1;
         ai.gather_position_instructed = true;
         ai.gather_direction = 4;
         let ctx = AiContext {
