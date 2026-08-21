@@ -68,3 +68,8 @@ __pycache__/
 /concept-maps
 /factorio-mods
 /mission-maps
+/mods
+
+# Dover splat tooling build artifacts
+scripts/dover_splat_renderer/target/
+__pycache__/
