@@ -7199,12 +7199,12 @@ impl EnemyAi {
 
     fn attacking_door_fight_waiting(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
+        _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             if super::them_lifecycle_debug_matches(ctx) {
@@ -7217,8 +7217,12 @@ impl EnemyAi {
                     self.base.current_substate,
                 );
             }
-            self.reinitialize_them_list(ctx, tick);
-            self.battle_decisions(sim, global, ctx, tick, grid);
+            // Original resumes a door fight through GetBattleOverview: it
+            // rebuilds the enemy list and starts the left/right observation
+            // sequence. Going directly to BattleDecisions skips those
+            // observation states and can synchronously enter SeekArea,
+            // consuming selection RNG which Original has not requested yet.
+            self.get_battle_overview(0, ctx, tick);
         }
         false
     }
@@ -9426,6 +9430,39 @@ mod tests {
                 z: 0.0,
             })
         ));
+    }
+
+    #[test]
+    fn door_fight_wait_timer_starts_battle_overview() {
+        // Savegame_033 replay-024 frame 24033: entering BattleDecisions
+        // directly selected SeekArea and consumed an RNG draw that Original
+        // did not make. RHArtificialMalignity handles this timer by calling
+        // GetBattleOverview and beginning the observation sequence instead.
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(95);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingDoorFightWaiting;
+        ai.list_them.push(170);
+
+        ai.attacking_door_fight_waiting(
+            &sim,
+            StimulusType::EventTimer,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert!(ai.list_them.is_empty());
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(crate::ai::LookDirection::Left)
+        );
     }
 
     #[test]
