@@ -9,7 +9,7 @@ use crate::host::ViewportState;
 use crate::native_font::{self, NativeFont};
 use crate::renderer::Renderer;
 use crate::ui_panel::{
-    PortraitCache, PortraitTarget, portrait_bar_items, portrait_capacity, slot_left_x,
+    PortraitCache, PortraitTarget, portrait_bar_items, portrait_slot_count, slot_left_x,
 };
 use robin_engine::character_kind as engine_character_kind;
 use robin_engine::coordinates as engine_coordinates;
@@ -575,7 +575,7 @@ fn render_portrait_text_gpu(
     let sh = renderer.screen_height();
 
     let (items, _) = portrait_bar_items(engine, local_seat, sw);
-    let capacity = portrait_capacity(sw);
+    let slot_count = portrait_slot_count(sw, items.len());
 
     for (slot, item) in items.iter().enumerate() {
         let pc_id = item.members[0];
@@ -599,7 +599,7 @@ fn render_portrait_text_gpu(
             CLOSE_POSITION_VISAGE
         };
 
-        let x = slot_left_x(sw, slot as u16, capacity) as i32;
+        let x = slot_left_x(sw, slot as u16, slot_count) as i32;
 
         let is_sword_fighting =
             matches!(entity, Entity::Pc(pc) if pc.actor.action_state.is_sword());
@@ -756,7 +756,7 @@ fn render_ammo_counts_gpu(
     let sh = renderer.screen_height();
 
     let (items, _) = portrait_bar_items(engine, local_seat, sw);
-    let capacity = portrait_capacity(sw);
+    let slot_count = portrait_slot_count(sw, items.len());
 
     for (slot, item) in items.iter().enumerate() {
         let PortraitTarget::Pc(pc_id) = item.target else {
@@ -778,7 +778,7 @@ fn render_ammo_counts_gpu(
             (&[ACTION1_WIDTH, ACTION2_WIDTH, ACTION3_WIDTH], 3)
         };
 
-        let x = slot_left_x(sw, slot as u16, capacity) as i32;
+        let x = slot_left_x(sw, slot as u16, slot_count) as i32;
         let scroll_top = (sh - POSITION_BOTTOM_SCROLL) as i32;
         let scroll_bot = (sh - BORDURE) as i32;
         let ammo_y = scroll_top + (scroll_bot - scroll_top - font.height() as i32) / 2;
@@ -802,6 +802,7 @@ fn render_ammo_counts_gpu(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_panel::portrait_capacity;
 
     #[test]
     fn slot_geometry_matches_ui_panel() {

@@ -1160,9 +1160,22 @@ fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
-/// Compute the pixel width of each portrait slot.
+/// Minimum number of layout slots the bar is divided into. Matches the
+/// original fixed five-slot layout so a small party stays spread out
+/// instead of packing into the left corner.
+const NUMBER_OF_SLOTS: usize = 5;
+
+/// Maximum number of portraits that physically fit across the panel.
 pub fn portrait_capacity(screen_width: u16) -> usize {
     usize::from(((screen_width.saturating_sub(2 * MARGIN)) / ELEMENT_WIDTH).max(1))
+}
+
+/// Number of layout slots the bar is divided into for `num_items` portraits.
+pub(crate) fn portrait_slot_count(screen_width: u16, num_items: usize) -> usize {
+    num_items.clamp(
+        NUMBER_OF_SLOTS,
+        portrait_capacity(screen_width).max(NUMBER_OF_SLOTS),
+    )
 }
 
 /// Compute the left X of a portrait element within its slot.
@@ -1739,7 +1752,7 @@ pub fn draw_panel(
     // walking `pc_ids` directly.
     let (portrait_items, paged) = portrait_bar_items(engine, local_seat, sw);
     let num_portraits = portrait_items.len() as u16;
-    let capacity = portrait_capacity(sw);
+    let slot_count = portrait_slot_count(sw, portrait_items.len());
     let frame = engine.frame_counter();
     let hovered_portrait =
         hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y);
@@ -1775,7 +1788,7 @@ pub fn draw_panel(
     }
 
     for slot in 0..num_portraits {
-        let x = slot_left_x(sw, slot, capacity);
+        let x = slot_left_x(sw, slot, slot_count);
         let x2 = x + ELEMENT_WIDTH;
 
         let item = &portrait_items[slot as usize];
@@ -2952,8 +2965,8 @@ pub fn hit_test_portrait(
     click_y: f32,
     num_pcs: usize,
 ) -> Option<u8> {
-    let capacity = portrait_capacity(screen_width);
-    let num_slots = num_pcs.min(capacity);
+    let num_slots = num_pcs.min(portrait_capacity(screen_width));
+    let slot_count = portrait_slot_count(screen_width, num_slots);
     let sh = screen_height;
 
     let panel_top = sh - PORTRAIT_TOTAL_HEIGHT;
@@ -2965,7 +2978,7 @@ pub fn hit_test_portrait(
     }
 
     for slot in 0..num_slots {
-        let x = slot_left_x(screen_width, slot as u16, capacity) as f32;
+        let x = slot_left_x(screen_width, slot as u16, slot_count) as f32;
         let x2 = x + ELEMENT_WIDTH as f32;
 
         if click_x >= x && click_x <= x2 {
@@ -2990,7 +3003,7 @@ pub fn hit_test_portrait_detailed(
     click_y: f32,
 ) -> Option<PortraitHit> {
     let (items, paged) = portrait_bar_items(engine, local_seat, screen_width);
-    let capacity = portrait_capacity(screen_width);
+    let slot_count = portrait_slot_count(screen_width, items.len());
     let num_slots = items.len();
     let sh = screen_height;
     let cy = click_y;
@@ -3029,7 +3042,7 @@ pub fn hit_test_portrait_detailed(
     }
 
     for (slot, item) in items.iter().enumerate().take(num_slots) {
-        let x = slot_left_x(screen_width, slot as u16, capacity) as f32;
+        let x = slot_left_x(screen_width, slot as u16, slot_count) as f32;
         let pin_right = x + f32::from(ALLIED_PIN_LEFT + ALLIED_PIN_ICON_SIZE);
         let x2 = if matches!(item.target, PortraitTarget::Pc(_)) {
             x + ELEMENT_WIDTH as f32
@@ -3242,7 +3255,7 @@ mod tests {
         // Each slot center should contain the 112px element
         let sw = 800u16;
         for slot in 0..5 {
-            let left = slot_left_x(sw, slot, portrait_capacity(sw));
+            let left = slot_left_x(sw, slot, portrait_slot_count(sw, 5));
             let right = left + ELEMENT_WIDTH;
             assert!(
                 left >= MARGIN || slot == 0,
@@ -3255,6 +3268,24 @@ mod tests {
                 slot
             );
         }
+    }
+
+    #[test]
+    fn few_portraits_spread_across_bar() {
+        // With five or fewer portraits the bar keeps the original
+        // five-slot layout: slots span the full width instead of
+        // packing element-width slots into the left corner.
+        for num_items in 1..=5 {
+            assert_eq!(portrait_slot_count(800, num_items), 5);
+        }
+        let slot_width = slot_left_x(800, 1, 5) - slot_left_x(800, 0, 5);
+        assert!(
+            slot_width > ELEMENT_WIDTH,
+            "five-slot layout should leave gaps between portraits"
+        );
+        // More items than the minimum divide the bar by the item count.
+        assert_eq!(portrait_slot_count(800, 6), 6);
+        assert_eq!(portrait_slot_count(1024, 7), 7);
     }
 
     #[test]
@@ -3450,7 +3481,7 @@ mod tests {
     #[test]
     fn hit_test_on_portrait_slot() {
         // screen 800x600, slot 0 starts at slot_left_x(800, 0)
-        let x = slot_left_x(800, 0, portrait_capacity(800)) as f32 + 10.0;
+        let x = slot_left_x(800, 0, portrait_slot_count(800, 3)) as f32 + 10.0;
         let y = 600.0 - 50.0; // within the panel area
         assert_eq!(hit_test_portrait(800, 600, x, y, 3), Some(0));
     }
@@ -3458,7 +3489,7 @@ mod tests {
     #[test]
     fn hit_test_empty_slots() {
         // No PCs means no hits even inside the panel
-        let x = slot_left_x(800, 0, portrait_capacity(800)) as f32 + 10.0;
+        let x = slot_left_x(800, 0, portrait_slot_count(800, 0)) as f32 + 10.0;
         let y = 600.0 - 50.0;
         assert_eq!(hit_test_portrait(800, 600, x, y, 0), None);
     }
@@ -3467,9 +3498,9 @@ mod tests {
     fn hit_test_between_slots() {
         // Click between slot boundaries (in the gap)
         let x0_right =
-            slot_left_x(800, 0, portrait_capacity(800)) as f32 + ELEMENT_WIDTH as f32 + 5.0;
+            slot_left_x(800, 0, portrait_slot_count(800, 3)) as f32 + ELEMENT_WIDTH as f32 + 5.0;
         let y = 600.0 - 50.0;
-        let x1_left = slot_left_x(800, 1, portrait_capacity(800)) as f32;
+        let x1_left = slot_left_x(800, 1, portrait_slot_count(800, 3)) as f32;
         // Only a gap hit if the click is truly between elements
         if x0_right < x1_left {
             assert_eq!(hit_test_portrait(800, 600, x0_right, y, 3), None);
