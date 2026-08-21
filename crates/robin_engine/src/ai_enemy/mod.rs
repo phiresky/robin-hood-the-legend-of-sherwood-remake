@@ -4753,7 +4753,7 @@ impl EnemyAi {
                 }
 
                 Question::ShallISendOutSoldier => {
-                    self.soldier_profile_initiative < 50 || !self.base.theoretical_patrol.is_empty()
+                    self.soldier_profile_initiative < 50 || !self.base.patrol.is_empty()
                 }
             };
         }
@@ -7239,6 +7239,30 @@ mod tests {
         ai.base.current_state = AiState::Default;
         ai.minimal_task_priority = task_priority::NONE;
         assert!(ai.answer_question(Question::HasTheNewTaskPriority, &ctx));
+    }
+
+    #[test]
+    fn send_out_soldier_uses_live_patrol_not_theoretical_patrol() {
+        let ctx = AiContext {
+            self_is_active: true,
+            in_building: false,
+            ..AiContext::default()
+        };
+        let mut ai = EnemyAi::new(1);
+        ai.soldier_profile_initiative = 60;
+
+        // RHArtificialMalignity::AnswerQuestion checks mlistPatrol here.
+        // A save may retain a theoretical patrol after its live patrol has
+        // emptied; that must not make the officer delegate body examination.
+        ai.base
+            .theoretical_patrol
+            .push(EntityId::Soldier(crate::entity_id::SoldierId(2)));
+        assert!(!ai.answer_question(Question::ShallISendOutSoldier, &ctx));
+
+        ai.base
+            .patrol
+            .push(EntityId::Soldier(crate::entity_id::SoldierId(2)));
+        assert!(ai.answer_question(Question::ShallISendOutSoldier, &ctx));
     }
 
     #[test]
