@@ -119,6 +119,23 @@ pub(super) fn opponent_sword_strike_time_limit(
     }
 }
 
+pub(super) fn captured_stale_impossible_deadline(
+    captured: Option<i16>,
+    required: bool,
+    frame: u32,
+    creation_order: u32,
+) -> i16 {
+    captured.unwrap_or_else(|| {
+        assert!(
+            !required,
+            "schema-16 frame {frame} is missing the captured stale-sprite strike deadline for target creation order {creation_order}"
+        );
+        // Historical schemas did not record the undefined read and observed
+        // -1 at their known boundary.
+        -1
+    })
+}
+
 impl EngineInner {
     /// Return the proposal deadline using Original's deliberately mixed view:
     /// `RHElementActor::GetAnimation()` exposes the live selected order, while
@@ -130,18 +147,37 @@ impl EngineInner {
     /// action point has passed and remains the permissive 1000 fallback.  An
     /// impossible marker is different even when the selected order is newer
     /// than the sprite row: Original still walks the stale row's delay vector
-    /// to `0xffff`, overflows its `SWORD` accumulator, and produces a negative
-    /// deadline.  Use the same deterministic strict deadline as the processed
-    /// impossible-row case instead of turning it into ordinary `-1`.
+    /// to `0xffff` through unchecked `std::vector::operator[]`, wrapping the
+    /// running `SWORD`. That allocator residue is not reproducible from game
+    /// state, so parity replays may provide the captured wrapped result.
     pub(super) fn opponent_sword_strike_time_limit_for_actor(
         &self,
         opponent: EntityId,
     ) -> Option<i16> {
         let animation = self.live_actor_animation(opponent)?;
         let entity = self.get_entity(opponent)?;
-        entity.actor_data()?;
+        let actor = entity.actor_data()?;
         let sprite = &entity.element_data().sprite;
-        let timing = sprite.action_done_timing();
+        let timing = match sprite.action_done_timing() {
+            crate::sprite::ActionDoneTiming::Impossible
+                if actor.installed_order.is_some_and(|order| {
+                    order.order_id.get() != sprite.last_processed_order_id
+                }) =>
+            {
+                let creation_order = self.world.original_creation_order(opponent);
+                crate::sprite::ActionDoneTiming::Frames(captured_stale_impossible_deadline(
+                    self.control
+                        .original_impossible_action_done_deadlines
+                        .get(&creation_order)
+                        .copied(),
+                    self.control
+                        .require_original_impossible_action_done_deadline,
+                    self.control.frame_counter,
+                    creation_order,
+                ))
+            }
+            timing => timing,
+        };
         Some(opponent_sword_strike_time_limit(Some(animation), || timing))
     }
 }

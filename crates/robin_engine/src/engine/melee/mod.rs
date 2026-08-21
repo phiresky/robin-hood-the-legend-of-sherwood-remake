@@ -3228,7 +3228,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_selected_strike_keeps_stale_impossible_deadline_strict() {
+    fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
         let mut engine = make_engine();
         let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let selected_row = crate::sprite_script::SpriteScript {
@@ -3285,8 +3285,22 @@ mod tests {
 
         assert_eq!(
             engine.opponent_sword_strike_time_limit_for_actor(target),
-            Some(i16::MIN),
-            "a fresh selected strike must not turn the stale sprite's impossible marker into permissive -1 timing"
+            Some(1000),
+            "schema-15 replays without a captured UB value retain the historical permissive result"
+        );
+
+        let target_creation_order = engine.world.original_creation_order(target);
+        engine
+            .control
+            .original_impossible_action_done_deadlines
+            .insert(target_creation_order, -22478);
+        engine
+            .control
+            .require_original_impossible_action_done_deadline = true;
+        assert_eq!(
+            engine.opponent_sword_strike_time_limit_for_actor(target),
+            Some(-22478),
+            "schema-16 can carry the Original allocator-dependent wrapped SWORD"
         );
 
         let sprite = &mut engine
@@ -3301,6 +3315,14 @@ mod tests {
             Some(i16::MIN),
             "the current sprite's impossible marker retains the strict S075 behavior"
         );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "schema-16 frame 38623 is missing the captured stale-sprite strike deadline for target creation order 201"
+    )]
+    fn schema16_missing_stale_impossible_deadline_fails_loudly() {
+        evaluate::captured_stale_impossible_deadline(None, true, 38623, 201);
     }
 
     fn empty_mission_script() -> crate::engine::types::MissionScript {

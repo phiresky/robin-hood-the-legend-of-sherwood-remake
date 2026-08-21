@@ -2661,6 +2661,29 @@ impl Engine {
         self.inner.control.rng.append_original_replay(draws);
     }
 
+    /// Supply one frame's captured results for Original's undefined stale
+    /// sprite action-point read. This is a parity-tool boundary, analogous to
+    /// the captured Original RNG stream; live simulation leaves it empty.
+    pub fn set_original_impossible_action_done_deadlines(
+        &mut self,
+        required: bool,
+        deadlines: impl IntoIterator<Item = (u32, i16)>,
+    ) {
+        let mut captured = std::collections::BTreeMap::new();
+        for (creation_order, deadline) in deadlines {
+            if let Some(previous) = captured.insert(creation_order, deadline) {
+                assert_eq!(
+                    previous, deadline,
+                    "conflicting Original strike deadlines for creation order {creation_order}"
+                );
+            }
+        }
+        self.inner.control.original_impossible_action_done_deadlines = captured;
+        self.inner
+            .control
+            .require_original_impossible_action_done_deadline = required;
+    }
+
     /// Replace and rewind the raw Original RNG stream used by parity tools.
     ///
     /// Loaded saves restore a serialized engine and RNG seed after mission

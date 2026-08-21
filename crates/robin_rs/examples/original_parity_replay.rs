@@ -3426,6 +3426,37 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // distinguish load-time differences from first-hourglass mutations.
         let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &assets, &frame));
         map.refresh_trace_indices(&frame);
+        engine.set_original_impossible_action_done_deadlines(
+            header.schema == 16,
+            frame
+                .strike_proposal_events
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .filter(|event| event.phase == "opponent_inputs")
+                .map(|event| {
+                    (
+                        event.principal_opponent_creation_order.unwrap_or_else(|| {
+                            panic!(
+                                "schema-16 frame {} opponent_inputs invocation {} lacks principal_opponent_creation_order",
+                                frame.frame_before, event.invocation
+                            )
+                        }),
+                        i16::try_from(event.time_limit.unwrap_or_else(|| {
+                            panic!(
+                                "schema-16 frame {} opponent_inputs invocation {} lacks time_limit",
+                                frame.frame_before, event.invocation
+                            )
+                        }))
+                        .unwrap_or_else(|_| {
+                            panic!(
+                                "Original strike deadline does not fit SWORD: {:?}",
+                                event.time_limit
+                            )
+                        }),
+                    )
+                }),
+        );
         if debug_stage_timing {
             eprintln!("parity stage: mapped original frame {}", frame.frame_before);
         }
