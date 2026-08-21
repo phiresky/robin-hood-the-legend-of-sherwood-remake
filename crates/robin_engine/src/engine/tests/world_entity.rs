@@ -2973,6 +2973,110 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     );
 }
 
+#[test]
+fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::Command;
+    use crate::sequence::{Sequence, SequenceElement};
+
+    // Linux3/Profile001/Savegame_014/replay-040, frame 18433: the terminal
+    // step puts the old principal just beyond UBER while a reciprocal second
+    // opponent remains between MAXIMAL and UBER. Original removes/promotes
+    // inside Human::Execute, registers Provoke, and only then registers the
+    // point-seek SpeakHeroReachDestination tail.
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let old_principal = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let promoted = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    let weapon = profiles
+        .hth_weapons
+        .first_mut()
+        .expect("complete actor fixture supplies an HtH weapon");
+    weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] = 90;
+    weapon.distance[crate::weapons::WeaponDistance::Uber as usize] = 150;
+
+    let positions = [
+        (owner, 151.583_5_f32),
+        (old_principal, 0.0_f32),
+        (promoted, 18.567_36_f32),
+    ];
+    for (entity_id, x) in positions {
+        let entity = engine.get_entity_mut(entity_id).unwrap();
+        entity
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(x, 0.0, 0.0));
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 0.0));
+    }
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![old_principal, promoted];
+    for opponent in [old_principal, promoted] {
+        engine
+            .get_entity_mut(opponent)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents = vec![owner];
+    }
+
+    assert!(
+        !engine.sword_movement_termination_warrants_provoke(&assets, owner),
+        "the >UBER old principal must make a pre-removal snapshot false"
+    );
+    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .opponents,
+        vec![promoted]
+    );
+    assert!(
+        engine.sword_movement_termination_warrants_provoke(&assets, owner),
+        "the promoted reciprocal opponent is inside the Provoke band"
+    );
+
+    engine.launch_sword_movement_termination_provoke(owner);
+    let mut post_seek = Sequence::new();
+    post_seek.append_element(SequenceElement::new(
+        2,
+        Command::SpeakHeroReachDestination,
+        Some(owner),
+    ));
+    engine.launch_sequence(post_seek);
+    let owner_registrations = engine
+        .orders
+        .sequence_manager
+        .v48_elements_to_go()
+        .into_iter()
+        .filter_map(|(sequence_id, element_index)| {
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+        })
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| element.command)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        owner_registrations,
+        vec![Command::Provoke, Command::SpeakHeroReachDestination],
+        "terminal Execute must register exactly one Provoke before post-seek Speak"
+    );
+}
+
 pub(super) fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     let mut entity = make_test_soldier(crate::element::Posture::Upright);
     let Entity::Soldier(soldier) = &mut entity else {

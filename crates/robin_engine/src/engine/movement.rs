@@ -4208,7 +4208,7 @@ impl EngineInner {
         }
     }
 
-    fn sword_movement_termination_warrants_provoke(
+    pub(super) fn sword_movement_termination_warrants_provoke(
         &self,
         assets: &crate::engine::LevelAssets,
         entity_id: EntityId,
@@ -4277,7 +4277,7 @@ impl EngineInner {
         )
     }
 
-    fn launch_sword_movement_termination_provoke(&mut self, entity_id: EntityId) {
+    pub(super) fn launch_sword_movement_termination_provoke(&mut self, entity_id: EntityId) {
         self.launch_element(crate::sequence::SequenceElement::new(
             1,
             crate::element::Command::Provoke,
@@ -8561,19 +8561,35 @@ impl EngineInner {
                 }
             }
         }
+        // Human's sword-movement Execute arm removes newly far opponents
+        // immediately after PerformMotion/PerformSeek and before inspecting
+        // the terminal motion state (`RHelementactorhuman.cpp:3778-3844`).
+        // Besides removing the old principal, this may synchronously promote
+        // a reciprocal in-range opponent to principal, so the Provoke gate
+        // must observe the updated list.
+        if executed_sword_movement {
+            self.quit_swordfight_with_far_opponents(sim, assets, owner);
+        }
+
         // Original evaluates the terminal sword-movement Provoke gate inside
-        // Human::Execute, before base Actor::Hourglass runs line-crossing
-        // callbacks. Those callbacks may project the actor onto a different
-        // elevation and move the live 3D position across a weapon-range
-        // boundary. Snapshot the complete mutual-opponent/range decision now;
-        // sequence registration remains deferred until the movement order has
-        // advanced below.
+        // Human::Execute, after the far-opponent removal above but before base
+        // Actor::Hourglass runs line-crossing callbacks. Those callbacks may
+        // project the actor onto a different elevation and move the live 3D
+        // position across a weapon-range boundary. Snapshot the complete
+        // mutual-opponent/range decision at that exact boundary.
         let sword_movement_provokes = sword_movement_terminations
             .into_iter()
             .filter(|&entity_id| {
                 self.sword_movement_termination_warrants_provoke(assets, entity_id)
             })
             .collect::<Vec<_>>();
+        // LaunchSequenceElement only registers this ordinary-priority work;
+        // its later Go/Instruct still runs after terminal order advancement.
+        // Register now so a synchronous StartPostSeekSequence registers its
+        // SpeakHeroReachDestination behind the Provoke, as in Original.
+        for entity_id in sword_movement_provokes {
+            self.launch_sword_movement_termination_provoke(entity_id);
+        }
         for entity_id in door_pass_transition_start_effects {
             self.apply_door_pass_transition_start_side_effects(assets, entity_id);
         }
@@ -8740,7 +8756,6 @@ impl EngineInner {
         // These calls are inside the Human/PC sword movement Execute arms,
         // after PerformMotion and before base Actor completion/DoNextOrder.
         if executed_sword_movement {
-            self.quit_swordfight_with_far_opponents(sim, assets, owner);
             if matches!(owner, EntityId::Pc(_)) {
                 let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
                     entity.actor_data()?;
@@ -8929,15 +8944,6 @@ impl EngineInner {
                     .set_direction_goal(external_direction);
             }
         }
-        // Original LaunchSequenceElement registers the Provoke from inside
-        // Execute, but its Instruct arbitration runs only after the terminal
-        // movement order has advanced. Launching before `do_next_order`
-        // incorrectly compares the Wait-priority Provoke against the still
-        // InProgress movement and abandons it.
-        for entity_id in sword_movement_provokes {
-            self.launch_sword_movement_termination_provoke(entity_id);
-        }
-
         // Drain water-splash titbit emissions queued from the walk
         // branch.  Emits a water particle at the actor's 3D position
         // with no element supplier.
