@@ -34,16 +34,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 jiff = "0.2"
 fastrand = "2"
 rand = "0.10"
-font8x8 = "0.3"
 anyhow = "1"
 libc = "0.2"
-num_enum = "0.7"
 bytemuck = { version = "1", features = ["derive"] }
-byteorder = "1"
-flate2 = "1"
-bzip2 = "0.6"
-strum = "0.28.0"
-strum_macros = "0.28.0"
 clap = { version = "4", features = ["derive"] }
 dirs = { version = "6", optional = true }
 ffmpeg-next = { version = "9", optional = true }
@@ -59,9 +52,7 @@ base64 = "0.22"
 sha2 = "0.11"
 # Windowing + input
 winit = { version = "0.30", features = ["android-native-activity", "serde"] }
-raw-window-handle = "0.6"
 gilrs = "0.11"
-arboard = { version = "3", optional = true }
 
 # GPU.  `webgl` enables wgpu's WebGL2 backend so wasm builds work on
 # browsers that don't yet expose WebGPU (most non-Chrome desktops as
@@ -171,7 +162,7 @@ video = ["dep:ffmpeg-next", "audio"]
 # Standard filesystem-backed save / replay directory resolution via the
 # `dirs` crate.  Disabled on wasm where saves/replays go through a
 # browser-side mechanism instead of OS data dirs.
-native-fs = ["dep:dirs", "dep:arboard"]
+native-fs = ["dep:dirs"]
 
 [[bin]]
 name = "robin"

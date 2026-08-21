@@ -12,9 +12,7 @@ robin_util = { path = "../robin_util" }
 robin_engine = { path = "../robin_engine" }
 serde = { version = "1", features = ["derive", "rc"] }
 tracing = "0.1"
-thiserror = "2"
 anyhow = "1"
-byteorder = "1"
 bytemuck = "1"
 flate2 = "1"
 bitcode = { version = "0.6", features = ["serde"] }
