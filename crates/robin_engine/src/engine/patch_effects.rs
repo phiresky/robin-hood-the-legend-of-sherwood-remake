@@ -10,6 +10,20 @@ use super::movement::MovePathOutcome;
 use super::*;
 use crate::patch::{PatchAnimation, PatchEffect};
 
+fn initialize_patch_animation(
+    sprite: &mut crate::sprite::Sprite,
+    action: crate::order::OrderType,
+    reverse: bool,
+) -> Option<u16> {
+    let row = sprite.row_for_action(action)?;
+    sprite.current_row = row;
+    // Original `RHPatch::Apply` calls `ForceAnimation` followed by
+    // `ResetSpriteFrame`, whose 0xffff counter sentinel makes the first
+    // Hourglass wrap to zero without consuming the first authored tick.
+    sprite.reset_sprite_frame(reverse);
+    Some(row)
+}
+
 /// Snapshot of the patch-level data needed to process effects.
 /// Extracted once before iterating effects to avoid repeated borrows.
 struct PatchContext {
@@ -505,7 +519,7 @@ impl EngineInner {
             entity.element_data_mut().active = true;
             {
                 let sprite = entity.sprite_mut();
-                let Some(row) = sprite.row_for_action(action) else {
+                let Some(_row) = initialize_patch_animation(sprite, action, reverse) else {
                     tracing::warn!(
                         handle,
                         ?anim,
@@ -515,15 +529,6 @@ impl EngineInner {
                     );
                     return;
                 };
-                sprite.current_row = row;
-                if reverse {
-                    // Start at last frame for reverse playback.
-                    let last_frame = sprite.num_frames_for_row(row).saturating_sub(1);
-                    sprite.current_frame = last_frame;
-                } else {
-                    sprite.current_frame = 0;
-                }
-                sprite.frame_count = 0;
             }
         }
 
@@ -645,6 +650,39 @@ mod tests {
     use crate::sequence::{SequenceElement, SequencePriority};
     use crate::sprite::Sprite;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    #[test]
+    fn patch_animation_reset_preserves_original_first_tick_sentinel() {
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::PATCH_TRANSITION as usize] = 0;
+        let script = SpriteScript {
+            frame_ids: vec![11, 22],
+            delays: vec![1, 1],
+            ..Default::default()
+        };
+        let mut sprite = Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+
+        assert_eq!(
+            initialize_patch_animation(&mut sprite, OrderType::PATCH_TRANSITION, false),
+            Some(0)
+        );
+        assert_eq!((sprite.current_frame, sprite.frame_count), (0, u16::MAX));
+
+        assert!(!sprite.increment_frame(
+            &crate::sim_rng::test_context(),
+            crate::sprite::FrameProgression::Default,
+        ));
+        assert_eq!((sprite.current_frame, sprite.frame_count), (0, 0));
+
+        assert_eq!(
+            initialize_patch_animation(&mut sprite, OrderType::PATCH_TRANSITION, true),
+            Some(0)
+        );
+        assert_eq!((sprite.current_frame, sprite.frame_count), (1, u16::MAX));
+    }
 
     #[test]
     fn inactive_patch_fx_still_snapshots_explicit_transition_frame() {
