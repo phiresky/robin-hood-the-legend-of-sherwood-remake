@@ -3478,15 +3478,19 @@ impl EnemyAi {
             return false;
         }
 
-        // seek_position = Position(primary_target).
-        if let Some(tpos) = tick
-            .nearby_fighters
-            .iter()
-            .find(|f| f.handle == target)
-            .map(|f| f.position)
-        {
-            self.base.seek_position = tpos;
-        }
+        // Original `MaybeMakeRiderAttack` unconditionally dereferences the
+        // selected `mpPrimaryTarget` here.  The target search above already
+        // uses the full fighter registry because the pointer is not limited
+        // to the 500-unit nearby snapshot; preserve that same scope when
+        // publishing `mposSeekPosition` for the later rider-return Face.
+        self.base.seek_position = self
+            .find_fighter(target, tick)
+            .unwrap_or_else(|| {
+                panic!(
+                    "selected rider charge target {target} disappeared from the fighter registry"
+                )
+            })
+            .position;
 
         // Original focuses the selected target before choosing between the
         // approach and immediate-charge arms. The immediate-charge arm then
@@ -4223,6 +4227,46 @@ mod tests {
         assert!(!ai.maybe_make_rider_attack(&ctx, &tick, None));
         assert_eq!(ai.base.primary_target, 76);
         assert!(ai.base.outbox.actor.orders.is_empty());
+    }
+
+    #[test]
+    fn rider_charge_retains_out_of_range_target_position_for_return_face() {
+        // Original `MaybeMakeRiderAttack` stores Position(mpPrimaryTarget)
+        // after selecting the charge.  A raw target pointer remains valid
+        // outside Rust's radius-limited nearby-fighter snapshot; the later
+        // GettingDistance reach-point handler faces this stored position.
+        let mut ai = EnemyAi::new(51);
+        ai.base.primary_target = 76;
+        ai.base.seek_position = Position {
+            x: 900.0,
+            y: 700.0,
+            ..Position::default()
+        };
+        let target_position = Position {
+            x: 0.0,
+            y: -200.0,
+            ..Position::default()
+        };
+        let target = FighterSnapshot {
+            handle: 76,
+            position: target_position,
+            is_able_to_fight: true,
+            is_pc: true,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters.clear();
+        tick.fighter_registry = vec![target];
+        let ctx = AiContext {
+            self_is_rider: true,
+            position: Position::default(),
+            direction: 0,
+            ..AiContext::default()
+        };
+
+        assert!(ai.maybe_make_rider_attack(&ctx, &tick, None));
+        assert_eq!(ai.base.primary_target, 76);
+        assert_eq!(ai.base.seek_position, target_position);
     }
 
     fn pc_view() -> crate::ai_entity_view::AiEntityView {
