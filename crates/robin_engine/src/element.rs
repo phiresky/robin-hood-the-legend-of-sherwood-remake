@@ -1908,6 +1908,32 @@ impl Default for NpcData {
 }
 
 impl NpcData {
+    /// Original `RHElementActorNPC::DeleteDetectable`: remove only the first
+    /// matching entry and report whether one was found. Release recordings can
+    /// contain duplicates because several Original `AddDetectable` callers only
+    /// guard uniqueness with a debug assertion.
+    pub fn delete_detectable(
+        &mut self,
+        element: EntityId,
+        detectable_type: DetectableType,
+    ) -> bool {
+        let index = detectable_type as usize;
+        let list = self.detectable_lists.get_mut(index).unwrap_or_else(|| {
+            panic!(
+                "NPC has no {:?} detectable list at index {index}",
+                detectable_type
+            )
+        });
+        let Some(position) = list
+            .iter()
+            .position(|detectable| detectable.element == Some(element))
+        else {
+            return false;
+        };
+        list.remove(position);
+        true
+    }
+
     /// Current AI top-level state, read from the owning [`AiController`]
     /// (single source of truth).  NPCs without an AI brain report
     /// [`AiTopState::Default`], matching the pre-consolidation default

@@ -424,11 +424,11 @@ impl EngineInner {
             if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
-                s.npc.detectable_lists[det_idx].retain(|d| d.element != Some(body_id));
+                s.npc.delete_detectable(body_id, DetectableType::Body);
             } else if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(friend_id)
                 && det_idx < c.npc.detectable_lists.len()
             {
-                c.npc.detectable_lists[det_idx].retain(|d| d.element != Some(body_id));
+                c.npc.delete_detectable(body_id, DetectableType::Body);
             }
         }
     }

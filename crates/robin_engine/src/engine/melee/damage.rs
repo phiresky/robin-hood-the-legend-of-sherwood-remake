@@ -2624,11 +2624,11 @@ impl EngineInner {
             if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
-                s.npc.detectable_lists[det_idx].retain(|d| d.element != Some(subject));
+                s.npc.delete_detectable(subject, kind);
             } else if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(npc_id)
                 && det_idx < c.npc.detectable_lists.len()
             {
-                c.npc.detectable_lists[det_idx].retain(|d| d.element != Some(subject));
+                c.npc.delete_detectable(subject, kind);
             }
         }
     }

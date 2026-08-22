@@ -7129,7 +7129,7 @@ impl EngineInner {
                             .any(|detectable| detectable.element == Some(beggar_id)),
                     )
                 });
-                npc.detectable_lists[det_idx].retain(|d| d.element != Some(beggar_id));
+                npc.delete_detectable(beggar_id, DetectableType::Beggar);
                 if let Some((before, present_before)) = mutation_before {
                     let present_after = npc.detectable_lists[det_idx]
                         .iter()
@@ -7276,7 +7276,7 @@ impl EngineInner {
                 continue;
             };
             if det_idx < npc.detectable_lists.len() {
-                npc.detectable_lists[det_idx].retain(|d| d.element != Some(resurrected_id));
+                npc.delete_detectable(resurrected_id, DetectableType::Body);
             }
         }
     }
@@ -9790,7 +9790,7 @@ impl EngineInner {
                             .any(|detectable| detectable.element == Some(*entity_id)),
                     )
                 });
-                npc.detectable_lists[idx].retain(|d| d.element != Some(*entity_id));
+                npc.delete_detectable(*entity_id, *det_type);
                 if let (Some(target_creation_order), Some((before, present_before))) =
                     (mutation_target_creation_order, mutation_before)
                 {

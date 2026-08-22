@@ -9090,13 +9090,23 @@ mod tests {
                 .npc_data_mut()
                 .unwrap();
             observer_npc.ai_brain.enemy_mut().unwrap().hth_weapon_id = 1;
-            for detectable_type in [DetectableType::Friend, DetectableType::MissedFriend] {
-                observer_npc.detectable_lists[detectable_type as usize].push(Detectable {
+            observer_npc.detectable_lists[DetectableType::Friend as usize].extend([
+                Detectable {
                     element: Some(victim),
-                    detectable_type,
+                    detectable_type: DetectableType::Friend,
                     ..Detectable::default()
-                });
-            }
+                },
+                Detectable {
+                    element: Some(victim),
+                    detectable_type: DetectableType::Friend,
+                    ..Detectable::default()
+                },
+            ]);
+            observer_npc.detectable_lists[DetectableType::MissedFriend as usize].push(Detectable {
+                element: Some(victim),
+                detectable_type: DetectableType::MissedFriend,
+                ..Detectable::default()
+            });
         }
 
         let mut assets = assets_with_sword_profile_effects(1, 50, 100, 0);
@@ -9147,9 +9157,16 @@ mod tests {
                 .is_empty()
         );
         let observer_npc = engine.get_entity(observer).unwrap().npc_data().unwrap();
+        let remaining_friends = &observer_npc.detectable_lists[DetectableType::Friend as usize];
+        assert_eq!(
+            remaining_friends.len(),
+            1,
+            "Original death fan-out deletes only the first duplicate Friend entry"
+        );
+        assert_eq!(remaining_friends[0].element, Some(victim));
         assert!(
-            observer_npc.detectable_lists[DetectableType::Friend as usize].is_empty()
-                && observer_npc.detectable_lists[DetectableType::MissedFriend as usize].is_empty()
+            observer_npc.detectable_lists[DetectableType::MissedFriend as usize].is_empty(),
+            "the ordinary unique MissedFriend entry is still removed"
         );
         let damage = engine
             .orders
