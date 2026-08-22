@@ -414,6 +414,26 @@ impl EngineInner {
                 {
                     actor.active_movement.clear();
                 }
+                // Original `InvalidateMovements` calls `Translate` on the
+                // selected movement (`RHelementactor.cpp:6580-6588`).  The
+                // MOVE arm begins by extracting an unauthorized actor from
+                // its obstacle before it tests direct reachability or queues
+                // a path request (`RHelementactor.cpp:3574-3594`).  Ordinary
+                // manager-driven translation already enters through
+                // `extract_move_instruction_owner`; this synchronous patch
+                // retranslation must cross the same boundary as well.
+                //
+                // Skipping it leaves the actor at the obstructed point and
+                // lets only `RHPathFinder::AddPathRequest`'s later,
+                // unexpanded-box recovery adjust the request source.  That
+                // differs observably: the actor is not moved, the corrected
+                // source is different, and `bUseFirstPoint` becomes true.
+                if !self.extract_move_instruction_owner(id) {
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(seq_id, elem_idx);
+                    continue;
+                }
                 match self.try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action) {
                     MovePathOutcome::Success | MovePathOutcome::Pending => {
                         // Corrected Original InvalidateMovements refreshes
@@ -614,8 +634,15 @@ impl EngineInner {
 mod tests {
     use super::*;
     use crate::coordinates::{MapPoint, SpriteAnchor, SpriteFrameOffset, WorldPoint3D};
-    use crate::element::{ElementData, ElementFx, ElementKind, Entity, FxData};
-    use crate::order::OrderType;
+    use crate::element::{
+        ActorData, ActorPc, ElementData, ElementFx, ElementKind, Entity, FxData, HumanData, PcData,
+        Posture,
+    };
+    use crate::fast_find_grid::GridLine;
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequencePriority};
     use crate::sprite::Sprite;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
@@ -700,5 +727,114 @@ mod tests {
         assert_eq!(decal.bank_id, 22);
         assert_eq!(decal.dst_x, 98);
         assert_eq!(decal.dst_y, 198);
+    }
+
+    #[test]
+    fn patch_invalidation_extracts_owner_before_retranslating_move() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        engine.world.fast_grid_mut().add_line(
+            GridLine::new(MapPoint::new(0.0, 128.0), MapPoint::new(256.0, 128.0), true),
+            0,
+        );
+
+        let start = MapPoint::new(130.0, 130.0);
+        let destination = MapPoint::new(220.0, 220.0);
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position_map(start);
+        element.set_layer(0);
+        element.set_sector(SectorHandle::new(1));
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -10.0, -5.0, 10.0, 5.0,
+            ));
+        element.sprite.position_iface.set_map_position(start);
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+
+        let order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(
+            1,
+            crate::element::Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.priority = SequencePriority::Normal;
+        if let crate::sequence::SequenceElementData::Movement {
+            destination: stored,
+            ..
+        } = &mut movement.data
+        {
+            *stored = destination;
+        }
+        movement.orders.push_back(Order::new(
+            OrderType::WalkingUpright,
+            destination.x,
+            destination.y,
+            order_id,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .expect("test PC exists")
+            .actor_data_mut()
+            .expect("test entity is an actor")
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        let move_box = *engine
+            .get_entity(owner)
+            .expect("test PC exists")
+            .position_iface()
+            .get_move_box_map();
+        assert!(
+            !engine.world.fast_grid.is_position_authorized(&move_box, 0),
+            "fixture must begin inside the active obstruction"
+        );
+        let mut expected_box = crate::coordinates::MapBBox::from_coords(
+            move_box.x_min() - 0.5,
+            move_box.y_min() - 0.5,
+            move_box.x_max() + 0.5,
+            move_box.y_max() + 0.5,
+        );
+        assert!(
+            engine
+                .world
+                .fast_grid
+                .find_authorized_position(&mut expected_box, 0),
+            "expanded Original extraction box must find a valid center"
+        );
+        let expected = expected_box.center();
+
+        engine.invalidate_paths_and_kill_crushed(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            0,
+            1,
+            &[],
+        );
+
+        let corrected = engine
+            .get_entity(owner)
+            .expect("test PC survives path invalidation")
+            .element_data()
+            .position_map();
+        assert_eq!(corrected, expected);
+        assert_ne!(corrected, start);
     }
 }
