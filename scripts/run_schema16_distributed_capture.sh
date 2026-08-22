@@ -214,10 +214,11 @@ start_collector() {
 
 collect() {
     local campaign=$1 relative remote_campaign incoming available pending imported imported_tmp
-    local lock_file lock_fd rel file destination
+    local lock_file lock_fd rel file destination collision_root collision_hash collision
     relative=${campaign#"$workspace"/}; remote_campaign="$remote_root/$relative"
     incoming="$campaign/.distributed-incoming"
     imported="$campaign/.distributed-imported-files"
+    collision_root="$campaign/.distributed-log-collisions"
     lock_file="$campaign/.distributed-collector.lock"
     mkdir -p -- "$incoming" "$workspace/tmp"
     exec {lock_fd}>"$lock_file"
@@ -255,8 +256,31 @@ collect() {
         if [[ "$file" == *.jsonl.zst ]]; then zstd -t -q --long=31 -- "$file"; fi
         mkdir -p -- "${destination%/*}"
         if [[ -e "$destination" ]]; then
-            cmp -s -- "$file" "$destination" || { printf 'error: collision differs: %s\n' "$destination" >&2; exit 1; }
-            rm -f -- "$file"
+            if cmp -s -- "$file" "$destination"; then
+                rm -f -- "$file"
+            elif [[ "$file" == *.log ]]; then
+                # Recorder logs include host/process diagnostics and can
+                # legitimately differ when a pre-migration trace was also
+                # observed by a remote shard. Preserve both versions while
+                # keeping trace and completion-marker collisions strict.
+                collision_hash=$(sha256sum -- "$file")
+                collision_hash=${collision_hash%% *}
+                collision="$collision_root/$rel.$collision_hash"
+                mkdir -p -- "${collision%/*}"
+                if [[ -e "$collision" ]]; then
+                    cmp -s -- "$file" "$collision" || {
+                        printf 'error: log collision archive differs: %s\n' "$collision" >&2
+                        exit 1
+                    }
+                    rm -f -- "$file"
+                else
+                    mv -- "$file" "$collision"
+                fi
+                printf 'warning: preserved differing recorder log at %s\n' "$collision" >&2
+            else
+                printf 'error: collision differs: %s\n' "$destination" >&2
+                exit 1
+            fi
         else
             mv -- "$file" "$destination"
         fi
