@@ -51,6 +51,30 @@ fn accumulate_seek_point_interest(current: f32, interest: u8) -> f32 {
     (f64::from(current) + f64::from(interest) * 0.01_f64) as f32
 }
 
+/// Reconstruct the sector pointer carried by Original's `RHposition` when a
+/// compact Rust stimulus retained only the point and layer.
+///
+/// In particular, `CALL_INSTRUCTION` copies an officer's seek point into each
+/// group member. Original copies the complete `RHposition`; a sector-less
+/// Rust copy would make the personal seek point fail `GoTo` before route
+/// construction and recursively consume unrelated global seek points.
+fn resolve_seek_area_center_sector(mut center: Position, ctx: &AiContext) -> Position {
+    if center.sector.is_some() {
+        return center;
+    }
+
+    let point = crate::coordinates::MapPoint::new(center.x, center.y);
+    let reference = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
+    if let crate::fast_find_grid::SectorHit::Found { sector_number, .. } =
+        ctx.fast_grid.get_sector(point, reference, center.level)
+    {
+        center.sector = u16::try_from(sector_number.get())
+            .ok()
+            .and_then(crate::position_interface::SectorHandle::new);
+    }
+    center
+}
+
 use super::util::{pos_distance, resolve_seek_point_id, resolve_seek_point_mut, vec_to_sector};
 use super::{
     AlertSoldiersFailureContinuation, EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION,
@@ -149,6 +173,7 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
+        let center = resolve_seek_area_center_sector(center, ctx);
         tracing::trace!(
             npc = self.base.me,
             state = ?self.base.current_state,
@@ -1601,6 +1626,79 @@ impl EnemyAi {
 mod tests {
     use super::*;
     use crate::ai_enemy::CampSoldierInfo;
+
+    #[test]
+    fn sectorless_group_seek_center_recovers_original_position_sector() {
+        use crate::coordinates::{MapBBox, MapPoint};
+        use crate::fast_find_grid::{FastFindGrid, GridSector};
+        use crate::sector::{SectorNumber, SectorType};
+
+        let points = vec![
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(128.0, 0.0),
+            MapPoint::new(128.0, 128.0),
+            MapPoint::new(0.0, 128.0),
+        ];
+        let mut bounding_box = MapBBox::new();
+        for &point in &points {
+            bounding_box.expand_point(point);
+        }
+        let mut grid = FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+        grid.add_sector(
+            GridSector {
+                points,
+                bounding_box,
+                sector_type: SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
+                layer: 0,
+                sector_number: SectorNumber::new(42),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            0,
+        );
+        let ctx = AiContext {
+            position: Position {
+                x: 32.0,
+                y: 32.0,
+                sector: crate::position_interface::SectorHandle::new(42),
+                level: 0,
+            },
+            fast_grid: std::sync::Arc::new(grid),
+            ..AiContext::default()
+        };
+
+        let sectorless = Position {
+            x: 64.0,
+            y: 64.0,
+            sector: None,
+            level: 0,
+        };
+        assert_eq!(
+            resolve_seek_area_center_sector(sectorless, &ctx).sector,
+            crate::position_interface::SectorHandle::new(42)
+        );
+
+        let authoritative = Position {
+            sector: crate::position_interface::SectorHandle::new(7),
+            ..sectorless
+        };
+        assert_eq!(
+            resolve_seek_area_center_sector(authoritative, &ctx).sector,
+            crate::position_interface::SectorHandle::new(7),
+            "an already-authored RHposition sector must not be spatially replaced"
+        );
+    }
 
     fn charly_view() -> crate::ai_entity_view::AiEntityView {
         use crate::ai_entity_view::EntityKind;
