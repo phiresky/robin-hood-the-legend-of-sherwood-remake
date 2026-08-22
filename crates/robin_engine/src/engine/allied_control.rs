@@ -1499,7 +1499,17 @@ impl EngineInner {
                 )
             });
             if ai_locked && let Some(destination) = deploy_destination {
-                self.perform_group_move(sim, assets, &[id], destination, false, true, None, None);
+                self.perform_group_move(
+                    sim,
+                    assets,
+                    &[id],
+                    destination,
+                    false,
+                    true,
+                    None,
+                    None,
+                    &[],
+                );
                 order.duty = AlliedDuty::Hold {
                     anchor: destination,
                 };
@@ -1548,7 +1558,17 @@ impl EngineInner {
                 }
             };
             if let Some(destination) = destination {
-                self.perform_group_move(sim, assets, &[id], destination, false, true, None, None);
+                self.perform_group_move(
+                    sim,
+                    assets,
+                    &[id],
+                    destination,
+                    false,
+                    true,
+                    None,
+                    None,
+                    &[],
+                );
                 order.last_destination = destination;
             }
             self.players.allied.orders.insert(id, order);

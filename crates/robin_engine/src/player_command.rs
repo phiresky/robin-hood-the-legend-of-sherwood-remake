@@ -56,6 +56,14 @@ pub enum PlayerCommand {
         /// input leaves this unset and uses the spatial selection normally.
         #[serde(default)]
         door_route_override: Option<bool>,
+        /// Schema-16 replay-only ordinary gate routes, keyed by actor. Each
+        /// gate is `(Original gate index, direct)`. Original has already run
+        /// `FindPathGates` when it records this metadata; consuming that exact
+        /// result avoids a second A* search choosing a different valid route
+        /// and therefore authoring different building-exit waits/RNG draws.
+        /// Live input leaves this empty.
+        #[serde(default)]
+        recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
     },
     /// Stop a PC (clear path, set waiting).
     StopPc {

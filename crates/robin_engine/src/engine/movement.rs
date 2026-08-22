@@ -4488,6 +4488,7 @@ impl EngineInner {
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         door_route_override: Option<bool>,
+        recorded_gate_routes: &[(EntityId, Vec<(u32, bool)>)],
     ) {
         self.perform_group_move_with_destinations(
             sim,
@@ -4498,6 +4499,7 @@ impl EngineInner {
             show_marker,
             goal_override,
             door_route_override,
+            recorded_gate_routes,
             None,
         );
     }
@@ -4531,6 +4533,7 @@ impl EngineInner {
             show_marker,
             None,
             None,
+            &[],
             Some(destinations),
         );
     }
@@ -4546,6 +4549,7 @@ impl EngineInner {
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         door_route_override: Option<bool>,
+        recorded_gate_routes: &[(EntityId, Vec<(u32, bool)>)],
         explicit_destinations: Option<&[MapPoint]>,
     ) {
         if pc_ids.is_empty() {
@@ -5133,7 +5137,43 @@ impl EngineInner {
                     .unwrap_or(false)
             });
 
-            let path = if door_goal_info.is_some() {
+            let mut recorded_routes_for_actor = recorded_gate_routes
+                .iter()
+                .filter(|(actor, _)| actor == pc_id);
+            let recorded_gate_path = recorded_routes_for_actor.next().map(|(_, gates)| {
+                assert!(
+                    recorded_routes_for_actor.next().is_none(),
+                    "recorded group move contains duplicate gate routes for {pc_id:?}"
+                );
+                assert!(
+                    door_goal.is_none(),
+                    "ordinary recorded gate route was attached to door-target move for {pc_id:?}"
+                );
+                assert!(
+                    !gates.is_empty(),
+                    "recorded successful gate route for {pc_id:?} is empty"
+                );
+                gates
+                    .iter()
+                    .map(|&(gate_id, direct)| {
+                        let door_index = crate::gate::DoorIndex(gate_id);
+                        self.script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(door_index))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "recorded group-move gate {gate_id} for {pc_id:?} is absent from the Rust mission"
+                                )
+                            });
+                        crate::gate::GatePathStep { door_index, direct }
+                    })
+                    .collect::<Vec<_>>()
+            });
+
+            let path = if recorded_gate_path.is_some() {
+                recorded_gate_path
+            } else if door_goal_info.is_some() {
                 door_goal_info.as_ref().map(|(_, p, _, _, _)| p.clone())
             } else {
                 let Some(goal_sector) = pc_goal_sector else {

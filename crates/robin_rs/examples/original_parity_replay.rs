@@ -1146,6 +1146,7 @@ impl TraceCommand {
                     goal_sector,
                     goal_layer,
                     group_move_resolution
+                        .as_ref()
                         .and_then(|resolution| resolution.unmapped_goal_search_sector),
                 ) {
                     GroupMoveGoalTranslation::Runtime(goal) => {
@@ -1188,7 +1189,17 @@ impl TraceCommand {
                     show_marker,
                     goal_override,
                     door_route_override: group_move_resolution
+                        .as_ref()
                         .map(|resolution| resolution.door_route),
+                    recorded_gate_routes: group_move_resolution
+                        .map(|resolution| {
+                            resolution
+                                .recorded_gate_routes
+                                .into_iter()
+                                .map(|(actor, gates)| (entity_map.translate(actor), gates))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 }
             }
             Self::LaunchInteraction {
@@ -1891,13 +1902,18 @@ struct ReplayDropAleResolution {
     goal: (SectorNumber, u16),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ReplayGroupMoveResolution {
     door_route: bool,
     /// A patch sector is a real Original motion-area identity but has no
     /// standalone Rust position-sector number. For a successful recorded
     /// gate route, its terminal gate exit is the equivalent Rust graph goal.
     unmapped_goal_search_sector: Option<u16>,
+    /// Successful ordinary `AppendMoveToSequence` gate paths are already
+    /// authoritative at this boundary. Replaying them avoids a second A*
+    /// search choosing a different valid path and changing the emitted
+    /// building waits (including their RNG draws).
+    recorded_gate_routes: Vec<(TraceEntityId, Vec<(u32, bool)>)>,
 }
 
 /// Recover whether Original used ordinary `AppendMoveToSequence` or the
@@ -1974,6 +1990,29 @@ fn resolve_schema_sixteen_group_move_route(
         "one group move produced routes ending in different sectors: {matching:?}"
     );
     let unmapped_goal_search_sector = terminal_exit_sectors.pop_first();
+    let recorded_gate_routes = if door_route {
+        Vec::new()
+    } else {
+        matching
+            .iter()
+            .filter(|(_, event)| {
+                matches!(
+                    event.draft_diagnostics.get("result"),
+                    Some(TraceJsonValue::String(result)) if result == "success"
+                ) && !event.gates.is_empty()
+            })
+            .map(|(_, event)| {
+                (
+                    event.actor,
+                    event
+                        .gates
+                        .iter()
+                        .map(|gate| (gate.gate_id, gate.direct))
+                        .collect(),
+                )
+            })
+            .collect()
+    };
     for (ordinal, _) in matching {
         assert!(
             consumed_route_ordinals.insert(ordinal),
@@ -1983,6 +2022,7 @@ fn resolve_schema_sixteen_group_move_route(
     Some(ReplayGroupMoveResolution {
         door_route,
         unmapped_goal_search_sector,
+        recorded_gate_routes,
     })
 }
 
@@ -11399,10 +11439,13 @@ mod tests {
             goal_sector: 117,
             goal_level: 8,
             gates: Vec::new(),
-            draft_diagnostics: BTreeMap::from([(
-                "ordinal".to_owned(),
-                TraceJsonValue::Unsigned(ordinal),
-            )]),
+            draft_diagnostics: BTreeMap::from([
+                ("ordinal".to_owned(), TraceJsonValue::Unsigned(ordinal)),
+                (
+                    "result".to_owned(),
+                    TraceJsonValue::String("success".to_owned()),
+                ),
+            ]),
         }
     }
 
@@ -11435,6 +11478,7 @@ mod tests {
             Some(ReplayGroupMoveResolution {
                 door_route: false,
                 unmapped_goal_search_sector: None,
+                recorded_gate_routes: Vec::new(),
             })
         );
         assert_eq!(consumed, BTreeSet::from([0]));
@@ -11465,6 +11509,7 @@ mod tests {
             Some(ReplayGroupMoveResolution {
                 door_route: true,
                 unmapped_goal_search_sector: None,
+                recorded_gate_routes: Vec::new(),
             })
         );
         let mut legacy_consumed = BTreeSet::new();
@@ -11517,6 +11562,7 @@ mod tests {
             Some(ReplayGroupMoveResolution {
                 door_route: false,
                 unmapped_goal_search_sector: Some(491),
+                recorded_gate_routes: vec![(actor, vec![(78, true)])],
             })
         );
         let map = EntityMap {

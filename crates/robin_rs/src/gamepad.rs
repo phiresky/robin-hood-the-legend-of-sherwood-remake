@@ -463,6 +463,7 @@ impl GamePadState {
                     // position is the existing behaviour.
                     goal_override: None,
                     door_route_override: None,
+                    recorded_gate_routes: Vec::new(),
                 });
             }
         }
