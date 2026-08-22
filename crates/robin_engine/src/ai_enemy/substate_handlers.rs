@@ -4285,37 +4285,28 @@ impl EnemyAi {
                 charly_waypoints = charly_waypoints.len(),
                 "officer instructs its alerted group with CallInstruction"
             );
-            for (index, handle) in instructed.iter().copied().enumerate() {
+            let mut pending_instructions = Vec::with_capacity(instructed.len());
+            for handle in instructed.iter().copied() {
                 let soldier_seek_pos = if charly_waypoints.is_empty() {
-                    if index > 0 {
-                        // Everyone after the first searches the area
-                        // around the point, not the point itself.
-                        seek_flags &= !SeekFlags::LOCATION_FIRST;
-                    }
                     seek_pos
                 } else {
                     let pos = charly_waypoints[waypoint_index];
                     waypoint_index = (waypoint_index + waypoint_step) % charly_waypoints.len();
                     pos
                 };
-                self.base.outbox.reentrant.cross_npc_actions.push(
-                    CrossNpcAction::RequestThinkResult {
-                        target: handle,
-                        caller: self.base.me,
-                        stimulus_type: StimulusType::CallInstruction,
-                        info: StimulusInfo::Hint(Hint {
-                            seek_point: soldier_seek_pos,
-                            seek_flags: seek_flags.bits(),
-                            who_tells_me: self.base.me,
-                        }),
-                        continuation: ThinkResultContinuation::OfficerInstructedGroupSoldier {
-                            last: index + 1 == instructed.len(),
-                        },
-                    },
-                );
+                pending_instructions.push((handle, soldier_seek_pos));
             }
-            if instructed.is_empty() {
+            self.pending_group_instruction_candidates = pending_instructions;
+            self.pending_group_instruction_seek_flags = seek_flags.bits();
+            self.pending_group_instruction_clear_location_after_accept =
+                charly_waypoints.is_empty();
+            if self.pending_group_instruction_candidates.is_empty() {
                 self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            } else {
+                // Original calls each soldier synchronously. A refusal deletes
+                // that member and retries the same list index, so only the
+                // first *accepted* member consumes LOCATION_FIRST.
+                self.queue_next_group_instruction();
             }
         }
         false
@@ -9008,6 +8999,110 @@ mod tests {
                 "{member_substate:?}"
             );
         }
+    }
+
+    #[test]
+    fn officer_group_instruction_retries_location_first_after_refusal() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(147);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingOfficerInstructGroupPointing;
+        ai.base.seek_position = Position {
+            x: 500.0,
+            ..Position::default()
+        };
+        ai.alerted_us = vec![148, 149, 150];
+        let ctx = AiContext {
+            frame: 733,
+            position: Position::default(),
+            ..AiContext::default()
+        };
+        let tick = AiPerTickData::stub();
+        let mut global = AiGlobalState::default();
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &mut global,
+            &ctx,
+            &tick,
+            None,
+        );
+
+        let take_instruction = |ai: &mut EnemyAi| {
+            let action = ai.base.outbox.reentrant.cross_npc_actions.remove(0);
+            let CrossNpcAction::RequestThinkResult {
+                target,
+                info: StimulusInfo::Hint(hint),
+                continuation,
+                ..
+            } = action
+            else {
+                panic!("group instruction must queue one result-bearing CallInstruction");
+            };
+            assert!(
+                ai.base.outbox.reentrant.cross_npc_actions.is_empty(),
+                "Original calls the next member only after this Think result"
+            );
+            (target, hint.seek_flags, continuation)
+        };
+
+        let (first, first_flags, first_continuation) = take_instruction(&mut ai);
+        assert_eq!(first, 148);
+        assert!(SeekFlags::from_bits_retain(first_flags).contains(SeekFlags::LOCATION_FIRST));
+        ai.resolve_think_result(
+            &sim,
+            false,
+            first,
+            first_continuation,
+            &mut global,
+            None,
+            &ctx,
+            &tick,
+        );
+
+        let (second, second_flags, second_continuation) = take_instruction(&mut ai);
+        assert_eq!(second, 149);
+        assert!(
+            SeekFlags::from_bits_retain(second_flags).contains(SeekFlags::LOCATION_FIRST),
+            "a refused index-zero member must not consume LOCATION_FIRST"
+        );
+        ai.resolve_think_result(
+            &sim,
+            true,
+            second,
+            second_continuation,
+            &mut global,
+            None,
+            &ctx,
+            &tick,
+        );
+
+        let (third, third_flags, third_continuation) = take_instruction(&mut ai);
+        assert_eq!(third, 150);
+        assert!(
+            !SeekFlags::from_bits_retain(third_flags).contains(SeekFlags::LOCATION_FIRST),
+            "everyone after the first accepted member searches only the area"
+        );
+        ai.resolve_think_result(
+            &sim,
+            true,
+            third,
+            third_continuation,
+            &mut global,
+            None,
+            &ctx,
+            &tick,
+        );
+
+        assert_eq!(ai.alerted_us, vec![149, 150]);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingOfficerWaitForInstructedGroup
+        );
+        assert_eq!(ai.base.when_does_timer_ring, 763);
+        assert!(ai.pending_group_instruction_candidates.is_empty());
+        assert_eq!(ai.pending_group_instruction_seek_flags, 0);
     }
 
     #[test]

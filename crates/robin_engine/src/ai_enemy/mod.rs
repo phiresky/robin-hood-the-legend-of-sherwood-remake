@@ -247,6 +247,22 @@ pub struct EnemyAi {
     /// at 20 successful Think returns, not 20 attempts, so calls advance one
     /// result at a time through this live continuation queue.
     pub pending_alert_soldier_candidates: Vec<HumanHandle>,
+    /// Group members still awaiting the officer's synchronous
+    /// `CALL_INSTRUCTION`, paired with the seek point authored for that
+    /// particular attempt. Original deletes a refusing member from the live
+    /// list and retries the same list index before deciding whether to clear
+    /// `SEEK_LOCATION_FIRST`; keeping this as a continuation queue preserves
+    /// that source order.
+    #[serde(default)]
+    pub pending_group_instruction_candidates: Vec<(HumanHandle, Position)>,
+    /// Flags for the next group instruction. Stored as bits so old serialized
+    /// AI snapshots default cleanly and unknown bits cannot be invented.
+    #[serde(default)]
+    pub pending_group_instruction_seek_flags: u16,
+    /// Whether the first accepted member consumes `SEEK_LOCATION_FIRST`.
+    /// Charly-path distribution keeps the flag for every member instead.
+    #[serde(default)]
+    pub pending_group_instruction_clear_location_after_accept: bool,
 
     // Archery
     /// This NPC's reserved shooting point, as `(archery_sector_idx,
@@ -429,6 +445,9 @@ impl Default for EnemyAi {
             already_seen_bodies: Vec::new(),
             alerted_us: Vec::new(),
             pending_alert_soldier_candidates: Vec::new(),
+            pending_group_instruction_candidates: Vec::new(),
+            pending_group_instruction_seek_flags: 0,
+            pending_group_instruction_clear_location_after_accept: false,
             my_shooting_point: None,
             my_archery_sector: None,
             my_archery_sector_index: 0,
@@ -2198,8 +2217,18 @@ impl EnemyAi {
             ThinkResultContinuation::OfficerInstructedGroupSoldier { last } => {
                 if !accepted {
                     self.alerted_us.retain(|&handle| handle != target);
+                } else if self.pending_group_instruction_clear_location_after_accept {
+                    self.pending_group_instruction_seek_flags &= !SeekFlags::LOCATION_FIRST.bits();
                 }
-                if last {
+                let finished = if self.pending_group_instruction_candidates.is_empty() {
+                    last
+                } else {
+                    self.queue_next_group_instruction();
+                    false
+                };
+                if finished {
+                    self.pending_group_instruction_seek_flags = 0;
+                    self.pending_group_instruction_clear_location_after_accept = false;
                     if self.alerted_us.is_empty() {
                         self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                     } else {
@@ -2298,6 +2327,31 @@ impl EnemyAi {
                 }
             }
         }
+    }
+
+    pub(super) fn queue_next_group_instruction(&mut self) {
+        let (target, seek_point) = self
+            .pending_group_instruction_candidates
+            .first()
+            .copied()
+            .expect("group instruction continuation requires a pending recipient");
+        self.pending_group_instruction_candidates.remove(0);
+        let last = self.pending_group_instruction_candidates.is_empty();
+        self.base
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::RequestThinkResult {
+                target,
+                caller: self.base.me,
+                stimulus_type: StimulusType::CallInstruction,
+                info: StimulusInfo::Hint(Hint {
+                    seek_point,
+                    seek_flags: self.pending_group_instruction_seek_flags,
+                    who_tells_me: self.base.me,
+                }),
+                continuation: ThinkResultContinuation::OfficerInstructedGroupSoldier { last },
+            });
     }
 
     fn resume_failed_alert_soldiers(
