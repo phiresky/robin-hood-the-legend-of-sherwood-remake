@@ -2170,6 +2170,13 @@ impl EnemyAi {
                         tick,
                         grid,
                     ) {
+                        // Original passes `mposSeekPosition` as the output
+                        // argument to ComputePositionBehindMyShieldBearer.
+                        // The candidate therefore becomes observable as soon
+                        // as that call succeeds, even when the following view
+                        // radius check rejects it and the decision falls back
+                        // to Shoot/ArcherObserve.
+                        self.base.seek_position = cover_pos;
                         // Cover point must be within view radius of the
                         // primary target, otherwise the archer can't see
                         // the enemy from behind the shield bearer.
@@ -2208,7 +2215,6 @@ impl EnemyAi {
                             continue;
                         }
 
-                        self.base.seek_position = cover_pos;
                         self.go_to(
                             AiState::Attacking,
                             Substate::AttackingBowRunningBehindShieldBearer,
@@ -5977,6 +5983,83 @@ mod tests {
         }
         launch_commands.extend(ai.base.outbox.actor.launch_commands.iter().copied());
         assert_eq!(launch_commands, vec![crate::element::Command::EquipBow]);
+    }
+
+    #[test]
+    fn rejected_shield_cover_keeps_computed_seek_position_before_shoot_fallback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(69);
+        ai.is_archer_unit = true;
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.primary_target = 126;
+        ai.base.seek_position = Position {
+            x: 10.0,
+            y: 20.0,
+            ..Position::default()
+        };
+
+        let bearer_position = Position {
+            x: 200.0,
+            y: 300.0,
+            ..Position::default()
+        };
+        let target_position = Position {
+            x: 1000.0,
+            y: 1000.0,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            remaining_arrows: 10,
+            sq_standard_view_radius: 100.0,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters = vec![
+            FighterSnapshot {
+                handle: 73,
+                position: bearer_position,
+                direction: 0,
+                is_friendly: true,
+                is_soldier: true,
+                is_shield_bearer: true,
+                primary_target: 126,
+                ..FighterSnapshot::default()
+            },
+            FighterSnapshot {
+                handle: 126,
+                position: target_position,
+                is_able_to_fight: true,
+                is_pc: true,
+                ..FighterSnapshot::default()
+            },
+        ];
+        let expected_cover = ai
+            .shield_bearer_cover_position(73, &tick)
+            .expect("fixture shield bearer must produce a cover position");
+        assert!(
+            square_norm(pos_diff(&target_position, &expected_cover)) >= ctx.sq_standard_view_radius,
+            "fixture must reject the computed cover point at the subsequent view-radius gate"
+        );
+
+        assert!(ai.execute_battle_decision(
+            &sim,
+            Decision::CoverBehindShieldBearer,
+            Substate::AttackingReactiontime,
+            73,
+            &mut std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        ));
+
+        assert_eq!(ai.base.seek_position, expected_cover);
+        assert_eq!(ai.shield_bearer_before_me, 0);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingBowObservingLoading
+        );
     }
 }
 #[test]
