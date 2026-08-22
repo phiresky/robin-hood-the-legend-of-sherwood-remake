@@ -1756,6 +1756,19 @@ impl EnemyAi {
                     let target =
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
+                    // The battle overview can become stale while membership is
+                    // rebuilt synchronously. Original treats a vanished target
+                    // exactly like a rejected CommandSoldiersToAttack and falls
+                    // back to reserve; do not resolve the legal handle-0 sentinel
+                    // as a required entity view.
+                    if target == 0 {
+                        tracing::warn!(
+                            me = self.base.me,
+                            "alert-soldiers decision lost its primary target; reserving instead"
+                        );
+                        decision = Decision::Reserve;
+                        continue;
+                    }
                     self.base.friends_are_alerted = true;
                     // DECISION_ALERT_SOLDIERS calls CommandSoldiersToAttack,
                     // NOT AlertSoldiers, with the live target position.
@@ -1797,6 +1810,19 @@ impl EnemyAi {
                     let target =
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
+                    // `GetNewPrimaryTarget` can legally return the null handle
+                    // after the overview selected this decision. The recorder
+                    // mirrors Original's existing failed-decision path and
+                    // retries as reserve; do not turn that sentinel into a
+                    // required entity-view lookup.
+                    if target == 0 {
+                        tracing::warn!(
+                            me = self.base.me,
+                            "tower-guard alert lost its primary target; reserving instead"
+                        );
+                        decision = Decision::Reserve;
+                        continue;
+                    }
                     self.base.friends_are_alerted = true;
                     self.base.seek_position = ctx
                         .expect_entity_view(target, "tower-guard alert primary target")
@@ -1809,6 +1835,14 @@ impl EnemyAi {
                     let target =
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
+                    if target == 0 {
+                        tracing::warn!(
+                            me = self.base.me,
+                            "tower-guard observation lost its primary target; reserving instead"
+                        );
+                        decision = Decision::Reserve;
+                        continue;
+                    }
                     self.base.friends_are_alerted = true;
                     self.base.seek_position = ctx
                         .expect_entity_view(target, "tower-guard observe primary target")
@@ -2039,6 +2073,19 @@ impl EnemyAi {
                     let target =
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
+                    // The target selected while choosing ArcherStepBack can
+                    // disappear before this execution-time reselection.
+                    // Original reports that lifecycle race and retries the
+                    // decision as Shoot, whose own no-target path falls back
+                    // to ArcherObserve.
+                    if target == 0 {
+                        tracing::warn!(
+                            me = self.base.me,
+                            "archer step-back decision lost its primary target; shooting instead"
+                        );
+                        decision = Decision::Shoot;
+                        continue;
+                    }
                     // Original re-reads Position(mpPrimaryTarget) after
                     // GetNewPrimaryTarget.  In particular, a door-passing
                     // target contributes its committed gate side rather than
@@ -5728,6 +5775,95 @@ mod tests {
                 Substate::AttackingReactiontime,
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn alert_soldiers_without_a_live_target_falls_back_to_reserve() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+
+        assert!(ai.execute_battle_decision(
+            &sim,
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            &mut std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        ));
+
+        assert_eq!(ai.base.primary_target, 0);
+        assert!(!ai.base.friends_are_alerted);
+        assert_eq!(ai.base.current_substate, Substate::AttackingReserve);
+        assert!(ai.base.timer_is_running);
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+    }
+
+    #[test]
+    fn tower_guard_decisions_without_a_live_target_fall_back_to_reserve() {
+        let sim = crate::sim_rng::test_context();
+
+        for decision in [Decision::TowerGuardAlert, Decision::TowerGuardObserve] {
+            let mut ai = EnemyAi::new(91);
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingReactiontime;
+
+            assert!(ai.execute_battle_decision(
+                &sim,
+                decision,
+                Substate::AttackingReactiontime,
+                0,
+                &mut std::collections::BTreeMap::new(),
+                &mut AiGlobalState::default(),
+                &AiContext::default(),
+                &AiPerTickData::stub(),
+                None,
+            ));
+
+            assert_eq!(ai.base.primary_target, 0, "{decision:?}");
+            assert!(!ai.base.friends_are_alerted, "{decision:?}");
+            assert_eq!(
+                ai.base.current_substate,
+                Substate::AttackingReserve,
+                "{decision:?}"
+            );
+            assert!(ai.base.timer_is_running, "{decision:?}");
+            assert!(ai.base.outbox.actor.orders.is_empty(), "{decision:?}");
+        }
+    }
+
+    #[test]
+    fn archer_step_back_without_a_live_target_falls_back_through_shoot() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        let ctx = AiContext {
+            remaining_arrows: 1,
+            ..AiContext::default()
+        };
+
+        assert!(ai.execute_battle_decision(
+            &sim,
+            Decision::ArcherStepBack,
+            Substate::AttackingReactiontime,
+            0,
+            &mut std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        ));
+
+        assert_eq!(ai.base.primary_target, 0);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingBowObservingLoading
         );
     }
 
