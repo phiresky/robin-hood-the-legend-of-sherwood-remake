@@ -216,7 +216,10 @@ jobs:
           # are provisioned; unsigned public installers trigger OS warnings.
           # No --msi: WiX-based MSI creation requires a Windows runner; the
           # cross-built package ships the Setup.exe installer only.
-          vpk pack \
+          # `[win]` is vpk's OS directive: without it vpk packages for the
+          # host OS (Linux) and refuses the win-x64 runtime. Quoted because
+          # the brackets are a bash glob.
+          vpk '[win]' pack \
             --packId io.github.phiresky.robinhood \
             --packVersion "${{ steps.version.outputs.version }}" \
             --packDir target/package-input \
