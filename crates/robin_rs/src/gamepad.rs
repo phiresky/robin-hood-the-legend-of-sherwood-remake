@@ -462,6 +462,7 @@ impl GamePadState {
                     // override through; spatial lookup at the cursor
                     // position is the existing behaviour.
                     goal_override: None,
+                    door_route_override: None,
                 });
             }
         }

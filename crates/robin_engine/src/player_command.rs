@@ -49,6 +49,13 @@ pub enum PlayerCommand {
         /// selected sector to the underlying motion sector when no jump
         /// line is executable, matching `RHEngine::PerformMove`.
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        /// Replay-only reconstruction of which Original route constructor was
+        /// selected. `Some(false)` forces ordinary `AppendMoveToSequence`
+        /// semantics even when Rust's spatial hit lands on a coincident door
+        /// overlay; `Some(true)` forces the door-target constructor. Live
+        /// input leaves this unset and uses the spatial selection normally.
+        #[serde(default)]
+        door_route_override: Option<bool>,
     },
     /// Stop a PC (clear path, set waiting).
     StopPc {

@@ -385,6 +385,7 @@ pub fn resolve_left_click(
             running: is_double,
             show_marker: false,
             goal_override,
+            door_route_override: None,
         }];
         if host.control_allied_soldiers && !allied_selected.is_empty() {
             commands.push(PlayerCommand::MoveAlliedSoldiers {
@@ -424,6 +425,7 @@ pub fn resolve_left_click(
         running: is_double,
         show_marker: true,
         goal_override,
+        door_route_override: None,
     }];
     if host.control_allied_soldiers && !allied_selected.is_empty() {
         commands.push(PlayerCommand::MoveAlliedSoldiers {
@@ -2213,6 +2215,7 @@ mod tests {
                 running: false,
                 show_marker: true,
                 goal_override: None,
+                door_route_override: None,
             }]
         );
         assert_eq!(host.input.element_old_click, None);

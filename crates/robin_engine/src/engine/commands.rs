@@ -296,6 +296,7 @@ impl EngineInner {
                 running,
                 show_marker,
                 goal_override,
+                door_route_override,
             } => {
                 self.perform_group_move(
                     sim,
@@ -305,6 +306,7 @@ impl EngineInner {
                     *running,
                     *show_marker,
                     *goal_override,
+                    *door_route_override,
                 );
                 // Fire `HeroSpeaking(HERO_ACCEPT_COMMAND, 0)` for the PC
                 // that just accepted the move — the "yes, milord" bark.
@@ -1391,6 +1393,7 @@ impl EngineInner {
                 running,
                 show_marker: _,
                 goal_override: _,
+                door_route_override: _,
             } => {
                 if !actors.contains(&recording_pc) {
                     return;
@@ -1821,6 +1824,7 @@ impl EngineInner {
                     // Macro replay always re-resolves via spatial lookup;
                     // patch redirects only fire from the live click path.
                     goal_override: None,
+                    door_route_override: None,
                 },
                 crate::macro_store::QaReplayCommand::Interaction {
                     target,

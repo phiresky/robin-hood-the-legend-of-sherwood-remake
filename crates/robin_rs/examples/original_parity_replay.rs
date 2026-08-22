@@ -1109,10 +1109,15 @@ impl TraceCommand {
         entity_map: &EntityMap,
         engine: &Engine,
         drop_ale_resolution: Option<ReplayDropAleResolution>,
+        group_move_door_route: Option<bool>,
     ) -> Option<PlayerCommand> {
         assert!(
             drop_ale_resolution.is_none() || matches!(&self, Self::DropAleAt { .. }),
             "DropAle route metadata was attached to a non-DropAle command"
+        );
+        assert!(
+            group_move_door_route.is_none() || matches!(&self, Self::GroupMove { .. }),
+            "group-move route metadata was attached to a non-group-move command"
         );
         Some(match self {
             Self::BoxSelect {
@@ -1179,6 +1184,7 @@ impl TraceCommand {
                     running,
                     show_marker,
                     goal_override,
+                    door_route_override: group_move_door_route,
                 }
             }
             Self::LaunchInteraction {
@@ -1879,6 +1885,72 @@ struct TraceRouteGate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReplayDropAleResolution {
     goal: (SectorNumber, u16),
+}
+
+/// Recover whether Original used ordinary `AppendMoveToSequence` or the
+/// distinct `AppendMoveToDoorSequence` constructor for a schema-16 group
+/// move. The command records the patch-aware route sector but not the
+/// coincident `mpSelectedSector` kind that selected the constructor. Rust's
+/// spatial lookup can choose a door overlay where Original chose the
+/// underlying motion sector, so the same-frame route event is authoritative.
+// TODO(parity-schema): record the selected group-move route constructor on
+// TraceCommand::GroupMove so future traces do not need this event join.
+fn resolve_schema_sixteen_group_move_door_route(
+    schema: u32,
+    command: &TraceCommand,
+    route_events: Option<&[TraceRouteConstructionEvent]>,
+    consumed_route_ordinals: &mut BTreeSet<u64>,
+) -> Option<bool> {
+    if schema != 16 {
+        return None;
+    }
+    let TraceCommand::GroupMove {
+        actors,
+        goal_sector,
+        ..
+    } = command
+    else {
+        return None;
+    };
+    let goal_sector = u16::try_from(*goal_sector)
+        .unwrap_or_else(|_| panic!("schema-16 group-move goal sector is negative: {goal_sector}"));
+
+    let mut matching = route_events
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|event| {
+            let ordinal = match event.draft_diagnostics.get("ordinal") {
+                Some(TraceJsonValue::Unsigned(ordinal)) => *ordinal,
+                other => panic!("schema-16 route event lacks an unsigned ordinal: {other:?}"),
+            };
+            if consumed_route_ordinals.contains(&ordinal)
+                || !actors.contains(&event.actor)
+                || event.goal_sector != goal_sector
+                || !matches!(event.kind.as_str(), "move" | "move_to_door")
+            {
+                return None;
+            }
+            Some((ordinal, event.kind.as_str()))
+        })
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return None;
+    }
+    matching.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+    let door_route = matching[0].1 == "move_to_door";
+    assert!(
+        matching
+            .iter()
+            .all(|(_, kind)| (*kind == "move_to_door") == door_route),
+        "one group move produced mixed ordinary and door route constructors: {matching:?}"
+    );
+    for (ordinal, _) in matching {
+        assert!(
+            consumed_route_ordinals.insert(ordinal),
+            "schema-16 route ordinal {ordinal} matched twice"
+        );
+    }
+    Some(door_route)
 }
 
 /// Recover the goal that Original retained before authorizing a DropAle
@@ -3597,12 +3669,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true)
             })
         });
-        let (commands_before_hourglass, commands_after_hourglass) =
-            split_late_refresh_orientations(
-                std::mem::take(&mut frame.commands),
-                popup_nested_refresh,
-            );
+        let (commands_before_hourglass, commands_after_hourglass) = split_late_refresh_orientations(
+            std::mem::take(&mut frame.commands),
+            popup_nested_refresh,
+        );
         let mut consumed_drop_ale_route_ordinals = BTreeSet::new();
+        let mut consumed_group_move_route_ordinals = BTreeSet::new();
         for command in commands_before_hourglass {
             if debug_stage_timing {
                 eprintln!(
@@ -3617,7 +3689,18 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &mut consumed_drop_ale_route_ordinals,
                 map,
             );
-            if let Some(command) = command.into_player_command(map, &engine, drop_ale_resolution) {
+            let group_move_door_route = resolve_schema_sixteen_group_move_door_route(
+                header.schema,
+                &command,
+                frame.route_construction_events.as_deref(),
+                &mut consumed_group_move_route_ordinals,
+            );
+            if let Some(command) = command.into_player_command(
+                map,
+                &engine,
+                drop_ale_resolution,
+                group_move_door_route,
+            ) {
                 if debug_stage_timing {
                     eprintln!(
                         "parity stage: applying command before frame {}: {command:?}",
@@ -3643,7 +3726,18 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     &mut consumed_drop_ale_route_ordinals,
                     map,
                 );
-                command.into_player_command(map, &engine, drop_ale_resolution)
+                let group_move_door_route = resolve_schema_sixteen_group_move_door_route(
+                    header.schema,
+                    &command,
+                    frame.route_construction_events.as_deref(),
+                    &mut consumed_group_move_route_ordinals,
+                );
+                command.into_player_command(
+                    map,
+                    &engine,
+                    drop_ale_resolution,
+                    group_move_door_route,
+                )
             })
             .collect::<Vec<_>>();
         if debug_stage_timing {
@@ -11240,6 +11334,110 @@ mod tests {
             GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(288), 4)),
             "a coincident overlay must not erase the recorded route goal"
         );
+    }
+
+    fn group_move_route_fixture(
+        actor: TraceEntityId,
+        kind: &str,
+        ordinal: u64,
+    ) -> TraceRouteConstructionEvent {
+        let point = TracePoint {
+            x: TraceFloat { bits: 0 },
+            y: TraceFloat { bits: 0 },
+        };
+        TraceRouteConstructionEvent {
+            kind: kind.to_owned(),
+            actor,
+            source: point,
+            source_sector: 114,
+            source_level: 7,
+            goal: point,
+            goal_sector: 117,
+            goal_level: 8,
+            gates: Vec::new(),
+            draft_diagnostics: BTreeMap::from([(
+                "ordinal".to_owned(),
+                TraceJsonValue::Unsigned(ordinal),
+            )]),
+        }
+    }
+
+    #[test]
+    fn schema_sixteen_group_move_recovers_ordinary_route_over_door_overlay() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 344,
+        };
+        let command = TraceCommand::GroupMove {
+            actors: vec![actor],
+            destination: TracePoint {
+                x: TraceFloat {
+                    bits: 357.031_98_f32.to_bits(),
+                },
+                y: TraceFloat {
+                    bits: 714.0_f32.to_bits(),
+                },
+            },
+            running: false,
+            show_marker: true,
+            goal_sector: 117,
+            goal_layer: 8,
+        };
+        let routes = [group_move_route_fixture(actor, "move", 0)];
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_group_move_door_route(
+                16,
+                &command,
+                Some(&routes),
+                &mut consumed,
+            ),
+            Some(false)
+        );
+        assert_eq!(consumed, BTreeSet::from([0]));
+    }
+
+    #[test]
+    fn group_move_route_recovery_preserves_door_kind_and_ignores_legacy_schema() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 344,
+        };
+        let command = TraceCommand::GroupMove {
+            actors: vec![actor],
+            destination: TracePoint {
+                x: TraceFloat { bits: 0 },
+                y: TraceFloat { bits: 0 },
+            },
+            running: false,
+            show_marker: true,
+            goal_sector: 117,
+            goal_layer: 8,
+        };
+        let routes = [group_move_route_fixture(actor, "move_to_door", 4)];
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_group_move_door_route(
+                16,
+                &command,
+                Some(&routes),
+                &mut consumed,
+            ),
+            Some(true)
+        );
+        let mut legacy_consumed = BTreeSet::new();
+        assert_eq!(
+            resolve_schema_sixteen_group_move_door_route(
+                15,
+                &command,
+                Some(&routes),
+                &mut legacy_consumed,
+            ),
+            None
+        );
+        assert!(legacy_consumed.is_empty());
     }
 
     fn drop_ale_route_fixture(

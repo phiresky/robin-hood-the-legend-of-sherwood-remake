@@ -323,6 +323,22 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn recorded_ordinary_route_ignores_coincident_door_overlay() {
+        assert_eq!(
+            group_move_door_selection(Some(86), true, Some(false)),
+            (None, false)
+        );
+        assert_eq!(
+            group_move_door_selection(Some(86), true, None),
+            (Some(86), true)
+        );
+        assert_eq!(
+            group_move_door_selection(Some(86), true, Some(true)),
+            (Some(86), true)
+        );
+    }
+
+    #[test]
     fn player_group_move_uses_resolved_upright_click_action() {
         assert_eq!(player_group_move_action(false), OrderType::WalkingUpright);
         assert_eq!(player_group_move_action(true), OrderType::RunningUpright);
@@ -2871,6 +2887,24 @@ fn group_move_route_goal(
         .unwrap_or((selected_sector, selected_layer))
 }
 
+#[inline]
+fn group_move_door_selection(
+    spatial_clicked_door_index: Option<u32>,
+    spatial_is_door_click: bool,
+    recorded_door_route: Option<bool>,
+) -> (Option<u32>, bool) {
+    match recorded_door_route {
+        Some(false) => (None, false),
+        Some(true) => (
+            Some(spatial_clicked_door_index.unwrap_or_else(|| {
+                panic!("recorded group move requires a door route but no Rust door was hit")
+            })),
+            true,
+        ),
+        None => (spatial_clicked_door_index, spatial_is_door_click),
+    }
+}
+
 /// `PerformGroupMove` receives one resolved upright action from the click
 /// dispatcher. It does not infer sword movement from an actor's opponent list;
 /// `DetermineMovementAnimation` performs any live action-state adaptation when
@@ -4453,6 +4487,7 @@ impl EngineInner {
         run: bool,
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        door_route_override: Option<bool>,
     ) {
         self.perform_group_move_with_destinations(
             sim,
@@ -4462,6 +4497,7 @@ impl EngineInner {
             run,
             show_marker,
             goal_override,
+            door_route_override,
             None,
         );
     }
@@ -4494,6 +4530,7 @@ impl EngineInner {
             run,
             show_marker,
             None,
+            None,
             Some(destinations),
         );
     }
@@ -4508,6 +4545,7 @@ impl EngineInner {
         run: bool,
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        door_route_override: Option<bool>,
         explicit_destinations: Option<&[MapPoint]>,
     ) {
         if pc_ids.is_empty() {
@@ -4595,8 +4633,13 @@ impl EngineInner {
         let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
             door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
         });
-        let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
-        let is_door_click = is_door_click_sector || clicked_door_index.is_some();
+        let spatial_clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
+        let spatial_is_door_click = is_door_click_sector || spatial_clicked_door_index.is_some();
+        let (clicked_door_index, is_door_click) = group_move_door_selection(
+            spatial_clicked_door_index,
+            spatial_is_door_click,
+            door_route_override,
+        );
         let (route_goal_sector, route_goal_layer) =
             group_move_route_goal(goal_override, hit.sector, hit.layer);
 
@@ -4735,13 +4778,13 @@ impl EngineInner {
                     effective_click,
                     is_lift_click,
                 );
-                if !is_door_click
-                    && !self.world.fast_grid.find_authorized_position_toward(
+                let authorized = is_door_click
+                    || self.world.fast_grid.find_authorized_position_toward(
                         &mut bbox,
                         effective_click,
                         effective_layer,
-                    )
-                {
+                    );
+                if !authorized {
                     self.hero_speaking(
                         assets,
                         *pc_id,

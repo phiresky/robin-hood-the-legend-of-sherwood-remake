@@ -595,6 +595,7 @@ mod tests {
                 running: false,
                 show_marker: true,
                 goal_override: None,
+                door_route_override: None,
             });
             rec.push(PlayerCommand::CrouchDown);
             rec.end_frame();
@@ -945,6 +946,7 @@ mod tests {
             running: true,
             show_marker: false,
             goal_override: Some((crate::sector::SectorNumber::new(42), 3)),
+            door_route_override: None,
         };
         let json = serde_json::to_string(&with_override).unwrap();
         let round: PlayerCommand = serde_json::from_str(&json).unwrap();
