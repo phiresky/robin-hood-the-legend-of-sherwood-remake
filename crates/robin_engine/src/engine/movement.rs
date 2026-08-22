@@ -4301,6 +4301,49 @@ impl EngineInner {
         ));
     }
 
+    /// Close the `StartPostSeekSequence` calls made from inside
+    /// `RHElementActor::PerformSeek` before returning to the surrounding
+    /// movement `Execute` arm.
+    ///
+    /// This ordering matters for sword movement. `PerformSeek` terminates the
+    /// outgoing seek and registers its stored interaction first; only after it
+    /// returns does `RHElementActorHuman::Execute` prune far opponents and
+    /// potentially register `RHCOMMAND_PROVOKE` for the terminal movement.
+    /// Keeping the registrations in that order lets the later Provoke queue
+    /// behind an in-progress EnterSwordfight instead of being selected first
+    /// and then interrupted by it.
+    fn launch_perform_seek_arrivals(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        arrivals: Vec<(EntityId, crate::sequence::SequenceId, usize)>,
+    ) -> Vec<EntityId> {
+        let mut reentrant_order_advances = Vec::new();
+        for (entity_id, seq_id, elem_idx) in arrivals {
+            let launched =
+                self.start_post_seek_sequence(sim, assets, entity_id, Some((seq_id, elem_idx)));
+            if debug_post_seek_handoff_enabled() {
+                eprintln!(
+                    "[POST_SEEK frame={} owner={entity_id:?} stage=ordinary_launch launched={launched} current={:?}]",
+                    self.control.frame_counter,
+                    self.orders
+                        .sequence_manager
+                        .current_element_for_actor(entity_id),
+                );
+            }
+            if launched {
+                reentrant_order_advances.push(entity_id);
+            }
+        }
+        // StartPostSeekSequence is synchronous inside PerformSeek. Settle the
+        // launched interaction before the derived Human Execute tail resumes.
+        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+            .unwrap_or_else(|error| {
+                panic!("failed to drain synchronous post-seek work: {error:?}")
+            });
+        reentrant_order_advances
+    }
+
     // ─── Order system ─────────────────────────────────────────────
 
     /// Snap a click/formation-slot point to the nearest authorized
@@ -8558,6 +8601,13 @@ impl EngineInner {
             }
         }
 
+        // PerformSeek calls StartPostSeekSequence before it returns its
+        // motion state to the surrounding Human Execute arm. In particular,
+        // an EnterSwordfight interaction is registered before that outer arm
+        // evaluates and registers its terminal Provoke.
+        let post_seek_reentrant_order_advances =
+            self.launch_perform_seek_arrivals(sim, assets, post_seek_arrivals);
+
         // Human's sword-movement Execute arm prunes newly far opponents
         // immediately after PerformMotion/PerformSeek and before inspecting
         // the returned motion state (`RHelementactorhuman.cpp:3778-3844`).
@@ -8603,8 +8653,8 @@ impl EngineInner {
             .collect::<Vec<_>>();
         // LaunchSequenceElement only registers this ordinary-priority work;
         // its later Go/Instruct still runs after terminal order advancement.
-        // Register now so a synchronous StartPostSeekSequence registers its
-        // SpeakHeroReachDestination behind the Provoke, as in Original.
+        // PerformSeek's synchronous post-seek registration has already run
+        // above, matching the nested Original call order.
         for entity_id in sword_movement_provokes {
             self.launch_sword_movement_termination_provoke(entity_id);
         }
@@ -8862,33 +8912,6 @@ impl EngineInner {
             self.apply_select_hulk(entity_id, speed);
         }
 
-        let mut post_seek_reentrant_order_advances = Vec::new();
-        for (entity_id, seq_id, elem_idx) in post_seek_arrivals {
-            let launched =
-                self.start_post_seek_sequence(sim, assets, entity_id, Some((seq_id, elem_idx)));
-            if debug_post_seek_handoff_enabled() {
-                eprintln!(
-                    "[POST_SEEK frame={} owner={entity_id:?} stage=ordinary_launch launched={launched} current={:?}]",
-                    self.control.frame_counter,
-                    self.orders
-                        .sequence_manager
-                        .current_element_for_actor(entity_id),
-                );
-            }
-            if launched {
-                post_seek_reentrant_order_advances.push(entity_id);
-            }
-        }
-        // `StartPostSeekSequence` launches the actor-owned interaction from
-        // inside `PerformSeek`. Close that synchronous launch before returning
-        // to the surrounding movement-transition Execute switch: FaceTo and
-        // similar callbacks must still observe the outgoing MovingFast state.
-        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-            .unwrap_or_else(|error| {
-                panic!(
-                    "movement owner {owner:?} failed to drain synchronous post-seek work: {error:?}"
-                )
-            });
         for (entity_id, posture, action_state) in post_seek_terminal_state_effects {
             let entity = self.get_entity_mut(entity_id).unwrap_or_else(|| {
                 panic!(
@@ -16448,6 +16471,93 @@ mod movement_transition_state_tests {
         MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    #[test]
+    fn perform_seek_registers_enter_swordfight_before_outer_terminal_provoke() {
+        // Nescafe/Profile001+003/Savegame000/replay021: the PC's sword
+        // movement reaches its seek target while carrying an EnterSwordfight
+        // post-seek sequence. Original StartPostSeekSequence runs inside
+        // PerformSeek, so EnterSwordfight reaches the manager FIFO before the
+        // surrounding Human Execute arm registers Provoke.
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+        let target = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        }));
+
+        let mut post_seek = Sequence::new();
+        let mut enter = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+        enter.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Element(target),
+        );
+        post_seek.append_element(enter);
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.seek_target = Some(target);
+            actor.post_seek_sequence = Some(Box::new(post_seek));
+        }
+
+        let movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingWithSword,
+        );
+        let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+        let registered = engine.orders.sequence_manager.hourglass();
+        assert_eq!(registered.len(), 1);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(movement_sequence, 0);
+
+        let reentrant =
+            engine.launch_perform_seek_arrivals(&sim, &assets, vec![(owner, movement_sequence, 0)]);
+        assert_eq!(reentrant, vec![owner]);
+        engine.launch_sword_movement_termination_provoke(owner);
+
+        let commands = engine
+            .orders
+            .sequence_manager
+            .v48_elements_to_go()
+            .into_iter()
+            .filter_map(|(sequence_id, element_index)| {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+            })
+            .filter(|element| element.owner == Some(owner))
+            .map(|element| element.command)
+            .collect::<Vec<_>>();
+        assert_eq!(commands, vec![Command::EnterSwordfight, Command::Provoke]);
+    }
 
     #[test]
     fn map_exit_move_bypasses_ordinary_level_bounds_preflight() {
