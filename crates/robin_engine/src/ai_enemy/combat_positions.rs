@@ -1484,9 +1484,16 @@ impl EnemyAi {
         };
         let forward = sector_to_vector(bearer_dir);
         let distance = archer::DISTANCE_SHIELD_BEARER_ARCHER as f32;
+        // Original first authors the aspect-corrected vector through
+        // `SetSector0to15(direction, ASPECT_RATIO)` and only then applies
+        // `operator*=(DISTANCE_SHIELD_BEARER_ARCHER)`. Keep those two f32
+        // roundings in that order: reassociating this as
+        // `(forward.y * distance) * ASPECT_RATIO` changes the cover point by
+        // one ULP for diagonal sectors.
+        let vertical_offset = (forward.1 * ASPECT_RATIO) * distance;
         Some(Position {
             x: bearer_pos.x - forward.0 * distance,
-            y: bearer_pos.y - forward.1 * distance * ASPECT_RATIO,
+            y: bearer_pos.y - vertical_offset,
             ..bearer_pos
         })
     }
@@ -4697,6 +4704,33 @@ mod tests {
         assert!(
             max_norm(pos_diff(&archer_position, &cover)) < archer::COVER_POINT_TOLERANCE as f32
         );
+    }
+
+    #[test]
+    fn shield_bearer_cover_preserves_original_aspect_then_distance_rounding() {
+        // Schema-16 seed 2,000,000, linux3/Profile_003/Savegame_029,
+        // replay-017 frame 12826. Original SetSector0to15 first multiplies
+        // sector 10's Y component by ASPECT_RATIO, then operator*= applies
+        // distance 30. Reassociating those products raises the destination Y
+        // from bits 0x4268_b9b6 to 0x4268_b9b7 and eventually changes a
+        // bit-exact visibility endpoint by two ULPs.
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 82,
+            position: position(1072.624755859375, 70.3487548828125),
+            direction: 10,
+            current_substate: Substate::AttackingProtectingWithShield as u32,
+            ..FighterSnapshot::default()
+        });
+
+        let cover = EnemyAi::default()
+            .shield_bearer_cover_position(82, &tick)
+            .expect("protecting shield bearer has a cover position");
+
+        assert_eq!(cover.x.to_bits(), 0x4488_bad1);
+        assert_eq!(cover.y.to_bits(), 0x4268_b9b6);
+        assert_eq!(cover.x, 1093.8380126953125);
+        assert_eq!(cover.y, 58.181358337402344);
     }
 
     #[test]
