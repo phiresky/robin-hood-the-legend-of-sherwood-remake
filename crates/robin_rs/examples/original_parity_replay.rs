@@ -1104,7 +1104,16 @@ impl From<TraceAction> for Action {
 }
 
 impl TraceCommand {
-    fn into_player_command(self, entity_map: &EntityMap, engine: &Engine) -> Option<PlayerCommand> {
+    fn into_player_command(
+        self,
+        entity_map: &EntityMap,
+        engine: &Engine,
+        drop_ale_resolution: Option<ReplayDropAleResolution>,
+    ) -> Option<PlayerCommand> {
+        assert!(
+            drop_ale_resolution.is_none() || matches!(&self, Self::DropAleAt { .. }),
+            "DropAle route metadata was attached to a non-DropAle command"
+        );
         Some(match self {
             Self::BoxSelect {
                 first,
@@ -1276,11 +1285,18 @@ impl TraceCommand {
                 actor,
                 target,
                 running,
-            } => PlayerCommand::DropAleAt {
-                actor: entity_map.translate(actor),
-                target_pos: target.into(),
-                running,
-            },
+            } => {
+                let (already_authorized, goal_override) = drop_ale_resolution
+                    .map(|resolution| (true, Some(resolution.goal)))
+                    .unwrap_or((false, None));
+                PlayerCommand::DropAleAt {
+                    actor: entity_map.translate(actor),
+                    target_pos: target.into(),
+                    running,
+                    already_authorized,
+                    goal_override,
+                }
+            }
             Self::ShieldSelectProtected {
                 actor,
                 protected_pc,
@@ -1858,6 +1874,69 @@ struct TraceRouteGate {
     level_in: u16,
     #[serde(flatten)]
     draft_diagnostics: BTreeMap<String, TraceJsonValue>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReplayDropAleResolution {
+    goal: (SectorNumber, u16),
+}
+
+/// Recover the goal that Original retained before authorizing a DropAle
+/// destination. Schema 16 does not yet carry that goal on `drop_ale_at`, but a
+/// cross-sector Seek records it in the same frame's route-construction stream.
+/// Match by route ordinal plus stable actor/point identity; projected point
+/// containment is intentionally not consulted because overlapping floors can
+/// select a different layer.
+// TODO(parity-schema): record DropAle's pre-authorization goal sector/layer on
+// the command itself. Same-sector moves do not publish a route event, so this
+// schema-16 recovery is intentionally limited to cross-sector seeks.
+fn resolve_schema_sixteen_drop_ale(
+    schema: u32,
+    command: &TraceCommand,
+    route_events: Option<&[TraceRouteConstructionEvent]>,
+    consumed_route_ordinals: &mut BTreeSet<u64>,
+    entity_map: &EntityMap,
+) -> Option<ReplayDropAleResolution> {
+    if schema != 16 {
+        return None;
+    }
+    let TraceCommand::DropAleAt { actor, target, .. } = command else {
+        return None;
+    };
+
+    let actor = entity_map.translate(*actor);
+    let matching_event = route_events
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|event| {
+            let ordinal = match event.draft_diagnostics.get("ordinal") {
+                Some(TraceJsonValue::Unsigned(ordinal)) => *ordinal,
+                other => panic!("schema-16 route event lacks an unsigned ordinal: {other:?}"),
+            };
+            if consumed_route_ordinals.contains(&ordinal)
+                || event.kind != "move"
+                || entity_map.translate(event.actor) != actor
+                || event.goal.x.bits != target.x.bits
+                || event.goal.y.bits != target.y.bits
+                || event.source_sector == event.goal_sector
+            {
+                return None;
+            }
+            Some((ordinal, event))
+        })
+        .min_by_key(|(ordinal, _)| *ordinal);
+    let (ordinal, event) = matching_event?;
+    assert!(
+        consumed_route_ordinals.insert(ordinal),
+        "schema-16 route ordinal {ordinal} matched twice"
+    );
+
+    Some(ReplayDropAleResolution {
+        goal: (
+            entity_map.translate_required_drop_ale_goal_sector(event.goal_sector),
+            event.goal_level,
+        ),
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -3523,6 +3602,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 std::mem::take(&mut frame.commands),
                 popup_nested_refresh,
             );
+        let mut consumed_drop_ale_route_ordinals = BTreeSet::new();
         for command in commands_before_hourglass {
             if debug_stage_timing {
                 eprintln!(
@@ -3530,7 +3610,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     frame.frame_after
                 );
             }
-            if let Some(command) = command.into_player_command(map, &engine) {
+            let drop_ale_resolution = resolve_schema_sixteen_drop_ale(
+                header.schema,
+                &command,
+                frame.route_construction_events.as_deref(),
+                &mut consumed_drop_ale_route_ordinals,
+                map,
+            );
+            if let Some(command) = command.into_player_command(map, &engine, drop_ale_resolution) {
                 if debug_stage_timing {
                     eprintln!(
                         "parity stage: applying command before frame {}: {command:?}",
@@ -3548,7 +3635,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }
         let commands_after_hourglass = commands_after_hourglass
             .into_iter()
-            .filter_map(|command| command.into_player_command(map, &engine))
+            .filter_map(|command| {
+                let drop_ale_resolution = resolve_schema_sixteen_drop_ale(
+                    header.schema,
+                    &command,
+                    frame.route_construction_events.as_deref(),
+                    &mut consumed_drop_ale_route_ordinals,
+                    map,
+                );
+                command.into_player_command(map, &engine, drop_ale_resolution)
+            })
             .collect::<Vec<_>>();
         if debug_stage_timing {
             eprintln!(
@@ -5948,6 +6044,18 @@ impl EntityMap {
             });
             GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(recorded), layer))
         }
+    }
+
+    fn translate_required_drop_ale_goal_sector(&self, original: u16) -> SectorNumber {
+        let runtime = self.sectors.get(&original).copied().unwrap_or_else(|| {
+            panic!(
+                "schema-16 DropAle route goal Original sector {original} has no retained Rust position-sector mapping"
+            )
+        });
+        let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
+            panic!("Rust DropAle goal sector {runtime} exceeds its signed identity domain")
+        });
+        SectorNumber::new(runtime)
     }
 
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
@@ -11131,6 +11239,146 @@ mod tests {
             map.translate_group_move_goal_sector(288, 4),
             GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(288), 4)),
             "a coincident overlay must not erase the recorded route goal"
+        );
+    }
+
+    fn drop_ale_route_fixture(
+        actor: TraceEntityId,
+        target: TracePoint,
+    ) -> TraceRouteConstructionEvent {
+        TraceRouteConstructionEvent {
+            kind: "move".to_owned(),
+            actor,
+            source: TracePoint {
+                x: TraceFloat {
+                    bits: 2413.0_f32.to_bits(),
+                },
+                y: TraceFloat {
+                    bits: 802.0_f32.to_bits(),
+                },
+            },
+            source_sector: 394,
+            source_level: 6,
+            goal: target,
+            goal_sector: 148,
+            goal_level: 4,
+            gates: Vec::new(),
+            draft_diagnostics: BTreeMap::from([(
+                "ordinal".to_owned(),
+                TraceJsonValue::Unsigned(7),
+            )]),
+        }
+    }
+
+    fn drop_ale_route_map(actor: TraceEntityId) -> EntityMap {
+        EntityMap {
+            entities: BTreeMap::from([(actor, EntityId::Pc(robin_engine::entity_id::PcId(12)))]),
+            entities_by_creation_order: BTreeMap::new(),
+            sectors: BTreeMap::from([(148, 55)]),
+            runtime_creation_order_boundary: 0,
+        }
+    }
+
+    #[test]
+    fn schema_sixteen_drop_ale_recovers_save067_route_goal() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let target = TracePoint {
+            x: TraceFloat {
+                bits: 2607.467_041_f32.to_bits(),
+            },
+            y: TraceFloat {
+                bits: 881.610_474_f32.to_bits(),
+            },
+        };
+        let command = TraceCommand::DropAleAt {
+            actor,
+            target,
+            running: false,
+        };
+        let routes = [drop_ale_route_fixture(actor, target)];
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_drop_ale(
+                16,
+                &command,
+                Some(&routes),
+                &mut consumed,
+                &drop_ale_route_map(actor),
+            ),
+            Some(ReplayDropAleResolution {
+                goal: (SectorNumber::new(55), 4),
+            })
+        );
+        assert_eq!(consumed, BTreeSet::from([7]));
+    }
+
+    #[test]
+    fn drop_ale_route_recovery_rejects_nonmatching_point_and_legacy_schema() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let target = TracePoint {
+            x: TraceFloat { bits: 0x4522_f77a },
+            y: TraceFloat { bits: 0x445c_6712 },
+        };
+        let command = TraceCommand::DropAleAt {
+            actor,
+            target,
+            running: false,
+        };
+        let mut wrong_target = target;
+        wrong_target.x.bits ^= 1;
+        let routes = [drop_ale_route_fixture(actor, wrong_target)];
+        let map = drop_ale_route_map(actor);
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_drop_ale(16, &command, Some(&routes), &mut consumed, &map,),
+            None
+        );
+        assert_eq!(
+            resolve_schema_sixteen_drop_ale(
+                15,
+                &command,
+                Some(&[drop_ale_route_fixture(actor, target)]),
+                &mut consumed,
+                &map,
+            ),
+            None
+        );
+        assert!(consumed.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "has no retained Rust position-sector mapping")]
+    fn schema_sixteen_drop_ale_rejects_unmapped_authoritative_goal() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let target = TracePoint {
+            x: TraceFloat { bits: 0x4522_f77a },
+            y: TraceFloat { bits: 0x445c_6712 },
+        };
+        let command = TraceCommand::DropAleAt {
+            actor,
+            target,
+            running: false,
+        };
+        let mut map = drop_ale_route_map(actor);
+        map.sectors.clear();
+
+        let _ = resolve_schema_sixteen_drop_ale(
+            16,
+            &command,
+            Some(&[drop_ale_route_fixture(actor, target)]),
+            &mut BTreeSet::new(),
+            &map,
         );
     }
 

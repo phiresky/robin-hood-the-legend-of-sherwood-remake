@@ -987,6 +987,8 @@ fn resolve_action_left_click(
                     actor: pc_id,
                     target_pos: map_pt,
                     running: is_double,
+                    already_authorized: false,
+                    goal_override: None,
                 },
                 commit_tail(is_recording),
             ];

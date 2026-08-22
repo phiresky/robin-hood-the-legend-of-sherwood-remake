@@ -741,8 +741,16 @@ impl EngineInner {
                 actor,
                 target_pos,
                 running,
+                already_authorized,
+                goal_override,
             } => {
-                self.apply_drop_ale_at(*actor, *target_pos, *running);
+                self.apply_drop_ale_at(
+                    *actor,
+                    *target_pos,
+                    *running,
+                    *already_authorized,
+                    *goal_override,
+                );
             }
             ShieldSelectProtected {
                 actor: _,
@@ -1452,6 +1460,8 @@ impl EngineInner {
                 actor,
                 target_pos,
                 running,
+                already_authorized: _,
+                goal_override: _,
             } => {
                 if *actor != recording_pc {
                     return;
@@ -1885,6 +1895,8 @@ impl EngineInner {
                     actor: pc,
                     target_pos,
                     running,
+                    already_authorized: false,
+                    goal_override: None,
                 },
                 crate::macro_store::QaReplayCommand::Swordfight { target, running } => {
                     // See Interaction arm — whole-sequence abort on
@@ -1992,9 +2004,18 @@ impl EngineInner {
                     actor,
                     target_pos,
                     running,
+                    already_authorized,
+                    goal_override,
                 } = &cmd
             {
-                self.apply_drop_ale_at_with_recovery(*actor, *target_pos, *running, true);
+                self.apply_drop_ale_at_with_recovery(
+                    *actor,
+                    *target_pos,
+                    *running,
+                    true,
+                    *already_authorized,
+                    *goal_override,
+                );
                 posture_recovery_embedded = true;
             } else {
                 self.apply_command(sim, display, input, assets, &cmd);
@@ -3880,8 +3901,17 @@ impl EngineInner {
         actor: EntityId,
         target_pos: crate::coordinates::MapPoint,
         running: bool,
+        already_authorized: bool,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
     ) {
-        self.apply_drop_ale_at_with_recovery(actor, target_pos, running, false);
+        self.apply_drop_ale_at_with_recovery(
+            actor,
+            target_pos,
+            running,
+            false,
+            already_authorized,
+            goal_override,
+        );
     }
 
     /// Build the ordinary DropAle route, optionally retaining quick-action
@@ -3892,6 +3922,8 @@ impl EngineInner {
         target_pos: crate::coordinates::MapPoint,
         running: bool,
         append_posture_recovery: bool,
+        already_authorized: bool,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
     ) {
         use crate::order::OrderType;
 
@@ -3939,7 +3971,17 @@ impl EngineInner {
         // sector is a door, or a lift that is a wall or ladder. Not ported
         // yet — a mis-resolution here would silently drop a replayed command,
         // so the guard needs its own validation pass.
-        let (goal_sector, goal_layer) = {
+        assert_eq!(
+            already_authorized,
+            goal_override.is_some(),
+            "resolved DropAle commands must carry both already_authorized and goal_override"
+        );
+        let (goal_sector, goal_layer) = if let Some((goal_sector, goal_layer)) = goal_override {
+            (
+                crate::position_interface::SectorHandle::new(u16::from(goal_sector)),
+                goal_layer,
+            )
+        } else {
             let reference = self
                 .get_entity(actor)
                 .map(|e| e.element_data().position_map())
@@ -3980,7 +4022,7 @@ impl EngineInner {
         // The move box is authorised on the cursor's layer, the same one the
         // seek element is stamped with.
         let mut destination_pos = target_pos;
-        if move_box.is_somewhere() {
+        if !already_authorized && move_box.is_somewhere() {
             let mut box_at_target = move_box.translated(target_pos);
             if self
                 .world
@@ -5303,6 +5345,32 @@ mod tests {
             .collect()
     }
 
+    fn drop_ale_seek_goal(
+        engine: &EngineInner,
+    ) -> (
+        crate::coordinates::MapPoint,
+        Option<crate::position_interface::SectorHandle>,
+        u16,
+    ) {
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("DropAle launches one seek route");
+        let seek = sequence.get(0).expect("DropAle route begins with Seek");
+        let SequenceElementData::Movement {
+            destination,
+            sector,
+            layer,
+            ..
+        } = &seek.data
+        else {
+            panic!("DropAle route must begin with movement");
+        };
+        (*destination, *sector, *layer)
+    }
+
     #[test]
     fn drop_ale_macro_embeds_helping_recovery_in_post_seek() {
         let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
@@ -5335,11 +5403,48 @@ mod tests {
                 actor: pc_id,
                 target_pos,
                 running: false,
+                already_authorized: false,
+                goal_override: None,
             },
         );
 
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
         assert_eq!(drop_ale_post_seek_commands(&engine), [Command::DropAle]);
+        assert_eq!(drop_ale_seek_goal(&engine).0, target_pos);
+    }
+
+    #[test]
+    fn resolved_replay_drop_ale_preserves_authorized_point_and_route_goal() {
+        let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
+        engine
+            .players
+            .macro_store
+            .get_or_insert(pc_id)
+            .clear_slot(0);
+        let authorized = crate::coordinates::MapPoint::new(2607.467_041, 881.610_474);
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::DropAleAt {
+                actor: pc_id,
+                target_pos: authorized,
+                running: false,
+                already_authorized: true,
+                goal_override: Some((crate::sector::SectorNumber::new(55), 4)),
+            },
+        );
+
+        assert_eq!(
+            drop_ale_seek_goal(&engine),
+            (
+                authorized,
+                crate::position_interface::SectorHandle::new(55),
+                4,
+            )
+        );
     }
 
     fn setup_strangle_command_scene() -> (EngineInner, LevelAssets, EntityId, EntityId) {
@@ -6310,6 +6415,8 @@ mod tests {
             pc_id,
             crate::coordinates::MapPoint { x: 80.0, y: 90.0 },
             false,
+            false,
+            None,
         );
 
         let sequence = engine

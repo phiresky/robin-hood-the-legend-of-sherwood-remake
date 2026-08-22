@@ -185,6 +185,17 @@ pub enum PlayerCommand {
         /// True selects `RUNNING_UPRIGHT` seek animation; comes from
         /// the double-click / record-QA matrix.
         running: bool,
+        /// The parity recorder stores the center returned by Original's
+        /// `FindAutorizedPosition`, while live input stores the raw cursor.
+        /// Only an Original-trace replay sets this; older serialized commands
+        /// retain the live/raw interpretation.
+        #[serde(default)]
+        already_authorized: bool,
+        /// Authoritative route goal retained by a matching schema-16 route
+        /// construction event. Spatially re-querying an authorized projected
+        /// point can select an overlapping floor instead.
+        #[serde(default)]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
     },
     /// Shield two-click protocol, first click: stash the focusable PC to
     /// protect in [`ShieldState::protected_pc`] and flip

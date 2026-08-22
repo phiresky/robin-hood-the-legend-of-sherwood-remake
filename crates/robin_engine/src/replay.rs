@@ -961,6 +961,34 @@ mod tests {
     }
 
     #[test]
+    fn legacy_drop_ale_command_defaults_to_live_raw_input() {
+        let current = PlayerCommand::DropAleAt {
+            actor: crate::element::EntityId::Pc(crate::entity_id::PcId(1)),
+            target_pos: crate::coordinates::MapPoint::new(50.0, 75.0),
+            running: false,
+            already_authorized: false,
+            goal_override: None,
+        };
+        let mut json = serde_json::to_value(current).unwrap();
+        let fields = json
+            .get_mut("DropAleAt")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged DropAle command fields");
+        fields.remove("already_authorized");
+        fields.remove("goal_override");
+
+        let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
+        assert!(matches!(
+            decoded,
+            PlayerCommand::DropAleAt {
+                already_authorized: false,
+                goal_override: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn save_markers_and_load_backs_round_trip_linearly() {
         let path = unique_replay_path("save_load_timeline");
         let campaign = crate::campaign::Campaign::default();
