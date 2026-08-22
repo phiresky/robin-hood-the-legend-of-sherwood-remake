@@ -15,9 +15,10 @@ fn rolling_initial_direction(position: MapPoint, goal: MapPoint) -> i16 {
     vector_to_sector_0_to_15(goal.x - position.x, goal.y - position.y)
 }
 
-/// Original's ordinary `PerformMotion` arrival snap uses the position
-/// interface's live goal, not the order's authored destination. `UpdateRoll`
-/// can stop a roll by replacing only that live goal with the current point.
+/// Original's ordinary `PerformMotion` anti-collision recovery and arrival
+/// snap use the position interface's live goal, not the order's authored
+/// destination. `UpdateRoll` can stop a roll by replacing only that live goal
+/// with the current point.
 fn rolling_terminal_snap_point(
     position: &crate::position_interface::PositionInterface,
 ) -> MapPoint {
@@ -170,16 +171,20 @@ impl EngineInner {
                 .expect("Rolling owner disappeared before movement commit");
             let cached = entity.position_iface().get_increment_map();
             let anti_on = entity.position_iface().is_anti_collision_on();
-            let (move_box, half_diagonal) = {
+            let (move_box, half_diagonal, live_goal) = {
                 let pi = entity.position_iface();
-                (*pi.get_move_box(), pi.get_half_diagonal())
+                (
+                    *pi.get_move_box(),
+                    pi.get_half_diagonal(),
+                    rolling_terminal_snap_point(pi),
+                )
             };
             let was_deviated = entity.position_iface().is_deviated();
             let mut state = super::anti_collision::AntiCollisionState {
                 pi: entity.position_iface_mut(),
                 move_box,
                 half_diagonal,
-                goal_map: goal,
+                goal_map: live_goal,
             };
             let (dx, dy) = super::anti_collision::apply_anti_collision_step(
                 &mover,
@@ -336,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped_rolling_snaps_to_rewritten_live_goal_not_order_destination() {
+    fn stopped_rolling_uses_rewritten_live_goal_not_order_destination() {
         let authored_order_destination = MapPoint::new(1213.184_1, 1172.210_4);
         let stopped_here = MapPoint::new(1208.699_5, 1156.473_4);
         let mut position = crate::position_interface::PositionInterface::new();
@@ -347,7 +352,11 @@ mod tests {
         position.set_map_goal(stopped_here);
 
         assert_ne!(position.map_goal(), authored_order_destination);
-        assert_eq!(rolling_terminal_snap_point(&position), stopped_here);
+        assert_eq!(
+            rolling_terminal_snap_point(&position),
+            stopped_here,
+            "both anti-collision recovery and terminal snapping consume this live goal"
+        );
     }
 
     #[test]
