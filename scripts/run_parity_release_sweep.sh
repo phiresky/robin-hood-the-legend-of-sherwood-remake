@@ -78,6 +78,28 @@ if [[ ! -f "$snapshot" ]]; then
     exit 2
 fi
 
+# A resumed campaign can encounter traces that already reached exact EOF in
+# another audit.  Status filenames in this sweep are relative to `corpus_dir`,
+# while the permanent ledger uses repository-relative campaign keys.  Import
+# that ledger explicitly so the spelling difference can never cause a known
+# EOF replay to run again.
+permanent_eof_snapshot=${PARITY_PERMANENT_EOF_SNAPSHOT:-}
+declare -A permanent_eof_keys=()
+if [[ -n "$permanent_eof_snapshot" ]]; then
+    if [[ ! -f "$permanent_eof_snapshot" ]]; then
+        printf 'error: permanent EOF snapshot does not exist: %s\n' \
+            "$permanent_eof_snapshot" >&2
+        exit 2
+    fi
+    while IFS= read -r permanent_key; do
+        [[ -n "$permanent_key" ]] || continue
+        permanent_eof_keys["$permanent_key"]=1
+    done < "$permanent_eof_snapshot"
+fi
+
+corpus_relative=${corpus_dir#"$workspace"/}
+campaign_key_prefix=${corpus_relative//\//__}
+
 mapfile -t traces < "$snapshot"
 for ((index = shard; index < ${#traces[@]}; index += shards)); do
     trace=${traces[index]}
@@ -88,8 +110,15 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     # as the same logical trace so a resumed sweep does not rerun already
     # completed work under a second filename namespace.
     full_key=${trace//\//__}
+    canonical_key="${campaign_key_prefix}__${key}"
     log="$audit_dir/logs/$key.log"
     status="$audit_dir/status/$key.status"
+
+    if [[ -n "$permanent_eof_snapshot" \
+        && -n "${permanent_eof_keys[$canonical_key]+present}" ]]
+    then
+        continue
+    fi
 
     # Two watcher instances can briefly overlap during a restart.  Sharding
     # prevents duplicate work within one invocation, but it cannot stop both
