@@ -4022,45 +4022,47 @@ impl EnemyAi {
         // Soldier returning to officer after search
         match stimulus_type {
             StimulusType::EventTimer => {
-                let ant = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == self.base.antagonist);
-                if let Some(ant) = ant {
-                    match ant.ai_substate {
-                        Substate::SeekingOfficerWaitForInstructedSoldier
-                        | Substate::SeekingOfficerWaitForInstructedGroup
-                        | Substate::SeekingDetectedCharly => {
+                // Original dereferences `mpAntagonist` here. It is not
+                // necessarily a soldier: retained saves can carry a civilian
+                // antagonist while this soldier is returning to the last
+                // known officer position. `camp_soldiers` cannot distinguish
+                // that valid participant from a missing entity.
+                let ant_substate = ctx
+                    .expect_entity_view(
+                        self.base.antagonist,
+                        "soldier-return-to-officer antagonist",
+                    )
+                    .ai_substate;
+                match ant_substate {
+                    Substate::SeekingOfficerWaitForInstructedSoldier
+                    | Substate::SeekingOfficerWaitForInstructedGroup
+                    | Substate::SeekingDetectedCharly => {
+                        self.base.launch_timer(20, ctx.frame);
+                    }
+                    _ => {
+                        // Are we near the officer's last known position?
+                        let dx = ctx.position.x - self.officers_position.x;
+                        let dy = ctx.position.y - self.officers_position.y;
+                        let sq_dist = dx * dx + dy * dy;
+                        if sq_dist < ctx.sq_standard_view_radius {
+                            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        } else {
+                            // Not near enough to know officer left
                             self.base.launch_timer(20, ctx.frame);
                         }
-                        _ => {
-                            // Are we near the officer's last known position?
-                            let dx = ctx.position.x - self.officers_position.x;
-                            let dy = ctx.position.y - self.officers_position.y;
-                            let sq_dist = dx * dx + dy * dy;
-                            if sq_dist < ctx.sq_standard_view_radius {
-                                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
-                            } else {
-                                // Not near enough to know officer left
-                                self.base.launch_timer(20, ctx.frame);
-                            }
-                        }
                     }
-                } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 }
             }
             StimulusType::EventReachPoint => {
-                let ant_substate = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
-                    .map(|cs| cs.ai_substate);
+                let ant_substate = ctx
+                    .expect_entity_view(
+                        self.base.antagonist,
+                        "soldier-return-to-officer antagonist",
+                    )
+                    .ai_substate;
                 match ant_substate {
-                    Some(
-                        Substate::SeekingOfficerWaitForInstructedSoldier
-                        | Substate::SeekingOfficerWaitForInstructedGroup,
-                    ) => {
+                    Substate::SeekingOfficerWaitForInstructedSoldier
+                    | Substate::SeekingOfficerWaitForInstructedGroup => {
                         self.base.outbox.reentrant.owner_work.push(
                             crate::ai::AiOwnerWork::BeginSoldierGiveReport {
                                 officer: self.base.antagonist,
@@ -8692,6 +8694,61 @@ mod tests {
         view.forecasted_destination =
             crate::ai::PreparedForecastDestination::fixed(position, view.direction);
         view
+    }
+
+    #[test]
+    fn returning_soldier_with_far_civilian_antagonist_keeps_route_and_rearms_timer() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(195);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSoldierReturnToOfficer;
+        ai.base.antagonist = 85;
+        ai.officers_position = Position {
+            x: 1_503.6351,
+            y: 1_097.0138,
+            ..Position::default()
+        };
+
+        let mut antagonist = civilian_view(
+            85,
+            Position {
+                x: 2_100.0,
+                y: 1_800.0,
+                ..Position::default()
+            },
+        );
+        antagonist.ai_state = AiState::Fleeing;
+        antagonist.ai_substate = Substate::FleeingHiding;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(85, antagonist);
+        let ctx = AiContext {
+            frame: 14_748,
+            position: Position {
+                x: 2_006.4349,
+                y: 1_735.3752,
+                ..Position::default()
+            },
+            sq_standard_view_radius: 300.0 * 300.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.seeking_soldier_return_to_officer(
+            &sim,
+            StimulusType::EventTimer,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingSoldierReturnToOfficer
+        );
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 14_768);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     }
 
     #[test]
