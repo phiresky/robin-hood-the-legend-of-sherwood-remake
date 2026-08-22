@@ -3380,17 +3380,16 @@ impl EnemyAi {
         let mut begin_charge = false;
         let mut ok = false;
 
-        // Find primary target position from fighter snapshots. Original
-        // dereferences the raw `mpPrimaryTarget` pointer, which is not
-        // radius-limited, so fall back to the full fighter registry when the
-        // target is outside the 500-unit `nearby_fighters` window.
-        let target_pos = self
-            .find_fighter(target, tick)
-            .filter(|f| !f.is_friendly)
-            .map(|f| f.position);
+        // Find the primary target from fighter snapshots. Original
+        // `GetGoodRiderAttackDestination` reads `pEnemy->GetPositionMap()`,
+        // not the door/carrier-aware AI `Position(pEnemy)`, so charge
+        // geometry consumes the raw element position. The persistent target
+        // pointer is not radius-limited, so fall back to the full fighter
+        // registry when it is outside the 500-unit `nearby_fighters` window.
+        let target_snapshot = self.find_fighter(target, tick).filter(|f| !f.is_friendly);
 
         if target != 0
-            && let Some(tpos) = target_pos
+            && let Some(target_snapshot) = target_snapshot
         {
             // The reference checks !IsDead && !IsUnconscious && !IsTied.
             // `is_able_to_fight` already covers the first two; the
@@ -3407,7 +3406,7 @@ impl EnemyAi {
                     target,
                     my_pos,
                     my_dir,
-                    tpos,
+                    target_snapshot.raw_position,
                     ctx,
                     grid,
                     &tick.fighter_registry,
@@ -3430,8 +3429,9 @@ impl EnemyAi {
                 // with no liveness or radius prefilter — the list is already
                 // maintained as the fight-capable enemy set. Resolve the
                 // entry through the full fighter registry so enemies beyond
-                // the 500-unit `nearby_fighters` window still get evaluated.
-                let epos = match self.find_fighter(*enemy, tick).map(|f| f.position) {
+                // the 500-unit `nearby_fighters` window still get evaluated,
+                // and preserve that function's direct GetPositionMap read.
+                let epos = match self.find_fighter(*enemy, tick).map(|f| f.raw_position) {
                     Some(p) => p,
                     None => continue,
                 };
@@ -3716,7 +3716,8 @@ impl EnemyAi {
                 // Original IsAnyFriendInThisPolygon scans the engine's
                 // complete same-camp fighter registry. A friend can block the
                 // far end of this charge corridor while being outside the
-                // rider-centered nearby-fighter window.
+                // rider-centered nearby-fighter window. Its polygon test also
+                // reads each friend's raw GetPositionMap, not AI Position().
                 for f in fighter_registry {
                     if !f.is_friendly || f.handle == 0 {
                         continue;
@@ -3727,10 +3728,10 @@ impl EnemyAi {
                     if f.is_dead || f.is_unconscious {
                         continue;
                     }
-                    if f.position.level != my_pos.level {
+                    if f.raw_position.level != my_pos.level {
                         continue;
                     }
-                    let fp = geo::Point::new(f.position.x as f64, f.position.y as f64);
+                    let fp = geo::Point::new(f.raw_position.x as f64, f.raw_position.y as f64);
                     if poly.contains(&fp) {
                         if debug_decision_path {
                             eprintln!(
@@ -3739,9 +3740,9 @@ impl EnemyAi {
                                 self.base.me,
                                 candidate,
                                 f.handle,
-                                f.position.x.to_bits(),
-                                f.position.y.to_bits(),
-                                f.position.level,
+                                f.raw_position.x.to_bits(),
+                                f.raw_position.y.to_bits(),
+                                f.raw_position.level,
                                 goal_x.to_bits(),
                                 goal_y.to_bits(),
                             );
@@ -4199,6 +4200,11 @@ mod tests {
                 y: f32::from_bits(0x43bb_a89f),
                 ..Position::default()
             },
+            raw_position: Position {
+                x: f32::from_bits(0x4474_03e3),
+                y: f32::from_bits(0x43bb_a89f),
+                ..Position::default()
+            },
             is_able_to_fight: true,
             is_pc: true,
             ..FighterSnapshot::default()
@@ -4206,6 +4212,11 @@ mod tests {
         let blocking_friend = FighterSnapshot {
             handle: 62,
             position: Position {
+                x: f32::from_bits(0x447b_182c),
+                y: f32::from_bits(0x43b8_eb5e),
+                ..Position::default()
+            },
+            raw_position: Position {
                 x: f32::from_bits(0x447b_182c),
                 y: f32::from_bits(0x43b8_eb5e),
                 ..Position::default()
@@ -4250,6 +4261,7 @@ mod tests {
         let target = FighterSnapshot {
             handle: 76,
             position: target_position,
+            raw_position: target_position,
             is_able_to_fight: true,
             is_pc: true,
             ..FighterSnapshot::default()
@@ -4267,6 +4279,48 @@ mod tests {
         assert!(ai.maybe_make_rider_attack(&ctx, &tick, None));
         assert_eq!(ai.base.primary_target, 76);
         assert_eq!(ai.base.seek_position, target_position);
+    }
+
+    #[test]
+    fn rider_charge_geometry_uses_raw_target_position_during_door_transit() {
+        // `Position(target)` substitutes the active door endpoint, while
+        // GetGoodRiderAttackDestination reads target->GetPositionMap(). Put
+        // those points on opposite sides of the rider so the accessor choice
+        // is observable without reproducing the shipped door grid.
+        let mut ai = EnemyAi::new(51);
+        ai.base.primary_target = 76;
+        ai.list_them = vec![76];
+        let target = FighterSnapshot {
+            handle: 76,
+            position: Position {
+                y: -50.0,
+                level: 1,
+                ..Position::default()
+            },
+            raw_position: Position {
+                y: 50.0,
+                ..Position::default()
+            },
+            is_able_to_fight: true,
+            is_pc: true,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters = vec![target.clone()];
+        tick.fighter_registry = vec![target];
+        let ctx = AiContext {
+            self_is_rider: true,
+            direction: 0,
+            ..AiContext::default()
+        };
+        let initial_state = (ai.base.current_state, ai.base.current_substate);
+
+        assert!(!ai.maybe_make_rider_attack(&ctx, &tick, None));
+        assert_eq!(
+            (ai.base.current_state, ai.base.current_substate),
+            initial_state
+        );
+        assert!(ai.base.outbox.actor.orders.is_empty());
     }
 
     fn pc_view() -> crate::ai_entity_view::AiEntityView {
@@ -4624,6 +4678,10 @@ mod tests {
                 y: -200.0,
                 ..Position::default()
             },
+            raw_position: Position {
+                y: -200.0,
+                ..Position::default()
+            },
             is_able_to_fight: true,
             is_pc: true,
             ..FighterSnapshot::default()
@@ -4667,6 +4725,10 @@ mod tests {
         tick.nearby_fighters = vec![FighterSnapshot {
             handle: 76,
             position: Position {
+                y: -50.0,
+                ..Position::default()
+            },
+            raw_position: Position {
                 y: -50.0,
                 ..Position::default()
             },
