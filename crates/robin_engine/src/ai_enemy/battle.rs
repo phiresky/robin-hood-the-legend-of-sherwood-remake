@@ -183,6 +183,14 @@ fn battle_friend_detected_360(
     friend_direction: u16,
     target: &crate::ai_entity_view::AiEntityView,
 ) -> bool {
+    // RHElementActorNPC::IsDetecting360Degrees(actor) returns before even
+    // issuing the sight query unless both elements are active and outside a
+    // building. BattleDecisions can still be reached synchronously while a
+    // phalanx member is inactive (for example during PLAY_ANIM_FROZEN), so
+    // the fact that its AI handler is running does not imply this predicate.
+    if !ctx.self_is_active || ctx.in_building || !target.active || target.in_building {
+        return false;
+    }
     let detection_point = crate::stealth::detection_point_world(
         friend_position_world,
         target.posture,
@@ -4455,6 +4463,7 @@ mod tests {
         target.detection_position_world.x = 100.0;
         let ctx = AiContext {
             self_view_radius: 500,
+            self_is_active: true,
             ..AiContext::default()
         };
 
@@ -4470,6 +4479,31 @@ mod tests {
         target.in_building = true;
         assert!(!battle_friend_detected_360(
             &ctx,
+            1,
+            2,
+            target.detection_position_world,
+            target.direction,
+            &target,
+        ));
+
+        target.in_building = false;
+        target.active = false;
+        assert!(!battle_friend_detected_360(
+            &ctx,
+            1,
+            2,
+            target.detection_position_world,
+            target.direction,
+            &target,
+        ));
+
+        target.active = true;
+        let inactive_owner = AiContext {
+            self_is_active: false,
+            ..ctx
+        };
+        assert!(!battle_friend_detected_360(
+            &inactive_owner,
             1,
             2,
             target.detection_position_world,
