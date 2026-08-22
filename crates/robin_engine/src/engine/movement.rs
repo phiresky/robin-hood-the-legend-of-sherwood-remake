@@ -1640,6 +1640,21 @@ fn movement_execute_visible_motion(
     motion
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct MovementOwnerMotion {
+    pub initial: Option<MotionState>,
+    pub post_completion_override: Option<MotionState>,
+}
+
+fn committed_arrival_post_completion_override(
+    raw_sprite_motion: MotionState,
+    visible_execute_motion: MotionState,
+    reaches_goal_this_step: bool,
+) -> Option<MotionState> {
+    (reaches_goal_this_step && raw_sprite_motion != visible_execute_motion)
+        .then_some(visible_execute_motion)
+}
+
 fn cancel_aborted_order_pop(
     order_pops: &mut Vec<(crate::sequence::SequenceId, usize)>,
     seq_id: crate::sequence::SequenceId,
@@ -3120,6 +3135,7 @@ struct MovementPrepass {
 /// by `tick_entity_movement_owner` after the movement pass.
 #[derive(Default)]
 struct MovementDeferred {
+    post_completion_motion_override: Option<crate::sprite::MotionState>,
     sword_movement_starts: Vec<EntityId>,
     sword_movement_terminations: Vec<EntityId>,
     // Collect movement results that need sequence manager notification.
@@ -7869,9 +7885,9 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         owner: EntityId,
         selected: Option<MovementOwnerSelection>,
-    ) -> Option<crate::sprite::MotionState> {
+    ) -> MovementOwnerMotion {
         let Some(selected) = selected else {
-            return None;
+            return MovementOwnerMotion::default();
         };
         let selected_is_live = self
             .orders
@@ -7881,7 +7897,7 @@ impl EngineInner {
             .and_then(|element| element.current_order())
             .is_some_and(|order| order.order_id == selected.order_id);
         if !selected_is_live {
-            return None;
+            return MovementOwnerMotion::default();
         }
         if let Some(entity) = self.world.entities.get(owner) {
             super::animation::direction_provenance_snapshot(
@@ -7898,7 +7914,7 @@ impl EngineInner {
             .and_then(|entity| entity.actor_data())
             .is_some_and(|actor| actor.execution_frozen)
         {
-            return None;
+            return MovementOwnerMotion::default();
         }
         let selected_command = self
             .orders
@@ -7914,14 +7930,14 @@ impl EngineInner {
             selected_command,
             Some(crate::element::Command::WaitTimer | crate::element::Command::WaitFreeLift)
         ) {
-            return None;
+            return MovementOwnerMotion::default();
         }
         if self.abort_orphaned_sword_movement(sim, assets, owner, selected) {
             // LaunchSequenceElement registers the replacement for the later
             // sequence-manager phase. It must not execute at this actor
             // boundary: Original exposes QuitSwordfight as the current
             // command for one frame before its lowering order starts.
-            return None;
+            return MovementOwnerMotion::default();
         }
         // `IsFrozenAll()` is read ONLY inside `RHSprite`
         // (`original-code/RHsprite.cpp:739`, `:985`, `:1042`, `:1084`, `:1124`,
@@ -8000,7 +8016,7 @@ impl EngineInner {
             if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
-            return None;
+            return MovementOwnerMotion::default();
         }
 
         // Sample mutable mobile geometry only now, at this actor's Original
@@ -8486,6 +8502,7 @@ impl EngineInner {
             );
         }
         let MovementDeferred {
+            post_completion_motion_override,
             sword_movement_starts,
             sword_movement_terminations,
             door_triggers,
@@ -9011,7 +9028,10 @@ impl EngineInner {
                 .action_state = action_state;
         }
 
-        refreshed_seek_in_progress.then_some(crate::sprite::MotionState::InProgress)
+        MovementOwnerMotion {
+            initial: refreshed_seek_in_progress.then_some(crate::sprite::MotionState::InProgress),
+            post_completion_override: post_completion_motion_override,
+        }
     }
 
     /// Movement Execute body for the single movement owner. The caller's
@@ -10561,6 +10581,11 @@ impl EngineInner {
             motion_state,
             reaches_goal_this_step,
             entity_target_seek,
+        );
+        deferred.post_completion_motion_override = committed_arrival_post_completion_override(
+            motion_state,
+            state_effect_motion,
+            reaches_goal_this_step,
         );
         let deferred_movement_state_start_due = if deferred_movement_state_start {
             let current_order = self
@@ -20040,10 +20065,17 @@ mod line_jump_tests {
             MotionState::InProgress,
             MotionState::Done,
         ] {
+            let visible =
+                movement_execute_visible_motion(OrderType::WalkingWithCorpse, motion, true, false);
             assert_eq!(
-                movement_execute_visible_motion(OrderType::WalkingWithCorpse, motion, true, false),
+                visible,
                 MotionState::Terminated,
                 "a step that satisfies the goal predicate reaches Execute as a termination"
+            );
+            assert_eq!(
+                committed_arrival_post_completion_override(motion, visible, true),
+                Some(MotionState::Terminated),
+                "staged arrival must preserve the Execute result for the post-completion latch"
             );
         }
         assert_eq!(

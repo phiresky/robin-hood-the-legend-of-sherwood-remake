@@ -1389,18 +1389,46 @@ fn specialized_execute_motion(
 }
 
 pub(super) trait IntoExplicitExecuteMotion {
-    fn into_explicit_execute_motion(self) -> Option<crate::sprite::MotionState>;
+    fn into_explicit_execute_motion(self) -> ExplicitExecuteMotion;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct ExplicitExecuteMotion {
+    pub initial: Option<crate::sprite::MotionState>,
+    pub post_completion_override: Option<crate::sprite::MotionState>,
 }
 
 impl IntoExplicitExecuteMotion for () {
-    fn into_explicit_execute_motion(self) -> Option<crate::sprite::MotionState> {
-        None
+    fn into_explicit_execute_motion(self) -> ExplicitExecuteMotion {
+        ExplicitExecuteMotion::default()
     }
 }
 
 impl IntoExplicitExecuteMotion for Option<crate::sprite::MotionState> {
-    fn into_explicit_execute_motion(self) -> Option<crate::sprite::MotionState> {
+    fn into_explicit_execute_motion(self) -> ExplicitExecuteMotion {
+        ExplicitExecuteMotion {
+            initial: self,
+            post_completion_override: None,
+        }
+    }
+}
+
+impl IntoExplicitExecuteMotion for ExplicitExecuteMotion {
+    fn into_explicit_execute_motion(self) -> ExplicitExecuteMotion {
         self
+    }
+}
+
+fn apply_post_completion_execute_override(
+    projected: crate::sprite::MotionState,
+    post_completion_override: Option<crate::sprite::MotionState>,
+    selected_element_interrupted: bool,
+    installed_successor_exists: bool,
+) -> crate::sprite::MotionState {
+    if !selected_element_interrupted || installed_successor_exists {
+        projected
+    } else {
+        post_completion_override.unwrap_or(projected)
     }
 }
 
@@ -1511,7 +1539,8 @@ fn is_start_stop_movement_rewrite(
 #[cfg(test)]
 mod specialized_execute_motion_tests {
     use super::{
-        is_start_stop_movement_rewrite, project_post_completion_motion, specialized_execute_motion,
+        apply_post_completion_execute_override, is_start_stop_movement_rewrite,
+        project_post_completion_motion, specialized_execute_motion,
         specialized_order_advanced_after_execute,
     };
     use crate::order::OrderType;
@@ -1602,6 +1631,40 @@ mod specialized_execute_motion_tests {
             false,
             false,
         ));
+    }
+
+    #[test]
+    fn committed_arrival_termination_survives_line_callback_interruption() {
+        assert_eq!(
+            apply_post_completion_execute_override(
+                MotionState::InProgress,
+                Some(MotionState::Terminated),
+                true,
+                false,
+            ),
+            MotionState::Terminated,
+            "Original latches PerformMotion's terminal arrival before the line callback interrupts the movement"
+        );
+        assert_eq!(
+            apply_post_completion_execute_override(
+                MotionState::InProgress,
+                Some(MotionState::Terminated),
+                true,
+                true,
+            ),
+            MotionState::InProgress,
+            "DoNextOrder's installed successor must still project the actor motion back to InProgress"
+        );
+        assert_eq!(
+            apply_post_completion_execute_override(
+                MotionState::InProgress,
+                Some(MotionState::Terminated),
+                false,
+                false,
+            ),
+            MotionState::InProgress,
+            "an ordinary committed arrival must retain the normal post-completion projection"
+        );
     }
 
     #[test]
@@ -4642,7 +4705,7 @@ impl EngineInner {
                                 "owner_execute_entry",
                             );
                         }
-                        let explicit_execute_motion = execute_owner_arm(
+                        let explicit_execute = execute_owner_arm(
                             self,
                             entity_id,
                             movement_selection,
@@ -4652,6 +4715,9 @@ impl EngineInner {
                             beggar_selection,
                         )
                         .into_explicit_execute_motion();
+                        let explicit_execute_motion = explicit_execute.initial;
+                        let post_completion_execute_override =
+                            explicit_execute.post_completion_override;
                         if let Some(entity) = self.world.entities.get(entity_id) {
                             super::animation::direction_provenance_snapshot(
                                 entity.position_iface(),
@@ -5116,6 +5182,13 @@ impl EngineInner {
                                 installed_successor_exists,
                                 selected_specialized_order_advanced,
                             );
+                            actor.continuation.motion_state =
+                                apply_post_completion_execute_override(
+                                    actor.continuation.motion_state,
+                                    post_completion_execute_override,
+                                    selected_element_interrupted,
+                                    installed_successor_exists,
+                                );
                             if let Some(config) = motion_latch_debug {
                                 eprintln!(
                                     "[MOTION_LATCH frame={} co={} owner={} entry_order={:?} entry_state={:?} specialized_motion={:?} explicit_in_progress={} retired={} interrupted={} impossible={} specialized_advanced={} installed_order={:?} installed_successor={} motion_before={:?} motion_after={:?}]",
@@ -5404,7 +5477,7 @@ impl EngineInner {
                     .and_then(Entity::actor_data)
                     .is_some_and(|actor| actor.execution_frozen);
                 if execution_frozen {
-                    return None;
+                    return ExplicitExecuteMotion::default();
                 }
                 // PerformSeek's "wait for the post seek sequence to be
                 // launched" arm runs ahead of every other seek step: Execute
@@ -5415,7 +5488,10 @@ impl EngineInner {
                         engine, owner, selection,
                     )
                 {
-                    return Some(crate::sprite::MotionState::Terminated);
+                    return ExplicitExecuteMotion {
+                        initial: Some(crate::sprite::MotionState::Terminated),
+                        post_completion_override: None,
+                    };
                 }
                 // RefreshSeek is part of this exact actor's PerformSeek
                 // Execute arm. Sampling here preserves creation-order
@@ -5425,7 +5501,10 @@ impl EngineInner {
                     if let Some(motion) =
                         engine.tick_refreshing_seek_for_owner(sim, assets, owner)
                     {
-                        return Some(motion);
+                        return ExplicitExecuteMotion {
+                            initial: Some(motion),
+                            post_completion_override: None,
+                        };
                     }
                     // FaceOpponent / FaceDangerPoint run inside the Execute
                     // arm *before* PerformSeek (RHelementactorhuman.cpp:3662,
@@ -5436,7 +5515,10 @@ impl EngineInner {
                         engine.apply_pre_perform_seek_facing_prologue(owner);
                     }
                     if engine.tick_refresh_seek_for_owner(sim, assets, owner) {
-                        return Some(crate::sprite::MotionState::InProgress);
+                        return ExplicitExecuteMotion {
+                            initial: Some(crate::sprite::MotionState::InProgress),
+                            post_completion_override: None,
+                        };
                     }
                 }
                 // PerformSeek's completion-time RefreshSeek branches return
@@ -5444,10 +5526,15 @@ impl EngineInner {
                 // (`original-code/RHelementactor.cpp:7963-7970`, `:8002-8007`),
                 // so Actor::Hourglass runs none of its DONE / TERMINATED /
                 // ABORTED tail for that slot.
-                if let Some(motion) =
-                    engine.tick_entity_movement_owner(sim, assets, owner, movement)
+                let movement_motion =
+                    engine.tick_entity_movement_owner(sim, assets, owner, movement);
+                if movement_motion.initial.is_some()
+                    || movement_motion.post_completion_override.is_some()
                 {
-                    return Some(motion);
+                    return ExplicitExecuteMotion {
+                        initial: movement_motion.initial,
+                        post_completion_override: movement_motion.post_completion_override,
+                    };
                 }
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
@@ -5493,7 +5580,7 @@ impl EngineInner {
                 if let Some(order_id) = selected_beggar {
                     engine.tick_beggar_bid_for(sim, assets, owner, order_id);
                 }
-                None
+                ExplicitExecuteMotion::default()
             },
             |engine, owner, derived_tail_order_type| {
                 let _detail = entity_system_detail_guard(EntitySystemDetail::NpcTail);
