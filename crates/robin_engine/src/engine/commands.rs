@@ -684,10 +684,16 @@ impl EngineInner {
                 pc_id,
                 action_index,
             } => {
-                self.select_pc_action_by_index(assets, input, seat, *pc_id, *action_index as u8);
+                let selected_before = self.players.seats[seat].selection.clone();
+                if self.select_pc_action_by_index(assets, input, seat, *pc_id, *action_index as u8)
+                {
+                    self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
+                }
             }
             SelectResolvedAction { pc_id, action } => {
+                let selected_before = self.players.seats[seat].selection.clone();
                 self.set_pc_action(assets, input, seat, *pc_id, *action);
+                self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
             }
             CancelAction { pc_id } => {
                 self.set_pc_action(
@@ -1292,6 +1298,31 @@ impl EngineInner {
         // emits a single side effect for the host to persist.
         if let Some(top_left) = display.minimap.take_pending_position() {
             self.feedback.pending_side_effects.pending_minimap_position = Some(top_left);
+        }
+    }
+
+    /// Close the `RHElementActor::Stop` cards authored by a player action
+    /// selection before the next `RHEngine::Hourglass` actor walk.
+    ///
+    /// Original `RHEngine::SelectAction` calls `Stop()` synchronously for
+    /// every selected PC (`original-code/RHengine.cpp:13054-13086`).  A
+    /// stopped `TakeCorpse` can therefore run its condolence immediately:
+    /// `DropCorpse(12, true)` releases the body and calls the body's `Wait()`
+    /// before creation-order actor slots begin
+    /// (`original-code/RHelementactorpc.cpp:6476-6506`).  Rust queues cards
+    /// to avoid re-entrant borrows, so leaving them for the actor/global drain
+    /// makes a body whose slot has not yet run miss its first idle Execute.
+    /// Registered action-entry elements remain on the manager FIFO; this
+    /// closes only selected-owner condolence cards created by the synchronous
+    /// Stop stack.
+    fn close_player_select_action_stop_callbacks(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        selected_before: Vec<EntityId>,
+    ) {
+        for owner in selected_before {
+            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         }
     }
 

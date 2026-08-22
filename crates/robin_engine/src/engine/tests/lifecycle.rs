@@ -1928,6 +1928,115 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
     );
 }
 
+/// `RHEngine::SelectAction` closes each selected PC's synchronous `Stop()`
+/// before the next engine Hourglass.  If that Stop interrupts a mid-grab
+/// `TakeCorpse`, the body's Wait is therefore installed before its own actor
+/// slot and executes in that same frame.
+#[test]
+fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::player_command::PlayerCommand;
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let body = engine.add_entity(make_test_soldier(Posture::Tied));
+    let carrier = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let carrier_entity = engine.get_entity_mut(carrier).unwrap();
+        carrier_entity.pc_data_mut().unwrap().carried = Some(body);
+        carrier_entity
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Tied);
+    }
+    {
+        let tied = OrderType::BeingTied;
+        let script = SpriteScript {
+            action_id: tied as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[tied as usize] = 0;
+        let body_entity = engine.get_entity_mut(body).unwrap();
+        body_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        body_entity.human_data_mut().unwrap().carrier = Some(carrier);
+        body_entity.human_data_mut().unwrap().unconscious = true;
+        body_entity.actor_data_mut().unwrap().execution_frozen = true;
+    }
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut take =
+        SequenceElement::new_interaction(1, Command::TakeCorpse, Some(carrier), Some(body));
+    take.orders.push_back(Order::new(
+        OrderType::TransitionWaitingUprightCarryingCorpse,
+        0.0,
+        0.0,
+        order_id,
+    ));
+    let take_sequence = engine.orders.sequence_manager.launch_element(take);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(take_sequence, 0);
+    engine.players.seats[0].selection = vec![carrier];
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut display = crate::engine::HostDisplayState::default();
+    let mut input = InputState::default();
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::SelectResolvedAction {
+            pc_id: carrier,
+            action: crate::profiles::Action::HelpToClimb,
+        },
+    );
+
+    assert_eq!(
+        engine
+            .get_entity(body)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .carrier,
+        None,
+        "SelectAction's synchronous Stop condolence must release the body before Hourglass"
+    );
+    let selected = engine
+        .orders
+        .sequence_manager
+        .current_element_for_actor(body)
+        .and_then(|(sequence, index)| engine.orders.sequence_manager.get_element(sequence, index))
+        .expect("the released body must already own its Wait");
+    assert_eq!(selected.command, Command::Wait);
+    let expected_order_id = selected.current_order().map(|order| order.order_id);
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    let body_entity = engine.get_entity(body).unwrap();
+    assert_eq!(body_entity.sprite().last_action, OrderType::BeingTied);
+    assert_eq!(
+        body_entity.actor_data().unwrap().last_execute_order_id,
+        expected_order_id,
+        "the body's creation-order slot must execute the freshly installed tied idle"
+    );
+}
+
 #[test]
 fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
     use crate::movement::AbilityKind;
