@@ -38,27 +38,14 @@ and will be installed automatically by rustup.
 
 ### Native release packages
 
-The `Native release` GitHub Actions workflow builds x86-64 Windows and Linux
-standalone binaries and packages them with Velopack. It runs for pull requests,
-version tags (`v1.2.3`), manual dispatches, and nightly at 03:17 UTC. A scheduled
-run skips packaging when `main` has not changed since the currently published
-nightly. Changed scheduled builds and manual dispatches publish a dated
-`nightly-YYYY-MM-DD` GitHub prerelease; same-day reruns replace that day's
-release. Version tags create normal versioned GitHub releases.
+GitHub Releases provides x86-64 Windows and Linux builds, with stable releases
+for version tags and rolling nightly prereleases. Windows downloads include ZIP
+and `Setup.exe`; Linux downloads include a tarball and AppImage.
+Installed packages should update automatically within their release channel.
 
-Windows releases contain a standalone ZIP, portable Velopack ZIP, one-click
-`Setup.exe`, and MSI installer. Linux releases contain a standalone tarball and
-Velopack AppImage; Velopack uses the self-updating AppImage as its Linux
-installer/distribution format. Installed Velopack builds check GitHub Releases
-in the background and apply downloaded updates after the game exits. Stable
-installs ignore prereleases; nightly installs continue following the rolling
-nightly release channel. These packages do not contain the original copyrighted
-game data. Set `ROBINHOOD_DATA_DIR` to an extracted game data root as described
-in [Game data](#game-data).
-
-CI enables native filesystem support and audio, but currently omits the
-optional FFmpeg-backed intro/outro video feature because the required Windows
-FFmpeg DLLs are not yet bundled in the installer.
+The packages do not include the original game data. Set `ROBINHOOD_DATA_DIR` to
+an extracted game data root as described in [Game data](#game-data). Intro and
+outro video playback is not currently included.
 
 Debug builds are tuned for fast iteration: `mold` linker,
 `sccache` rustc wrapper, cranelift backend, dependencies built at
@@ -72,19 +59,15 @@ Tests and lints:
 
 ### Testing with original game data
 
-Tests that inspect shipped mission scripts are explicitly ignored because the
-repository does not contain proprietary game data. They never silently pass
-when data is unavailable. Point `ROBINHOOD_DATA_DIR` at an extracted data root
-containing `Data/`, then select the tests for that distribution:
+Some ignored integration tests require original game data. Point
+`ROBINHOOD_DATA_DIR` at an absolute path containing `Data/`, then run the tests
+for that distribution:
 
-    ROBINHOOD_DATA_DIR=datadirs/demo_leicester_ecoste \
+    ROBINHOOD_DATA_DIR=/absolute/path/to/leicester-demo \
         cargo test -p robin_assets demo_script -- --ignored
 
-    ROBINHOOD_DATA_DIR=datadirs/fullgame_gog \
+    ROBINHOOD_DATA_DIR=/absolute/path/to/full-game \
         cargo test -p robin_assets fullgame_scripts -- --ignored
-
-Running an ignored data-backed test without the variable, or against a data
-root that lacks its required fixture, fails with an explicit diagnostic.
 
 ### WebAssembly (browser)
 
