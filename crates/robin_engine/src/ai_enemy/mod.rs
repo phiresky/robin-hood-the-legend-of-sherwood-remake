@@ -4005,6 +4005,27 @@ impl EnemyAi {
             return false;
         }
 
+        // Original's first unconscious gate reads the actor flag, not the AI
+        // substate. That distinction matters while a postponed injury leaves
+        // an unconscious actor in a non-sleeping state such as
+        // DefaultScriptDriven: ordinary calls must still be refused before
+        // they can relay work through a retained patrol chief.
+        if ctx.self_is_unconscious {
+            match stimulus_type {
+                StimulusType::EventLoseConsciousness => {}
+                StimulusType::EventFitAgain => {
+                    if ctx.posture == crate::element::Posture::Carried {
+                        self.base.register_log_line(LogLineType::EventRefused, 7);
+                        return false;
+                    }
+                }
+                _ => {
+                    self.base.register_log_line(LogLineType::EventRefused, 8);
+                    return false;
+                }
+            }
+        }
+
         // Handle special events processed during StartThink
         match stimulus_type {
             StimulusType::EventLoseConsciousness => {
@@ -6886,6 +6907,28 @@ mod tests {
         let stimulus = Stimulus::new(StimulusType::EventTimer);
         assert!(!ai.start_think(&stimulus, &ctx, true));
         assert!(ai.base.stimulus_queue.is_empty());
+    }
+
+    #[test]
+    fn start_think_rejects_look_there_for_physically_unconscious_script_driven_actor() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultScriptDriven;
+        let ctx = AiContext {
+            self_is_unconscious: true,
+            ..AiContext::default()
+        };
+
+        assert!(!ai.start_think(&Stimulus::new(StimulusType::CallLookThere), &ctx, false,));
+        assert_eq!(ai.base.current_state, AiState::Default);
+        assert_eq!(ai.base.current_substate, Substate::DefaultScriptDriven);
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
+        assert!(
+            ai.base
+                .ai_log
+                .last()
+                .is_some_and(|line| line.line_type == LogLineType::EventRefused && line.info == 8)
+        );
     }
 
     #[test]

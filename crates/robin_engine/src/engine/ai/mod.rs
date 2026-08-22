@@ -2531,6 +2531,7 @@ pub(super) fn build_ai_context_from_entity(
         self_life_points: entity.human_life_points(),
         self_max_life_points: entity.human_max_life_points(),
         self_is_dead: entity.is_dead(),
+        self_is_unconscious: entity.human_data().is_some_and(|human| human.unconscious),
         self_detectable_friend_count,
         self_detectable_missed_friend_count,
         self_seen_enemy_handles,

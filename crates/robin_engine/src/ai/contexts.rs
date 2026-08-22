@@ -280,6 +280,12 @@ pub struct AiContext {
     /// stimuli at a corpse after the tick loop would normally skip it.
     pub self_is_dead: bool,
 
+    /// `true` when the evaluating human's physical unconscious flag is set.
+    /// Original `StartThink` checks this flag independently of the AI state:
+    /// a postponed injury can leave an unconscious actor in a non-sleeping
+    /// substate, but ordinary stimuli are still refused.
+    pub self_is_unconscious: bool,
+
     /// Number of entries in this NPC's
     /// `detectable_lists[DetectableType::Friend]`. Used by
     /// `return_to_duty_common_stuff` to decide whether to clear
