@@ -1404,10 +1404,12 @@ impl EngineInner {
         concussion: u16,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        if self.is_scroll_protected_civilian(victim_id) {
-            tracing::debug!(?victim_id, "generic damage blocked: scroll-carrying beggar");
-            return;
-        }
+        // Do not short-circuit an attached-scroll civilian here. Original's
+        // RHElementActorCivilian overrides only GetWounded and
+        // AddConcussionOfTheBrain; RHElementActorHuman::Translate still runs
+        // the command-specific reaction after those no-op primitives return
+        // (rhelementactorcivilian.cpp:901-924,
+        // RHelementactorhuman.cpp:1608-1620).
 
         // Generic-damage early-out arms before damage math:
         //   1. OnLadder / OnWall → translate_ladder_wall_fall.
@@ -1579,13 +1581,9 @@ impl EngineInner {
         is_arrow_damage: bool,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        if self.is_scroll_protected_civilian(victim_id) {
-            tracing::debug!(
-                ?victim_id,
-                "piercing damage blocked: scroll-carrying beggar"
-            );
-            return;
-        }
+        // Attached-scroll civilian immunity belongs to the virtual wound and
+        // concussion primitives, not around ReceivePiercingDamage's later
+        // translation. See the matching generic-damage source-order note.
 
         // Preserve the incoming posture only for the ladder/wall reaction.
         // Original applies ReceivePiercingDamage before translating the hit,
@@ -1905,10 +1903,11 @@ impl EngineInner {
         is_harder_hit: bool,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        if self.is_scroll_protected_civilian(victim_id) {
-            tracing::debug!(?victim_id, "hit damage blocked: scroll-carrying beggar");
-            return;
-        }
+        // RHCOMMAND_RECEIVE_HIT_DAMAGE unconditionally continues from
+        // AddConcussionOfTheBrain into TranslateHitDamage. A civilian with
+        // an attached scroll suppresses the concussion primitive, but still
+        // authors the falling-hit order (RHelementactorhuman.cpp:1745-1791;
+        // rhelementactorcivilian.cpp:901-909).
         let victim = self.expect_entity(victim_id, "apply_hit_damage victim");
         let ctx = concussion_ctx_full(
             victim,
@@ -2509,8 +2508,9 @@ impl EngineInner {
     }
 
     /// True if `victim_id` is a civilian carrying an unrevealed beggar
-    /// scroll.  A beggar mid-reveal is immune to wound / concussion
-    /// damage.  Callers use this to short-circuit damage entry points.
+    /// scroll. The civilian's virtual wound / concussion primitives are
+    /// immune, but command translation still runs; callers must not use this
+    /// to skip a registered damage element's translation.
     pub(crate) fn is_scroll_protected_civilian(&self, victim_id: EntityId) -> bool {
         match self.get_entity(victim_id) {
             Some(Entity::Civilian(c)) => c.npc.attached_scroll.is_some(),

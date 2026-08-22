@@ -3906,6 +3906,71 @@ mod tests {
     }
 
     #[test]
+    fn scroll_civilian_hit_keeps_immunity_but_still_translates_reaction() {
+        let mut engine = make_engine();
+        let _null_slot = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_civilian(WorldPoint3D {
+            x: 20.0,
+            ..WorldPoint3D::default()
+        }));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            let civilian = match victim_entity {
+                Entity::Civilian(civilian) => civilian,
+                other => panic!("test civilian changed kind to {:?}", other.kind()),
+            };
+            civilian.npc.attached_scroll = Some(crate::entity_id::EntityId::Scroll(
+                crate::entity_id::ScrollId(u32::MAX),
+            ));
+            civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::new(
+                crate::ai_friendly::FriendlyAi::new(victim.index()),
+            ));
+        }
+        let damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveHitDamage,
+            Some(victim),
+            Some(attacker),
+            0,
+            3,
+        );
+        let sequence = engine.launch_element(damage);
+        let mut assets = LevelAssets::default();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .civilians
+            .push(crate::profiles::CivilianProfile::default());
+
+        engine.dispatch_receive_damage(
+            &crate::sim_rng::test_context(),
+            &assets,
+            victim,
+            sequence,
+            0,
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_entity.human_data().unwrap().concussion_of_the_brain,
+            0,
+            "the attached-scroll civilian override must still suppress concussion"
+        );
+        let damage = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(damage.state, crate::sequence::SequenceState::InProgress);
+        assert!(
+            damage
+                .orders
+                .iter()
+                .any(|order| order.order_type == OrderType::FallingHitUpright),
+            "TranslateHitDamage must still author the hit reaction after the no-op concussion override"
+        );
+    }
+
+    #[test]
     fn conscious_hit_applies_ai_eye_status_synchronously() {
         let mut engine = make_engine();
         let null_slot = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
