@@ -789,20 +789,15 @@ fn build_ctx(
 
     let attentive = entity.enemy_ai().map(|e| e.attentive).unwrap_or(false);
 
-    // Interaction antagonist: Net detection for PC `TAKE`.
+    // Interaction antagonist: landed RHElementNet detection for PC `TAKE`.
+    // Inventory bonus nets are RHElementBonus objects in Original and fall
+    // through the ordinary-object branch, which permits a crouched pickup.
     let antagonist_is_net = match &elem.data {
         SequenceElementData::Interaction {
             antagonist: Some(antagonist),
         } => engine
             .get_entity(*antagonist)
-            .and_then(|e| e.object_data())
-            .map(|o| {
-                matches!(
-                    o.object_type,
-                    crate::element::ObjectType::Net | crate::element::ObjectType::BonusNet
-                )
-            })
-            .unwrap_or(false),
+            .is_some_and(|entity| matches!(entity, crate::element::Entity::Net(_))),
         _ => false,
     };
 
@@ -2591,6 +2586,43 @@ mod tests {
             .unwrap()
             .posture_after_transition;
         assert_eq!(posture_after, P::Crouched);
+    }
+
+    #[test]
+    fn crouched_pc_takes_bonus_net_without_landed_net_standup() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::Crouched, AS::Waiting));
+        let bonus_net = engine.add_entity(Entity::Bonus(crate::element::ElementBonus {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ObjectBonus,
+                ..Default::default()
+            },
+            object: crate::element::ObjectData {
+                object_type: crate::element::ObjectType::BonusNet,
+                ..Default::default()
+            },
+        }));
+        let mut elem =
+            SequenceElement::new_interaction(1, Command::Take, Some(owner), Some(bonus_net));
+        elem.priority = SequencePriority::Preference;
+        elem.posture_after_transition = P::Crouched;
+        elem.action_state_after_transition = AS::Waiting;
+        let seq = engine.orders.sequence_manager.launch_element(elem);
+
+        assert!(generate_transition(&mut engine, owner, seq, 0));
+        assert!(
+            !orders_for(&engine, seq, 0).contains(&OrderType::TransitionCrouchingUp),
+            "RHElementBonus(BONUS_NET) is not the landed RHElementNet special case"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq, 0)
+                .expect("bonus-net Take element")
+                .posture_after_transition,
+            P::Crouched
+        );
     }
 
     /// Soldier MOVE with RunningUpright from Crouched must queue

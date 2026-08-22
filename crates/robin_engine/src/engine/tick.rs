@@ -7995,13 +7995,20 @@ impl EngineInner {
                 .get(object)
                 .and_then(|e| e.object_data())
                 .map(|o| o.object_type);
+            // Original's special net pickup arm is selected by the
+            // RHElementNet class. An inventory RHElementBonus whose object
+            // type is BONUS_NET follows ordinary TakeObject instead: it uses
+            // the usual capacity/quantity split and is only deactivated when
+            // the bonus is fully consumed.
+            let is_landed_net = self
+                .world
+                .entities
+                .get(object)
+                .is_some_and(|entity| matches!(entity, Entity::Net(_)));
             let taker_is_pc = self.get_entity(taker).map(|e| e.is_pc()).unwrap_or(false);
 
             match object_type {
-                Some(obj_type)
-                    if obj_type == crate::element::ObjectType::Net
-                        || (taker_is_pc && obj_type == crate::element::ObjectType::BonusNet) =>
-                {
+                Some(_) if is_landed_net => {
                     self.unapply_net_effect(object);
                     if taker_is_pc {
                         self.increase_ammo_and_enable(

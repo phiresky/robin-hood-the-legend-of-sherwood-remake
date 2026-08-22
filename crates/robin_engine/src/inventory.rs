@@ -324,7 +324,13 @@ pub fn take_object(
     };
 
     let current = status.get_ammo(action);
-    let available = effective_max.saturating_sub(current);
+    // Original computes this subtraction from two UWORD values and stores
+    // the result in an ULONG (`RHElementActorPC::TakeObject`).  Integer
+    // promotion therefore makes an over-capacity legacy status negative
+    // before the ULONG conversion wraps it to a large positive capacity.
+    // That quirk consumes the whole world pickup, while the later
+    // `IncreaseAmmoAmount` range check rejects the inventory addition.
+    let available = (i32::from(effective_max) - i32::from(current)) as u32;
 
     if available == 0 {
         return Some(PickupResult {
@@ -334,7 +340,7 @@ pub fn take_object(
         });
     }
 
-    let taken = object_quantity.min(available);
+    let taken = u32::from(object_quantity).min(available) as u16;
     status.increase_ammo(action, taken, effective_max);
 
     let remainder = object_quantity - taken;
@@ -646,6 +652,35 @@ mod tests {
         assert_eq!(result.taken, 0);
         assert_eq!(result.remainder, 3);
         assert!(!result.remove_from_world);
+    }
+
+    #[test]
+    fn pickup_over_capacity_consumes_world_object_without_adding_ammo() {
+        // Original's UWORD subtraction is assigned to ULONG.  A save can
+        // retain six units after Hard difficulty lowers this capacity to
+        // four; the wrapped capacity removes the pickup, while
+        // IncreaseAmmoAmount rejects 6 + 3 > 4.
+        let mut status = PcStatus::default();
+        status.set_ammo(Action::Apple, 6);
+        let profile = CharacterProfile {
+            actions: [Action::Apple, Action::NoAction, Action::NoAction],
+            action_max_ammo: [6, 0, 0],
+            ..CharacterProfile::default()
+        };
+
+        let result = take_object(
+            &mut status,
+            &profile,
+            DifficultyLevel::Hard,
+            Action::Apple,
+            3,
+        )
+        .expect("Apple has an ammo counter");
+
+        assert_eq!(result.taken, 3);
+        assert_eq!(result.remainder, 0);
+        assert!(result.remove_from_world);
+        assert_eq!(status.get_ammo(Action::Apple), 6);
     }
 
     // ── Drop ──
