@@ -667,6 +667,49 @@ impl EngineInner {
                 square_distance(actor, target) <= 1600.0
             }
 
+            // ── UseLever ───────────────────────────────────────
+            // Original `RHElementActorPC::CheckSequenceElementValidity`
+            // treats the interaction antagonist as the owning
+            // `RHElementMobile`: the cart must still be stopped and, on the
+            // Execute-time check, within 40 map units.  Rust represents that
+            // master through its masked FX child and `mobile_index`.
+            Command::UseLever => {
+                if !actor.is_pc() {
+                    return true;
+                }
+                if !self.can_pc_execute_commands(actor_id, !check_position) {
+                    return false;
+                }
+                let Some(antagonist_id) = interaction_victim_id(element) else {
+                    return false;
+                };
+                let Some(mobile_index) = self
+                    .get_entity(antagonist_id)
+                    .and_then(Entity::as_fx)
+                    .and_then(|fx| fx.fx.mobile_index)
+                else {
+                    return false;
+                };
+                let mobile = self
+                    .world
+                    .mobile_elements
+                    .get(usize::from(mobile_index))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "UseLever antagonist {antagonist_id:?} references missing mobile {mobile_index}"
+                        )
+                    });
+                if !mobile.stopped {
+                    return false;
+                }
+                if !check_position {
+                    return true;
+                }
+                let actor_position = actor.element_data().position_map();
+                let delta = actor_position - mobile.position;
+                delta.x * delta.x + delta.y * delta.y <= 1600.0
+            }
+
             // ── DropAmmo ────────────────────────────────────────
             // CanExecuteCommands() — defaults (false, false).
             Command::DropAmmo => {
@@ -1372,6 +1415,11 @@ pub(super) fn pc_init_validity_arm(
         // Terminated on validity failure.
         OT::Searching | OT::SearchingCrouched => Some((true, ValidityArmTerminal::Terminated)),
 
+        // ── UsingLever ─────────────────────────────────────────
+        // The PC arm returns TERMINATED before touching the sprite when the
+        // mobile stopped/distance revalidation fails.
+        OT::UsingLever => Some((true, ValidityArmTerminal::Terminated)),
+
         // ── Healing ────────────────────────────────────────────
         // Terminated on validity failure.
         OT::Healing => Some((true, ValidityArmTerminal::Terminated)),
@@ -1563,7 +1611,8 @@ fn read_target_point_3d(
 mod tests {
     use super::*;
     use crate::element::{
-        ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind, ObjectData,
+        ActorPc, ActorSoldier, ElementBonus, ElementData, ElementFx, ElementKind, FxData,
+        ObjectData,
     };
 
     fn actor_element(kind: ElementKind) -> ElementData {
@@ -1609,6 +1658,47 @@ mod tests {
             npc: Default::default(),
             soldier: Default::default(),
         }))
+    }
+
+    fn add_stopped_mobile(engine: &mut EngineInner, position_x: f32) -> EntityId {
+        let mobile_index =
+            u16::try_from(engine.world.mobile_elements.len()).expect("test mobile index fits u16");
+        let mut element = ElementData {
+            kind: ElementKind::Fx,
+            active: true,
+            ..ElementData::default()
+        };
+        element.set_position_map(crate::coordinates::MapPoint::new(position_x, 0.0));
+        let child = engine.add_entity(Entity::Fx(ElementFx {
+            element,
+            fx: FxData {
+                mobile_index: Some(mobile_index),
+                ..FxData::default()
+            },
+        }));
+        engine
+            .world
+            .mobile_elements
+            .push(crate::mobile::MobileElement {
+                sprite_ids: vec![child],
+                motion_polygon: Vec::new(),
+                position: crate::coordinates::MapPoint::new(position_x, 0.0),
+                old_position: crate::coordinates::MapPoint::new(position_x, 0.0),
+                path_index: 0,
+                current_waypoint: 0,
+                forward: true,
+                layer: 0,
+                sector: 0,
+                obstacle: None,
+                active: true,
+                stopped: true,
+                speed: 0.0,
+                speed_goal: 0.0,
+                acceleration: 0.0,
+                increment: crate::coordinates::MapVec::ZERO,
+                goal: crate::coordinates::MapPoint::new(position_x, 0.0),
+            });
+        child
     }
 
     fn bow_execute_fixture() -> (
@@ -2170,6 +2260,28 @@ mod tests {
         }
 
         assert!(human_init_validity_arm(OT::ShootingWithBowLeaningOut, false).is_none());
+    }
+
+    #[test]
+    fn using_lever_initialization_requires_a_stopped_nearby_mobile() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let actor = add_pc(&mut engine);
+        let mobile_child = add_stopped_mobile(&mut engine, 40.0);
+        let element =
+            SequenceElement::new_interaction(3, Command::UseLever, Some(actor), Some(mobile_child));
+
+        assert!(engine.check_sequence_element_validity(&assets, actor, &element, true));
+        engine.world.mobile_elements[0].stopped = false;
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, true));
+        engine.world.mobile_elements[0].stopped = true;
+        engine.world.mobile_elements[0].position.x = 40.01;
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, true));
+        assert!(engine.check_sequence_element_validity(&assets, actor, &element, false));
+        assert!(matches!(
+            pc_init_validity_arm(crate::order::OrderType::UsingLever),
+            Some((true, ValidityArmTerminal::Terminated))
+        ));
     }
 
     #[test]
