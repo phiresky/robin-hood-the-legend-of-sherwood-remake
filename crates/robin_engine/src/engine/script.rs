@@ -5301,6 +5301,16 @@ impl EngineInner {
                         .pending_side_effects
                         .pending_popup_texts
                         .push(text_id);
+                    // `RHScript::DisplayPopupText` calls
+                    // `RHMenuPopupScroll::Display` synchronously. The first
+                    // popup in a universal frame constructs its colorized
+                    // background and re-enters `RHGame::Refresh(false,
+                    // false)` before the native returns. Keep this direct
+                    // native on the same suppression latch as a recorded
+                    // DisplayPopupText sequence element.
+                    if !self.control.fast_forward && self.control.begin_popup_scroll_display() {
+                        self.refresh_arrows_for_presentation(sim);
+                    }
                     self.orders
                         .messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
@@ -6070,6 +6080,67 @@ mod script_context_tests {
                 .element_data()
                 .custom_minimap_dot,
             crate::minimap::CustomDot::NotCustomized as u16
+        );
+    }
+
+    #[test]
+    fn direct_popup_native_refreshes_a_new_arrow_before_returning() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{
+            Animation, ElementData, ElementKind, ElementProjectile, Entity, ObjectData, ObjectType,
+            ProjectileData, TrajectoryPoint,
+        };
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        engine.control.frame_counter = 48479;
+
+        let mut element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        };
+        element.set_position(WorldPoint3D::ZERO);
+        let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type: ObjectType::Arrow,
+                animation: Animation::ObjectFlying,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                flying: true,
+                trajectory: vec![TrajectoryPoint {
+                    position: WorldPoint3D::new(10.0, 0.0, 100.0),
+                    time: 4,
+                }],
+                ..Default::default()
+            },
+        }));
+
+        engine.apply_host_commands(
+            &sim,
+            &LevelAssets::default(),
+            vec![crate::natives::EngineCommand::DisplayPopupText { text_id: 11 }],
+        );
+
+        let Entity::Projectile(arrow) = engine
+            .get_entity(arrow)
+            .expect("direct popup must retain its arrow")
+        else {
+            panic!("direct popup arrow changed entity kind");
+        };
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame
+            ),
+            (4, 8)
+        );
+        assert_eq!(engine.control.popup_scroll_last_display_frame, Some(48479));
+        assert_eq!(
+            engine.feedback.pending_side_effects.pending_popup_texts,
+            vec![11]
         );
     }
 
