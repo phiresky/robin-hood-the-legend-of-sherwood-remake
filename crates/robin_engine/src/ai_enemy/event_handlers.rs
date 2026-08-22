@@ -142,6 +142,18 @@ impl EnemyAi {
                                     CharlySeekerTarget::Npc(charly),
                                     self.base.antagonist,
                                 );
+                                // Original calls UnalertAllNearCharlySeekers
+                                // synchronously before Say(FOUND_CHARLY).
+                                // Preserve that statement boundary: a
+                                // rejected speech can immediately dispatch
+                                // EVENT_MYTALK_1 and ReturnToDuty, whose
+                                // patrol-chief visibility query must not
+                                // overtake the earlier Charly-seeker sweep.
+                                self.base.outbox.reentrant.owner_work.push(
+                                    AiOwnerWork::ActorEffects(std::mem::take(
+                                        &mut self.base.outbox.actor,
+                                    )),
+                                );
                                 self.base
                                     .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
                                 self.base
@@ -3539,12 +3551,14 @@ mod tests {
             ai.base.outbox.reentrant.owner_work.as_slice(),
             [
                 AiOwnerWork::StateChange(_),
+                AiOwnerWork::ActorEffects(effects),
                 AiOwnerWork::Speech(AiSpeechAttempt {
                     remark: Remark::FoundCharly,
                     ..
                 }),
                 AiOwnerWork::ResumeSendCharlyAfterSpeech { charly: 42 }
-            ]
+            ] if effects.unalert_near_charly_seekers
+                == Some(CharlySeekerTarget::Npc(42))
         ));
     }
 
