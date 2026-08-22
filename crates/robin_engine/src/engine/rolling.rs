@@ -36,6 +36,13 @@ fn rolling_terminal_posture(motion: MotionState, is_dead: bool) -> Option<crate:
     })
 }
 
+/// Original's multi-line `CheckForLineCrossing` arm always executes the
+/// shared `UpdateRoll`/increment-recompute tail, even when none of the
+/// coincident lines is an elevation bond (`RHelementactor.cpp:7284-7310`).
+fn rolling_crossing_revalidates(crossed_elevation: bool, crossing_count: usize) -> bool {
+    crossed_elevation || crossing_count > 1
+}
+
 impl EngineInner {
     /// `RHElementActorHuman::Execute(RHANIMATION_ROLLING)`.
     pub(super) fn tick_rolling_owner(
@@ -251,8 +258,22 @@ impl EngineInner {
             .unwrap()
             .element_data()
             .position_map();
-        if self.check_for_line_crossing(assets, owner, old_pos, new_pos, layer) {
+        // The single-line arm revalidates only for an elevation line. The
+        // multi-line arm enters the shared tail unconditionally, including
+        // coincident script/sound boundaries with zero elevation lines.
+        let crossing_count = self
+            .world
+            .fast_grid
+            .get_actor_crossing_line_indices(layer, old_pos, new_pos)
+            .len();
+        let crossed = self.check_for_line_crossing(assets, owner, old_pos, new_pos, layer);
+        if rolling_crossing_revalidates(crossed, crossing_count) {
             self.update_roll_after_crossing(assets, owner);
+            self.world.entities[owner]
+                .as_mut()
+                .expect("Rolling owner disappeared after line crossing")
+                .position_iface_mut()
+                .compute_increment_all(order.compute_direction);
         }
         self.check_for_non_elevation_line_crossing(sim, assets, owner, old_pos, new_pos, layer);
 
@@ -374,5 +395,13 @@ mod tests {
             rolling_terminal_posture(MotionState::Terminated, true),
             Some(crate::element::Posture::Dead)
         );
+    }
+
+    #[test]
+    fn coincident_non_elevation_lines_revalidate_roll() {
+        assert!(!rolling_crossing_revalidates(false, 0));
+        assert!(!rolling_crossing_revalidates(false, 1));
+        assert!(rolling_crossing_revalidates(true, 1));
+        assert!(rolling_crossing_revalidates(false, 2));
     }
 }

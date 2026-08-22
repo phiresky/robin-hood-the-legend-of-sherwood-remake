@@ -95,14 +95,15 @@ use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
-/// Materialize the zero map increment produced by Original's lazy
-/// `GetIncrementMap` after `UpdateRoll` stops at the actor's current point.
+/// Match `UpdateRoll`'s rejected-slope arm: publish only the current point as
+/// the new goal. The surrounding `CheckForLineCrossing` tail then calls
+/// `ComputeIncrementAll`; keeping the increment uncached lets its
+/// `bVerySmallIncrement` guard preserve the prior direction goal.
 fn stop_roll_at_current_position(
     position: &mut crate::position_interface::PositionInterface,
     here: crate::coordinates::MapPoint,
 ) {
     position.set_map_goal(here);
-    position.compute_increment_map();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3729,16 +3730,19 @@ mod tests {
     }
 
     #[test]
-    fn stopped_rolling_materializes_zero_map_increment() {
+    fn stopped_rolling_preserves_direction_through_shared_recompute() {
         let here = MapPoint::new(1208.699_5, 1156.473_4);
         let mut position = crate::position_interface::PositionInterface::new();
         position.set_map_position(here);
+        position.set_direction_instantly(crate::position_interface::Direction::from_raw(10));
         position.set_map_increment(MapVec::new(0.274_060_93, 0.961_712_3));
 
         stop_roll_at_current_position(&mut position, here);
+        position.compute_increment_all(true);
 
         assert_eq!(position.map_goal(), here);
         assert_eq!(position.get_increment_map(), MapVec::ZERO);
+        assert_eq!(position.get_direction_goal().as_u8(), 10);
     }
 
     fn falling_pushed_soldier(dead: bool) -> Entity {
