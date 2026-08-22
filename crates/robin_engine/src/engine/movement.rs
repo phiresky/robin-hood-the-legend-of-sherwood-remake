@@ -8558,9 +8558,16 @@ impl EngineInner {
             }
         }
 
-        for entity_id in sword_movement_starts {
-            self.apply_sword_movement_start_initiative_transfer(entity_id);
+        // Human's sword-movement Execute arm prunes newly far opponents
+        // immediately after PerformMotion/PerformSeek and before inspecting
+        // the returned motion state (`RHelementactorhuman.cpp:3778-3844`).
+        // In particular, this precedes the START initiative handoff: pruning
+        // the old principal can promote a different reciprocal opponent, and
+        // that promoted opponent is the one Original gives the initiative.
+        if executed_sword_movement {
+            self.quit_swordfight_with_far_opponents(sim, assets, owner);
         }
+
         let state_effect_frame = self.control.frame_counter;
         for (entity_id, posture, action_state) in movement_state_effects {
             if let Some(entity) = self.get_entity_mut(entity_id) {
@@ -8578,14 +8585,8 @@ impl EngineInner {
                 }
             }
         }
-        // Human's sword-movement Execute arm removes newly far opponents
-        // immediately after PerformMotion/PerformSeek and before inspecting
-        // the terminal motion state (`RHelementactorhuman.cpp:3778-3844`).
-        // Besides removing the old principal, this may synchronously promote
-        // a reciprocal in-range opponent to principal, so the Provoke gate
-        // must observe the updated list.
-        if executed_sword_movement {
-            self.quit_swordfight_with_far_opponents(sim, assets, owner);
+        for entity_id in sword_movement_starts {
+            self.apply_sword_movement_start_initiative_transfer(entity_id);
         }
 
         // Original evaluates the terminal sword-movement Provoke gate inside

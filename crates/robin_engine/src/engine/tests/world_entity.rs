@@ -3134,6 +3134,76 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
     );
 }
 
+#[test]
+fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+
+    // Human::Execute performs QuitSwordfightWithFarOpponents immediately
+    // after PerformMotion and only then handles RHMOTION_START. The old
+    // principal can therefore disappear before the START initiative handoff.
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let old_principal = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let promoted = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    let weapon = profiles
+        .hth_weapons
+        .first_mut()
+        .expect("complete actor fixture supplies an HtH weapon");
+    weapon.distance[crate::weapons::WeaponDistance::Uber as usize] = 150;
+
+    for (entity_id, x) in [
+        (owner, 151.583_5_f32),
+        (old_principal, 0.0_f32),
+        (promoted, 18.567_36_f32),
+    ] {
+        let entity = engine.get_entity_mut(entity_id).unwrap();
+        entity
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(x, 0.0, 0.0));
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 0.0));
+    }
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![old_principal, promoted];
+    for opponent in [old_principal, promoted] {
+        engine
+            .get_entity_mut(opponent)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents = vec![owner];
+    }
+
+    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+    engine.apply_sword_movement_start_initiative_transfer(owner);
+
+    let owner_human = engine.get_entity(owner).unwrap().human_data().unwrap();
+    assert_eq!(owner_human.opponents, vec![promoted]);
+    assert!(!owner_human.smalltalk_initiative);
+    let promoted_human = engine.get_entity(promoted).unwrap().human_data().unwrap();
+    assert!(promoted_human.smalltalk_initiative);
+    assert!(promoted_human.received_smalltalk_initiative);
+    assert!(
+        !engine
+            .get_entity(old_principal)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .smalltalk_initiative,
+        "the pruned old principal must not receive the START handoff"
+    );
+}
+
 pub(super) fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     let mut entity = make_test_soldier(crate::element::Posture::Upright);
     let Entity::Soldier(soldier) = &mut entity else {
