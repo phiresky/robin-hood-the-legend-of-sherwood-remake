@@ -38,6 +38,33 @@ struct RefreshViewLifecycleDebugConfig {
     creation_order: Option<u32>,
 }
 
+#[cfg(test)]
+mod building_door_membership_tests {
+    use super::door_belongs_to_ai_house;
+    use crate::gate::DoorType;
+
+    #[test]
+    fn building_trap_remains_in_complete_ai_house_gate_list() {
+        assert!(door_belongs_to_ai_house(DoorType::Building));
+        assert!(door_belongs_to_ai_house(DoorType::BuildingTrap));
+
+        for unrelated in [
+            DoorType::Default,
+            DoorType::Gate,
+            DoorType::LiftHigh,
+            DoorType::LiftLow,
+            DoorType::LiftHighCrenel,
+            DoorType::Trap,
+            DoorType::Reinforcement,
+        ] {
+            assert!(
+                !door_belongs_to_ai_house(unrelated),
+                "{unrelated:?} must not create an AI house association"
+            );
+        }
+    }
+}
+
 fn refresh_view_lifecycle_debug_config() -> &'static RefreshViewLifecycleDebugConfig {
     static CONFIG: std::sync::OnceLock<RefreshViewLifecycleDebugConfig> =
         std::sync::OnceLock::new();
@@ -81,6 +108,17 @@ fn refresh_view_lifecycle_debug_config() -> &'static RefreshViewLifecycleDebugCo
 pub(super) fn building_exit_wait_owner_debug_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BUILDING_EXIT_WAIT_OWNER").is_some())
+}
+
+/// Original attaches both ordinary building doors and building-trap doors to
+/// `RHSectorBuilding::GetGates()`. AI house initialization must preserve that
+/// ownership because both rally-point creation and door-fight placement walk
+/// the complete building gate list.
+fn door_belongs_to_ai_house(door_type: crate::gate::DoorType) -> bool {
+    matches!(
+        door_type,
+        crate::gate::DoorType::Building | crate::gate::DoorType::BuildingTrap
+    )
 }
 
 /// Narrow, process-local diagnostics for the Save050 SeekArea point-count
@@ -6078,14 +6116,17 @@ impl EngineInner {
         // NPC-populated buildings (the houses list being built from
         // starting sectors) is an artifact of *how* it initializes,
         // not a semantic invariant; live occupant tracking supersedes
-        // it.  Trap doors (`BuildingTrap`) remain excluded — those
-        // sectors aren't regular building interiors and shouldn't
-        // carry rally points.
+        // it. `RHArtificialIntelligence::InitAI` walks every gate owned by
+        // each building when it builds rally points, and
+        // `InitBattleBeforeDoor` walks that same gate list. This includes a
+        // `DOOR_BUILDING_TRAP` whose inside sector is the building; excluding
+        // it can select a farther ordinary door and changes the observable
+        // door-fight RNG consumption.
         // A missing script is the explicitly warned degraded-load path from
         // `init_ai`; houses intentionally remain empty in that mode.
         if self.scripts.mission.is_some() {
             for (idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
-                if !matches!(door.door_type, crate::gate::DoorType::Building) {
+                if !door_belongs_to_ai_house(door.door_type) {
                     continue;
                 }
                 doors_by_building
