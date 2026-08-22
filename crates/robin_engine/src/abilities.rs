@@ -932,20 +932,19 @@ pub fn begin_heal(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    // Validate target: living PC with HP < max, OR an FX target (which
-    // just runs the animation so the target's `ActivatedByHeal` script
-    // can fire on Done — see `HealDone` in `engine/combat.rs`).
+    // `RHElementActorPC::Translate(RHCOMMAND_HEAL)` only authors the
+    // Healing order.  The living/injured/range predicate belongs to the
+    // following Execute initialization (`RHelementactorpc.cpp:3055-3062,
+    // 4524-4532`), after the element has become selected.  In particular, a
+    // post-seek Heal whose victim recovered while the healer was travelling
+    // is still visible as Healing for this manager phase and terminates from
+    // Execute on the next actor phase.  Do not prevalidate hit points here.
+    //
+    // Retain the command's structural target invariant: supported targets
+    // are PCs and FX targets.  Missing/unsupported interaction targets are
+    // not valid authored Heal commands.
     let target_valid = match entities.get(target_id) {
-        Some(e) => {
-            if e.kind().is_fx_target() {
-                true
-            } else if e.is_pc() {
-                let hp = e.pc_data().map(|pc| pc.life_points).unwrap_or(0);
-                hp > 0 && hp < LIFEPOINTS_PC
-            } else {
-                false
-            }
-        }
+        Some(e) => e.kind().is_fx_target() || e.is_pc(),
         None => false,
     };
     if !target_valid {
@@ -3813,6 +3812,54 @@ mod tests {
         assert_eq!(order.order_type, OrderType::Healing);
         assert_eq!(order.target_actor, Some(target.index()));
         assert!(!order.compute_direction);
+    }
+
+    #[test]
+    fn heal_translation_does_not_prevalidate_full_health_target() {
+        let mut entities = Entities::new();
+        for _ in 0..2 {
+            entities.push(Some(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: HumanData::default(),
+                pc: PcData::default(),
+            })));
+        }
+        let healer = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        entities
+            .get_mut(target)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .life_points = LIFEPOINTS_PC;
+
+        let mut manager = SequenceManager::new();
+        let seq_id = launch_ability_element(&mut manager, Command::HealCmd, healer);
+        let mut next_id = 1;
+        assert_eq!(
+            begin_heal(
+                &mut entities,
+                &mut manager,
+                healer,
+                target,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started,
+            "Translate must install Healing before Execute checks whether the victim is still injured"
+        );
+        assert_eq!(
+            manager
+                .get_element(seq_id, 0)
+                .and_then(SequenceElement::current_order)
+                .map(|order| order.order_type),
+            Some(OrderType::Healing)
+        );
     }
 
     #[test]

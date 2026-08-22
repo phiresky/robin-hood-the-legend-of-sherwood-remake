@@ -1942,6 +1942,7 @@ mod tests {
     fn healing_new_order_owner_loop_validates_before_ability_effects() {
         enum TargetKind {
             Human(f32),
+            HumanFullHealth,
             Fx(f32),
             SelfHeal,
         }
@@ -1954,6 +1955,10 @@ mod tests {
             (
                 TargetKind::Human(39.999),
                 crate::sequence::SequenceState::InProgress,
+            ),
+            (
+                TargetKind::HumanFullHealth,
+                crate::sequence::SequenceState::Terminated,
             ),
             (
                 TargetKind::Fx(80.0),
@@ -1994,6 +1999,16 @@ mod tests {
                     entity
                         .element_data_mut()
                         .set_position_map(crate::coordinates::MapPoint::new(distance, 0.0));
+                    target
+                }
+                TargetKind::HumanFullHealth => {
+                    let target = add_pc(&mut engine);
+                    engine
+                        .get_entity_mut(target)
+                        .unwrap()
+                        .pc_data_mut()
+                        .unwrap()
+                        .life_points = crate::abilities::LIFEPOINTS_PC;
                     target
                 }
                 TargetKind::Fx(distance) => {
