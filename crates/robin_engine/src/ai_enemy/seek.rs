@@ -797,7 +797,12 @@ impl EnemyAi {
         let current_frame = ctx.frame;
 
         // Unlock the previous seek point
-        if let Some(prev_id) = self.actual_seek_point.take()
+        // Original unlocks `mpActualSeekPoint` here but deliberately retains
+        // the pointer until a new candidate is assigned below.  In
+        // particular, a beggar detour returns with the old point identity;
+        // when seeking resumes, the next entry unlocks that shared point a
+        // second time.  Another soldier may have locked it during the detour.
+        if let Some(prev_id) = self.actual_seek_point
             && let Some(sp) = resolve_seek_point_mut(
                 prev_id,
                 &mut self.personal_seek_point_1,
@@ -2369,5 +2374,71 @@ mod tests {
         assert!(global.seek_points[0].locked);
         assert_eq!(ai.actual_seek_point, Some(0));
         assert_eq!(ai.base.last_goto_destination, destination);
+    }
+
+    #[test]
+    fn beggar_detour_retains_old_seek_point_for_second_unlock() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(223);
+        ai.actual_seek_point = Some(0);
+        ai.beggars_to_control.push(999);
+        ai.positions_of_beggars_to_control.push(Position {
+            x: 50.0,
+            y: 60.0,
+            ..Position::default()
+        });
+
+        let next_position = Position {
+            x: 300.0,
+            y: 400.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points = vec![
+            SeekPoint {
+                position: Position {
+                    x: 1176.0,
+                    y: 1958.0,
+                    ..Position::default()
+                },
+                frame_when_full_interest: 0,
+                directions: vec![2],
+                last_calculated_interest: 55,
+                locked: true,
+                id: 0,
+            },
+            SeekPoint {
+                position: next_position,
+                frame_when_full_interest: 0,
+                directions: vec![4],
+                last_calculated_interest: 100,
+                locked: false,
+                id: 1,
+            },
+        ];
+        let ctx = AiContext::default();
+
+        ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.actual_seek_point, Some(0));
+        assert!(!global.seek_points[0].locked);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingSeekpointApproachingBeggar
+        );
+
+        // A different investigator selects the shared point while this AI is
+        // away identifying the beggar. Original's retained pointer makes the
+        // resumed SeekNextPoint clear that intervening lock again.
+        global.seek_points[0].locked = true;
+        ai.beggar_to_examine = 0;
+        ai.my_seek_points.push(1);
+
+        ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
+
+        assert!(!global.seek_points[0].locked);
+        assert_eq!(ai.actual_seek_point, Some(1));
+        assert!(global.seek_points[1].locked);
+        assert_eq!(ai.base.last_goto_destination, next_position);
     }
 }
