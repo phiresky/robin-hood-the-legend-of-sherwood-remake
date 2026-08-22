@@ -323,18 +323,22 @@ mod group_move_authorization_tests {
     }
 
     #[test]
-    fn recorded_ordinary_route_ignores_coincident_door_overlay() {
+    fn recorded_ordinary_route_keeps_door_placement_but_uses_ordinary_path() {
         assert_eq!(
             group_move_door_selection(Some(86), true, Some(false)),
-            (None, false)
+            (None, false, true)
         );
         assert_eq!(
             group_move_door_selection(Some(86), true, None),
-            (Some(86), true)
+            (Some(86), true, true)
         );
         assert_eq!(
             group_move_door_selection(Some(86), true, Some(true)),
-            (Some(86), true)
+            (Some(86), true, true)
+        );
+        assert_eq!(
+            group_move_door_selection(None, false, Some(false)),
+            (None, false, false)
         );
     }
 
@@ -2892,8 +2896,8 @@ fn group_move_door_selection(
     spatial_clicked_door_index: Option<u32>,
     spatial_is_door_click: bool,
     recorded_door_route: Option<bool>,
-) -> (Option<u32>, bool) {
-    match recorded_door_route {
+) -> (Option<u32>, bool, bool) {
+    let (route_door_index, route_is_door) = match recorded_door_route {
         Some(false) => (None, false),
         Some(true) => (
             Some(spatial_clicked_door_index.unwrap_or_else(|| {
@@ -2902,7 +2906,15 @@ fn group_move_door_selection(
             true,
         ),
         None => (spatial_clicked_door_index, spatial_is_door_click),
-    }
+    };
+
+    // Original keeps two independent identities in PerformGroupMove:
+    // `mpSelectedSector` supplies `bDoor`, which bypasses formation-point
+    // authorization, while the patch-aware `pSectorGoal` selects ordinary
+    // FindPathGates versus FindPathIntoDoor. A schema-16 replay can therefore
+    // author an ordinary route over a coincident door overlay without losing
+    // the overlay's placement semantics (RHengine.cpp:5322-5337, 5447-5468).
+    (route_door_index, route_is_door, spatial_is_door_click)
 }
 
 /// `PerformGroupMove` receives one resolved upright action from the click
@@ -4639,11 +4651,12 @@ impl EngineInner {
         });
         let spatial_clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
         let spatial_is_door_click = is_door_click_sector || spatial_clicked_door_index.is_some();
-        let (clicked_door_index, is_door_click) = group_move_door_selection(
-            spatial_clicked_door_index,
-            spatial_is_door_click,
-            door_route_override,
-        );
+        let (clicked_door_index, is_door_click, bypass_formation_authorization) =
+            group_move_door_selection(
+                spatial_clicked_door_index,
+                spatial_is_door_click,
+                door_route_override,
+            );
         let (route_goal_sector, route_goal_layer) =
             group_move_route_goal(goal_override, hit.sector, hit.layer);
 
@@ -4782,7 +4795,7 @@ impl EngineInner {
                     effective_click,
                     is_lift_click,
                 );
-                let authorized = is_door_click
+                let authorized = bypass_formation_authorization
                     || self.world.fast_grid.find_authorized_position_toward(
                         &mut bbox,
                         effective_click,
@@ -4940,7 +4953,7 @@ impl EngineInner {
                     }))
             {
                 // Door clicks skip the walkable snap entirely.
-                let snap_res = if is_door_click || mercenary_center.is_some() {
+                let snap_res = if bypass_formation_authorization || mercenary_center.is_some() {
                     Some(*dest)
                 } else {
                     self.authorize_group_move_destination(
@@ -5022,7 +5035,7 @@ impl EngineInner {
             // This is also required for a single PC clicking a lift: the
             // authored click can be shifted slightly so the upright move box
             // fits inside the narrow wall/ladder rail.
-            let resolved_dest = if is_door_click || mercenary_center.is_some() {
+            let resolved_dest = if bypass_formation_authorization || mercenary_center.is_some() {
                 *dest
             } else {
                 let Some(resolved) = self.authorize_group_move_destination(
