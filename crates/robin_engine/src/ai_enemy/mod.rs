@@ -649,15 +649,15 @@ impl EnemyAi {
             .unwrap_or(false);
         if !target_swordfighting && let Some(target) = self.find_fighter(new_target, tick) {
             // Original calls RHArtificialIntelligence::MaxNormDistance:
-            // subtract full world positions, stretch Y for the isometric
-            // projection, then take the 3D max norm. Raw map-space Y can
-            // incorrectly put a target inside sword range.
-            let max_norm = ai_max_norm_distance(
-                &target.position,
+            // subtract raw element world positions, stretch Y for the
+            // isometric projection, then take the 3D max norm. AI Position()
+            // may instead snap a door-passing target to the gate endpoint.
+            let target_body = crate::coordinates::WorldPoint3D::new(
+                target.raw_position.x,
+                target.raw_position.y + target.elevation,
                 target.elevation,
-                &ctx.position,
-                ctx.elevation,
             );
+            let max_norm = ai_max_norm_distance_world(&target_body, &ctx.self_body_position_world);
             let my_max_range = self
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.sword_range_maximal as f32)
@@ -7469,6 +7469,11 @@ mod tests {
         views.insert(107, target_view);
         let ctx = AiContext {
             position: me_position,
+            self_body_position_world: crate::coordinates::WorldPoint3D::new(
+                me_position.x,
+                me_position.y,
+                0.0,
+            ),
             elevation: 0.0,
             camp: Camp::Lacklandists,
             entity_views: crate::ai_entity_view::shared_entity_views(views),
@@ -7480,12 +7485,14 @@ mod tests {
             FighterSnapshot {
                 handle: 72,
                 position: me_position,
+                raw_position: me_position,
                 sword_range_maximal: 50,
                 ..FighterSnapshot::default()
             },
             FighterSnapshot {
                 handle: 107,
                 position: target_position,
+                raw_position: target_position,
                 is_pc: true,
                 ..FighterSnapshot::default()
             },
@@ -7493,6 +7500,67 @@ mod tests {
 
         assert!(ai.is_too_proud_to_attack(&ctx, &tick, None));
         assert_eq!(ai.base.primary_target, 107);
+    }
+
+    #[test]
+    fn too_proud_range_gate_uses_raw_target_body_during_door_transit() {
+        // Save067/r005 and Save068/r005: the target's AI Position() is the
+        // committed point inside gate 108, but Original MaxNormDistance()
+        // calls RHElement::GetPosition() directly.  The live body is within
+        // this knight's sword reach, so pride must not suppress the attack.
+        let me_position = test_position(2230.0, 405.0);
+        let raw_target = test_position(2268.0, 393.0);
+        let snapped_door_target = test_position(2301.0, 381.0);
+
+        let mut ai = EnemyAi::new(266);
+        ai.soldier_profile_pride = 80;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.list_them = vec![320];
+
+        let mut target_view = soldier_view(snapped_door_target);
+        target_view.is_pc = true;
+        target_view.kind = EntityKind::Pc;
+        target_view.detection_position = MapPoint::new(raw_target.x, raw_target.y);
+        target_view.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(raw_target.x, raw_target.y, 0.0);
+        target_view.passing_door = true;
+        let mut owner_view = soldier_view(me_position);
+        owner_view.camp = Camp::Lacklandists;
+        let mut views = AiEntityViewMap::new();
+        views.insert(266, owner_view);
+        views.insert(320, target_view);
+        let ctx = AiContext {
+            position: me_position,
+            self_body_position_world: crate::coordinates::WorldPoint3D::new(
+                me_position.x,
+                me_position.y,
+                0.0,
+            ),
+            camp: Camp::Lacklandists,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry = vec![
+            FighterSnapshot {
+                handle: 266,
+                position: me_position,
+                raw_position: me_position,
+                sword_range_maximal: 50,
+                ..FighterSnapshot::default()
+            },
+            FighterSnapshot {
+                handle: 320,
+                position: snapped_door_target,
+                raw_position: raw_target,
+                is_pc: true,
+                ..FighterSnapshot::default()
+            },
+        ];
+
+        assert!(!ai.is_too_proud_to_attack(&ctx, &tick, None));
+        assert_eq!(ai.base.primary_target, 320);
     }
 
     #[test]
