@@ -663,9 +663,23 @@ impl EnemyAi {
                 continue;
             }
 
-            // MaxNorm + SquareNorm radius gates. Keep Original's positive
-            // strict comparisons so unordered legacy coordinates are rejected.
-            if !alert_soldier_is_inside_radius(cs.position, my_pos, alert_radius) {
+            // MaxNorm + SquareNorm radius gates. Original evaluates both
+            // positions through RHArtificialIntelligence::Position. During a
+            // door pass that resolves the candidate to its selected gate
+            // endpoint, rather than the raw body position retained in
+            // CampSoldierInfo for other consumers.
+            let candidate_position = ctx
+                .entity_view(cs.handle)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "AlertSoldiers candidate {} lacks the required AI entity view",
+                        cs.handle
+                    )
+                })
+                .position;
+            // Keep Original's positive strict comparisons so unordered legacy
+            // coordinates are rejected.
+            if !alert_soldier_is_inside_radius(candidate_position, my_pos, alert_radius) {
                 continue;
             }
 
@@ -1818,6 +1832,68 @@ impl EnemyAi {
 mod tests {
     use super::*;
 
+    fn alert_candidate(handle: u32, position: Position) -> CampSoldierInfo {
+        CampSoldierInfo {
+            handle,
+            active: true,
+            position,
+            position_world: WorldPoint3D::new(position.x, position.y, 0.0),
+            direction: 0,
+            rank: ProfileRank::Soldier,
+            ai_state: AiState::Default,
+            ai_substate: Substate::DefaultOnPost,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            detected_body: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 300,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        }
+    }
+
+    fn soldier_entity_view(position: Position) -> crate::ai_entity_view::AiEntityView {
+        let entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData::default(),
+            actor: crate::element::ActorData::default(),
+            human: crate::element::HumanData::default(),
+            npc: crate::element::NpcData::default(),
+            soldier: crate::element::SoldierData::default(),
+        });
+        let mut view = crate::ai_entity_view::entity_view_from_entity(
+            &entity,
+            127,
+            false,
+            None,
+            None,
+            crate::order::OrderType::WaitingUpright,
+        );
+        view.position = position;
+        view
+    }
+
     #[test]
     fn alert_soldier_radius_keeps_positive_strict_float_gates() {
         let officer = Position::default();
@@ -1848,6 +1924,59 @@ mod tests {
             !alert_soldier_is_inside_radius(at(0.0, f32::NAN), officer, 5.0),
             "an unordered Y coordinate must fail Original's positive comparisons"
         );
+    }
+
+    #[test]
+    fn alert_soldiers_radius_uses_door_resolved_ai_position() {
+        // Save018/r040: Soldier96's interpolated body lies inside the
+        // officer's circle, while Position(Soldier96) resolves its active
+        // door pass to gate 27's point-out and lies outside it. Original
+        // therefore rejects the soldier before delivering CALL_ALERT.
+        let officer = Position {
+            x: 1723.7462,
+            y: 747.5348,
+            ..Position::default()
+        };
+        let raw_body = Position {
+            x: 1458.0,
+            y: 331.0,
+            ..Position::default()
+        };
+        let gate_point_out = Position {
+            x: 1416.0,
+            y: 344.0,
+            ..Position::default()
+        };
+        let radius = combat::ALERT_RADIUS as f32;
+        assert!(alert_soldier_is_inside_radius(raw_body, officer, radius));
+        assert!(!alert_soldier_is_inside_radius(
+            gate_point_out,
+            officer,
+            radius
+        ));
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(96, soldier_entity_view(gate_point_out));
+        let ctx = AiContext {
+            position: officer,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(alert_candidate(96, raw_body));
+
+        let mut ai = EnemyAi::new(99);
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        assert!(!ai.alert_soldiers(
+            Position::default(),
+            0,
+            &AiGlobalState::default(),
+            None,
+            &ctx,
+            &tick,
+            AlertSoldiersFailureContinuation::None,
+        ));
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     }
 
     #[test]
