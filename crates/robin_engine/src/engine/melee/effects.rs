@@ -1184,7 +1184,6 @@ impl EngineInner {
                 .expect("falling-pushed victim layer cannot be the no-layer sentinel"),
         );
         let dx = goal.x - victim_pos.x;
-        let dy = goal.y - victim_pos.y;
         let dz = goal_z - victim_z;
         let dy_world = (goal.y + goal_z) - (victim_pos.y + victim_z);
         let actor = self
@@ -1192,23 +1191,27 @@ impl EngineInner {
             .expect("falling-pushed victim vanished")
             .actor_data_mut()
             .expect("falling-pushed victim lost actor data");
-        actor.active_flight = (dx.abs() > 0.01 || dy.abs() > 0.01 || dz.abs() > 0.01).then_some(
-            crate::element::ActiveFlight {
-                geometry: crate::element::FlightGeometry::World3d,
-                increment_x: dx / frames as f32,
-                increment_y: dy_world / frames as f32,
-                goal_x: goal.x,
-                goal_y: goal.y,
-                frames_remaining: frames,
-                antagonist: Some(attacker_id),
-                increment_z: dz / frames as f32,
-                goal_z,
-                goal_layer: layer,
-                goal_sector: sector,
-                obstacle,
-                ladder_fall: false,
-            },
-        );
+        // ReadyForTakeOff always installs its increment and goal. A rejected
+        // horizontal push can still have a few-ULP vertical difference when
+        // the landing plane recomputes the cached takeoff map point; Original
+        // applies that tiny increment on every PerformFlight tick. Collapsing
+        // sub-centimetre flights here makes RHPositionInterface::IsMoving
+        // falsely remain clear.
+        actor.active_flight = Some(crate::element::ActiveFlight {
+            geometry: crate::element::FlightGeometry::World3d,
+            increment_x: dx / frames as f32,
+            increment_y: dy_world / frames as f32,
+            goal_x: goal.x,
+            goal_y: goal.y,
+            frames_remaining: frames,
+            antagonist: Some(attacker_id),
+            increment_z: dz / frames as f32,
+            goal_z,
+            goal_layer: layer,
+            goal_sector: sector,
+            obstacle,
+            ladder_fall: false,
+        });
     }
 
     // ─── Rolling on slopes ──────────────────────────────────────────

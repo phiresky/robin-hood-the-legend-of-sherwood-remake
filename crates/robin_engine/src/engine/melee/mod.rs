@@ -9602,6 +9602,29 @@ mod tests {
                 .map(|(_, _, order)| order.order_type),
             Some(OrderType::FallingPushedWithSword)
         );
+        let fall_script = crate::sprite_script::SpriteScript {
+            action_id: OrderType::FallingBackSword as u16,
+            action_done: 1,
+            frame_ids: vec![1, 2],
+            delays: vec![0, 0],
+            distances: vec![0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0, 0],
+            ..Default::default()
+        };
+        let mut fall_conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        fall_conversion[OrderType::FallingBackSword as usize] = 0;
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            let position_iface = victim_entity.element_data().sprite.position_iface.clone();
+            let mut sprite = crate::sprite::Sprite::new(
+                std::sync::Arc::new(vec![fall_script; 16]),
+                std::sync::Arc::new(fall_conversion),
+            );
+            sprite.position_iface = position_iface;
+            victim_entity.element_data_mut().sprite = sprite;
+        }
         let material_before_takeoff = engine.get_entity(victim).unwrap().element_data().material();
         engine.initialize_push_flight(
             &assets,
@@ -9614,16 +9637,16 @@ mod tests {
             material_before_takeoff,
             "ReadyForTakeOff installs only the goal obstacle/plane, not its material"
         );
-        assert!(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .active_flight
-                .is_none(),
-            "a fully rejected ReadyForTakeOff retains zero displacement"
-        );
+        let rejected_flight = engine
+            .get_entity(victim)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_flight
+            .expect("ReadyForTakeOff must retain a fully rejected flight");
+        assert_eq!(rejected_flight.increment_x, 0.0);
+        assert_eq!(rejected_flight.increment_y, 0.0);
+        assert_eq!(rejected_flight.increment_z, 0.0);
         let accepted_increment = 1.0;
         engine
             .get_entity_mut(victim)
