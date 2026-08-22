@@ -1185,6 +1185,19 @@ fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destinat
     assert!(!waiting_ai.already_on_point);
     assert_eq!(waiting_ai.take_pending_orders().len(), 1);
 
+    // A live transition owned by the actor's default Wait is not a stale
+    // movement projection. Original GetAnimation() reads that transition,
+    // so an exact-position GoTo registers a real Move and reaches the point
+    // later through SequenceManager::Hourglass (Save071/replay-021).
+    let mut default_wait_ctx = ctx.clone();
+    default_wait_ctx.self_animation_reached_action_done = false;
+    default_wait_ctx.self_selected_element_is_default_wait = Some(true);
+    let mut default_wait_ai = AiController::new(93);
+    default_wait_ai.think_recursion_depth = 1;
+    default_wait_ai.go_to(default_wait_ctx.position, GotoFlags::RUN, &default_wait_ctx);
+    assert!(!default_wait_ai.already_on_point);
+    assert_eq!(default_wait_ai.take_pending_orders().len(), 1);
+
     let mut speed_ai = AiController::new(93);
     speed_ai.think_recursion_depth = 1;
     speed_ai.go_to_speed(ctx.position, GotoFlags::RUN, 1.5, &ctx);

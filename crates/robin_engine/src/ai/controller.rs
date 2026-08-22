@@ -3480,6 +3480,12 @@ impl AiController {
         ctx: &AiContext,
     ) -> bool {
         ctx.position == *destination
+            // A transition installed on the actor's real default Wait is
+            // live in Original too: `GetAnimation()` reads that order and
+            // the close-point switch must launch a coincident Move.  The
+            // projection is only for Rust's stale outgoing movement view,
+            // never for `mpWaitSequenceElement` itself.
+            && ctx.self_selected_element_is_default_wait != Some(true)
             // This projection only repairs the phase split where Rust still
             // publishes the outgoing transition order while the actor state
             // remains on the movement it terminates.  Once Execute has
