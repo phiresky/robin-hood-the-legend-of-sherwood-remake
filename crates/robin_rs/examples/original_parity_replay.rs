@@ -1109,14 +1109,14 @@ impl TraceCommand {
         entity_map: &EntityMap,
         engine: &Engine,
         drop_ale_resolution: Option<ReplayDropAleResolution>,
-        group_move_door_route: Option<bool>,
+        group_move_resolution: Option<ReplayGroupMoveResolution>,
     ) -> Option<PlayerCommand> {
         assert!(
             drop_ale_resolution.is_none() || matches!(&self, Self::DropAleAt { .. }),
             "DropAle route metadata was attached to a non-DropAle command"
         );
         assert!(
-            group_move_door_route.is_none() || matches!(&self, Self::GroupMove { .. }),
+            group_move_resolution.is_none() || matches!(&self, Self::GroupMove { .. }),
             "group-move route metadata was attached to a non-group-move command"
         );
         Some(match self {
@@ -1142,9 +1142,12 @@ impl TraceCommand {
                 goal_layer,
             } => {
                 let destination: MapPoint = destination.into();
-                let goal_override = match entity_map
-                    .translate_group_move_goal_sector(goal_sector, goal_layer)
-                {
+                let goal_override = match entity_map.translate_group_move_goal_sector(
+                    goal_sector,
+                    goal_layer,
+                    group_move_resolution
+                        .and_then(|resolution| resolution.unmapped_goal_search_sector),
+                ) {
                     GroupMoveGoalTranslation::Runtime(goal) => {
                         engine
                             .fast_grid()
@@ -1184,7 +1187,8 @@ impl TraceCommand {
                     running,
                     show_marker,
                     goal_override,
-                    door_route_override: group_move_door_route,
+                    door_route_override: group_move_resolution
+                        .map(|resolution| resolution.door_route),
                 }
             }
             Self::LaunchInteraction {
@@ -1887,6 +1891,15 @@ struct ReplayDropAleResolution {
     goal: (SectorNumber, u16),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReplayGroupMoveResolution {
+    door_route: bool,
+    /// A patch sector is a real Original motion-area identity but has no
+    /// standalone Rust position-sector number. For a successful recorded
+    /// gate route, its terminal gate exit is the equivalent Rust graph goal.
+    unmapped_goal_search_sector: Option<u16>,
+}
+
 /// Recover whether Original used ordinary `AppendMoveToSequence` or the
 /// distinct `AppendMoveToDoorSequence` constructor for a schema-16 group
 /// move. The command records the patch-aware route sector but not the
@@ -1895,12 +1908,12 @@ struct ReplayDropAleResolution {
 /// underlying motion sector, so the same-frame route event is authoritative.
 // TODO(parity-schema): record the selected group-move route constructor on
 // TraceCommand::GroupMove so future traces do not need this event join.
-fn resolve_schema_sixteen_group_move_door_route(
+fn resolve_schema_sixteen_group_move_route(
     schema: u32,
     command: &TraceCommand,
     route_events: Option<&[TraceRouteConstructionEvent]>,
     consumed_route_ordinals: &mut BTreeSet<u64>,
-) -> Option<bool> {
+) -> Option<ReplayGroupMoveResolution> {
     if schema != 16 {
         return None;
     }
@@ -1930,27 +1943,47 @@ fn resolve_schema_sixteen_group_move_door_route(
             {
                 return None;
             }
-            Some((ordinal, event.kind.as_str()))
+            Some((ordinal, event))
         })
         .collect::<Vec<_>>();
     if matching.is_empty() {
         return None;
     }
     matching.sort_unstable_by_key(|(ordinal, _)| *ordinal);
-    let door_route = matching[0].1 == "move_to_door";
+    let door_route = matching[0].1.kind == "move_to_door";
     assert!(
         matching
             .iter()
-            .all(|(_, kind)| (*kind == "move_to_door") == door_route),
+            .all(|(_, event)| (event.kind == "move_to_door") == door_route),
         "one group move produced mixed ordinary and door route constructors: {matching:?}"
     );
+    let mut terminal_exit_sectors = matching
+        .iter()
+        .filter_map(|(_, event)| {
+            event.gates.last().map(|gate| {
+                if gate.direct {
+                    gate.sector_in
+                } else {
+                    gate.sector_out
+                }
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    assert!(
+        terminal_exit_sectors.len() <= 1,
+        "one group move produced routes ending in different sectors: {matching:?}"
+    );
+    let unmapped_goal_search_sector = terminal_exit_sectors.pop_first();
     for (ordinal, _) in matching {
         assert!(
             consumed_route_ordinals.insert(ordinal),
             "schema-16 route ordinal {ordinal} matched twice"
         );
     }
-    Some(door_route)
+    Some(ReplayGroupMoveResolution {
+        door_route,
+        unmapped_goal_search_sector,
+    })
 }
 
 /// Recover the goal that Original retained before authorizing a DropAle
@@ -3689,7 +3722,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &mut consumed_drop_ale_route_ordinals,
                 map,
             );
-            let group_move_door_route = resolve_schema_sixteen_group_move_door_route(
+            let group_move_resolution = resolve_schema_sixteen_group_move_route(
                 header.schema,
                 &command,
                 frame.route_construction_events.as_deref(),
@@ -3699,7 +3732,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 map,
                 &engine,
                 drop_ale_resolution,
-                group_move_door_route,
+                group_move_resolution,
             ) {
                 if debug_stage_timing {
                     eprintln!(
@@ -3726,7 +3759,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     &mut consumed_drop_ale_route_ordinals,
                     map,
                 );
-                let group_move_door_route = resolve_schema_sixteen_group_move_door_route(
+                let group_move_resolution = resolve_schema_sixteen_group_move_route(
                     header.schema,
                     &command,
                     frame.route_construction_events.as_deref(),
@@ -3736,7 +3769,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     map,
                     &engine,
                     drop_ale_resolution,
-                    group_move_door_route,
+                    group_move_resolution,
                 )
             })
             .collect::<Vec<_>>();
@@ -6124,10 +6157,21 @@ impl EntityMap {
         &self,
         original: i16,
         layer: u16,
+        unmapped_goal_search_sector: Option<u16>,
     ) -> GroupMoveGoalTranslation {
         let original = u16::try_from(original)
             .unwrap_or_else(|_| panic!("Original group-move sector is negative: {original}"));
         if let Some(&runtime) = self.sectors.get(&original) {
+            let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
+                panic!("Rust position sector {runtime} exceeds its signed identity domain")
+            });
+            GroupMoveGoalTranslation::Runtime((SectorNumber::new(runtime), layer))
+        } else if let Some(search_sector) = unmapped_goal_search_sector {
+            let runtime = self.sectors.get(&search_sector).copied().unwrap_or_else(|| {
+                panic!(
+                    "successful group-move route terminal Original sector {search_sector} has no retained Rust position-sector mapping"
+                )
+            });
             let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
                 panic!("Rust position sector {runtime} exceeds its signed identity domain")
             });
@@ -11322,15 +11366,15 @@ mod tests {
         // recorded waypoint may lie outside that sector's polygon. Translation
         // therefore depends only on retained construction topology.
         assert_eq!(
-            map.translate_group_move_goal_sector(55, 0),
+            map.translate_group_move_goal_sector(55, 0, None),
             GroupMoveGoalTranslation::Runtime((SectorNumber::new(23), 0))
         );
         assert_eq!(
-            map.translate_group_move_goal_sector(56, 0),
+            map.translate_group_move_goal_sector(56, 0, None),
             GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(56), 0))
         );
         assert_eq!(
-            map.translate_group_move_goal_sector(288, 4),
+            map.translate_group_move_goal_sector(288, 4, None),
             GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(288), 4)),
             "a coincident overlay must not erase the recorded route goal"
         );
@@ -11387,13 +11431,11 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_door_route(
-                16,
-                &command,
-                Some(&routes),
-                &mut consumed,
-            ),
-            Some(false)
+            resolve_schema_sixteen_group_move_route(16, &command, Some(&routes), &mut consumed,),
+            Some(ReplayGroupMoveResolution {
+                door_route: false,
+                unmapped_goal_search_sector: None,
+            })
         );
         assert_eq!(consumed, BTreeSet::from([0]));
     }
@@ -11419,17 +11461,15 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_door_route(
-                16,
-                &command,
-                Some(&routes),
-                &mut consumed,
-            ),
-            Some(true)
+            resolve_schema_sixteen_group_move_route(16, &command, Some(&routes), &mut consumed,),
+            Some(ReplayGroupMoveResolution {
+                door_route: true,
+                unmapped_goal_search_sector: None,
+            })
         );
         let mut legacy_consumed = BTreeSet::new();
         assert_eq!(
-            resolve_schema_sixteen_group_move_door_route(
+            resolve_schema_sixteen_group_move_route(
                 15,
                 &command,
                 Some(&routes),
@@ -11438,6 +11478,61 @@ mod tests {
             None
         );
         assert!(legacy_consumed.is_empty());
+    }
+
+    #[test]
+    fn successful_patch_group_move_uses_terminal_gate_as_rust_search_sector() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 297,
+        };
+        let command = TraceCommand::GroupMove {
+            actors: vec![actor],
+            destination: TracePoint {
+                x: TraceFloat { bits: 0 },
+                y: TraceFloat { bits: 0 },
+            },
+            running: false,
+            show_marker: true,
+            goal_sector: 492,
+            goal_layer: 0,
+        };
+        let mut route = group_move_route_fixture(actor, "move", 0);
+        route.goal_sector = 492;
+        route.gates.push(TraceRouteGate {
+            gate_id: 78,
+            direct: true,
+            sector_out: 0,
+            level_out: 0,
+            sector_in: 491,
+            level_in: 6,
+            draft_diagnostics: BTreeMap::new(),
+        });
+        let mut consumed = BTreeSet::new();
+        let resolution =
+            resolve_schema_sixteen_group_move_route(16, &command, Some(&[route]), &mut consumed);
+
+        assert_eq!(
+            resolution,
+            Some(ReplayGroupMoveResolution {
+                door_route: false,
+                unmapped_goal_search_sector: Some(491),
+            })
+        );
+        let map = EntityMap {
+            entities: BTreeMap::new(),
+            entities_by_creation_order: BTreeMap::new(),
+            sectors: BTreeMap::from([(491, 55)]),
+            runtime_creation_order_boundary: 0,
+        };
+        assert_eq!(
+            map.translate_group_move_goal_sector(
+                492,
+                0,
+                resolution.and_then(|resolution| resolution.unmapped_goal_search_sector),
+            ),
+            GroupMoveGoalTranslation::Runtime((SectorNumber::new(55), 0))
+        );
     }
 
     fn drop_ale_route_fixture(

@@ -23,3 +23,11 @@ log was moved into that watcher's output slot, destroying the sole log copy.
 The key is therefore recorded directly in `seed2000000.snapshot` under the
 permanent-EOF/no-rerun rule; no status-0 log was reconstructed and the replay
 was not rerun.
+
+`schema16-seed2000000` SuN1Sh1nE/Profile004/Savegame_028/replay-033 reached
+exact EOF once on 2026-08-22 with runner SHA-256
+`99854abded344f5770ca6d652dc117be932c0e8dea683f0f338afff97a6f0f47`.
+The execution harness retained the complete successful stdout in its tool
+result but the invocation did not tee it into the audit directory. The key is
+recorded directly in `seed2000000.snapshot`; no status-0 log was reconstructed
+and the replay was not rerun.
