@@ -1203,7 +1203,7 @@ fn goto_already_on_point_projects_move_to_wait_transition_only_at_exact_destinat
 }
 
 #[test]
-fn goto_with_live_animation_does_not_project_unfinished_transition_to_idle() {
+fn goto_with_live_animation_does_not_project_transition_to_idle() {
     let mut ctx =
         goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
     ctx.self_animation_reached_action_done = false;
@@ -1214,6 +1214,18 @@ fn goto_with_live_animation_does_not_project_unfinished_transition_to_idle() {
     assert!(!ai.already_on_point);
     assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(ai.take_pending_orders().len(), 1);
+
+    // `go_to_with_live_animation` is used by the nested panic seek-point
+    // fallback after reconstructing Original's live sequence order. Even at
+    // the action-done point, a transition is not one of Original GoTo's
+    // literal idle animations and must launch the coincident Move instead of
+    // recursively delivering EVENT_REACHPOINT.
+    ctx.self_animation_reached_action_done = true;
+    let mut action_done_ai = AiController::new(39);
+    action_done_ai.go_to_with_live_animation(ctx.position, GotoFlags::RUN, &ctx);
+    assert!(!action_done_ai.already_on_point);
+    assert!(action_done_ai.outbox.reentrant.self_stimuli.is_empty());
+    assert_eq!(action_done_ai.take_pending_orders().len(), 1);
 }
 
 #[test]

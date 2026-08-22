@@ -3710,7 +3710,8 @@ impl AiController {
         let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
             || (project_outgoing_wait
                 && Self::outgoing_wait_transition_at_exact_destination(&destination, ctx))
-            || (ctx.self_animation_reached_action_done
+            || (project_outgoing_wait
+                && ctx.self_animation_reached_action_done
                 && matches!(
                     ctx.self_animation,
                     crate::order::OrderType::TransitionWalkingUprightWaitingUpright
