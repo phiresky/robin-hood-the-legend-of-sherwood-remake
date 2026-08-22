@@ -11466,6 +11466,38 @@ mod tests {
     }
 
     #[test]
+    fn group_reachpoint_keeps_raw_wrapped_gather_direction_for_face_to() {
+        let mut ai = EnemyAi::new(66);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingGroupGoToOfficer;
+        ai.gather_position_instructed = true;
+        // AlertSoldiers' raw loop cursor can exceed 15. Original FaceTo
+        // compares this raw value before the Turn order projects it to a
+        // direction sector, so 29 must not short-circuit against sector 13.
+        ai.gather_direction = 29;
+        let ctx = AiContext {
+            self_action_state: crate::element::ActionState::Waiting,
+            direction: 13,
+            ..AiContext::default()
+        };
+
+        ai.seeking_group_go_to_officer(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        let [turn] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("raw gather direction 29 must author one Turn against sector 13");
+        };
+        assert_eq!(turn.order_type, crate::order::OrderType::Turning);
+        assert_eq!(turn.explicit_direction, Some(29));
+        assert!(!ai.base.already_turned);
+        assert_eq!(ai.base.current_substate, Substate::SeekingGroupGoToOfficer);
+    }
+
+    #[test]
     fn officer_ignores_missed_patrol_member_when_deciding_to_follow_nearby_steps() {
         let mut ai = EnemyAi::new(125);
         ai.base.current_state = AiState::Seeking;

@@ -29,6 +29,21 @@ fn formation_direction(dx: f32, dy: f32) -> u16 {
     vec_to_sector_ar(dx, dy, ASPECT_RATIO)
 }
 
+/// Return Original's raw formation-loop cursor and its projected sector.
+///
+/// `RHArtificialMalignity::AlertSoldiers` increments `uwDirection` without
+/// wrapping and masks only the argument passed to
+/// `CanPutSoldiersInThisDirection`.  After a successful attempt it stores the
+/// raw cursor (XORed with 8) in each soldier's `muwGatherDirection`.  Values
+/// such as 29 therefore deliberately survive even though actor direction 29
+/// projects to sector 13.  Preserving those high bits matters to `FaceTo`'s
+/// raw equality check: 29 is not already-facing 13, so Original still authors
+/// a Turn.
+fn formation_sweep_cursor(average_direction: u16, offset: u16) -> (u16, u16) {
+    let raw = average_direction + offset;
+    (raw, raw & 15)
+}
+
 /// Sum the unit directions used by Original's officer attack broadcast.
 ///
 /// `SBGeoVector2D::GetNormalized()` divides unconditionally in shipping
@@ -827,7 +842,7 @@ impl EnemyAi {
         // Try directions / door-step positions
         // until `CanPutSoldiersInThisDirection` succeeds.
         let mut chosen_slots: Option<Vec<Position>> = None;
-        let mut chosen_direction: u16 = avg_dir_start;
+        let mut chosen_direction_raw: u16 = avg_dir_start;
         let mut chosen_officer_pt: MapPoint = MapPoint::new(my_pos.x, my_pos.y);
         let mut chosen_officer_position: Position = my_pos;
 
@@ -851,7 +866,8 @@ impl EnemyAi {
                         break;
                     }
                     for offset in 0..16u16 {
-                        let try_dir = (avg_dir_start + offset) & 15;
+                        let (try_direction_raw, try_dir) =
+                            formation_sweep_cursor(avg_dir_start, offset);
                         if let Some(slots) = self.can_put_soldiers_in_this_direction(
                             ctx,
                             global,
@@ -862,7 +878,7 @@ impl EnemyAi {
                             grid,
                         ) {
                             chosen_slots = Some(slots);
-                            chosen_direction = try_dir;
+                            chosen_direction_raw = try_direction_raw;
                             chosen_officer_pt = try_pt;
                             // Officer's future
                             // position = doorPositionOut overlaid with
@@ -883,7 +899,8 @@ impl EnemyAi {
                 // Outdoor: sweep 16 directions starting at the
                 // average soldier-direction.
                 for offset in 0..16u16 {
-                    let try_dir = (avg_dir_start + offset) & 15;
+                    let (try_direction_raw, try_dir) =
+                        formation_sweep_cursor(avg_dir_start, offset);
                     if let Some(slots) = self.can_put_soldiers_in_this_direction(
                         ctx,
                         global,
@@ -894,7 +911,7 @@ impl EnemyAi {
                         grid,
                     ) {
                         chosen_slots = Some(slots);
-                        chosen_direction = try_dir;
+                        chosen_direction_raw = try_direction_raw;
                         break;
                     }
                 }
@@ -911,7 +928,7 @@ impl EnemyAi {
         // `InstructGatherPosition`.  The face direction is
         // `direction ^ 8` (face the threat).
         if let Some(mut slots) = chosen_slots.clone() {
-            let face_threat = chosen_direction ^ 8;
+            let face_threat = chosen_direction_raw ^ 8;
             let alerted_handles = self.alerted_us.clone();
             // Snapshot positions for the nearest-slot match
             // (outdoor branch) before we start mutating the slot
@@ -980,7 +997,8 @@ impl EnemyAi {
             // soldiers) before the GatherSoldiers animation.  A
             // successful placement stores `match_dir ^ 8` as the gather
             // direction and the turn re-XORs it, so the turn lands on
-            // `match_dir` — `chosen_direction` verbatim.
+            // `match_dir` — the raw successful loop cursor verbatim. Actor
+            // direction projection masks it later; do not normalize it here.
             //
             // When no placement is found the gather direction keeps the
             // value the 16-direction sweep left behind, `avg_dir + 16`,
@@ -989,7 +1007,7 @@ impl EnemyAi {
             // the 16-sector wrap, leaving `avg_dir ^ 8` — the officer
             // faces *away* from the average soldier direction.
             let turn_dir = if placement_ok {
-                chosen_direction
+                chosen_direction_raw
             } else {
                 avg_dir_start ^ 8
             };
@@ -1016,14 +1034,11 @@ impl EnemyAi {
             // Indoor alert, found a free spot outside.
             // Stash the gather destination for the leave-house
             // substate transition.
-            // gather_direction = direction ^ 8.
-            // after the L12296 XOR, `uwDirection` is `match_dir ^ 8`,
-            // so the stored value is `match_dir` (officer faces
-            // toward the formation when leaving the house).  In our
-            // Rust naming `chosen_direction` is already `match_dir`,
-            // so we store it verbatim.
+            // After Original's first XOR, `uwDirection` is the raw successful
+            // cursor XOR 8. The indoor assignment XORs it again, preserving
+            // the raw cursor rather than its 0..15 projection.
             self.gather_position = chosen_officer_position;
-            self.gather_direction = chosen_direction;
+            self.gather_direction = chosen_direction_raw;
             self.set_state(
                 AiState::Seeking,
                 Substate::SeekingOfficerWaitInsideHouseToInstructGroup,
@@ -1988,6 +2003,18 @@ mod tests {
             crate::position_interface::vector_to_sector_0_to_15_with_aspect(1.0, 1.0, 1.0) as u16,
             "the aspect-1 classifier would start the formation sweep one sector early"
         );
+    }
+
+    #[test]
+    fn formation_sweep_preserves_raw_cursor_after_sector_wrap() {
+        // nicouzouf Save014/r013: the sweep starts at 8 and accepts its
+        // fourteenth attempt, projected sector 5. Original retains raw cursor
+        // 21 and instructs the soldiers with 21 ^ 8 = 29, not normalized 13.
+        let (raw, projected) = formation_sweep_cursor(8, 13);
+        assert_eq!(raw, 21);
+        assert_eq!(projected, 5);
+        assert_eq!(raw ^ 8, 29);
+        assert_eq!((raw ^ 8) & 15, 13);
     }
 
     #[test]
