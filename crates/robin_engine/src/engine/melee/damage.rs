@@ -3154,6 +3154,13 @@ impl EngineInner {
 
         // NPC kill cascade: clear stale pre-death work, then enqueue the
         // death-owned alert/music transition and snap the terminal state.
+        // Original `RHElementActorNPC::Kill` calls virtual `SetState`; the
+        // enemy override clears the Beggar detectable bucket when this death
+        // leaves STATE_SEEKING.  Rust writes the terminal controller state
+        // directly below, so preserve that override side effect explicitly.
+        let clear_beggar_detectables = victim
+            .enemy_ai()
+            .is_some_and(|ai| ai.base.current_state == crate::ai::AiState::Seeking);
         let forced_attentive = if victim.is_soldier() {
             victim
                 .enemy_ai()
@@ -3179,6 +3186,9 @@ impl EngineInner {
         }
 
         if let Some(npc) = victim.npc_data_mut() {
+            if clear_beggar_detectables {
+                npc.detectable_lists[crate::element::DetectableType::Beggar as usize].clear();
+            }
             // Close eyes if not already closed — the guard prevents
             // re-triggering the eye-shut animation on an NPC killed
             // while already sleeping (e.g. assassinated in his cot).

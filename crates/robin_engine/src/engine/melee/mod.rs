@@ -8975,6 +8975,70 @@ mod tests {
     }
 
     #[test]
+    fn killing_seeking_enemy_clears_only_its_beggar_detectables() {
+        use crate::ai::{AiState, Substate};
+        use crate::element::{Detectable, DetectableType};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            let ai = victim_entity.enemy_ai_mut().unwrap();
+            ai.hth_weapon_id = 1;
+            ai.base.current_state = AiState::Seeking;
+            ai.base.current_substate = Substate::SeekingArrowReactiontime;
+            let npc = victim_entity.npc_data_mut().unwrap();
+            for detectable_type in [DetectableType::Enemy, DetectableType::Beggar] {
+                npc.detectable_lists[detectable_type as usize].push(Detectable {
+                    element: Some(attacker),
+                    detectable_type,
+                    ..Detectable::default()
+                });
+            }
+        }
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.apply_nonvisual_death_cascade(
+            &sim,
+            &assets_with_sword_profile_effects(1, 50, 100, 0),
+            victim,
+            (sequence, 0),
+            true,
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        let npc = victim_entity.npc_data().unwrap();
+        assert!(npc.detectable_lists[DetectableType::Beggar as usize].is_empty());
+        assert_eq!(
+            npc.detectable_lists[DetectableType::Enemy as usize]
+                .iter()
+                .map(|detectable| detectable.element)
+                .collect::<Vec<_>>(),
+            vec![Some(attacker)],
+            "Enemy SetState only deletes the Beggar bucket when leaving Seeking"
+        );
+        let ai = victim_entity.ai_controller().unwrap();
+        assert_eq!(ai.current_state, AiState::Sleeping);
+        assert_eq!(ai.current_substate, Substate::SleepingForever);
+    }
+
+    #[test]
     fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
         use crate::ai::{AiState, AlertLevel, Substate};
         use crate::element::{Detectable, DetectableType};
