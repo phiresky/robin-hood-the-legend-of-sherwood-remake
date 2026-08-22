@@ -265,6 +265,63 @@ fn replay_host_resolution_without_logical_request_keeps_authoritative_completion
 }
 
 #[test]
+fn replay_host_resolution_preserves_an_unrelated_reconstructed_pending_request() {
+    use crate::ai::Remark;
+    use crate::sound::{ExclamationGroup, PendingExclamation};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    let sim = crate::sim_rng::test_context();
+    let unrelated = PendingExclamation {
+        actor_id: 45,
+        group: ExclamationGroup::Civilian,
+        profile_id: 0x5755_0000,
+        exclamation_id: 16,
+        variant: -1,
+    };
+    engine
+        .feedback
+        .sound_sim
+        .pending_exclamations
+        .push(unrelated.clone());
+
+    engine.queue_replay_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: soldier_id.index(),
+        identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
+        exclamation_id: Remark::Arrow as u16,
+        duration_frames: 3,
+    }]);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+
+    assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
+    let retained = &engine.feedback.sound_sim.pending_exclamations[0];
+    assert_eq!(
+        (
+            retained.actor_id,
+            retained.profile_id,
+            retained.exclamation_id,
+            retained.variant,
+        ),
+        (
+            unrelated.actor_id,
+            unrelated.profile_id,
+            unrelated.exclamation_id,
+            unrelated.variant,
+        ),
+        "an Original-only host completion must not consume unrelated reconstructed Rust speech"
+    );
+    assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(
+        engine.feedback.sound_sim.playing_exclamations[0].actor_id,
+        soldier_id.index()
+    );
+    assert_eq!(
+        mytalk_ai(&engine, soldier_id).current_remark,
+        Remark::TheSoundOfSilence,
+        "an unmatched host completion must not invent a logical AI remark"
+    );
+}
+
+#[test]
 #[should_panic(expected = "live sound manager resolved exclamation")]
 fn live_host_resolution_without_logical_request_remains_an_invariant_failure() {
     use crate::ai::Remark;

@@ -2534,45 +2534,49 @@ impl EngineInner {
                     resolution.duration_frames,
                 ),
             );
-            if let Some(pending) = self
+            let pending = self
                 .feedback
                 .sound_sim
                 .pending_exclamations
                 .first()
-                .cloned()
-            {
-                assert_eq!(
-                    (pending.actor_id, pending.exclamation_id),
-                    (resolution.actor_id, resolution.exclamation_id),
-                    "sound-manager resolution order diverged; pending FIFO: {:?}",
-                    self.feedback.sound_sim.pending_exclamations
-                );
+                .cloned();
+            let matches_pending = pending.as_ref().is_some_and(|pending| {
+                (pending.actor_id, pending.exclamation_id)
+                    == (resolution.actor_id, resolution.exclamation_id)
+            });
+            if matches_pending {
+                let pending = pending.expect("matching pending exclamation disappeared");
                 assert_eq!(
                     (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id),
                     resolution.identifier,
                     "sound manager resolved a different speech profile than the pending request"
                 );
                 self.feedback.sound_sim.pending_exclamations.remove(0);
-            } else {
-                assert!(
-                    replay_injected_resolutions,
-                    "live sound manager resolved exclamation {} for actor {} with no pending request",
-                    resolution.exclamation_id, resolution.actor_id
-                );
-                // This is an explicit `resolved_exclamations` event recorded
-                // by `RHParity::RecordResolvedExclamation` inside Original's
-                // host-owned pending-sound loop (`original-code/RHsound.cpp:
-                // 2150-2255`), not a request inferred by Rust. Preserve that
-                // authoritative host playback/completion timing, but do not
-                // invent a Rust AI current-remark latch. The eventual callback
-                // is consequently stale unless Rust independently has the
-                // matching logical speech state.
+            } else if replay_injected_resolutions {
+                // The host sound queue is not serialized in legacy saves.
+                // Schema-16 records its concrete between-frame completions,
+                // while Rust can independently reconstruct a different
+                // logical request from adopted NPC state.  An authoritative
+                // Original completion must not consume that unrelated Rust
+                // FIFO entry; process its timing below exactly as in the
+                // empty-pending case.
                 tracing::warn!(
                     actor_id = resolution.actor_id,
                     exclamation_id = resolution.exclamation_id,
                     identifier = resolution.identifier,
                     duration_frames = resolution.duration_frames,
-                    "replay injected an authoritative Original host exclamation with no Rust logical request"
+                    pending = ?self.feedback.sound_sim.pending_exclamations,
+                    "replay injected an authoritative Original host exclamation that does not match the Rust logical FIFO"
+                );
+            } else if pending.is_some() {
+                panic!(
+                    "sound-manager resolution order diverged; pending FIFO: {:?}",
+                    self.feedback.sound_sim.pending_exclamations
+                );
+            } else {
+                panic!(
+                    "live sound manager resolved exclamation {} for actor {} with no pending request",
+                    resolution.exclamation_id, resolution.actor_id
                 );
             }
             if resolution.duration_frames == 0 {
