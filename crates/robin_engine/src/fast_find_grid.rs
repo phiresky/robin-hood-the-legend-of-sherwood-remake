@@ -936,6 +936,10 @@ pub struct DoorProjectionInfo {
     pub point_in: MapPoint,
     pub point_out: MapPoint,
     pub sector_out: crate::sector::SectorNumber,
+    /// Exact runtime identity of `sector_out`. Public sector numbers are not
+    /// unique in shipped levels, while Original carries the sector pointer.
+    #[serde(default)]
+    pub sector_out_index: Option<SectorIndex>,
     pub layer_out: u16,
 }
 

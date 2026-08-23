@@ -2087,6 +2087,7 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
         point_in: MapPoint::new(50.0, 50.0),
         point_out: MapPoint::new(45.0, 55.0),
         sector_out: SectorNumber::new(8),
+        sector_out_index: None,
         layer_out: 2,
     });
 

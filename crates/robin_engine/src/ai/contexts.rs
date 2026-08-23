@@ -8,7 +8,7 @@ use super::*;
 /// door-type tags (`RHsector.cpp:1492-1525`). `ReconsiderEnemyApproach` then
 /// uses the high entry only when its outside layer equals the attacker's
 /// current layer; every other layer uses the low entry
-/// (`RHartificialmalignity.cpp:6649-6678`).
+/// (`RHartificialmalignity.cpp:6890-6915`).
 ///
 /// The outer option distinguishes an ordinary sector from a lift. Stairs are
 /// lifts, but deliberately return `Some(None)` because they suppress charging
@@ -21,16 +21,30 @@ impl AiContext {
     ) -> Option<Option<Position>> {
         let target_sector = target.sector?;
         let sector_number = crate::sector::SectorNumber::new(target_sector.get() as i16);
-        let grid_index = *fast_grid
-            .level
-            .sector_number_map
-            .get(&sector_number)
-            .unwrap_or_else(|| {
-                panic!("primary target sector {sector_number} is absent from the grid")
-            });
+        let target_has_exact_sector = target_sector.arena_index().is_some();
+        // Original follows the target's exact `RHSector*`. Shipped levels can
+        // contain duplicate public sector numbers, so consult the retained
+        // arena identity first and use the legacy number map only for
+        // explicitly number-only synthetic/compatibility positions.
+        let grid_index = target_sector.arena_index().map_or_else(
+            || {
+                *fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&sector_number)
+                    .unwrap_or_else(|| {
+                        panic!("primary target sector {sector_number} is absent from the grid")
+                    })
+            },
+            usize::from,
+        );
         let sector = fast_grid.level.sectors.get(grid_index).unwrap_or_else(|| {
             panic!("primary target sector {sector_number} maps to missing grid index {grid_index}")
         });
+        assert_eq!(
+            sector.sector_number, sector_number,
+            "primary target exact arena index {grid_index} conflicts with public sector {sector_number}"
+        );
         if !sector.sector_type.is_lift() && sector.lift_type.is_none() {
             return None;
         }
@@ -82,10 +96,23 @@ impl AiContext {
         } else {
             low.1
         };
+        let mut selected_sector =
+            crate::position_interface::SectorHandle::new(u16::from(selected.sector_out));
+        match selected.sector_out_index {
+            Some(index) => {
+                selected_sector = selected_sector.map(|sector| sector.with_arena_index(index));
+            }
+            None if target_has_exact_sector => {
+                panic!(
+                    "exact lift sector {sector_number} selected an endpoint without an exact outside sector"
+                );
+            }
+            None => {}
+        }
         Some(Some(Position {
             x: selected.point_out.x,
             y: selected.point_out.y,
-            sector: crate::position_interface::SectorHandle::new(u16::from(selected.sector_out)),
+            sector: selected_sector,
             level: selected.layer_out,
         }))
     }

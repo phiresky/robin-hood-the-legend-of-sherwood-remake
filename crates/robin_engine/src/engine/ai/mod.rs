@@ -2073,6 +2073,7 @@ mod parity_tests {
                 point_in: door.point_in,
                 point_out: door.point_out,
                 sector_out: door.sector_out,
+                sector_out_index: door.sector_out_index,
                 layer_out: door.layer_out,
             })
             .collect();
@@ -2111,6 +2112,7 @@ mod parity_tests {
                 door_type: crate::gate::DoorType::LiftLow,
                 sector_in: crate::sector::SectorNumber::new(42),
                 sector_out: crate::sector::SectorNumber::new(5),
+                sector_out_index: crate::fast_find_grid::SectorIndex::new(5),
                 point_out: MapPoint::new(10.0, 20.0),
                 layer_out: 1,
                 ..Default::default()
@@ -2119,6 +2121,7 @@ mod parity_tests {
                 door_type: crate::gate::DoorType::LiftHigh,
                 sector_in: crate::sector::SectorNumber::new(42),
                 sector_out: crate::sector::SectorNumber::new(8),
+                sector_out_index: crate::fast_find_grid::SectorIndex::new(8),
                 point_out: MapPoint::new(30.0, 40.0),
                 layer_out: 3,
                 ..Default::default()
@@ -2145,6 +2148,10 @@ mod parity_tests {
             .expect("ladder has an approach entry");
         assert_eq!((high.x, high.y, high.level), (10.0, 20.0, 1));
         assert_eq!(high.sector.map(u16::from), Some(5));
+        assert_eq!(
+            high.sector.and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(5)
+        );
 
         // Every layer other than the high door's layer falls back to the low
         // entry, including layers matching neither door.
@@ -2159,6 +2166,64 @@ mod parity_tests {
             assert_eq!((low.x, low.y, low.level), (30.0, 40.0, 3));
             assert_eq!(low.sector.map(u16::from), Some(8));
         }
+    }
+
+    #[test]
+    fn lift_approach_prefers_exact_arena_over_duplicate_public_sector() {
+        let mut doors = lift_doors();
+        let mut second_high = doors[0].clone();
+        second_high.point_out = MapPoint::new(100.0, 120.0);
+        second_high.sector_out = crate::sector::SectorNumber::new(15);
+        second_high.sector_out_index = crate::fast_find_grid::SectorIndex::new(15);
+        let mut second_low = doors[1].clone();
+        second_low.point_out = MapPoint::new(130.0, 300.0);
+        second_low.sector_out = crate::sector::SectorNumber::new(18);
+        second_low.sector_out_index = crate::fast_find_grid::SectorIndex::new(18);
+        doors.extend([second_high, second_low]);
+
+        let mut grid = lift_grid(crate::sector::LiftType::Ladder, &doors);
+        let level = std::sync::Arc::make_mut(&mut grid.level);
+        level.sectors[0].gate_indices = vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)];
+        let mut duplicate = level.sectors[0].clone();
+        duplicate.gate_indices = vec![crate::gate::DoorIndex(2), crate::gate::DoorIndex(3)];
+        level.sectors.push(duplicate);
+        level
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(42), 1);
+
+        let public = crate::position_interface::SectorHandle::new(42).unwrap();
+        let exact = public.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
+        let exact_entry = crate::ai::AiContext::enemy_lift_approach_for_position(
+            &grid,
+            crate::ai::Position {
+                sector: Some(exact),
+                ..crate::ai::Position::default()
+            },
+            Some(1),
+        )
+        .expect("exact target is a lift")
+        .expect("exact target has an entry");
+        assert_eq!((exact_entry.x, exact_entry.y), (10.0, 20.0));
+        assert_eq!(
+            exact_entry.sector.and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(5)
+        );
+
+        let numeric_entry = crate::ai::AiContext::enemy_lift_approach_for_position(
+            &grid,
+            crate::ai::Position {
+                sector: Some(public),
+                ..crate::ai::Position::default()
+            },
+            Some(1),
+        )
+        .expect("number-only target is a lift")
+        .expect("number-only target has an entry");
+        assert_eq!((numeric_entry.x, numeric_entry.y), (100.0, 120.0));
+        assert_eq!(
+            numeric_entry.sector.and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(15)
+        );
     }
 
     #[test]

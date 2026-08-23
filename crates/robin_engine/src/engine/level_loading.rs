@@ -4589,6 +4589,7 @@ impl EngineInner {
                 point_in: door.point_in,
                 point_out: door.point_out,
                 sector_out: door.sector_out,
+                sector_out_index: door.sector_out_index,
                 layer_out: door.layer_out,
             })
             .collect();
