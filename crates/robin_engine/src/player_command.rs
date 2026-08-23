@@ -69,6 +69,11 @@ pub enum PlayerCommand {
         /// Live input leaves this empty.
         #[serde(default)]
         recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
+        /// Schema-16 replay-only actors whose authoritative Original
+        /// `AppendMoveToSequence` gate search failed. Replaying that observed
+        /// failure must not launch a second A* search against Rust topology.
+        #[serde(default)]
+        recorded_failed_gate_routes: Vec<EntityId>,
     },
     /// Stop a PC (clear path, set waiting).
     StopPc {

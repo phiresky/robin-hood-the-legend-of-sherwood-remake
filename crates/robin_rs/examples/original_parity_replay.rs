@@ -1339,21 +1339,31 @@ impl TraceCommand {
                         .as_ref()
                         .map(|resolution| resolution.door_route),
                     recorded_gate_routes: group_move_resolution
+                        .as_ref()
                         .map(|resolution| {
                             resolution
                                 .recorded_gate_routes
-                                .into_iter()
+                                .iter()
                                 .map(|(actor, gates)| {
                                     (
-                                        entity_map.translate(actor),
+                                        entity_map.translate(*actor),
                                         gates
                                             .into_iter()
-                                            .map(|(gate, direct)| {
+                                            .map(|&(gate, direct)| {
                                                 (entity_map.translate_gate(gate), direct)
                                             })
                                             .collect(),
                                     )
                                 })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    recorded_failed_gate_routes: group_move_resolution
+                        .map(|resolution| {
+                            resolution
+                                .recorded_failed_gate_routes
+                                .into_iter()
+                                .map(|actor| entity_map.translate(actor))
                                 .collect()
                         })
                         .unwrap_or_default(),
@@ -2071,6 +2081,10 @@ struct ReplayGroupMoveResolution {
     /// search choosing a different valid path and changing the emitted
     /// building waits (including their RNG draws).
     recorded_gate_routes: Vec<(TraceEntityId, Vec<(u32, bool)>)>,
+    /// Authoritative failed `AppendMoveToSequence` searches, keyed by actor.
+    /// The empty gate list is an observed failure outcome, not permission to
+    /// run Rust's A* again against reconstructed topology.
+    recorded_failed_gate_routes: Vec<TraceEntityId>,
 }
 
 /// Recover whether `AppendMoveToSequence` selected its internal
@@ -2194,6 +2208,30 @@ fn resolve_schema_sixteen_group_move_route(
             })
             .collect()
     };
+    let recorded_failed_gate_routes = matching
+        .iter()
+        .filter(|(_, event)| {
+            matches!(
+                event.draft_diagnostics.get("result"),
+                Some(TraceJsonValue::String(result)) if result == "failure"
+            )
+        })
+        .map(|(_, event)| {
+            assert!(
+                event.gates.is_empty(),
+                "failed schema-16 group-move route unexpectedly retained gates: {event:?}"
+            );
+            event.actor
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        recorded_failed_gate_routes
+            .iter()
+            .collect::<BTreeSet<_>>()
+            .len(),
+        recorded_failed_gate_routes.len(),
+        "one schema-16 group move recorded multiple failed routes for the same actor"
+    );
     for (ordinal, _) in matching {
         assert!(
             consumed_route_ordinals.insert(ordinal),
@@ -2204,6 +2242,7 @@ fn resolve_schema_sixteen_group_move_route(
         door_route,
         unmapped_goal_search_sector,
         recorded_gate_routes,
+        recorded_failed_gate_routes,
     })
 }
 
@@ -12091,6 +12130,7 @@ mod tests {
                 door_route: false,
                 unmapped_goal_search_sector: Some(64),
                 recorded_gate_routes: vec![(actor, vec![(53, false)])],
+                recorded_failed_gate_routes: Vec::new(),
             })
         );
         assert_eq!(consumed, BTreeSet::from([0]));
@@ -12142,6 +12182,7 @@ mod tests {
                 door_route: true,
                 unmapped_goal_search_sector: Some(64),
                 recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: Vec::new(),
             })
         );
         let mut legacy_consumed = BTreeSet::new();
@@ -12200,9 +12241,61 @@ mod tests {
                 door_route: true,
                 unmapped_goal_search_sector: None,
                 recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: vec![actor],
             })
         );
         assert_eq!(consumed, BTreeSet::from([5]));
+    }
+
+    #[test]
+    fn schema_sixteen_failed_ordinary_group_move_is_authoritative() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 136,
+        };
+        let command = TraceCommand::GroupMove {
+            actors: vec![actor],
+            destination: TracePoint {
+                x: TraceFloat {
+                    bits: 642.953_6_f32.to_bits(),
+                },
+                y: TraceFloat {
+                    bits: 730.12_f32.to_bits(),
+                },
+            },
+            running: false,
+            show_marker: true,
+            goal_sector: 421,
+            goal_layer: 6,
+        };
+        let mut route = group_move_route_fixture(actor, "move", 0);
+        route.source_sector = 116;
+        route.source_level = 8;
+        route.goal_sector = 421;
+        route.goal_level = 6;
+        route.draft_diagnostics.insert(
+            "result".to_owned(),
+            TraceJsonValue::String("failure".to_owned()),
+        );
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_group_move_route(
+                16,
+                &command,
+                Some(&[route]),
+                &mut consumed,
+                &group_move_route_map(0),
+                &group_move_sector_kinds(421, None),
+            ),
+            Some(ReplayGroupMoveResolution {
+                door_route: false,
+                unmapped_goal_search_sector: None,
+                recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: vec![actor],
+            })
+        );
+        assert_eq!(consumed, BTreeSet::from([0]));
     }
 
     #[test]
@@ -12251,6 +12344,7 @@ mod tests {
                 door_route: false,
                 unmapped_goal_search_sector: Some(491),
                 recorded_gate_routes: vec![(actor, vec![(78, true)])],
+                recorded_failed_gate_routes: Vec::new(),
             })
         );
         let map = EntityMap {

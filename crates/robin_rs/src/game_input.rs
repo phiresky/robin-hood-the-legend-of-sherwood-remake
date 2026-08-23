@@ -388,6 +388,7 @@ pub fn resolve_left_click(
             goal_sector_index_override: None,
             door_route_override: None,
             recorded_gate_routes: Vec::new(),
+            recorded_failed_gate_routes: Vec::new(),
         }];
         if host.control_allied_soldiers && !allied_selected.is_empty() {
             commands.push(PlayerCommand::MoveAlliedSoldiers {
@@ -430,6 +431,7 @@ pub fn resolve_left_click(
         goal_sector_index_override: None,
         door_route_override: None,
         recorded_gate_routes: Vec::new(),
+        recorded_failed_gate_routes: Vec::new(),
     }];
     if host.control_allied_soldiers && !allied_selected.is_empty() {
         commands.push(PlayerCommand::MoveAlliedSoldiers {
@@ -2222,6 +2224,7 @@ mod tests {
                 goal_sector_index_override: None,
                 door_route_override: None,
                 recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: Vec::new(),
             }]
         );
         assert_eq!(host.input.element_old_click, None);

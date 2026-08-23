@@ -113,6 +113,7 @@ impl EngineInner {
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         door_route_override: Option<bool>,
         recorded_gate_routes: &[(EntityId, Vec<(u32, bool)>)],
+        recorded_failed_gate_routes: &[EntityId],
     ) {
         self.perform_group_move_with_destinations(
             sim,
@@ -125,6 +126,7 @@ impl EngineInner {
             goal_sector_index_override,
             door_route_override,
             recorded_gate_routes,
+            recorded_failed_gate_routes,
             None,
         );
     }
@@ -160,6 +162,7 @@ impl EngineInner {
             None,
             None,
             &[],
+            &[],
             Some(destinations),
         );
     }
@@ -177,6 +180,7 @@ impl EngineInner {
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         door_route_override: Option<bool>,
         recorded_gate_routes: &[(EntityId, Vec<(u32, bool)>)],
+        recorded_failed_gate_routes: &[EntityId],
         explicit_destinations: Option<&[MapPoint]>,
     ) {
         if pc_ids.is_empty() {
@@ -837,9 +841,15 @@ impl EngineInner {
                     })
                     .collect::<Vec<_>>()
             });
+            let recorded_route_failed = recorded_failed_gate_routes
+                .iter()
+                .filter(|actor| *actor == pc_id)
+                .count();
+            let recorded_route_result =
+                recorded_group_move_route_result(*pc_id, recorded_gate_path, recorded_route_failed);
 
-            let path = if recorded_gate_path.is_some() {
-                recorded_gate_path
+            let path = if let Some(recorded) = recorded_route_result {
+                recorded
             } else if door_goal_info.is_some() {
                 door_goal_info.as_ref().map(|(_, p, _, _, _)| p.clone())
             } else {

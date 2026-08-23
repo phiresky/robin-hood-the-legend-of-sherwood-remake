@@ -3872,6 +3872,7 @@ impl EngineInner {
                             None,
                             None,
                             &[],
+                            &[],
                         );
                     }
                 } else {

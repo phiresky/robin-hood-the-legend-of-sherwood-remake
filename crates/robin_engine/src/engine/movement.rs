@@ -479,6 +479,25 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn recorded_failed_group_move_route_suppresses_live_a_star() {
+        let actor = EntityId::Pc(crate::entity_id::PcId(136));
+        assert_eq!(
+            recorded_group_move_route_result::<Vec<crate::gate::GatePathStep>>(actor, None, 1),
+            Some(None),
+            "an observed Original failure is an authoritative route result"
+        );
+        assert_eq!(
+            recorded_group_move_route_result(actor, Some(vec![7_u32]), 0),
+            Some(Some(vec![7_u32]))
+        );
+        assert_eq!(
+            recorded_group_move_route_result::<Vec<u32>>(actor, None, 0),
+            None,
+            "live commands with no recorded outcome still run route resolution"
+        );
+    }
+
+    #[test]
     fn player_group_move_uses_resolved_upright_click_action() {
         assert_eq!(player_group_move_action(false), OrderType::WalkingUpright);
         assert_eq!(player_group_move_action(true), OrderType::RunningUpright);
@@ -3451,6 +3470,30 @@ fn group_move_uses_simple_route(
             .is_some_and(|goal| u16::from(goal) == source_sector && goal_layer == source_layer),
     };
     same_topology || (!is_door_click && (!is_valid || goal_sector.is_none()))
+}
+
+/// Return an authoritative schema-16 route outcome when one was recorded.
+/// `Some(None)` is deliberately distinct from `None`: the former means
+/// Original already ran gate A* and observed failure, while the latter permits
+/// the live engine to resolve a route itself.
+fn recorded_group_move_route_result<T>(
+    actor: EntityId,
+    successful: Option<T>,
+    failed_count: usize,
+) -> Option<Option<T>> {
+    assert!(
+        failed_count <= 1,
+        "recorded group move contains duplicate failed routes for {actor:?}"
+    );
+    assert!(
+        failed_count == 0 || successful.is_none(),
+        "recorded group move marks {actor:?} route as both successful and failed"
+    );
+    if failed_count != 0 {
+        Some(None)
+    } else {
+        successful.map(Some)
+    }
 }
 
 /// `PerformGroupMove` receives one resolved upright action from the click

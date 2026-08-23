@@ -465,6 +465,7 @@ impl GamePadState {
                     goal_sector_index_override: None,
                     door_route_override: None,
                     recorded_gate_routes: Vec::new(),
+                    recorded_failed_gate_routes: Vec::new(),
                 });
             }
         }

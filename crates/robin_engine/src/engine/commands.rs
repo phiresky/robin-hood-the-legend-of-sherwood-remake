@@ -15,6 +15,11 @@ use crate::sequence::{
 };
 use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
+#[inline]
+fn group_move_actor_accepts_command(actor: EntityId, recorded_failed_routes: &[EntityId]) -> bool {
+    !recorded_failed_routes.contains(&actor)
+}
+
 /// Rebuild the seek tolerance of a `SwordStrikeCmd` that was recorded
 /// before the resolved distance became part of the command.
 ///
@@ -315,6 +320,7 @@ impl EngineInner {
                 goal_sector_index_override,
                 door_route_override,
                 recorded_gate_routes,
+                recorded_failed_gate_routes,
             } => {
                 self.perform_group_move(
                     sim,
@@ -327,6 +333,7 @@ impl EngineInner {
                     *goal_sector_index_override,
                     *door_route_override,
                     recorded_gate_routes,
+                    recorded_failed_gate_routes,
                 );
                 // Fire `HeroSpeaking(HERO_ACCEPT_COMMAND, 0)` for the PC
                 // that just accepted the move — the "yes, milord" bark.
@@ -335,7 +342,13 @@ impl EngineInner {
                 // command-dispatch entry point where the assets are in
                 // scope.
                 for &pc_id in actors {
-                    self.hero_speaking(assets, pc_id, crate::engine::melee::HERO_ACCEPT_COMMAND);
+                    if group_move_actor_accepts_command(pc_id, recorded_failed_gate_routes) {
+                        self.hero_speaking(
+                            assets,
+                            pc_id,
+                            crate::engine::melee::HERO_ACCEPT_COMMAND,
+                        );
+                    }
                 }
             }
             StopPc { pc_id } => {
@@ -1416,6 +1429,7 @@ impl EngineInner {
                 goal_sector_index_override: _,
                 door_route_override: _,
                 recorded_gate_routes: _,
+                recorded_failed_gate_routes: _,
             } => {
                 if !actors.contains(&recording_pc) {
                     return;
@@ -1849,6 +1863,7 @@ impl EngineInner {
                     goal_sector_index_override: None,
                     door_route_override: None,
                     recorded_gate_routes: Vec::new(),
+                    recorded_failed_gate_routes: Vec::new(),
                 },
                 crate::macro_store::QaReplayCommand::Interaction {
                     target,
@@ -4875,6 +4890,14 @@ mod tests {
     use crate::profiles::{Action, CharacterProfile, ProfileManager};
     use crate::sprite::Sprite;
     use crate::sprite_script::{SpriteScript, UNMAPPED};
+
+    #[test]
+    fn recorded_failed_group_move_does_not_emit_accept_bark() {
+        let failed = EntityId::Pc(crate::entity_id::PcId(136));
+        let succeeded = EntityId::Pc(crate::entity_id::PcId(137));
+        assert!(!group_move_actor_accepts_command(failed, &[failed]));
+        assert!(group_move_actor_accepts_command(succeeded, &[failed]));
+    }
 
     #[test]
     fn target_interaction_door_adaptation_omits_redundant_sector_assertion() {

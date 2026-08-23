@@ -598,6 +598,7 @@ mod tests {
                 goal_sector_index_override: None,
                 door_route_override: None,
                 recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: Vec::new(),
             });
             rec.push(PlayerCommand::CrouchDown);
             rec.end_frame();
@@ -951,6 +952,9 @@ mod tests {
             goal_sector_index_override: crate::fast_find_grid::SectorIndex::new(17),
             door_route_override: None,
             recorded_gate_routes: Vec::new(),
+            recorded_failed_gate_routes: vec![crate::element::EntityId::Pc(
+                crate::entity_id::PcId(1),
+            )],
         };
         let json = serde_json::to_string(&with_override).unwrap();
         let round: PlayerCommand = serde_json::from_str(&json).unwrap();
@@ -958,11 +962,16 @@ mod tests {
             PlayerCommand::GroupMove {
                 goal_override: Some((sector, layer)),
                 goal_sector_index_override: Some(index),
+                recorded_failed_gate_routes,
                 ..
             } => {
                 assert_eq!(sector, crate::sector::SectorNumber::new(42));
                 assert_eq!(layer, 3);
                 assert_eq!(index.get(), 17);
+                assert_eq!(
+                    recorded_failed_gate_routes,
+                    vec![crate::element::EntityId::Pc(crate::entity_id::PcId(1))]
+                );
             }
             _ => panic!("round-tripped GroupMove lost its goal_override"),
         }
@@ -979,20 +988,24 @@ mod tests {
             goal_sector_index_override: crate::fast_find_grid::SectorIndex::new(17),
             door_route_override: None,
             recorded_gate_routes: Vec::new(),
+            recorded_failed_gate_routes: Vec::new(),
         };
         let mut json = serde_json::to_value(current).unwrap();
-        json.get_mut("GroupMove")
+        let fields = json
+            .get_mut("GroupMove")
             .and_then(serde_json::Value::as_object_mut)
-            .expect("externally tagged GroupMove fields")
-            .remove("goal_sector_index_override");
+            .expect("externally tagged GroupMove fields");
+        fields.remove("goal_sector_index_override");
+        fields.remove("recorded_failed_gate_routes");
 
         let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
         assert!(matches!(
             decoded,
             PlayerCommand::GroupMove {
                 goal_sector_index_override: None,
+                recorded_failed_gate_routes,
                 ..
-            }
+            } if recorded_failed_gate_routes.is_empty()
         ));
     }
 

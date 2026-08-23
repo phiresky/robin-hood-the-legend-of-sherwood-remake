@@ -1510,6 +1510,7 @@ impl EngineInner {
                     None,
                     None,
                     &[],
+                    &[],
                 );
                 order.duty = AlliedDuty::Hold {
                     anchor: destination,
@@ -1569,6 +1570,7 @@ impl EngineInner {
                     None,
                     None,
                     None,
+                    &[],
                     &[],
                 );
                 order.last_destination = destination;
