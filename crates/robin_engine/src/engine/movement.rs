@@ -2951,10 +2951,14 @@ pub(crate) fn adapt_source_to_current_door_with_identity(
 ///
 /// Rust keeps an executing translated pass in `ActorData` rather than always
 /// mirroring it into `PositionInterface`. Prefer that live pass until its
-/// first `PassingDoor` callback. Original `RHElementActor::PassDoor` clears
-/// `GetDoor()` at that callback even though the translated movement element
-/// can keep executing its far-side walk, so later commands must use the live
-/// position/sector instead of adapting through the completed gate.
+/// first `PassingDoor` callback, but only while the pass still owns the
+/// installed actor order. A postponed pass can remain in this Rust-only slot
+/// while an unrelated command is installed; Original's `GetDoor()` then
+/// reflects only `PositionInterface` and must not be reconstructed from the
+/// dormant pass. Original `RHElementActor::PassDoor` clears `GetDoor()` at the
+/// callback even though the translated movement element can keep executing
+/// its far-side walk, so later commands must use the live position/sector
+/// instead of adapting through the completed gate.
 ///
 /// The direction reported here is the pass's live traversal direction, not the
 /// movement element's retained `mswDirection`. `RHSequence::AppendMoveToSequence`
@@ -2974,8 +2978,14 @@ pub(crate) fn current_door_for_route_source(
 ) -> (crate::position_interface::DoorHandle, bool) {
     entity
         .actor_data()
-        .and_then(|actor| actor.active_door_pass.as_ref())
-        .filter(|pass| pass.triggers_fired == 0)
+        .and_then(|actor| {
+            actor.active_door_pass.as_ref().filter(|pass| {
+                pass.triggers_fired == 0
+                    && actor
+                        .installed_order
+                        .is_some_and(|order| order.order_type == pass.current_action)
+            })
+        })
         .map(|pass| {
             (
                 crate::position_interface::DoorHandle(pass.door_index.0),
@@ -3021,7 +3031,8 @@ pub(super) fn sector_hits_have_distinct_identity(
 mod route_source_tests {
     use super::{current_door_for_route_source, sector_hits_have_distinct_identity};
     use crate::element::{
-        ActiveDoorPass, ActorData, ActorPc, ElementData, Entity, HumanData, PcData,
+        ActiveDoorPass, ActorData, ActorPc, ElementData, Entity, HumanData, InstalledActorOrder,
+        PcData,
     };
     use crate::gate::DoorIndex;
     use crate::order::OrderType;
@@ -3049,6 +3060,10 @@ mod route_source_tests {
                     current_reverse: false,
                     saved_action_state: None,
                 }),
+                installed_order: Some(InstalledActorOrder {
+                    order_id: std::num::NonZeroU32::new(1).unwrap(),
+                    order_type: OrderType::WalkingUpright,
+                }),
                 ..ActorData::default()
             },
             human: HumanData::default(),
@@ -3070,6 +3085,21 @@ mod route_source_tests {
         assert_eq!(
             current_door_for_route_source(&pc),
             (DoorHandle::NULL, false)
+        );
+    }
+
+    #[test]
+    fn route_source_does_not_resurrect_postponed_door_under_unrelated_order() {
+        let mut pc = pc_with_door_pass(0);
+        pc.actor_data_mut().unwrap().installed_order = Some(InstalledActorOrder {
+            order_id: std::num::NonZeroU32::new(2).unwrap(),
+            order_type: OrderType::WaitingUpright,
+        });
+
+        assert_eq!(
+            current_door_for_route_source(&pc),
+            (DoorHandle::NULL, false),
+            "Rust's dormant pass mirror must not replace Original's null PositionInterface door pointer"
         );
     }
 

@@ -1947,7 +1947,9 @@ mod tests {
     use crate::sequence::SequenceElementData;
 
     fn door_fight_route_fixture(triggers_fired: u8) -> (EngineInner, EntityId, Position) {
-        use crate::element::{ActiveDoorPass, ActorData, ActorPc, ElementData, HumanData, PcData};
+        use crate::element::{
+            ActiveDoorPass, ActorData, ActorPc, ElementData, HumanData, InstalledActorOrder, PcData,
+        };
         use crate::engine::MissionScript;
         use crate::fast_find_grid::GridSector;
         use crate::gate::{Door, DoorIndex, DoorType};
@@ -2041,6 +2043,10 @@ mod tests {
                     current_reverse: false,
                     saved_action_state: None,
                 }),
+                installed_order: (triggers_fired == 0).then_some(InstalledActorOrder {
+                    order_id: std::num::NonZeroU32::new(1).unwrap(),
+                    order_type: OrderType::RunningUpright,
+                }),
                 ..ActorData::default()
             },
             human: HumanData::default(),
@@ -2120,6 +2126,45 @@ mod tests {
                 .iter()
                 .any(|element| element.command == Command::ChangePosition),
             "control must actually contain the building-exit route"
+        );
+    }
+
+    #[test]
+    fn door_fight_route_does_not_adapt_dormant_pass_under_wait_order() {
+        use crate::element::InstalledActorOrder;
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, pc, goal) = door_fight_route_fixture(0);
+        engine
+            .get_entity_mut(pc)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order = Some(InstalledActorOrder {
+                order_id: std::num::NonZeroU32::new(2).unwrap(),
+                order_type: OrderType::WaitingUpright,
+            });
+
+        let (_, draws) = with_draw_trace(|| {
+            engine.send_before_door_to_fight_pc(&sim, pc, goal, 4, 10, None);
+        });
+        assert_eq!(
+            draws,
+            [
+                RngSite::RuntimeBuildingExitWait,
+                RngSite::RuntimeBuildingExitWait
+            ],
+            "Original AppendMoveToSequence builds the building exit after the old pass is postponed"
+        );
+        assert_eq!(
+            door_fight_sequence(&engine, pc)
+                .elements
+                .iter()
+                .take(2)
+                .map(|element| element.command)
+                .collect::<Vec<_>>(),
+            [Command::WaitTimer, Command::AssertPosition]
         );
     }
 
