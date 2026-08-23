@@ -21,10 +21,17 @@ poll_seconds=${SCHEMA16_DISTRIBUTED_POLL_SECONDS:-30}
 audit_dir=${SCHEMA16_DISTRIBUTED_AUDIT_DIR:-}
 recorder_sha=${SCHEMA16_DISTRIBUTED_RECORDER_SHA:-02485baafdcfb285039a763f1c3bc4d9f2534d97bf26b3724fbb5c24fca0ccba}
 recorder_rel="binaries/parity-recorders/$recorder_sha/robin"
+# Captures publish native .parity.bitcode.zst traces, so every host needs the
+# Rust converter. Unlike the frozen i386 recorder it cannot be copied between
+# hosts -- it links this workspace's contemporary libraries -- so each host
+# builds its own from a clean HEAD snapshot.
+converter_rel=${SCHEMA16_DISTRIBUTED_CONVERTER_REL:-binaries/parity-converter/original_parity_replay}
+converter_src_rel=${SCHEMA16_DISTRIBUTED_CONVERTER_SRC_REL:-converter-src}
 
 usage() {
     printf 'usage: %s prepare|migrate|collect|watch|status [CAMPAIGN]\n' "$0"
     printf '       %s capture-shard CAMPAIGN SHARD SHARDS JOBS\n' "$0"
+    printf '       %s build-remote-converter\n' "$0"
 }
 
 require_uint() {
@@ -75,6 +82,34 @@ ssh_worker() {
     ssh -F "$ssh_config" "$remote_host" "$@"
 }
 
+build_remote_converter() {
+    local revision installed
+    revision=$(git -C "$workspace" rev-parse HEAD)
+    installed=$(ssh_worker "cat '$remote_root/$converter_rel.revision' 2>/dev/null || true")
+    if [[ "$installed" == "$revision" ]] \
+        && ssh_worker "test -x '$remote_root/$converter_rel'"
+    then
+        printf 'remote converter already at %s\n' "$revision"
+        return
+    fi
+    ssh_worker "mkdir -p '$remote_root/$converter_src_rel' '$remote_root/${converter_rel%/*}'"
+    # A committed snapshot, never the working tree: the converter decides when a
+    # recording may be deleted, so its provenance has to be a named revision.
+    git -C "$workspace" archive --format=tar HEAD \
+        | ssh -F "$ssh_config" "$remote_host" \
+            "tar -x -C '$remote_root/$converter_src_rel'"
+    # A non-interactive ssh skips the shell profile that puts rustup on PATH.
+    # Captures own the machine, so the build yields to them.
+    ssh_worker "cd '$remote_root/$converter_src_rel' \
+        && PATH=\"\$HOME/.cargo/bin:\$PATH\" \
+            nice -n 19 cargo build --release --example original_parity_replay \
+        && install -m 0755 target/release/examples/original_parity_replay \
+            '$remote_root/$converter_rel' \
+        && printf '%s\n' '$revision' > '$remote_root/$converter_rel.revision'"
+    printf 'remote converter built from %s: %s:%s\n' \
+        "$revision" "$remote_host" "$remote_root/$converter_rel"
+}
+
 prepare_remote() {
     local campaign=$1 remote_campaign relative
     relative=${campaign#"$workspace"/}
@@ -94,11 +129,13 @@ prepare_remote() {
     rsync -a -e "ssh -F $ssh_config" "$workspace/$recorder_rel" \
         "$remote_host:$remote_root/$recorder_rel"
     ssh_worker "test \"\$(sha256sum '$remote_root/$recorder_rel' | cut -d' ' -f1)\" = '$recorder_sha'; '$remote_root/original-code/runtime-i386/ld-linux.so.2' --library-path '$remote_root/original-code/runtime-i386:$remote_root/original-code/runtime-i386/pulseaudio' --list '$remote_root/$recorder_rel' >/dev/null"
+    build_remote_converter
     printf 'remote capture runtime ready: %s:%s\n' "$remote_host" "$remote_root"
 }
 
 capture_shard() {
     local campaign=$1 shard=$2 shards=$3 jobs=$4 root binary seed replays loader library_dir
+    local converter
     root=${SCHEMA16_DISTRIBUTED_WORKSPACE:-$workspace}
     [[ "$campaign" == /* ]] || campaign="$root/$campaign"
     seed=$(campaign_value "$campaign" PARITY_INPUT_SEED_BASE)
@@ -114,12 +151,23 @@ capture_shard() {
         # explicit loader on workers that need it.
         library_dir=${SCHEMA16_DISTRIBUTED_LIBRARY_DIR:-/lib/i386-linux-gnu}
     fi
+    # A worker keeps its converter at the pinned path; a developer host that
+    # builds the workspace anyway just uses what cargo produced.
+    converter="$root/$converter_rel"
+    if [[ ! -x "$converter" ]]; then
+        converter="$root/target/release/examples/original_parity_replay"
+    fi
+    if [[ ! -x "$converter" ]]; then
+        printf 'error: no parity converter on this host (build with `%s build-remote-converter` or `cargo build --release --example original_parity_replay`): %s\n' \
+            "$0" "$converter" >&2
+        exit 2
+    fi
     env \
         PARITY_TRACE_SCHEMA=16 PARITY_RANDOM_REPLAYS="$replays" PARITY_FRAMES=1500 \
         PARITY_INPUT_SEED_BASE="$seed" PARITY_SEED=1 \
         SHERWOOD_LIMIT=30 SHERWOOD_SAMPLE_SEED=1 \
         SHARD_COUNT="$shards" SHARD_INDEX="$shard" CAPTURE_JOBS="$jobs" \
-        COMPRESS=1 ZSTD_THREADS=1 ZSTD_LEVEL=16 HEADFUL=0 SKIP_BUILD=1 \
+        COMPRESS=1 PARITY_CONVERTER="$converter" HEADFUL=0 SKIP_BUILD=1 \
         WATCHDOG_SECONDS=2700 ROBIN_BINARY="$binary" \
         ROBIN_LOADER="$loader" ROBIN_LIBRARY_DIR="$library_dir" \
         ROBINHOOD_DATA_DIR="$root/datadirs/fullgame_linux" \
@@ -342,6 +390,12 @@ if [[ "$action" == capture-shard ]]; then
     exit
 fi
 [[ -r "$ssh_config" ]] || { printf 'error: missing SSH config %s\n' "$ssh_config" >&2; exit 2; }
+if [[ "$action" == build-remote-converter ]]; then
+    # Provisioning only: no campaign has to exist yet, and a running one is
+    # untouched because the build installs beside the campaign, not into it.
+    build_remote_converter
+    exit
+fi
 campaign=$(find_campaign "${1:-}")
 validate_campaign "$campaign"
 case "$action" in
