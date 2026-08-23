@@ -538,6 +538,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             .build_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
                 owner,
+                crate::position_interface::SectorHandle::new(22),
                 vec![GatePathStep {
                     door_index: DoorIndex(0),
                     direct,
@@ -562,6 +563,25 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             .sequence_manager
             .get_sequence(sequence_id)
             .expect("gate sequence");
+        let leading_assert = sequence
+            .elements
+            .first()
+            .expect("cross-sector route has a leading assertion");
+        assert_eq!(leading_assert.command, Command::AssertPosition);
+        let SequenceElementData::Movement {
+            sector,
+            destination,
+            ..
+        } = &leading_assert.data
+        else {
+            panic!("leading AssertPosition changed element kind")
+        };
+        assert_eq!(
+            *sector,
+            crate::position_interface::SectorHandle::new(22),
+            "leading AssertPosition must retain the caller's adapted source sector instead of reconstructing it from the first door side"
+        );
+        assert_eq!(*destination, MapPoint::default());
         let speech_index = sequence
             .elements
             .iter()
@@ -650,6 +670,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             .build_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
                 owner,
+                crate::position_interface::SectorHandle::new(22),
                 vec![GatePathStep {
                     door_index: DoorIndex(0),
                     direct,

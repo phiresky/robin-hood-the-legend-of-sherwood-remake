@@ -891,6 +891,15 @@ impl crate::engine::EngineInner {
         let _ = self.build_gate_movement_sequence(
             sim,
             owner,
+            Some(
+                crate::position_interface::SectorHandle::new(path_src_sector).unwrap_or_else(
+                    || {
+                        panic!(
+                            "entity seek refresh for {owner:?} adapted to invalid source sector {path_src_sector}"
+                        )
+                    },
+                ),
+            ),
             gate_path,
             GoalShape::Seek {
                 point: resolved.destination,
@@ -1051,6 +1060,13 @@ impl crate::engine::EngineInner {
         let _ = self.build_gate_movement_sequence(
             sim,
             owner,
+            Some(
+                crate::position_interface::SectorHandle::new(src_sector).unwrap_or_else(|| {
+                    panic!(
+                        "point seek refresh for {owner:?} adapted to invalid source sector {src_sector}"
+                    )
+                }),
+            ),
             gate_path,
             GoalShape::Point {
                 point: destination,
@@ -1395,6 +1411,7 @@ mod tests {
             .build_gate_movement_sequence(
                 &sim,
                 owner,
+                crate::position_interface::SectorHandle::new(1),
                 vec![GatePathStep {
                     door_index: DoorIndex(0),
                     direct: true,

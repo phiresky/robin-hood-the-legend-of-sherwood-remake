@@ -1402,6 +1402,24 @@ impl EngineInner {
         ))
     }
 
+    /// Original's mixed `marrayGates` order mapped to runtime door indices.
+    ///
+    /// Stateful doors and stateless jump gates preserve construction order
+    /// within each kind, but Rust installs those kinds in a different mixed
+    /// order. Recorded Original gate indices must cross this mapping before
+    /// they are lowered into runtime movement sequences.
+    pub fn legacy_gate_order(&self, assets: &LevelAssets) -> Vec<crate::gate::DoorIndex> {
+        let retained = assets
+            .legacy_grid_topology
+            .as_ref()
+            .expect("Original gate translation requires retained grid topology");
+        crate::legacy_save::gate_topology::derive_legacy_gate_order(
+            &retained.gates,
+            &self.script_domains.interactables.doors,
+        )
+        .unwrap_or_else(|error| panic!("derive Original gate translation: {error}"))
+    }
+
     /// Value corresponding to Original `RHElementActor::mulWaitTime`.
     ///
     /// Rust keeps the seek-refresh countdown separate from ordinary command

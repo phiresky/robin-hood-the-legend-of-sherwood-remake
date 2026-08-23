@@ -1019,11 +1019,12 @@ fn split_late_refresh_orientations(
     if popup_nested_refresh {
         for (index, command) in commands.iter().enumerate() {
             if let TraceCommand::OrientActionAt { actor, action, .. } = command {
-                if let Some(entry) = final_popup_orientations
-                    .iter_mut()
-                    .find(|(known_actor, known_action, _)| {
-                        known_actor == actor && known_action == action
-                    })
+                if let Some(entry) =
+                    final_popup_orientations
+                        .iter_mut()
+                        .find(|(known_actor, known_action, _)| {
+                            known_actor == actor && known_action == action
+                        })
                 {
                     entry.2 = index;
                 } else {
@@ -1048,9 +1049,7 @@ fn split_late_refresh_orientations(
                 if actions_selected_this_boundary.get(actor) == Some(action)
                     || final_popup_orientations.iter().any(
                         |(known_actor, known_action, known_index)| {
-                            known_actor == actor
-                                && known_action == action
-                                && *known_index == index
+                            known_actor == actor && known_action == action && *known_index == index
                         },
                     ) =>
             {
@@ -1196,7 +1195,17 @@ impl TraceCommand {
                             resolution
                                 .recorded_gate_routes
                                 .into_iter()
-                                .map(|(actor, gates)| (entity_map.translate(actor), gates))
+                                .map(|(actor, gates)| {
+                                    (
+                                        entity_map.translate(actor),
+                                        gates
+                                            .into_iter()
+                                            .map(|(gate, direct)| {
+                                                (entity_map.translate_gate(gate), direct)
+                                            })
+                                            .collect(),
+                                    )
+                                })
                                 .collect()
                         })
                         .unwrap_or_default(),
@@ -5931,6 +5940,8 @@ struct EntityMap {
     /// canonical position-sector number. The raw numbers are allocation
     /// details rather than gameplay identity.
     sectors: BTreeMap<u16, u16>,
+    /// Original mixed gate-array slot to Rust's runtime door-table index.
+    gates: Vec<robin_engine::gate::DoorIndex>,
     /// One past the highest creation order the mission start established.
     /// Below it the Original's serials come from the mission file or the save
     /// and are exact; at or above it they also count the throwaway elements
@@ -6032,6 +6043,7 @@ impl EntityMap {
             entities: result,
             entities_by_creation_order,
             sectors,
+            gates: engine.legacy_gate_order(assets),
             runtime_creation_order_boundary,
         }
     }
@@ -6185,6 +6197,18 @@ impl EntityMap {
             .entities
             .get(&original)
             .unwrap_or_else(|| panic!("original entity {original:?} has no Rust correspondence"))
+    }
+
+    fn translate_gate(&self, original: u32) -> u32 {
+        let original_index = usize::try_from(original)
+            .unwrap_or_else(|_| panic!("Original gate index {original} exceeds usize"));
+        self.gates
+            .get(original_index)
+            .copied()
+            .unwrap_or_else(|| {
+                panic!("Original gate index {original} is absent from the retained gate topology")
+            })
+            .into()
     }
 
     /// Preserve the patch-aware `pSectorGoal` recorded by PerformGroupMove.
@@ -10720,6 +10744,7 @@ mod tests {
             entities: BTreeMap::from([(original_actor, rust_actor)]),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
+            gates: Vec::new(),
             runtime_creation_order_boundary: u32::MAX,
         };
         let request = robin_engine::pathfinder::ParityPathRequest {
@@ -11385,6 +11410,7 @@ mod tests {
             entities: BTreeMap::from([(old_trace_id, rust_id)]),
             entities_by_creation_order: BTreeMap::from([(158, rust_id)]),
             sectors: BTreeMap::new(),
+            gates: Vec::new(),
             runtime_creation_order_boundary: u32::MAX,
         };
 
@@ -11399,6 +11425,7 @@ mod tests {
             entities: BTreeMap::new(),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::from([(55, 23)]),
+            gates: Vec::new(),
             runtime_creation_order_boundary: 0,
         };
 
@@ -11418,6 +11445,26 @@ mod tests {
             GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(288), 4)),
             "a coincident overlay must not erase the recorded route goal"
         );
+    }
+
+    #[test]
+    fn recorded_group_move_gate_uses_retained_mixed_gate_order() {
+        let map = EntityMap {
+            entities: BTreeMap::new(),
+            entities_by_creation_order: BTreeMap::new(),
+            sectors: BTreeMap::new(),
+            // Original constructed jump gate 1 between two stateful doors;
+            // Rust installed the stateful doors first, so its runtime peer is
+            // door-table index 3.
+            gates: vec![
+                robin_engine::gate::DoorIndex(0),
+                robin_engine::gate::DoorIndex(3),
+                robin_engine::gate::DoorIndex(1),
+            ],
+            runtime_creation_order_boundary: 0,
+        };
+
+        assert_eq!(map.translate_gate(1), 3);
     }
 
     fn group_move_route_fixture(
@@ -11569,6 +11616,7 @@ mod tests {
             entities: BTreeMap::new(),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::from([(491, 55)]),
+            gates: Vec::new(),
             runtime_creation_order_boundary: 0,
         };
         assert_eq!(
@@ -11614,6 +11662,7 @@ mod tests {
             entities: BTreeMap::from([(actor, EntityId::Pc(robin_engine::entity_id::PcId(12)))]),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::from([(148, 55)]),
+            gates: Vec::new(),
             runtime_creation_order_boundary: 0,
         }
     }

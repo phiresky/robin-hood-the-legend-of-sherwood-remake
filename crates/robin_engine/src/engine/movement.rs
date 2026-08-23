@@ -343,6 +343,30 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn same_topology_door_overlay_still_uses_simple_move() {
+        let sector = Some(crate::sector::SectorNumber::new(50));
+
+        assert!(group_move_uses_simple_route(true, true, sector, 0, 50, 0,));
+        assert_eq!(
+            group_move_door_selection(Some(86), true, None),
+            (Some(86), true, true),
+            "the selected door overlay must still bypass destination authorization"
+        );
+    }
+
+    #[test]
+    fn distinct_goal_door_overlay_keeps_gate_route() {
+        assert!(!group_move_uses_simple_route(
+            true,
+            true,
+            Some(crate::sector::SectorNumber::new(51)),
+            0,
+            50,
+            0,
+        ));
+    }
+
+    #[test]
     fn player_group_move_uses_resolved_upright_click_action() {
         assert_eq!(player_group_move_action(false), OrderType::WalkingUpright);
         assert_eq!(player_group_move_action(true), OrderType::RunningUpright);
@@ -979,6 +1003,26 @@ fn door_pass_eager_posture(
     }
 }
 
+/// Whether a terminal translated door transition still has an authoritative
+/// PassDoor owner when the runtime `ActiveDoorPass` mirror is absent.
+///
+/// Restored Original saves can carry the complete translated order chain in
+/// the serialized PassDoor sequence without reconstructing that Rust-only
+/// mirror.  The crenel climb-up exit is the one completion in this path that
+/// needs no door geometry: the Original Execute arm only publishes the PC's
+/// crouched/waiting state before advancing to `PASSING_DOOR`.
+pub(super) fn pass_door_transition_completion_has_owner(
+    command: crate::element::Command,
+    has_active_door_pass: bool,
+    action: OrderType,
+    is_pc: bool,
+) -> bool {
+    has_active_door_pass
+        || (command == crate::element::Command::PassDoor
+            && is_pc
+            && action == OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel)
+}
+
 #[cfg(test)]
 mod door_pass_posture_tests {
     use super::*;
@@ -1047,6 +1091,35 @@ mod door_pass_posture_tests {
         );
         assert_eq!(literal_lift_sprite_action(OT::PassingDoor), None);
         assert_eq!(literal_lift_sprite_action(OT::WalkingUpright), None);
+    }
+
+    #[test]
+    fn restored_pass_door_crenel_completion_does_not_require_runtime_latch() {
+        assert!(pass_door_transition_completion_has_owner(
+            Command::PassDoor,
+            false,
+            OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
+            true,
+        ));
+
+        assert!(
+            !pass_door_transition_completion_has_owner(
+                Command::PassDoor,
+                false,
+                OrderType::TransitionClimbingWallDownWaitingUpright,
+                true,
+            ),
+            "door-dependent transition completion must still require ActiveDoorPass"
+        );
+        assert!(
+            !pass_door_transition_completion_has_owner(
+                Command::Move,
+                false,
+                OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
+                true,
+            ),
+            "an unrelated movement sequence must not acquire PassDoor completion semantics"
+        );
     }
 
     #[test]
@@ -2915,6 +2988,23 @@ fn group_move_door_selection(
     // author an ordinary route over a coincident door overlay without losing
     // the overlay's placement semantics (RHengine.cpp:5322-5337, 5447-5468).
     (route_door_index, route_is_door, spatial_is_door_click)
+}
+
+#[inline]
+fn group_move_uses_simple_route(
+    is_door_click: bool,
+    is_valid: bool,
+    goal_sector: Option<crate::sector::SectorNumber>,
+    goal_layer: u16,
+    source_sector: u16,
+    source_layer: u16,
+) -> bool {
+    // PerformMove passes the patch-aware pSectorGoal to AppendMoveToSequence.
+    // A coincident mpSelectedSector door only controls formation authorization;
+    // it cannot turn an equal source/goal sector into a door traversal.
+    let same_topology = goal_sector
+        .is_some_and(|goal| u16::from(goal) == source_sector && goal_layer == source_layer);
+    same_topology || (!is_door_click && (!is_valid || goal_sector.is_none()))
 }
 
 /// `PerformGroupMove` receives one resolved upright action from the click
@@ -4945,13 +5035,14 @@ impl EngineInner {
             }
 
             // Same-sector or unknown goal sector: simple move
-            if !is_door_click
-                && (!is_valid
-                    || pc_goal_sector.is_none()
-                    || pc_goal_sector.is_some_and(|goal| {
-                        u16::from(goal) == *src_sector && pc_effective_layer == *pc_src_layer
-                    }))
-            {
+            if group_move_uses_simple_route(
+                is_door_click,
+                is_valid,
+                pc_goal_sector,
+                pc_effective_layer,
+                *src_sector,
+                *pc_src_layer,
+            ) {
                 // Door clicks skip the walkable snap entirely.
                 let snap_res = if bypass_formation_authorization || mercenary_center.is_some() {
                     Some(*dest)
@@ -5258,6 +5349,14 @@ impl EngineInner {
                     let _ = self.build_gate_movement_sequence(
                         sim,
                         *pc_id,
+                        Some(
+                            crate::position_interface::SectorHandle::new(path_src_sector)
+                                .unwrap_or_else(|| {
+                                panic!(
+                                    "cross-sector group move for {pc_id:?} has invalid source sector {path_src_sector}"
+                                )
+                            }),
+                        ),
                         gate_steps,
                         goal_shape,
                         pc_effective_layer,
@@ -5379,6 +5478,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         entity_id: EntityId,
+        source_sector: Option<crate::position_interface::SectorHandle>,
         gate_path: Vec<crate::gate::GatePathStep>,
         goal: GoalShape,
         goal_layer: u16,
@@ -5458,29 +5558,10 @@ impl EngineInner {
             door_action: OrderType,
         }
 
-        let (gate_shots, starting_sector) = {
+        let gate_shots = {
             if self.scripts.mission.is_none() {
                 return None;
             }
-            // Starting sector = the sector on the "old" side of the
-            // first gate.  Needed to decide whether the actor's
-            // current location is a building (→ first gate uses the
-            // CHANGE_POSITION branch) or not.
-            let start_sector = gate_path
-                .first()
-                .and_then(|first| {
-                    self.script_domains
-                        .interactables
-                        .doors
-                        .get(usize::from(first.door_index))
-                })
-                .map(|d| {
-                    if gate_path[0].direct {
-                        u16::from(d.sector_out)
-                    } else {
-                        u16::from(d.sector_in)
-                    }
-                });
             let shots: Vec<GateShot> = gate_path
                 .iter()
                 .filter_map(|step| {
@@ -5539,7 +5620,7 @@ impl EngineInner {
                     })
                 })
                 .collect();
-            (shots, start_sector)
+            shots
         }; // host borrow dropped here
 
         // Does the entity have the lockpick contextual action?
@@ -5576,7 +5657,16 @@ impl EngineInner {
         // Track the "previous" sector so each gate knows what it's
         // coming *from*.  After the first gate, this is the
         // previous gate's `new_sector`.
-        let mut prev_sector: Option<u16> = starting_sector;
+        // Original carries the (possibly door-adapted) `pSectorSource`
+        // argument through both the leading assertion and `pOldSector`.
+        // Do not reconstruct it from the first gate: authored/loaded gate
+        // sides can contain the invalid-sector sentinel even when the route
+        // source is a valid ordinary motion sector.
+        assert!(
+            gate_shots.is_empty() || source_sector.is_some(),
+            "gate movement route for {entity_id:?} has no source sector"
+        );
+        let mut prev_sector: Option<u16> = source_sector.map(u16::from);
 
         // Cross-sector source-sector sanity assert.  When the goal
         // sector differs from the source, prepend an `AssertPosition`
@@ -5586,7 +5676,7 @@ impl EngineInner {
         // aborts gracefully instead of following a stale path.  This
         // unified builder is only invoked for cross-sector traversals
         // (callers handle same-sector inline), so emit unconditionally.
-        if let Some(src_sector) = starting_sector {
+        if let Some(source_sector) = source_sector {
             let mut leading_ap = SequenceElement::new_movement(
                 level,
                 Command::AssertPosition,
@@ -5596,7 +5686,7 @@ impl EngineInner {
             leading_ap.data = SequenceElementData::Movement {
                 destination: crate::coordinates::MapPoint::default(),
                 layer: 0,
-                sector: crate::position_interface::SectorHandle::new(src_sector),
+                sector: Some(source_sector),
                 gate_id: None,
                 line_id: None,
                 element: Some(entity_id),
@@ -7090,6 +7180,7 @@ impl EngineInner {
             return self.build_gate_movement_sequence(
                 sim,
                 entity_id,
+                Some(source_sector),
                 gate_path,
                 goal,
                 goal_layer,
@@ -9340,6 +9431,12 @@ impl EngineInner {
                 self.world.original_creation_order(entity_id)
             });
         let sprite_row_diagnostic = diagnostic_creation_order.is_some();
+        let selected_command = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .map(|element| element.command)
+            .expect("selected movement element disappeared before Execute");
         let entity = self
             .world
             .entities
@@ -11175,8 +11272,12 @@ impl EngineInner {
                         OrderType::TransitionClimbingLadderDownWaitingUpright
                             | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
                     );
-            if door_pass_anim.is_some()
-                && door_transition_state_effect_due
+            if pass_door_transition_completion_has_owner(
+                selected_command,
+                door_pass_anim.is_some(),
+                order_action,
+                is_pc,
+            ) && door_transition_state_effect_due
                 && matches!(
                     anim,
                     OrderType::TransitionWaitingUprightClimbingWallUp
@@ -13113,7 +13214,12 @@ impl EngineInner {
                         // has been constructed. Original constructs and
                         // launches first, then observes IsComputingPath and
                         // Halts (`RHartificialintelligence.cpp:2538-2620`).
-                        intent.halt_after_launch_for_path_waiter = was_computing_path;
+                        // A synchronous continuation may already carry the
+                        // outgoing path-waiter's GoTo tail after that waiter
+                        // has been halted. Preserve that authored provenance;
+                        // the current manager command can only add the same
+                        // requirement, never revoke it.
+                        intent.halt_after_launch_for_path_waiter |= was_computing_path;
                         self.launch_ai_move(entity_id, &intent);
                         path_waiter_tail_deferred |= was_computing_path;
                     }

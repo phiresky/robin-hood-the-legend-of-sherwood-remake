@@ -58,6 +58,65 @@ fn drop_owner_boundary_matches(frame: u32, owner: EntityId) -> bool {
 }
 
 #[cfg(test)]
+mod restored_pass_door_completion_tests {
+    use super::*;
+    use crate::element::{
+        ActionState, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, PcData,
+        Posture,
+    };
+    use crate::order::OrderType;
+
+    fn airborne_pc() -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Flying,
+                ..ElementData::default()
+            },
+            actor: ActorData {
+                action_state: ActionState::Moving,
+                active_door_pass: None,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })
+    }
+
+    #[test]
+    fn restored_crenel_exit_completes_without_active_door_pass() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(airborne_pc());
+        engine.apply_door_pass_transition_completion_side_effects(
+            &LevelAssets::new(),
+            owner,
+            OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
+        );
+
+        let pc = engine.get_entity(owner).unwrap();
+        assert_eq!(pc.element_data().posture, Posture::Crouched);
+        assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
+        assert!(pc.actor_data().unwrap().active_door_pass.is_none());
+    }
+
+    #[test]
+    fn unrelated_transition_still_requires_active_door_pass() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(airborne_pc());
+        engine.apply_door_pass_transition_completion_side_effects(
+            &LevelAssets::new(),
+            owner,
+            OrderType::TransitionClimbingWallDownWaitingUpright,
+        );
+
+        let pc = engine.get_entity(owner).unwrap();
+        assert_eq!(pc.element_data().posture, Posture::Flying);
+        assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Moving);
+    }
+}
+
+#[cfg(test)]
 thread_local! {
     static PROJECTILE_DERIVED_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, crate::element::ObjectType)>>> =
         const { std::cell::RefCell::new(None) };
@@ -6798,6 +6857,32 @@ impl EngineInner {
         use crate::coordinates::MapPoint;
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType as OT;
+
+        // A restored Original save may already contain the complete
+        // translated PassDoor order chain without Rust's parallel
+        // ActiveDoorPass mirror.  This crenel exit needs no door geometry:
+        // its terminal Execute arm only publishes the PC state before
+        // DoNextOrder selects PASSING_DOOR.
+        if action == OT::TransitionClimbingWallUpWaitingCrouchedCrenel
+            && self.get_entity(entity_id).is_some_and(|entity| {
+                entity.is_pc()
+                    && entity
+                        .actor_data()
+                        .is_some_and(|actor| actor.active_door_pass.is_none())
+            })
+        {
+            let entity = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("crenel transition completion owner disappeared");
+            entity.set_posture(Posture::Crouched);
+            entity
+                .actor_data_mut()
+                .expect("crenel transition completion owner is not an actor")
+                .action_state = ActionState::Waiting;
+            return;
+        }
 
         let Some((door_index, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
             entity.actor_data().and_then(|actor| {

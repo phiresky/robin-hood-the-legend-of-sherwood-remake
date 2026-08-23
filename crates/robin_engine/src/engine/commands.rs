@@ -2954,8 +2954,8 @@ impl EngineInner {
             crate::order::OrderType::WalkingUpright
         };
 
-        let gate_path = if actor_sector == target_sector {
-            Vec::new()
+        let (gate_path, gate_source_sector) = if actor_sector == target_sector {
+            (Vec::new(), None)
         } else {
             let (source_pos, source_sector) = super::movement::adapt_source_to_current_door(
                 &self.script_domains.interactables.doors,
@@ -2990,7 +2990,18 @@ impl EngineInner {
                 );
                 return false;
             };
-            path
+            (
+                path,
+                Some(
+                    crate::position_interface::SectorHandle::new(source_sector).unwrap_or_else(
+                        || {
+                            panic!(
+                                "target interaction for {actor:?} adapted to invalid source sector {source_sector}"
+                            )
+                        },
+                    ),
+                ),
+            )
         };
 
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(actor));
@@ -3006,6 +3017,7 @@ impl EngineInner {
         self.build_gate_movement_sequence(
             sim,
             actor,
+            gate_source_sector,
             gate_path,
             GoalShape::Target {
                 point: target_pos,
@@ -3638,6 +3650,14 @@ impl EngineInner {
                 let _ = self.build_gate_movement_sequence(
                     sim,
                     pc_id,
+                    Some(
+                        crate::position_interface::SectorHandle::new(adj_src_sector)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "swordfight route for {pc_id:?} adapted to invalid source sector {adj_src_sector}"
+                                )
+                            }),
+                    ),
                     path,
                     goal_shape,
                     arrival_layer,

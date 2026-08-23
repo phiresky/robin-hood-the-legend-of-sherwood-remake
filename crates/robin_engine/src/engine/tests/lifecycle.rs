@@ -325,6 +325,15 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.set_engine_locked(true);
+    let pending_owner = EntityId::Pc(crate::entity_id::PcId(319));
+    let pending_sequence = engine.orders.sequence_manager.launch_element(
+        crate::sequence::SequenceElement::new_movement(
+            1,
+            crate::element::Command::AssertPosition,
+            Some(pending_owner),
+            crate::order::OrderType::WalkingUpright,
+        ),
+    );
     engine
         .orders
         .pending_hades_kills
@@ -344,6 +353,16 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     assert!(
         engine.orders.pending_hades_kills.is_empty(),
         "deferred order work must drain before the locked mission gate"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(pending_sequence, 0)
+            .expect("locked gate must retain the registered sequence element")
+            .state,
+        crate::sequence::SequenceState::Todo,
+        "the locked mission gate must leave manager-FIFO work for a later hourglass"
     );
     assert_eq!(
         phases,
@@ -3021,6 +3040,80 @@ fn path_waiter_tail_halts_registered_roof_move_before_instruction() {
         "GoTo's post-launch Halt removes the roof Move from the manager FIFO"
     );
     assert_eq!(engine.actor_command(owner), Command::Wait);
+}
+
+#[test]
+fn fallback_staging_preserves_authored_path_waiter_tail_after_waiter_is_gone() {
+    use crate::element::Posture;
+    use crate::order::{AiOrderIntent, OrderType};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+
+    let mut fallback = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
+    fallback.halt_after_launch_for_path_waiter = true;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .orders
+        .push(fallback);
+
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+
+    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+    assert!(
+        engine.orders.pending_move_requests[0]
+            .1
+            .halt_after_launch_for_path_waiter,
+        "roof-fallback staging must not erase the path-waiter tail after the outgoing waiter was halted"
+    );
+}
+
+#[test]
+fn ordinary_move_staging_does_not_invent_path_waiter_tail() {
+    use crate::element::Posture;
+    use crate::order::{AiOrderIntent, OrderType};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .orders
+        .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
+
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+
+    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+    assert!(
+        !engine.orders.pending_move_requests[0]
+            .1
+            .halt_after_launch_for_path_waiter,
+        "ordinary movement without a live or inherited path waiter must remain unmarked"
+    );
 }
 
 #[test]

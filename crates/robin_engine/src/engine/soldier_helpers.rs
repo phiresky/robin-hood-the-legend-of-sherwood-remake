@@ -1837,6 +1837,7 @@ impl EngineInner {
                     let _ = self.build_gate_movement_sequence(
                         sim,
                         pc_id,
+                        Some(source_sector),
                         path,
                         GoalShape::Point {
                             point: MapPoint::new(goal.x, goal.y),

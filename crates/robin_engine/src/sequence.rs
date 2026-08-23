@@ -6702,6 +6702,67 @@ mod tests {
     }
 
     #[test]
+    fn live_hourglass_places_normal_successor_after_older_fifo_work() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Pc(crate::entity_id::PcId(319));
+
+        let mut route = Sequence::new();
+        route.append_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
+        route.append_element(make_simple_element(2, Command::Move, Some(owner)));
+        let route_id = mgr.launch_sequence(route);
+
+        let older_owner_a = EntityId::Soldier(crate::entity_id::SoldierId(4));
+        let older_owner_b = EntityId::Soldier(crate::entity_id::SoldierId(5));
+        let older_a = mgr.launch_element(make_simple_element(
+            1,
+            Command::LookLeft,
+            Some(older_owner_a),
+        ));
+        let older_b = mgr.launch_element(make_simple_element(
+            1,
+            Command::LookRight,
+            Some(older_owner_b),
+        ));
+
+        assert!(matches!(
+            mgr.pop_next_hourglass_action(),
+            Some(SequenceAction::InstructOwner {
+                sequence_id,
+                element_index: 0,
+                ..
+            }) if sequence_id == route_id
+        ));
+
+        // AssertPosition terminates inside Actor::Translate. Ready registers
+        // the level-2 Move at the live manager FIFO tail before Go returns.
+        mgr.element_in_progress(route_id, 0);
+        mgr.element_terminated(route_id, 0);
+        finish_test_condolations(&mut mgr);
+
+        let remaining = [
+            mgr.pop_next_hourglass_action(),
+            mgr.pop_next_hourglass_action(),
+            mgr.pop_next_hourglass_action(),
+        ];
+        assert!(matches!(
+            remaining[0],
+            Some(SequenceAction::InstructOwner { sequence_id, .. }) if sequence_id == older_a
+        ));
+        assert!(matches!(
+            remaining[1],
+            Some(SequenceAction::InstructOwner { sequence_id, .. }) if sequence_id == older_b
+        ));
+        assert!(matches!(
+            remaining[2],
+            Some(SequenceAction::InstructOwner {
+                owner: action_owner,
+                sequence_id,
+                element_index: 1,
+            }) if action_owner == owner && sequence_id == route_id
+        ));
+    }
+
+    #[test]
     fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
         let mut mgr = SequenceManager::new();
         let owner = EntityId::Pc(crate::entity_id::PcId(0));
