@@ -807,7 +807,7 @@ mod legacy_grid_topology_tests {
     use super::*;
     use crate::level_data::{
         ProtoGridChunk, RawBuildingEntry, RawDoor, RawJumpLine, RawJumpLinePair, RawJumpZone,
-        RawLift, SectorPolygon,
+        RawLift, RawSeekPoint, RawTacticData, SectorPolygon,
     };
 
     fn door(has_click_sector: bool) -> RawDoor {
@@ -1079,6 +1079,68 @@ mod legacy_grid_topology_tests {
             crate::fast_find_grid::SectorIndex::new(41).unwrap()
         );
         assert_ne!(outside.1, inside.1);
+    }
+
+    #[test]
+    fn tactic_seek_position_resolves_sparse_slot_to_exact_sector_object() {
+        let mut assets = LevelAssets::new();
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.mission.tactic_data = Some(RawTacticData {
+            reinforcement_points: Vec::new(),
+            ambush_points: Vec::new(),
+            seek_points: vec![RawSeekPoint {
+                x: 658,
+                y: 2905,
+                sector: 1,
+                level: 0,
+                direction: 7,
+            }],
+            archery_sectors: Vec::new(),
+        });
+        let mut engine = EngineInner::new();
+
+        // The environment stage runs before the current mission retains its
+        // topology. It must not install seek positions through stale assets.
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors: vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(9), Some(9)],
+            position_sector_indices: vec![
+                crate::fast_find_grid::SectorIndex::new(38),
+                crate::fast_find_grid::SectorIndex::new(39),
+            ],
+            ..LegacyGridTopologyAssets::default()
+        });
+        engine.load_environment_stage(&mut assets, &mut loaded, false);
+        assert!(engine.ai.global.seek_points.is_empty());
+
+        // The deferred stage observes only the newly retained topology and
+        // preserves duplicate-public-sector object identity.
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors: vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(18), Some(18)],
+            position_sector_indices: vec![
+                crate::fast_find_grid::SectorIndex::new(40),
+                crate::fast_find_grid::SectorIndex::new(41),
+            ],
+            ..LegacyGridTopologyAssets::default()
+        });
+        let tactic_position = EngineInner::resolve_sparse_position_handle(&assets, 1);
+        assert_eq!(tactic_position.get(), 18);
+        assert_eq!(
+            tactic_position.arena_index(),
+            crate::fast_find_grid::SectorIndex::new(41),
+            "a tactic RHposition must retain its sparse-slot sector identity rather than interpreting the slot as public sector 1"
+        );
+        engine.install_tactic_seek_points_stage(&assets, &loaded);
+        let installed = &engine.ai.global.seek_points[0].position;
+        assert_eq!((installed.x, installed.y), (658.0, 2905.0));
+        assert_eq!(installed.sector, Some(tactic_position));
     }
 
     #[test]
@@ -2976,6 +3038,7 @@ impl EngineInner {
             &self.world.fast_grid.level.sectors,
         )
         .unwrap_or_else(|detail| panic!("legacy position-sector registration drifted: {detail}"));
+        self.install_tactic_seek_points_stage(assets, &loaded);
         resolve_hiking_waypoint_sector_identities(assets, &self.world.fast_grid.level.sectors);
         let level_plan = level_builder.preflight(self, assets, &loaded)?;
         self.build_mission_level_stages(assets, &loaded, &level_plan)?;
@@ -4596,6 +4659,28 @@ impl EngineInner {
                 panic!("door endpoint slot {sparse_slot} has no exact runtime sector identity")
             });
         (crate::sector::SectorNumber::new(number), index)
+    }
+
+    /// Resolve an Original sparse sector slot into the exact `RHposition`
+    /// sector handle carried by tactic points and other serialized positions.
+    fn resolve_sparse_position_handle(
+        assets: &LevelAssets,
+        sparse_slot: u16,
+    ) -> crate::position_interface::SectorHandle {
+        let (number, index) = Self::resolve_sparse_position_sector(assets, sparse_slot);
+        let public = u16::try_from(number.get()).unwrap_or_else(|_| {
+            panic!(
+                "sparse position sector slot {sparse_slot} resolves to invalid public sector {}",
+                number.get()
+            )
+        });
+        crate::position_interface::SectorHandle::new(public)
+            .unwrap_or_else(|| {
+                panic!(
+                    "sparse position sector slot {sparse_slot} resolves to the null sector sentinel"
+                )
+            })
+            .with_arena_index(index)
     }
 
     /// Building loading replaces a door's stream-read inside pointer with

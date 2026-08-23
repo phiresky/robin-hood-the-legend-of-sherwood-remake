@@ -232,24 +232,6 @@ impl EngineInner {
         self.ai.global.reset_seek_points();
         self.ai.global.reset_ambush_points();
         if let Some(ref tactic) = loaded.mission.tactic_data {
-            for raw in &tactic.seek_points {
-                let dir = crate::ai::SeekPointDirection {
-                    position: crate::ai::Position {
-                        x: raw.x as f32,
-                        y: raw.y as f32,
-                        sector: crate::position_interface::SectorHandle::new(raw.sector),
-                        level: raw.level,
-                    },
-                    direction: raw.direction,
-                };
-                self.ai.global.add_seek_point_direction(&dir);
-            }
-            tracing::debug!(
-                "Loaded {} raw seek-point directions → {} unified seek points",
-                tactic.seek_points.len(),
-                self.ai.global.seek_points.len(),
-            );
-
             // Install ambush points.
             // `position_3d` and `id` get fixed up later by the AI-init
             // loop at `engine/ai.rs`.
@@ -551,6 +533,43 @@ impl EngineInner {
         self.world.static_sight_obstacle_active = vec![true; n];
         assets.static_sight_obstacles = std::sync::Arc::new(static_obstacles);
         tracing::info!("Loaded {} sight obstacles for AI line-of-sight", n);
+    }
+
+    /// Install tactic seek points after Original's sparse sector topology has
+    /// been retained and validated. `load_environment_stage` runs too early:
+    /// resolving there can observe stale topology from the previous mission.
+    pub(super) fn install_tactic_seek_points_stage(
+        &mut self,
+        assets: &LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) {
+        self.ai.global.reset_seek_points();
+        let Some(tactic) = loaded.mission.tactic_data.as_ref() else {
+            return;
+        };
+        for raw in &tactic.seek_points {
+            // The tactic stream stores an Original `marraySectors` slot,
+            // and `RHSeekPointDirection::InitializeFromMissionStream`
+            // resolves it through `GetSector(uwSector)`. Retain that exact
+            // arena object rather than interpreting the slot as a displayed
+            // sector number.
+            let sector = Self::resolve_sparse_position_handle(assets, raw.sector);
+            let dir = crate::ai::SeekPointDirection {
+                position: crate::ai::Position {
+                    x: raw.x as f32,
+                    y: raw.y as f32,
+                    sector: Some(sector),
+                    level: raw.level,
+                },
+                direction: raw.direction,
+            };
+            self.ai.global.add_seek_point_direction(&dir);
+        }
+        tracing::debug!(
+            "Loaded {} raw seek-point directions → {} unified seek points",
+            tactic.seek_points.len(),
+            self.ai.global.seek_points.len(),
+        );
     }
 
     /// Register mission script sectors only after the proto motion pass has
