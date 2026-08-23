@@ -22,7 +22,6 @@ use crate::element::{
 use crate::entities::Entities;
 use crate::movement::{AbilityKind, ActiveAbility};
 use crate::order::{Order, OrderType};
-use crate::position_interface::{ObstacleHandle, PlaneZCoeffs};
 use crate::sequence::{SequenceId, SequenceManager};
 use crate::sprite::MotionState as SpriteMotionState;
 
