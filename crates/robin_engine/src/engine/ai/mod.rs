@@ -3516,7 +3516,7 @@ fn build_one_entity_view(
                 crate::ai::Position {
                     x: position_element.position_map().x,
                     y: position_element.position_map().y,
-                    sector: position_element.sector(),
+                    sector: ai_view_position_sector(engine, position_element),
                     level: position_element.layer(),
                 }
             },
@@ -3543,6 +3543,213 @@ fn build_one_entity_view(
         );
     }
     view
+}
+
+/// Preserve the `RHSector*` carried by Original's `RHElement::GetPosition`
+/// when constructing an AI-visible `Position(element)`.
+///
+/// Legacy compatibility entities can still carry only a public sector
+/// number.  For a loaded spatial grid, recover that omitted pointer from the
+/// actor's current point and layer, never from the lossy public-number map.
+/// A wholly empty test/compatibility grid cannot prove an arena identity and
+/// deliberately remains number-only. Once topology exists, a missing or
+/// ambiguous identity is an invariant failure rather than an invitation to
+/// guess through the lossy public-number map.
+fn ai_view_position_sector(
+    engine: &EngineInner,
+    element: &crate::element::ElementData,
+) -> Option<crate::position_interface::SectorHandle> {
+    let sector = element.sector()?;
+    if let Some(index) = sector.arena_index() {
+        let exact =
+            super::movement::grid_sector_for_position_handle(&engine.world.fast_grid.level, sector)
+                .unwrap_or_else(|| panic!("AI Position carries missing exact sector {index:?}"));
+        assert_eq!(
+            exact.sector_number,
+            crate::sector::SectorNumber::new(i16::from(sector)),
+            "AI Position exact sector identity disagrees with its public number"
+        );
+        return Some(sector);
+    }
+
+    let public = crate::sector::SectorNumber::new(i16::from(sector));
+    let point = element.position_map();
+    let layer = element.layer();
+    let candidates = engine
+        .world
+        .fast_grid
+        .level
+        .sectors
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.sector_number == public && candidate.layer == layer)
+        .collect::<Vec<_>>();
+    let matches = candidates
+        .iter()
+        .copied()
+        .filter(|(_, candidate)| candidate.contains_point(point))
+        .collect::<Vec<_>>();
+    let index = match matches.as_slice() {
+        [(index, _)] => *index,
+        [] => match candidates.as_slice() {
+            [(index, _)] => *index,
+            [] if engine.world.fast_grid.level.sectors.is_empty() => return Some(sector),
+            [] => panic!(
+                "AI Position sector {public} layer {layer} is absent from the loaded exact arena"
+            ),
+            _ => panic!(
+                "AI Position sector {public} at {point:?} has no containing sector and is ambiguous in the exact arena"
+            ),
+        },
+        _ => panic!("AI Position sector {public} at {point:?} is ambiguous in the exact arena"),
+    };
+    let index = crate::fast_find_grid::SectorIndex::new(index as u32)
+        .expect("AI Position exact sector index exceeds the arena range");
+    Some(sector.with_arena_index(index))
+}
+
+#[cfg(test)]
+mod ai_view_position_sector_tests {
+    use super::*;
+    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::gate::Door;
+    use crate::sector::{SectorNumber, SectorType};
+
+    fn square_sector(number: i16, layer: u16, min: f32, max: f32) -> GridSector {
+        GridSector {
+            points: vec![
+                MapPoint::new(min, min),
+                MapPoint::new(max, min),
+                MapPoint::new(max, max),
+                MapPoint::new(min, max),
+            ],
+            bounding_box: MapBBox::from_coords(min, min, max, max),
+            sector_type: SectorType::MOTION | SectorType::AREA,
+            layer,
+            sector_number: SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
+    #[test]
+    fn entity_view_recovers_duplicate_public_goal_for_exact_gate_route() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let wrong = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(square_sector(88, 2, 300.0, 350.0), 2);
+        let goal = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(square_sector(88, 2, 100.0, 200.0), 2);
+        let source = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(square_sector(77, 2, 10.0, 60.0), 2);
+        assert_ne!(wrong, goal);
+
+        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        }));
+        let element = engine
+            .get_entity_mut(target)
+            .expect("test PC exists")
+            .element_data_mut();
+        element.active = true;
+        element.set_position_map(MapPoint::new(150.0, 150.0));
+        element.set_layer(2);
+        element.set_sector(crate::position_interface::SectorHandle::new(88));
+
+        let views = build_entity_views(&engine);
+        let goal_position = views.get(&target.index()).expect("PC view exists").position;
+        assert_eq!(
+            goal_position.sector.and_then(|sector| sector.arena_index()),
+            SectorIndex::new(goal)
+        );
+
+        let door = Door {
+            sector_out: SectorNumber::new(77),
+            sector_in: SectorNumber::new(88),
+            sector_out_index: SectorIndex::new(source),
+            sector_in_index: SectorIndex::new(goal),
+            point_out: MapPoint::new(50.0, 50.0),
+            point_in: MapPoint::new(150.0, 150.0),
+            layer_out: 2,
+            layer_in: 2,
+            ..Door::default()
+        };
+        let route = crate::gate::find_path_gates_with_sector_indices(
+            &[door],
+            (25.0, 25.0),
+            77,
+            SectorIndex::new(source),
+            (goal_position.x, goal_position.y),
+            goal_position.sector.unwrap().get(),
+            goal_position.sector.unwrap().arena_index(),
+            None,
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("exact EventView goal must remain routable through the indexed gate graph");
+        assert_eq!(route.len(), 1);
+    }
+
+    #[test]
+    fn empty_compatibility_grid_keeps_number_only_ai_position() {
+        let engine = EngineInner::new();
+        let mut element = crate::element::ElementData::default();
+        element.set_position_map(MapPoint::new(150.0, 150.0));
+        element.set_layer(2);
+        element.set_sector(crate::position_interface::SectorHandle::new(88));
+        assert_eq!(
+            ai_view_position_sector(&engine, &element)
+                .unwrap()
+                .arena_index(),
+            None
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ambiguous in the exact arena")]
+    fn duplicate_public_noncontaining_position_does_not_guess_an_identity() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        engine
+            .world
+            .fast_grid_mut()
+            .add_sector(square_sector(88, 2, 250.0, 300.0), 2);
+        engine
+            .world
+            .fast_grid_mut()
+            .add_sector(square_sector(88, 2, 350.0, 400.0), 2);
+        let mut element = crate::element::ElementData::default();
+        element.set_position_map(MapPoint::new(150.0, 150.0));
+        element.set_layer(2);
+        element.set_sector(crate::position_interface::SectorHandle::new(88));
+        let _ = ai_view_position_sector(&engine, &element);
+    }
 }
 
 fn build_nets_by_victim(
