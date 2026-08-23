@@ -119,6 +119,15 @@ pub(super) fn opponent_sword_strike_time_limit(
     }
 }
 
+fn resolve_stale_impossible_action_done(
+    captured_deadline: Option<i16>,
+) -> crate::sprite::ActionDoneTiming {
+    captured_deadline.map_or(
+        crate::sprite::ActionDoneTiming::Impossible,
+        crate::sprite::ActionDoneTiming::Frames,
+    )
+}
+
 impl EngineInner {
     /// Return the proposal deadline using Original's deliberately mixed view:
     /// `RHElementActor::GetAnimation()` exposes the live selected order, while
@@ -155,15 +164,11 @@ impl EngineInner {
                 self.world.original_creation_order(proposer),
                 self.world.original_creation_order(opponent),
             );
-            crate::sprite::ActionDoneTiming::Frames(
+            resolve_stale_impossible_action_done(
                 self.control
                     .original_impossible_action_done_deadlines
                     .get_mut(&key)
-                    .and_then(std::collections::VecDeque::pop_front)
-                    // No event means Original did not reach the recorder's
-                    // opponent-input site on this generic resolver call.
-                    // Historical schemas also lack this event boundary.
-                    .unwrap_or(-1),
+                    .and_then(std::collections::VecDeque::pop_front),
             )
         } else {
             timing
@@ -3102,7 +3107,10 @@ impl EngineInner {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_within_smalltalk_strike_range, opponent_sword_strike_time_limit};
+    use super::{
+        is_within_smalltalk_strike_range, opponent_sword_strike_time_limit,
+        resolve_stale_impossible_action_done,
+    };
     use crate::combat::{self, NearbyVictim, ProposedCombatAction, StrikeSelectionContext};
     use crate::element::Camp;
     use crate::profiles::{HtHWeaponProfile, ThrustProfile, WeaponThrustKind};
@@ -3221,6 +3229,20 @@ mod tests {
             propose(crate::sprite::ActionDoneTiming::Frames(18)),
             Some(ProposedCombatAction::Parry),
             "frame 732's valid 18-frame deadline admits the zero-frame parry transition"
+        );
+    }
+
+    #[test]
+    fn historical_trace_keeps_uncaptured_stale_impossible_deadline_rejecting() {
+        assert_eq!(
+            resolve_stale_impossible_action_done(None),
+            crate::sprite::ActionDoneTiming::Impossible,
+            "an older trace without the captured over-read must not turn an impossible marker into permissive -1",
+        );
+        assert_eq!(
+            resolve_stale_impossible_action_done(Some(-16230)),
+            crate::sprite::ActionDoneTiming::Frames(-16230),
+            "newer traces preserve the captured legacy wrapped deadline",
         );
     }
 
