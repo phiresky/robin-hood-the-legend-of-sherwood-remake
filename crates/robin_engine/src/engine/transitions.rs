@@ -47,37 +47,6 @@ struct TransitionCtx {
     /// element is a Movement variant; set to `None` for every other
     /// command.
     movement_action: Option<OrderType>,
-    /// The actor's current posture.
-    // TODO: never read by any live branch yet; needs C++-comparison
-    // triage before deciding whether a missing parity branch should
-    // consume it or the field should be dropped.
-    #[allow(dead_code)]
-    actor_posture: Posture,
-    /// The actor's current action state.
-    // TODO: unread pending C++-comparison triage (see actor_posture).
-    #[allow(dead_code)]
-    actor_action_state: ActionState,
-    /// The posture the actor is scheduled to have once transition
-    /// orders finish.
-    // TODO: unread pending C++-comparison triage (see actor_posture).
-    #[allow(dead_code)]
-    posture_after_transition: Posture,
-    /// The action state scheduled after transition orders finish.
-    // TODO: unread pending C++-comparison triage (see actor_posture).
-    #[allow(dead_code)]
-    action_state_after_transition: ActionState,
-    /// Whether this element is part of a movement chain — movement
-    /// sub-elements inherit their transition orders from the
-    /// surrounding movement sequence, so a few action-transition
-    /// branches skip the redundant queue on them.
-    // TODO: unread pending C++-comparison triage (see actor_posture).
-    #[allow(dead_code)]
-    is_part_of_movement: bool,
-    /// Soldier attentive flag.  Only meaningful for soldier actors;
-    /// defaults to `false` for everyone else.
-    // TODO: unread pending C++-comparison triage (see actor_posture).
-    #[allow(dead_code)]
-    attentive: bool,
     /// For PC `WAIT` in a force-crouched sector: overrides the default
     /// upright flag set with crouched flags.  Plumbed via the context
     /// so the pure flag helper doesn't need sector access.
@@ -764,20 +733,6 @@ fn build_ctx(
         .sequence_manager
         .get_element(seq_id, elem_idx)?;
 
-    let actor_action_state = entity
-        .actor_data()
-        .map(|a| a.action_state)
-        .unwrap_or_default();
-    let actor_posture = entity.element_data().posture;
-    let is_part_of_movement = matches!(
-        elem.command,
-        Command::Move
-            | Command::MoveOk
-            | Command::Seek
-            | Command::PassDoor
-            | Command::JumpCmd
-            | Command::AssertPosition
-    );
     let movement_action = match &elem.data {
         SequenceElementData::Movement { action, .. } => Some(*action),
         _ => None,
@@ -786,8 +741,6 @@ fn build_ctx(
         SequenceElementData::Movement { gate_id, .. } => *gate_id,
         _ => None,
     };
-
-    let attentive = entity.enemy_ai().map(|e| e.attentive).unwrap_or(false);
 
     // Interaction antagonist: landed RHElementNet detection for PC `TAKE`.
     // Inventory bonus nets are RHElementBonus objects in Original and fall
@@ -853,12 +806,6 @@ fn build_ctx(
         kind: entity.kind(),
         command: elem.command,
         movement_action,
-        actor_posture,
-        actor_action_state,
-        posture_after_transition: elem.posture_after_transition,
-        action_state_after_transition: elem.action_state_after_transition,
-        is_part_of_movement,
-        attentive,
         force_crouched,
         door_type,
         door_lift_kind,
@@ -2666,12 +2613,6 @@ mod tests {
             kind: ElementKind::ActorPc,
             command: Command::PassDoor,
             movement_action: Some(OrderType::WalkingUpright),
-            actor_posture: P::Crouched,
-            actor_action_state: AS::Moving,
-            posture_after_transition: P::Crouched,
-            action_state_after_transition: AS::Moving,
-            is_part_of_movement: true,
-            attentive: false,
             force_crouched: false,
             door_type: Some(crate::gate::DoorType::LiftHighCrenel),
             door_lift_kind: Some(crate::sector::LiftType::Wall),
@@ -2716,12 +2657,6 @@ mod tests {
             kind: ElementKind::ActorPc,
             command: Command::PassDoor,
             movement_action: Some(OrderType::WalkingUpright),
-            actor_posture: P::Crouched,
-            actor_action_state: AS::Moving,
-            posture_after_transition: P::Crouched,
-            action_state_after_transition: AS::Moving,
-            is_part_of_movement: true,
-            attentive: false,
             force_crouched: false,
             door_type: Some(crate::gate::DoorType::LiftHigh),
             door_lift_kind: Some(crate::sector::LiftType::Wall),
