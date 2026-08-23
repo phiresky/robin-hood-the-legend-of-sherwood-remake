@@ -69,7 +69,7 @@ pub enum EngineCommand {
         actor_handle: i32,
         x: f32,
         y: f32,
-        dest_layer_sector: Option<(u16, u16)>,
+        dest_layer_sector: Option<(u16, crate::position_interface::SectorHandle)>,
         spawn_elevation_probe: Option<(f32, f32)>,
     },
     /// Mission won.

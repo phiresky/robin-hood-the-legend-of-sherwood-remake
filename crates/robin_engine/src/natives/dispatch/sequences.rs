@@ -413,7 +413,7 @@ impl NativeContext<'_, '_> {
                     tracing::error!("Script Error in RecordMove: illegal movement style {style}");
                     return 0;
                 }
-                let dest_layer_sector = self.resolve_location_layer_sector(loc);
+                let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
                 // Chained Record* moves for the same actor start
                 // from the previous target, not the actor's live
                 // position.
@@ -427,7 +427,8 @@ impl NativeContext<'_, '_> {
                     .map(|r| r.current_size())
                     .unwrap_or(0);
                 // Expand the move into the sequence.
-                let (goal_layer, goal_sector) = dest_layer_sector.unwrap_or((0, 0));
+                let (goal_layer, goal_sector) =
+                    dest_layer_sector.expect("validated RecordMove point has no motion sector");
                 let (sx, sy, src_layer, src_sector) =
                     origin.unwrap_or((dx, dy, goal_layer, goal_sector));
                 self.append_move_to_sequence(
@@ -480,7 +481,7 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
-                let dest_layer_sector = self.resolve_location_layer_sector(loc);
+                let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
                 let origin = self.update_motion_start_position(actor, (dx, dy), dest_layer_sector);
                 let action = Self::movement_style(style);
                 let pre_record_size = self
@@ -490,7 +491,8 @@ impl NativeContext<'_, '_> {
                     .as_ref()
                     .map(|r| r.current_size())
                     .unwrap_or(0);
-                let (goal_layer, goal_sector) = dest_layer_sector.unwrap_or((0, 0));
+                let (goal_layer, goal_sector) =
+                    dest_layer_sector.expect("validated RecordMoveNear point has no motion sector");
                 let (sx, sy, src_layer, src_sector) =
                     origin.unwrap_or((dx, dy, goal_layer, goal_sector));
                 self.append_move_to_sequence(
@@ -550,19 +552,25 @@ impl NativeContext<'_, '_> {
                 // Find nearest door whose mid-point is within
                 // 300px of the target; if none, return 0.
                 let max_sq_dist = 300.0_f32 * 300.0;
-                let mut best: Option<(f32, f32, f32, u16, u16)> = None;
+                let mut best: Option<(
+                    f32,
+                    f32,
+                    f32,
+                    u16,
+                    crate::position_interface::SectorHandle,
+                )> = None;
                 for door in &self.script_domains.interactables.doors {
                     let ddx = door.point_mid.x - lx;
                     let ddy = door.point_mid.y - ly;
                     let sq = ddx * ddx + ddy * ddy;
                     if sq < max_sq_dist && (best.is_none() || sq < best.unwrap().0) {
-                        best = Some((
-                            sq,
-                            door.point_in.x,
-                            door.point_in.y,
-                            door.layer_in,
-                            door.sector_in.0 as u16,
-                        ));
+                        let mut sector =
+                            crate::position_interface::SectorHandle::new(u16::from(door.sector_in))
+                                .expect("door interior uses null sector sentinel");
+                        if let Some(index) = door.sector_in_index {
+                            sector = sector.with_arena_index(index);
+                        }
+                        best = Some((sq, door.point_in.x, door.point_in.y, door.layer_in, sector));
                     }
                 }
                 let Some((_, ix, iy, door_layer, door_sector)) = best else {
@@ -649,7 +657,7 @@ impl NativeContext<'_, '_> {
                 // script locations carry that data; computed ones
                 // do not, so we leave layer/sector untouched in
                 // that case.
-                let dest_layer_sector = self.resolve_location_layer_sector(loc);
+                let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
 
                 // `direction == -1` means "use actor's current direction".
                 let actor_dir = self
@@ -698,9 +706,11 @@ impl NativeContext<'_, '_> {
                             ed.in_honolulu = false;
                         }
                         ed.set_position_map(crate::coordinates::MapPoint { x: ox, y: oy });
-                        if let Some((layer, sector_num)) = dest_layer_sector {
+                        if let Some((layer, sector)) = dest_layer_sector {
                             ed.set_layer(layer);
-                            ed.set_sector(crate::position_interface::SectorHandle::new(sector_num));
+                            ed.sprite
+                                .position_iface
+                                .set_sector_topology(Some(sector), sector.arena_index());
                         }
                         ed.update_grid_cell();
                     } else {
@@ -726,7 +736,8 @@ impl NativeContext<'_, '_> {
                 // Always refresh the cached destination on both
                 // the insert and update paths.
                 if let Some(rec) = self.script_state.sequence_recorder.recording.as_mut() {
-                    let (layer, sector) = dest_layer_sector.unwrap_or((0, 0));
+                    let (layer, sector) = dest_layer_sector
+                        .expect("validated RecordEnterGame point has no motion sector");
                     rec.moving_actors.insert(
                         actor,
                         crate::sequence::RecordingMotionTarget {
@@ -810,14 +821,15 @@ impl NativeContext<'_, '_> {
                 // leave walk (not the actor's live position,
                 // which the EnterGame teleport pinned to the
                 // *outside* spawn point).
-                let dest_layer_sector = self.resolve_location_layer_sector(loc);
+                let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
                 let origin = self.update_motion_start_position(actor, (dx, dy), dest_layer_sector);
 
                 // Step 1: append_move_to_sequence(origin → script
                 // point).  Cross-sector traversals expand into
                 // ASSERT_POSITION + per-gate sub-elements;
                 // same-sector goal collapses to a single MOVE.
-                let (goal_layer, goal_sector) = dest_layer_sector.unwrap_or((0, 0));
+                let (goal_layer, goal_sector) = dest_layer_sector
+                    .expect("validated RecordLeaveGame point has no motion sector");
                 let (sx, sy, src_layer, src_sector) =
                     origin.unwrap_or((dx, dy, goal_layer, goal_sector));
                 self.append_move_to_sequence(
@@ -1412,8 +1424,7 @@ impl NativeContext<'_, '_> {
                     let corpse_sector = corpse_entity
                         .element_data()
                         .sector()
-                        .map(u16::from)
-                        .unwrap_or(0);
+                        .unwrap_or_else(|| panic!("RecordTakeCorpse target has no source sector"));
                     // Replays `update_motion_start_position` on
                     // the taker so a chained Record* sees the
                     // corpse as the new motion target.

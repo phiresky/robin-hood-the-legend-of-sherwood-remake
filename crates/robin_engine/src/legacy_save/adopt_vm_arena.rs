@@ -503,6 +503,9 @@ impl LegacyVmArenaBuilder<'_> {
                         position: (location.position.x, location.position.y),
                         layer: Some(location.layer),
                         sector: location.sector.0,
+                        sector_handle: location.sector.0.map(|slot| {
+                            super::adopt::retained_position_sector_handle(self.assets, slot)
+                        }),
                         active: location.active,
                         legacy_dummy: location.legacy_dummy,
                     })

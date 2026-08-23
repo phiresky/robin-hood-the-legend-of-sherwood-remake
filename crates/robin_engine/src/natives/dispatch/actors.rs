@@ -326,7 +326,7 @@ impl NativeContext<'_, '_> {
                     Some(entity) => {
                         let pos = entity.element_data().position_map();
                         let layer = entity.element_data().layer();
-                        let sector = entity.element_data().sector().map(|s| s.get());
+                        let sector = entity.element_data().sector();
                         let meta = sector.map(|s| (layer, s));
                         self.create_computed_location_full(pos.x, pos.y, meta)
                     }

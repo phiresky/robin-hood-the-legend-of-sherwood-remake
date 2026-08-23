@@ -117,6 +117,7 @@ impl ScriptRuntime {
             location_positions: assets.scripts.location_positions.clone(),
             location_layers: assets.scripts.location_layers.clone(),
             location_sectors: assets.scripts.location_sectors.clone(),
+            location_sector_handles: assets.scripts.location_sector_handles.clone(),
             script_zone_grid_indices: assets.scripts.zone_grid_indices.clone(),
             patch_animation_entities: assets.entities.patch_animation_entities.clone(),
             lua_names: assets.scripts.names.clone(),

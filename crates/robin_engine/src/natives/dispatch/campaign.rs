@@ -623,8 +623,8 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
-                let layer_sector_a = self.resolve_location_layer_sector(loc_a);
-                let layer_sector_b = self.resolve_location_layer_sector(loc_b);
+                let layer_sector_a = self.resolve_location_layer_sector_handle(loc_a);
+                let layer_sector_b = self.resolve_location_layer_sector_handle(loc_b);
                 // If both sides resolve to a layer/sector, they
                 // must match.  If only one (or neither) resolves
                 // — e.g. computed locations that inherited no
@@ -632,11 +632,13 @@ impl NativeContext<'_, '_> {
                 // whatever metadata is available; the source
                 // point just carries its own layer/sector
                 // forward.
-                if let (Some(a), Some(b)) = (layer_sector_a, layer_sector_b)
-                    && a != b
+                if let (Some((layer_a, sector_a)), Some((layer_b, sector_b))) =
+                    (layer_sector_a, layer_sector_b)
+                    && (layer_a != layer_b
+                        || !crate::natives::script_sector_identities_match(sector_a, sector_b))
                 {
                     tracing::error!(
-                        "Script Error in ComputeLocationBetween: locations span different layers/sectors (a={a:?}, b={b:?})"
+                        "Script Error in ComputeLocationBetween: locations span different layers/sectors (a={layer_sector_a:?}, b={layer_sector_b:?})"
                     );
                     return 0;
                 }

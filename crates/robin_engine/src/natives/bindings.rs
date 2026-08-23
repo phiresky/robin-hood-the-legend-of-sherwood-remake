@@ -19,6 +19,7 @@ pub struct AttachedScriptBindings {
     pub location_positions: Arc<Vec<(f32, f32)>>,
     pub location_layers: Arc<Vec<u16>>,
     pub location_sectors: Arc<Vec<u16>>,
+    pub location_sector_handles: Arc<Vec<Option<crate::position_interface::SectorHandle>>>,
     pub script_zone_grid_indices: Arc<Vec<u32>>,
     pub patch_animation_entities: Arc<Vec<Option<i32>>>,
     pub lua_names: Arc<ScriptNameBindings>,

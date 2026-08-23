@@ -956,6 +956,12 @@ pub struct LevelScriptAssets {
     pub location_layers: std::sync::Arc<Vec<u16>>,
     /// Motion-sector numbers parallel to `location_positions`.
     pub location_sectors: std::sync::Arc<Vec<u16>>,
+    /// Exact Original position-sector identities parallel to
+    /// `location_positions`. Entries remain `None` only for legacy/test
+    /// bindings that predate retained sparse-sector topology.
+    #[serde(default)]
+    pub location_sector_handles:
+        std::sync::Arc<Vec<Option<crate::position_interface::SectorHandle>>>,
     /// Number of buildings exposed to the mission script.
     pub building_count: usize,
     /// Number of hiking paths exposed to the mission script.

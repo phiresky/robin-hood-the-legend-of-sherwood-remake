@@ -752,7 +752,7 @@ fn start_returns_one() {
 fn recorded_direct_gate_route_retains_pass_door_direction() {
     use crate::coordinates::MapPoint;
     use crate::gate::Door;
-    use crate::sequence::{MoveFlags, RecordingSession, SequenceElementData};
+    use crate::sequence::{RecordingSession, SequenceElementData};
 
     // Seed-2M linux2/Profile_002/ExQuickSave/replay-001 reaches this path:
     // script RecordMove builds a direct route from sector_out to sector_in.
@@ -790,10 +790,10 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
             actor,
             crate::order::OrderType::WalkingUpright,
             (876.0, 879.0),
-            103,
+            crate::position_interface::SectorHandle::new(103).unwrap(),
             4,
             (859.0, 897.0),
-            98,
+            crate::position_interface::SectorHandle::new(98).unwrap(),
             3,
             None,
             0.0,
@@ -827,6 +827,231 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
     assert_eq!(
         *direction, 1,
         "SetGate copies direct RHGate::mbDirect into the selected movement element"
+    );
+}
+
+#[test]
+fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_control() {
+    use crate::coordinates::MapPoint;
+    use crate::fast_find_grid::SectorIndex;
+    use crate::gate::{Door, build_gate_links};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{RecordingSession, SequenceElementData};
+
+    fn handle(public: u16, arena: u32, exact: bool) -> SectorHandle {
+        let handle = SectorHandle::new(public).unwrap();
+        if exact {
+            handle.with_arena_index(SectorIndex::new(arena).unwrap())
+        } else {
+            handle
+        }
+    }
+
+    for exact in [true, false] {
+        let mut host = BoundScriptEffects::new();
+        host.entities =
+            crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
+        host.entities
+            .get_legacy_slot_mut(0)
+            .unwrap()
+            .1
+            .element_data_mut()
+            .set_position_map(MapPoint::new(0.0, 0.0));
+        host.entities
+            .get_legacy_slot_mut(0)
+            .unwrap()
+            .1
+            .element_data_mut()
+            .sprite
+            .position_iface
+            .set_sector_topology(
+                Some(handle(103, 10_010, exact)),
+                exact.then(|| SectorIndex::new(10_010).unwrap()),
+            );
+        let mut doors = (0..123)
+            .map(|index| Door {
+                active: false,
+                sector_out: crate::sector::SectorNumber::new(1000 + index),
+                sector_in: crate::sector::SectorNumber::new(2000 + index),
+                sector_out_index: exact.then(|| SectorIndex::new(1000 + index as u32).unwrap()),
+                sector_in_index: exact.then(|| SectorIndex::new(2000 + index as u32).unwrap()),
+                ..Door::default()
+            })
+            .collect::<Vec<_>>();
+        let sectors = [
+            (103, 10_010),
+            (66, 10_011),
+            (66, 10_012),
+            (72, 10_013),
+            (89, 10_014),
+        ];
+        let public = |index: usize| {
+            if !exact && index == 2 {
+                67
+            } else {
+                sectors[index].0
+            }
+        };
+        let make_door = |out: usize, inside: usize, direct_points: bool| Door {
+            active: true,
+            point_out: MapPoint::new(out as f32 * 20.0, 0.0),
+            point_in: MapPoint::new(inside as f32 * 20.0, 0.0),
+            point_mid: MapPoint::new((out + inside) as f32 * 10.0, 0.0),
+            sector_out: crate::sector::SectorNumber::new(public(out)),
+            sector_in: crate::sector::SectorNumber::new(public(inside)),
+            sector_out_index: exact.then(|| SectorIndex::new(sectors[out].1).unwrap()),
+            sector_in_index: exact.then(|| SectorIndex::new(sectors[inside].1).unwrap()),
+            layer_out: if direct_points {
+                out as u16
+            } else {
+                inside as u16
+            },
+            layer_in: if direct_points {
+                inside as u16
+            } else {
+                out as u16
+            },
+            ..Door::default()
+        };
+        doors[118] = make_door(0, 1, true); // direct
+        doors[117] = make_door(2, 1, false); // indirect: 1 -> 2
+        doors[122] = make_door(2, 3, true); // direct
+        doors[120] = make_door(4, 3, false); // indirect: 3 -> 4
+        build_gate_links(&mut doors);
+        let auth = host
+            .entities
+            .get_legacy_slot(0)
+            .unwrap()
+            .1
+            .actor_auth_info();
+        let expected_path = crate::gate::find_path_gates_with_sector_indices(
+            &doors,
+            (0.0, 0.0),
+            103,
+            exact.then(|| SectorIndex::new(10_010).unwrap()),
+            (80.0, 0.0),
+            89,
+            exact.then(|| SectorIndex::new(10_014).unwrap()),
+            Some(&auth),
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .unwrap();
+        assert_eq!(
+            expected_path
+                .iter()
+                .map(|step| u32::from(step.door_index))
+                .collect::<Vec<_>>(),
+            vec![118, 117, 122, 120]
+        );
+        host.script_domains.interactables.doors = doors;
+        host.state.sequence_recorder.recording = Some(RecordingSession::new());
+        let actor = ScriptHandleCodec::actor_handle_from_index(0);
+        host.bindings.script_location_count = 1;
+        host.bindings.script_point_count = 1;
+        host.bindings.location_positions = std::sync::Arc::new(vec![(80.0, 0.0)]);
+        host.bindings.location_layers = std::sync::Arc::new(vec![2]);
+        host.bindings.location_sectors = std::sync::Arc::new(vec![89]);
+        host.bindings.location_sector_handles =
+            std::sync::Arc::new(vec![exact.then(|| handle(89, 10_014, true))]);
+        assert!(
+            crate::engine::current_door_for_route_source(
+                host.entities.get_legacy_slot(0).unwrap().1
+            )
+            .0
+            .is_null()
+        );
+        assert_eq!(
+            host.entities
+                .get_legacy_slot(0)
+                .unwrap()
+                .1
+                .element_data()
+                .sector()
+                .unwrap()
+                .arena_index(),
+            exact.then(|| SectorIndex::new(10_010).unwrap())
+        );
+        assert_eq!(
+            host.entities
+                .get_legacy_slot(0)
+                .unwrap()
+                .1
+                .element_data()
+                .position_map(),
+            MapPoint::new(0.0, 0.0)
+        );
+        let location = ScriptHandleCodec::location_handle_from_index(0);
+        {
+            let capabilities = NativeSessionCapabilities::new(
+                &host.simulation,
+                &mut host.entities,
+                &mut host.ai_global,
+                &mut host.fast_grid,
+            );
+            let context = NativeContext::with_bindings(
+                &mut host.host,
+                &mut host.state,
+                &mut host.script_domains,
+                &host.bindings,
+                &capabilities,
+            );
+            assert_eq!(
+                context
+                    .resolve_location_layer_sector_handle(location)
+                    .unwrap()
+                    .1
+                    .arena_index(),
+                exact.then(|| SectorIndex::new(10_014).unwrap())
+            );
+        }
+        let mut stack = NativeStack::default();
+        stack.push_i32(actor);
+        stack.push_i32(location);
+        stack.push_i32(0);
+        assert_eq!(
+            call_host_native(&mut host, NativeFn::RecordMove, &mut stack),
+            1
+        );
+        let recording = host.state.sequence_recorder.recording.as_ref().unwrap();
+        assert_eq!(
+            recording.moving_actors[&actor].sector.arena_index(),
+            exact.then(|| SectorIndex::new(10_014).unwrap())
+        );
+        let gate_ids = recording
+            .sequence
+            .elements
+            .iter()
+            .filter_map(|element| match &element.data {
+                SequenceElementData::Movement { gate_id, .. } => *gate_id,
+                _ => None,
+            })
+            .map(u32::from)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            gate_ids,
+            vec![118, 117, 122, 120],
+            "recorded commands: {:?}",
+            recording
+                .sequence
+                .elements
+                .iter()
+                .map(|element| element.command)
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+#[should_panic(expected = "script-recorded gate path references missing door 7")]
+fn recorded_gate_path_missing_door_is_an_invariant_failure() {
+    super::script_gate_path_door(
+        &[],
+        crate::gate::GatePathStep {
+            door_index: crate::gate::DoorIndex(7),
+            direct: true,
+        },
     );
 }
 
@@ -1156,6 +1381,7 @@ fn camera_commands_copy_static_and_vm_local_computed_points() {
             position: (90.0, 123.0),
             layer: Some(2),
             sector: Some(44),
+            sector_handle: None,
             active: true,
             legacy_dummy: false,
         }));
@@ -1451,6 +1677,66 @@ fn compute_location_between() {
         }
         other => panic!("expected return, got {other:?}"),
     }
+}
+
+#[test]
+fn get_actor_location_retains_exact_sector_for_later_record_move() {
+    let mut host = BoundScriptEffects::new();
+    let mut soldier = native_test_soldier();
+    let arena = crate::fast_find_grid::SectorIndex::new(91).unwrap();
+    soldier
+        .element_data_mut()
+        .sprite
+        .position_iface
+        .set_sector_topology(
+            crate::position_interface::SectorHandle::new(44),
+            Some(arena),
+        );
+    host.entities.push(Some(soldier));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    let location = call_host_native(&mut host, NativeFn::GetActorLocation, &mut stack);
+    let index = ScriptHandleCodec::location_index(location).unwrap();
+    let computed = host.state.computed_locations[index - host.bindings.script_location_count]
+        .as_ref()
+        .unwrap();
+    assert_eq!(computed.sector_handle.unwrap().arena_index(), Some(arena));
+}
+
+#[test]
+#[should_panic(expected = "exact RHposition provenance is required")]
+fn record_move_rejects_mixed_exact_source_and_legacy_number_only_computed_goal() {
+    let mut host = BoundScriptEffects::new();
+    let mut soldier = native_test_soldier();
+    let source_arena = crate::fast_find_grid::SectorIndex::new(90).unwrap();
+    soldier
+        .element_data_mut()
+        .sprite
+        .position_iface
+        .set_sector_topology(
+            crate::position_interface::SectorHandle::new(44),
+            Some(source_arena),
+        );
+    host.entities.push(Some(soldier));
+    host.state.sequence_recorder.recording = Some(crate::sequence::RecordingSession::new());
+    host.state
+        .computed_locations
+        .push(Some(ComputedScriptLocation {
+            position: (10.0, 10.0),
+            layer: Some(0),
+            sector: Some(44),
+            sector_handle: None,
+            active: true,
+            legacy_dummy: false,
+        }));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let location = ScriptHandleCodec::location_handle_from_index(0);
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(location);
+    stack.push_i32(0);
+    let _ = call_host_native(&mut host, NativeFn::RecordMove, &mut stack);
 }
 
 #[test]

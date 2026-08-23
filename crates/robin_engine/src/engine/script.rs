@@ -994,7 +994,10 @@ impl EngineInner {
                     actor_handle,
                     x,
                     y,
-                    dest_layer_sector,
+                    dest_layer_sector: dest_layer_sector.and_then(|(layer, sector)| {
+                        crate::position_interface::SectorHandle::new(sector)
+                            .map(|sector| (layer, sector))
+                    }),
                     spawn_elevation_probe: None,
                 }],
             );
@@ -5511,15 +5514,18 @@ impl EngineInner {
                         tracing::warn!("SetActorLocation: actor {actor_handle} missing entity");
                         continue;
                     };
-                    if let Some((layer, sector_num)) = dest_layer_sector {
-                        let sector = crate::position_interface::SectorHandle::new(sector_num);
+                    if let Some((layer, sector)) = dest_layer_sector {
                         let entity = self
                             .world
                             .entities
                             .get_mut(id)
                             .expect("SetActorLocation actor vanished before layer mutation");
                         entity.element_data_mut().set_layer(layer);
-                        entity.element_data_mut().set_sector(sector);
+                        entity
+                            .element_data_mut()
+                            .sprite
+                            .position_iface
+                            .set_sector_topology(Some(sector), sector.arena_index());
                     }
                     let pt = crate::coordinates::MapPoint { x, y };
                     if !is_actor {
@@ -5554,8 +5560,8 @@ impl EngineInner {
                     // state writes in place.  Required ordering: if
                     // the destination sector isn't a motion area,
                     // skip the rest.
-                    if let Some((_layer, sector_num)) = dest_layer_sector {
-                        let sector_handle = crate::sector::SectorNumber::new(sector_num as i16);
+                    if let Some((_layer, sector)) = dest_layer_sector {
+                        let sector_handle = crate::sector::SectorNumber::new(sector.get() as i16);
                         let valid = self
                             .grid_sector_by_number(sector_handle)
                             .map(|gs| gs.sector_type.is_motion() && gs.sector_type.is_area())
@@ -5590,9 +5596,9 @@ impl EngineInner {
                     // skipped — the obstacle only gets rebound when
                     // the destination was a real script point or
                     // script sector.
-                    if let Some((layer, sector_num)) = dest_layer_sector {
+                    if let Some((layer, sector)) = dest_layer_sector {
                         let new_obstacle =
-                            self.get_projection_area_index(assets, sector_num, layer, pt);
+                            self.get_projection_area_index(assets, sector.get(), layer, pt);
                         let new_material = new_obstacle.and_then(|oi| {
                             self.sight_obstacles(assets).get(oi as usize).map(|obs| {
                                 crate::element::GameMaterial::from_u32(obs.material as u32)
@@ -5627,12 +5633,11 @@ impl EngineInner {
                     // actor's stale cached plane — acceptable for
                     // ordinary SetActorLocation but wrong for an
                     // outside-of-map enter-game spawn.
-                    if let (Some((layer, sector_num)), Some((probe_x, probe_y))) =
+                    if let (Some((layer, sector)), Some((probe_x, probe_y))) =
                         (dest_layer_sector, spawn_elevation_probe)
                     {
-                        let handle = crate::position_interface::SectorHandle::new(sector_num);
                         let elev = self
-                            .position_to_point_3d(assets, handle, layer, probe_x, probe_y)
+                            .position_to_point_3d(assets, Some(sector), layer, probe_x, probe_y)
                             .z;
                         if let Some(entity) = self.world.entities.get_mut(id) {
                             // `set_position` writes the 3D point and
@@ -6092,6 +6097,7 @@ mod script_context_tests {
                 position: (12.5, -8.0),
                 layer: Some(2),
                 sector: Some(44),
+                sector_handle: None,
                 active: true,
                 legacy_dummy: false,
             }));

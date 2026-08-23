@@ -693,6 +693,71 @@ fn validate_legacy_position_sector_bijection(
     Ok(())
 }
 
+/// Resolve the sector pointer stored on every authored script location after
+/// the current mission's sparse `marraySectors` topology has been retained.
+/// `RHScript::RecordMove` passes this exact `RHSector*` through to
+/// `RHSequence::AppendMoveToSequence`; reducing it to the public number makes
+/// duplicate-number sectors disconnected from exact door endpoints.
+fn retain_script_location_sector_identities(
+    assets: &mut LevelAssets,
+    loaded: &crate::level_data::LoadedLevel,
+) {
+    let Some(script_objects) = loaded.mission.script_objects.as_ref() else {
+        assets.scripts.location_sector_handles = std::sync::Arc::new(Vec::new());
+        return;
+    };
+    let topology = assets
+        .legacy_grid_topology
+        .as_ref()
+        .expect("script location resolution requires retained Original sector topology");
+    let resolve = |sparse_slot: u16| {
+        let slot = usize::from(sparse_slot);
+        let public = topology
+            .position_sector_numbers
+            .get(slot)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| {
+                panic!("script location references unmappable Original sector slot {sparse_slot}")
+            });
+        let arena = topology
+            .position_sector_indices
+            .get(slot)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| {
+                panic!("script location sector slot {sparse_slot} has no exact runtime identity")
+            });
+        let public = u16::try_from(public).unwrap_or_else(|_| {
+            panic!("script location sector slot {sparse_slot} has negative public number {public}")
+        });
+        Some(
+            crate::position_interface::SectorHandle::new(public)
+                .unwrap_or_else(|| {
+                    panic!("script location sector slot {sparse_slot} resolves to null sentinel")
+                })
+                .with_arena_index(arena),
+        )
+    };
+    let handles = script_objects
+        .points
+        .iter()
+        .map(|point| point.sector)
+        .map(resolve)
+        // Shipped script lines are absent. Script sectors carry their own
+        // numeric `muwSector`, not an `RHSector*` resolved through
+        // `marraySectors` (RHsector.cpp/RHSectorScript).
+        .chain(script_objects.lines.iter().map(|_| None))
+        .chain(script_objects.sectors.iter().map(|_| None))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        handles.len(),
+        assets.scripts.location_count,
+        "script location exact-sector identities disagree with authored locations"
+    );
+    assets.scripts.location_sector_handles = std::sync::Arc::new(handles);
+}
+
 /// Resolve each serialized waypoint `RHSector*` sparse slot to the exact live
 /// sector pointer identity retained by Original's `SerializeSectorPointer`.
 fn resolve_hiking_waypoint_sector_identities(
@@ -3065,6 +3130,7 @@ impl EngineInner {
             &self.world.fast_grid.level.sectors,
         )
         .unwrap_or_else(|detail| panic!("legacy position-sector registration drifted: {detail}"));
+        retain_script_location_sector_identities(assets, &loaded);
         self.install_tactic_seek_points_stage(assets, &loaded);
         resolve_hiking_waypoint_sector_identities(assets, &self.world.fast_grid.level.sectors);
         let level_plan = level_builder.preflight(self, assets, &loaded)?;

@@ -380,7 +380,7 @@ pub struct RecordingMotionTarget {
     pub x: f32,
     pub y: f32,
     pub layer: u16,
-    pub sector: u16,
+    pub sector: crate::position_interface::SectorHandle,
 }
 
 /// A sequence being built up via script `Record*` calls.

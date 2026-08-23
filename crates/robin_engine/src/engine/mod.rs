@@ -73,7 +73,9 @@ pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use global_options::*;
 pub(crate) use movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
-pub(crate) use movement::{adapt_source_to_current_door, current_door_for_route_source};
+pub(crate) use movement::{
+    adapt_source_to_current_door_with_identity, current_door_for_route_source,
+};
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
     Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup,

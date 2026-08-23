@@ -88,6 +88,30 @@ use crate::interp::{
 use crate::order::OrderType;
 use crate::patch::Patch;
 use crate::profiles::Action;
+
+fn script_gate_path_door(
+    doors: &[crate::gate::Door],
+    step: crate::gate::GatePathStep,
+) -> &crate::gate::Door {
+    doors.get(usize::from(step.door_index)).unwrap_or_else(|| {
+        panic!(
+            "script-recorded gate path references missing door {}",
+            u32::from(step.door_index)
+        )
+    })
+}
+
+#[inline]
+fn script_sector_identities_match(
+    source: crate::position_interface::SectorHandle,
+    goal: crate::position_interface::SectorHandle,
+) -> bool {
+    match (source.arena_index(), goal.arena_index()) {
+        (Some(source), Some(goal)) => source == goal,
+        (None, None) => source == goal,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
 use crate::sequence::{Field, FieldValue, MoveFlags, RecordingSession, Sequence, SequenceElement};
 
 /// Convert a raw script-supplied animation ordinal to an
@@ -790,9 +814,15 @@ impl NativeContext<'_, '_> {
             .find(|candidate| u16::from(candidate.sector_number) == sector)
     }
 
-    fn sector_is_building(&self, sector: u16) -> bool {
-        self.sector_kind(sector)
-            .is_some_and(|kind| kind.sector_type.is_building())
+    fn sector_kind_handle(
+        &self,
+        sector: crate::position_interface::SectorHandle,
+    ) -> Option<&crate::fast_find_grid::GridSector> {
+        if let Some(index) = sector.arena_index() {
+            self.fast_grid.level.sectors.get(usize::from(index))
+        } else {
+            self.sector_kind(sector.get())
+        }
     }
 
     fn building_sector_is_authorized(&self, sector: crate::sector::SectorNumber) -> bool {
@@ -841,11 +871,6 @@ impl NativeContext<'_, '_> {
             .and_then(|kind| kind.lift_type)
     }
 
-    fn sector_is_door(&self, sector: u16) -> bool {
-        self.sector_kind(sector)
-            .is_some_and(|kind| kind.sector_type.is_door())
-    }
-
     fn door_index_for_goal_sector(
         &self,
         goal_sector: u16,
@@ -888,10 +913,10 @@ impl NativeContext<'_, '_> {
         actor_handle: i32,
         action: OrderType,
         mut source: (f32, f32),
-        mut source_sector: u16,
+        mut source_sector: crate::position_interface::SectorHandle,
         mut _source_layer: u16,
         goal: (f32, f32),
-        goal_sector: u16,
+        goal_sector: crate::position_interface::SectorHandle,
         goal_layer: u16,
         victim: Option<EntityId>,
         tolerance: f32,
@@ -899,7 +924,9 @@ impl NativeContext<'_, '_> {
         speed_factor: f32,
     ) -> bool {
         use crate::element::Command;
-        use crate::gate::{find_path_gates, find_path_into_door};
+        use crate::gate::{
+            find_path_gates_with_sector_indices, find_path_into_door_with_sector_index,
+        };
         use crate::position_interface::SectorHandle;
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
 
@@ -923,7 +950,7 @@ impl NativeContext<'_, '_> {
             .get_entity(actor_handle)
             .map(crate::engine::current_door_for_route_source)
             && let Some((adapted_source, adapted_sector, adapted_layer)) =
-                crate::engine::adapt_source_to_current_door(
+                crate::engine::adapt_source_to_current_door_with_identity(
                     &self.script_domains.interactables.doors,
                     door_handle,
                     door_direction,
@@ -941,7 +968,7 @@ impl NativeContext<'_, '_> {
         let mut emit_count: u32 = 0;
 
         // ── Same-sector fast path ──
-        if source_sector == goal_sector {
+        if script_sector_identities_match(source_sector, goal_sector) {
             let mut elem = SequenceElement::new_movement(0, Command::Move, owner, action);
             if let SequenceElementData::Movement {
                 destination,
@@ -973,7 +1000,7 @@ impl NativeContext<'_, '_> {
             ..
         } = &mut leader.data
         {
-            *sector = SectorHandle::new(source_sector);
+            *sector = Some(source_sector);
             *element = owner;
             *sf = speed_factor;
         }
@@ -983,15 +1010,18 @@ impl NativeContext<'_, '_> {
         // ── Find the gate path ──
         let auth = self.get_entity(actor_handle).map(|e| e.actor_auth_info());
         let allow_leave_map = initial_flags.contains(MoveFlags::MAP);
-        let goal_is_door_sector = self.sector_is_door(goal_sector);
+        let goal_is_door_sector = self
+            .sector_kind_handle(goal_sector)
+            .is_some_and(|sector| sector.sector_type.is_door());
 
         let path_opt = if goal_is_door_sector {
-            self.door_index_for_goal_sector(goal_sector, goal)
+            self.door_index_for_goal_sector(goal_sector.get(), goal)
                 .and_then(|door_idx| {
-                    find_path_into_door(
+                    find_path_into_door_with_sector_index(
                         &self.script_domains.interactables.doors,
                         source,
-                        source_sector,
+                        source_sector.get(),
+                        source_sector.arena_index(),
                         door_idx,
                         auth.as_ref(),
                         allow_leave_map,
@@ -1000,12 +1030,14 @@ impl NativeContext<'_, '_> {
                     )
                 })
         } else {
-            find_path_gates(
+            find_path_gates_with_sector_indices(
                 &self.script_domains.interactables.doors,
                 source,
-                source_sector,
+                source_sector.get(),
+                source_sector.arena_index(),
                 goal,
-                goal_sector,
+                goal_sector.get(),
+                goal_sector.arena_index(),
                 auth.as_ref(),
                 allow_leave_map,
                 &|sector| self.building_sector_is_authorized(sector),
@@ -1030,8 +1062,8 @@ impl NativeContext<'_, '_> {
             }
             tracing::debug!(
                 actor = actor_handle,
-                from_sector = source_sector,
-                to_sector = goal_sector,
+                from_sector = source_sector.get(),
+                to_sector = goal_sector.get(),
                 "AppendMoveToSequence: no gate path"
             );
             return false;
@@ -1059,7 +1091,7 @@ impl NativeContext<'_, '_> {
             exit: crate::coordinates::MapPoint,
             entry_layer: u16,
             exit_layer: u16,
-            new_sector: u16,
+            new_sector: SectorHandle,
             is_jump: bool,
             jump_line_src: Option<crate::jump_line::JumpLineIndex>,
             jump_line_dst: Option<crate::jump_line::JumpLineIndex>,
@@ -1070,29 +1102,33 @@ impl NativeContext<'_, '_> {
 
         let gate_shots: Vec<GateShot> = gate_steps
             .iter()
-            .filter_map(|step| {
-                let door = self
-                    .script_domains
-                    .interactables
-                    .doors
-                    .get(usize::from(step.door_index))?;
-                let (entry, exit, entry_layer, exit_layer, new_sector) = if step.direct {
-                    (
-                        door.point_out,
-                        door.point_in,
-                        door.layer_out,
-                        door.layer_in,
-                        u16::from(door.sector_in),
-                    )
-                } else {
-                    (
-                        door.point_in,
-                        door.point_out,
-                        door.layer_in,
-                        door.layer_out,
-                        u16::from(door.sector_out),
-                    )
-                };
+            .map(|step| {
+                let door = script_gate_path_door(&self.script_domains.interactables.doors, *step);
+                let (entry, exit, entry_layer, exit_layer, new_sector_number, new_sector_index) =
+                    if step.direct {
+                        (
+                            door.point_out,
+                            door.point_in,
+                            door.layer_out,
+                            door.layer_in,
+                            u16::from(door.sector_in),
+                            door.sector_in_index,
+                        )
+                    } else {
+                        (
+                            door.point_in,
+                            door.point_out,
+                            door.layer_in,
+                            door.layer_out,
+                            u16::from(door.sector_out),
+                            door.sector_out_index,
+                        )
+                    };
+                let mut new_sector = SectorHandle::new(new_sector_number)
+                    .expect("script-recorded door endpoint uses null sector sentinel");
+                if let Some(index) = new_sector_index {
+                    new_sector = new_sector.with_arena_index(index);
+                }
                 let is_jump = door.is_jump();
                 let (jump_src, jump_dst) = if is_jump {
                     let (s, d) = if step.direct {
@@ -1114,7 +1150,7 @@ impl NativeContext<'_, '_> {
                 // exist in original-code but are commented out at
                 // execution time.
                 let (entry_action, door_action) = (action, action);
-                Some(GateShot {
+                GateShot {
                     door_index: step.door_index,
                     direct: step.direct,
                     entry,
@@ -1128,7 +1164,7 @@ impl NativeContext<'_, '_> {
                     is_locked_pc_unlockable,
                     entry_action,
                     door_action,
-                })
+                }
             })
             .collect();
 
@@ -1170,7 +1206,9 @@ impl NativeContext<'_, '_> {
             //
             // Original AppendMoveToSequence approaches every gate
             // before splitting into door handling or RHCOMMAND_JUMP.
-            let old_is_building = self.sector_is_building(prev_sector);
+            let old_is_building = self
+                .sector_kind_handle(prev_sector)
+                .is_some_and(|sector| sector.sector_type.is_building());
             let entry_action = shot.entry_action;
             let door_action = shot.door_action;
 
@@ -1224,7 +1262,7 @@ impl NativeContext<'_, '_> {
                 {
                     *destination = shot.entry;
                     *layer = shot.entry_layer;
-                    *sector = SectorHandle::new(prev_sector);
+                    *sector = Some(prev_sector);
                     *flags = gate_flags;
                     *direction = dir;
                     *sf = speed_factor;
@@ -1320,7 +1358,7 @@ impl NativeContext<'_, '_> {
             }
 
             // ── Ladder-lift wait ──
-            if self.sector_is_ladder_lift(shot.new_sector) {
+            if self.sector_is_ladder_lift(shot.new_sector.get()) {
                 let mut wait =
                     SequenceElement::new_movement(0, Command::WaitFreeLift, owner, door_action);
                 if let SequenceElementData::Movement {
@@ -1330,7 +1368,7 @@ impl NativeContext<'_, '_> {
                     ..
                 } = &mut wait.data
                 {
-                    *sector = SectorHandle::new(shot.new_sector);
+                    *sector = Some(shot.new_sector);
                     *gate_id = Some(shot.door_index);
                     *sf = speed_factor;
                 }
@@ -1391,7 +1429,9 @@ impl NativeContext<'_, '_> {
 
         // ── Trailing emission ──
         if !ended_early {
-            let last_into_building = self.sector_is_building(last_new_sector);
+            let last_into_building = self
+                .sector_kind_handle(last_new_sector)
+                .is_some_and(|sector| sector.sector_type.is_building());
 
             // Trailing MOVE to the goal unless we landed inside a
             // building or `move_after_last_door=false`.
@@ -1466,18 +1506,22 @@ impl NativeContext<'_, '_> {
         &mut self,
         actor_handle: i32,
         new_dest: (f32, f32),
-        new_dest_layer_sector: Option<(u16, u16)>,
-    ) -> Option<(f32, f32, u16, u16)> {
+        new_dest_layer_sector: Option<(u16, crate::position_interface::SectorHandle)>,
+    ) -> Option<(f32, f32, u16, crate::position_interface::SectorHandle)> {
         use crate::sequence::RecordingMotionTarget;
         // Fall back to live actor position if no cached entry.
-        let live_origin: Option<(f32, f32, u16, u16)> = self.get_entity(actor_handle).map(|e| {
+        let live_origin = self.get_entity(actor_handle).map(|e| {
             let p = e.element_data().position_map();
             let layer = e.element_data().layer();
-            let sector = e.element_data().sector().map(u16::from).unwrap_or(0);
+            let sector = e.element_data().sector().unwrap_or_else(|| {
+                panic!("script movement actor {actor_handle} has no source sector")
+            });
             (p.x, p.y, layer, sector)
         });
 
-        let (dest_layer, dest_sector) = new_dest_layer_sector.unwrap_or((0, 0));
+        let (dest_layer, dest_sector) = new_dest_layer_sector.unwrap_or_else(|| {
+            panic!("script movement target for actor {actor_handle} has no sector identity")
+        });
         let new_target = RecordingMotionTarget {
             x: new_dest.0,
             y: new_dest.1,
@@ -2766,6 +2810,37 @@ impl NativeContext<'_, '_> {
             .and_then(|location| location.layer.zip(location.sector))
     }
 
+    /// Exact counterpart used by script sequence recording. Authored points
+    /// retain their sparse Original sector pointer; legacy/test bindings and
+    /// computed points continue through the number-only graph.
+    fn resolve_location_layer_sector_handle(
+        &self,
+        handle: i32,
+    ) -> Option<(u16, crate::position_interface::SectorHandle)> {
+        let (layer, sector_number) = self.resolve_location_layer_sector(handle)?;
+        let idx = ScriptHandleCodec::location_index(handle)?;
+        let sector = if idx < self.bindings.script_location_count {
+            self.bindings
+                .location_sector_handles
+                .get(idx)
+                .copied()
+                .flatten()
+                .or_else(|| crate::position_interface::SectorHandle::new(sector_number))?
+        } else {
+            let location = self
+                .script_state
+                .computed_locations
+                .get(idx - self.bindings.script_location_count)?
+                .as_ref()?;
+            location.sector_handle.unwrap_or_else(|| {
+                panic!(
+                    "computed script location {handle} has number-only sector {sector_number}; exact RHposition provenance is required"
+                )
+            })
+        };
+        Some((layer, sector))
+    }
+
     /// Create a new dynamic location at (x, y) and return its script handle.
     /// `layer_sector` carries the source actor/point's (layer, sector); pass
     /// `None` for points without associated sector geometry.
@@ -2773,14 +2848,15 @@ impl NativeContext<'_, '_> {
         &mut self,
         x: f32,
         y: f32,
-        layer_sector: Option<(u16, u16)>,
+        layer_sector: Option<(u16, crate::position_interface::SectorHandle)>,
     ) -> i32 {
         self.script_state
             .computed_locations
             .push(Some(ComputedScriptLocation {
                 position: (x, y),
                 layer: layer_sector.map(|(layer, _)| layer),
-                sector: layer_sector.map(|(_, sector)| sector),
+                sector: layer_sector.map(|(_, sector)| sector.get()),
+                sector_handle: layer_sector.map(|(_, sector)| sector),
                 active: true,
                 legacy_dummy: false,
             }));

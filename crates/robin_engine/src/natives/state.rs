@@ -41,6 +41,10 @@ pub struct ComputedScriptLocation {
     /// point can carry a layer while its serialized sector pointer is null.
     pub layer: Option<u16>,
     pub sector: Option<u16>,
+    /// Exact live counterpart of `sector` when the location was copied from
+    /// an RHposition. Legacy snapshots retain the number-only field above.
+    #[serde(default)]
+    pub sector_handle: Option<crate::position_interface::SectorHandle>,
     /// Serialized `RHPointScript` flags. New runtime points use
     /// `active = true`, `legacy_dummy = false`.
     pub active: bool,

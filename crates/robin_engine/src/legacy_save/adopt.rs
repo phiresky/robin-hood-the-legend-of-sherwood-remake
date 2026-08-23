@@ -144,6 +144,38 @@ pub struct LegacyPositionSectorIdentity {
     pub runtime_index: SectorIndex,
 }
 
+pub(crate) fn retained_position_sector_handle(
+    assets: &LevelAssets,
+    sparse_slot: u16,
+) -> SectorHandle {
+    let retained = assets
+        .legacy_grid_topology
+        .as_ref()
+        .expect("legacy computed location requires retained sparse sector topology");
+    let slot = usize::from(sparse_slot);
+    let public = retained
+        .position_sector_numbers
+        .get(slot)
+        .copied()
+        .flatten()
+        .unwrap_or_else(|| {
+            panic!("legacy computed location references non-position sector slot {sparse_slot}")
+        });
+    let arena = retained
+        .position_sector_indices
+        .get(slot)
+        .copied()
+        .flatten()
+        .unwrap_or_else(|| {
+            panic!("legacy computed location sector slot {sparse_slot} has no arena identity")
+        });
+    let public =
+        u16::try_from(public).expect("legacy computed location sector has negative public number");
+    SectorHandle::new(public)
+        .expect("legacy computed location sector equals null sentinel")
+        .with_arena_index(arena)
+}
+
 /// Exact Original jump-line pointer space.
 ///
 /// Original serializes a line pointer as its layer plus its ordinal inside
