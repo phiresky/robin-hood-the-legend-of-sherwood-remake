@@ -984,8 +984,8 @@ fn synchronous_terminal_enter_swordfight_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
-    let opponent = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let opponent = engine.add_entity(make_test_pc(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(owner)
@@ -2762,6 +2762,24 @@ fn waiting_parry_survives_normal_movement_successor_replacement() {
     assert_eq!(incoming.state, SequenceState::Postponed);
     assert_eq!(incoming.command, Command::Move);
     assert!(incoming.orders.is_empty());
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(parry_sequence, 0)
+            .unwrap()
+            .cross_postponed,
+        None,
+        "replacement stays invisible until the interrupted successor's card returns"
+    );
+
+    let mut pending = engine.orders.sequence_manager.drain_pending_condolations();
+    assert_eq!(pending.len(), 1);
+    engine
+        .orders
+        .sequence_manager
+        .finish_pending_condolation(pending.remove(0));
+
     assert_eq!(
         engine
             .orders
