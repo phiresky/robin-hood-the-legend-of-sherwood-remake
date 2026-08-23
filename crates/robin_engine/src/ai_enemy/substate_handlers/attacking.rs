@@ -756,6 +756,9 @@ impl EnemyAi {
             let sword_range = self
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.sword_range_default)
+                // `sword_range` is persistent profile state; unlike action
+                // state or positions, it does not become stale when the
+                // per-tick fighter registry omits the owner.
                 .unwrap_or(self.sword_range);
             let target = self
                         .find_fighter(self.base.primary_target, tick)
@@ -1320,7 +1323,12 @@ impl EnemyAi {
             let my_action = self
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.action_state)
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    panic!(
+                        "shield bearer {} is missing its required fighter snapshot",
+                        self.base.me
+                    )
+                });
             if crate::ai_enemy::battle_decision_debug_enabled() {
                 eprintln!(
                     "SHIELD_TIMER frame={} me={} action={:?} shield={} left={} right={} archer_behind={} target={} target_action={:?}",
@@ -1346,7 +1354,12 @@ impl EnemyAi {
                     // position, not the AI `Position()` helper that projects
                     // actors passing a door onto the gate endpoint.
                     .map(|f| (f.raw_position, f.elevation as f32))
-                    .unwrap_or((ctx.position, ctx.elevation));
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "shield bearer {} requires primary target {} in the fighter registry",
+                            self.base.me, self.base.primary_target
+                        )
+                    });
                 self.base.raise_shield(target_pos, target_elevation);
                 self.base.launch_timer(20, ctx.frame);
             } else if self.left_combat_neighbour != 0 || self.right_combat_neighbour != 0 {
@@ -1359,10 +1372,27 @@ impl EnemyAi {
                 self.base.launch_timer(5, ctx.frame);
             } else if self.archer_behind_me != 0 {
                 // Protecting an archer — update direction and stay
+                if self.base.primary_target == 0 {
+                    self.base.primary_target =
+                        self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
+                }
+                if self.base.primary_target == 0 {
+                    tracing::error!(
+                        soldier = self.base.me,
+                        "shield bearer protecting an archer has no primary target"
+                    );
+                    self.get_battle_overview(0, ctx, tick);
+                    return false;
+                }
                 let target_pos = self
                     .find_fighter(self.base.primary_target, tick)
                     .map(|f| f.position)
-                    .unwrap_or(ctx.position);
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "shield bearer {} requires primary target {} in the fighter registry",
+                            self.base.me, self.base.primary_target
+                        )
+                    });
                 let dx = target_pos.x - ctx.position.x;
                 let dy = target_pos.y - ctx.position.y;
                 let dir = vec_to_sector(dx, dy);
@@ -1380,7 +1410,12 @@ impl EnemyAi {
                     let target_is_bow = self
                         .find_fighter(target, tick)
                         .map(|f| f.action_state.is_bow())
-                        .unwrap_or(false);
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "shield bearer {} requires target {} in the fighter registry",
+                                self.base.me, target
+                            )
+                        });
                     if target_is_bow {
                         // Still danger
                         if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4)
@@ -1421,7 +1456,12 @@ impl EnemyAi {
                 let target_pos = self
                     .find_fighter(self.base.primary_target, tick)
                     .map(|f| f.position)
-                    .unwrap_or(ctx.position);
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "advancing shield bearer {} requires primary target {} in the fighter registry",
+                            self.base.me, self.base.primary_target
+                        )
+                    });
                 self.go_near(
                     self.base.current_state,
                     self.base.current_substate,
@@ -1473,7 +1513,12 @@ impl EnemyAi {
                         // Position() may instead project an actor traversing
                         // a door onto its gate endpoint.
                         .map(|f| (f.raw_position, f.elevation as f32))
-                        .unwrap_or((ctx.position, ctx.elevation));
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "phalanx runner {} requires target {} in the fighter registry",
+                                self.base.me, target
+                            )
+                        });
                     self.base.raise_shield(target_pos, target_elevation);
                     // Original follows the RaiseShield launch with
                     // `Focus(mpPrimaryTarget)`, not an actor turn.
@@ -1503,7 +1548,12 @@ impl EnemyAi {
                 let my_action = self
                     .find_fighter(self.base.me, tick)
                     .map(|f| f.action_state)
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "phalanx soldier {} is missing its required fighter snapshot",
+                            self.base.me
+                        )
+                    });
 
                 tracing::trace!(
                     target: "robin_engine::ai_enemy::phalanx",
@@ -1531,7 +1581,12 @@ impl EnemyAi {
                     let (target_pos, target_elevation) = self
                         .find_fighter(self.base.primary_target, tick)
                         .map(|f| (f.raw_position, f.elevation as f32))
-                        .unwrap_or((ctx.position, ctx.elevation));
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "phalanx soldier {} requires primary target {} in the fighter registry",
+                                self.base.me, self.base.primary_target
+                            )
+                        });
                     self.base.raise_shield(target_pos, target_elevation);
                     self.base.launch_timer(20, ctx.frame);
                 } else if !self.reconsider_phalanx(sim, global, ctx, tick, grid) {
@@ -1540,7 +1595,12 @@ impl EnemyAi {
                         let target_pos = self
                             .find_fighter(self.base.primary_target, tick)
                             .map(|f| f.position)
-                            .unwrap_or(ctx.position);
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "phalanx soldier {} requires primary target {} in the fighter registry",
+                                    self.base.me, self.base.primary_target
+                                )
+                            });
                         let dx = target_pos.x - ctx.position.x;
                         let dy = target_pos.y - ctx.position.y;
                         let dir = vec_to_sector(dx, dy);
@@ -1589,7 +1649,12 @@ impl EnemyAi {
                                 || s == Substate::AttackingBowLoading as u32
                                 || s == Substate::AttackingBowAiming as u32
                         })
-                        .unwrap_or(false);
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "phalanx soldier {} requires protected archer {} in the fighter registry",
+                                self.base.me, self.archer_behind_me
+                            )
+                        });
                     if archer_in_bow {
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
@@ -2333,13 +2398,21 @@ impl EnemyAi {
             // must inspect the target element's physical sector, not
             // `RHArtificialIntelligence::Position(actor)`'s committed
             // destination-side sector during a door pass.
-            let target_on_lift = grid
-                .and_then(|g| {
-                    tick.primary_target_live_position
-                        .and_then(|position| position.sector)
-                        .map(|s| g.sector_type(u32::from(s)).is_lift())
-                })
-                .unwrap_or(false);
+            let target_on_lift = grid.is_some_and(|g| {
+                let position = tick.primary_target_live_position.unwrap_or_else(|| {
+                    panic!(
+                        "ladder-waiting soldier {} requires live position for primary target {}",
+                        self.base.me, self.base.primary_target
+                    )
+                });
+                let sector = position.sector.unwrap_or_else(|| {
+                    panic!(
+                        "ladder-waiting soldier {} requires a sector for primary target {}",
+                        self.base.me, self.base.primary_target
+                    )
+                });
+                g.sector_type(u32::from(sector)).is_lift()
+            });
             if target_on_lift {
                 self.base.face_entity(self.base.primary_target, ctx);
                 self.base.outbox.actor.set_focus(self.base.primary_target);
