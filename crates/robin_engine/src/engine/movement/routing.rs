@@ -283,7 +283,16 @@ impl EngineInner {
                 let (door_handle, door_direction) = current_door_for_route_source(entity);
                 (
                     element.position_map(),
-                    element.sector(),
+                    // Original snapshots `Position(mpMe)`, including its
+                    // exact `RHSector*`, when GoTo builds the sequence. A
+                    // legacy-loaded actor may retain only the public sector
+                    // number on ElementData, while the live AI Position can
+                    // recover the unique arena object from point + layer.
+                    // Keep that exact source identity here: mixing a
+                    // number-only source with an exact goal cannot enter the
+                    // indexed gate graph and spuriously reports
+                    // EVENT_COULDNT_REACHPOINT.
+                    super::ai::ai_view_position_sector(self, element),
                     element.layer(),
                     door_handle,
                     door_direction,
@@ -1286,5 +1295,177 @@ impl EngineInner {
             .position_iface_mut()
             .turn();
         order_action
+    }
+}
+
+#[cfg(test)]
+mod exact_ai_goto_source_tests {
+    use super::*;
+    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::element::{ActorSoldier, AiBrain, ElementData, ElementKind, Entity, Posture};
+    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::gate::{Door, GatePathStep};
+    use crate::position_interface::SectorHandle;
+    use crate::sector::{SectorNumber, SectorType};
+
+    fn square_sector(number: i16, layer: u16, min: MapPoint, max: MapPoint) -> GridSector {
+        GridSector {
+            points: vec![
+                min,
+                MapPoint::new(max.x, min.y),
+                max,
+                MapPoint::new(min.x, max.y),
+            ],
+            bounding_box: MapBBox::from_coords(min.x, min.y, max.x, max.y),
+            sector_type: SectorType::MOTION | SectorType::AREA,
+            layer,
+            sector_number: SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
+    #[test]
+    fn arrow_reaction_goto_recovers_exact_source_before_indexed_gate_search() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(32, 32);
+        engine.world.fast_grid_mut().allocate_layers(5);
+        let wrong_source = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                104,
+                4,
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(200.0, 200.0),
+            ),
+            4,
+        );
+        let source = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                104,
+                4,
+                MapPoint::new(600.0, 1350.0),
+                MapPoint::new(700.0, 1450.0),
+            ),
+            4,
+        );
+        let middle = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                99,
+                3,
+                MapPoint::new(250.0, 1150.0),
+                MapPoint::new(350.0, 1450.0),
+            ),
+            3,
+        );
+        let goal = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                89,
+                2,
+                MapPoint::new(500.0, 1200.0),
+                MapPoint::new(600.0, 1350.0),
+            ),
+            2,
+        );
+        assert_ne!(wrong_source, source);
+
+        let mut soldier = ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+        soldier
+            .element
+            .set_position_map(MapPoint::new(630.0, 1408.0));
+        soldier.element.set_layer(4);
+        // Legacy adoption retained the public sector but not RHSector*.
+        soldier.element.set_sector(SectorHandle::new(104));
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+
+        let mut intent = crate::order::AiOrderIntent::new(
+            crate::order::OrderType::RunningUpright,
+            531.231,
+            1268.2043,
+        );
+        intent.target_layer = Some(2);
+        intent.target_sector = SectorHandle::new(89)
+            .map(|sector| sector.with_arena_index(SectorIndex::new(goal).unwrap()));
+        intent.target_sector_index = SectorIndex::new(goal);
+        engine.launch_ai_move(owner, &intent);
+
+        let [(_, captured)] = engine.orders.pending_move_requests.as_slice() else {
+            panic!("arrow reaction GoTo must enqueue exactly one movement")
+        };
+        assert_eq!(captured.source_position, Some(MapPoint::new(630.0, 1408.0)));
+        assert_eq!(captured.source_sector_index, SectorIndex::new(source));
+
+        let mut doors = vec![
+            Door {
+                active: true,
+                sector_out: SectorNumber::new(104),
+                sector_in: SectorNumber::new(99),
+                sector_out_index: SectorIndex::new(source),
+                sector_in_index: SectorIndex::new(middle),
+                point_out: MapPoint::new(273.0, 1195.0),
+                point_in: MapPoint::new(280.0, 1221.0),
+                ..Door::default()
+            },
+            Door {
+                active: true,
+                sector_out: SectorNumber::new(89),
+                sector_in: SectorNumber::new(99),
+                sector_out_index: SectorIndex::new(goal),
+                sector_in_index: SectorIndex::new(middle),
+                point_out: MapPoint::new(322.0, 1426.0),
+                point_in: MapPoint::new(314.0, 1392.0),
+                ..Door::default()
+            },
+        ];
+        crate::gate::build_gate_links(&mut doors);
+        let route = crate::gate::find_path_gates_with_sector_indices(
+            &doors,
+            (
+                captured.source_position.unwrap().x,
+                captured.source_position.unwrap().y,
+            ),
+            captured.source_sector.unwrap().get(),
+            captured.source_sector_index,
+            (captured.target_x, captured.target_y),
+            captured.target_sector.unwrap().get(),
+            captured.target_sector_index,
+            None,
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("exact arrow-reaction source must enter the two-door gate route");
+        assert_eq!(
+            route,
+            [
+                GatePathStep {
+                    door_index: crate::gate::DoorIndex(0),
+                    direct: true,
+                },
+                GatePathStep {
+                    door_index: crate::gate::DoorIndex(1),
+                    direct: false,
+                },
+            ]
+        );
     }
 }
