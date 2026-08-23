@@ -2926,18 +2926,22 @@ mod tests {
         npc.view_radius_goal = 400;
         let initial_alpha = npc.view_alpha_start;
 
-        // One tick: alpha drops by 5, step accelerates from 0 → 5.
+        // RHElementActorNPC starts uwRadiusStep at 10.  One tick consumes
+        // that initial step, then accelerates it from 10 → 15.
         refresh_view(&mut npc, &ctx(None, Posture::Upright));
         assert_eq!(npc.view_alpha_start, initial_alpha - 5);
-        assert_eq!(npc.view_radius_step, 5);
+        assert_eq!(npc.view_radius_goal, 390);
+        assert_eq!(npc.view_radius_step, 15);
 
-        // Run many frames — quadratic shrink must eventually close.
-        for _ in 0..200 {
-            if npc.eye_status == EyeStatus::Closed {
-                break;
-            }
+        // With the Original's 400-radius constructor state, the cone remains
+        // in the dying state through refresh 11 and closes on refresh 12.
+        for _ in 1..11 {
             refresh_view(&mut npc, &ctx(None, Posture::Upright));
         }
+        assert_eq!(npc.eye_status, EyeStatus::DieOrGetUnconscious);
+        assert_eq!(npc.view_radius_goal, 15);
+
+        refresh_view(&mut npc, &ctx(None, Posture::Upright));
         assert_eq!(npc.eye_status, EyeStatus::Closed);
         assert_eq!(npc.view_radius_goal, 0);
     }

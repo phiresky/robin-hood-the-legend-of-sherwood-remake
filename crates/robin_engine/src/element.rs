@@ -1883,7 +1883,10 @@ impl Default for NpcData {
             view_angle_iterator_step: crate::ai_vision::NORMAL_ANGLE_ITERATOR_STEP,
             view_radius_base: 400,
             view_radius_goal: 400,
-            view_radius_step: 0,
+            // RHElementActorNPC initializes uwRadiusStep to 10.  The
+            // DieOrGetUnconscious view-cone collapse consumes this value on
+            // its first RefreshView and then accelerates it by 5 each frame.
+            view_radius_step: 10,
             view_alpha_start: crate::ai_vision::ALPHA_START,
             view_longrange_radius_factor: 1.0,
             view_half_aperture_cosine: crate::ai_vision::NORMAL_HALF_APERTURE.cos(),
