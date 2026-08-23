@@ -155,6 +155,25 @@ impl From<&str> for ScriptDriverError {
     }
 }
 
+fn assign_post_from_script_request(
+    ai: &mut crate::ai::AiController,
+    post_x: f32,
+    post_y: f32,
+    post_sector: crate::position_interface::SectorHandle,
+    post_level: u16,
+    direction: i32,
+) {
+    ai.assign_new_post(
+        crate::ai::Position {
+            x: post_x,
+            y: post_y,
+            sector: Some(post_sector),
+            level: post_level,
+        },
+        direction as u16,
+    );
+}
+
 /// Script-originated effects removed from the VM adapter before processing.
 ///
 /// Draining first ends the `MissionScript` borrow. Effect handlers may then
@@ -734,12 +753,6 @@ impl EngineInner {
                         owner.index()
                     )
                 })?;
-                let post_position = crate::ai::Position {
-                    x: post_x,
-                    y: post_y,
-                    sector: crate::position_interface::SectorHandle::new(post_sector),
-                    level: post_level,
-                };
                 let ai = self
                     .get_entity_mut(owner)
                     .and_then(Entity::ai_controller_mut)
@@ -749,7 +762,14 @@ impl EngineInner {
                             owner.index()
                         )
                     })?;
-                ai.assign_new_post(post_position, direction as u16);
+                assign_post_from_script_request(
+                    ai,
+                    post_x,
+                    post_y,
+                    post_sector,
+                    post_level,
+                    direction,
+                );
                 // Original AssignNewPost calls Think(EVENT_RETURN_TO_DUTY)
                 // before returning to the script. Close that owner-local AI
                 // stack and materialize its GoTo now. The resulting ordinary
@@ -6084,6 +6104,41 @@ mod script_context_tests {
             classes: vec![startup],
         })
         .expect("minimal StartUp script must load")
+    }
+
+    #[test]
+    fn assign_post_engine_boundary_retains_exact_return_to_duty_sector() {
+        let mut ai = crate::ai::AiController::new(147);
+        let arena = crate::fast_find_grid::SectorIndex::new(97).unwrap();
+        let exact = crate::position_interface::SectorHandle::new(97)
+            .unwrap()
+            .with_arena_index(arena);
+
+        assign_post_from_script_request(&mut ai, 780.0, 995.0, exact, 3, 4);
+
+        assert_eq!(
+            ai.initial_position,
+            crate::ai::Position {
+                x: 780.0,
+                y: 995.0,
+                sector: Some(exact),
+                level: 3,
+            }
+        );
+        assert_eq!(
+            ai.initial_position.sector.unwrap().arena_index(),
+            Some(arena)
+        );
+        assert_ne!(
+            ai.initial_position.sector.unwrap().arena_index(),
+            crate::fast_find_grid::SectorIndex::new(98),
+            "same-public foreign topology must not replace the authored post"
+        );
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli,
+            [crate::ai::StimulusType::EventReturnToDuty],
+            "the exact post must survive the same engine helper that triggers ReturnToDuty"
+        );
     }
 
     #[test]

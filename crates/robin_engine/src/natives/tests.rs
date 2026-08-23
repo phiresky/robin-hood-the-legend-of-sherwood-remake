@@ -2243,9 +2243,83 @@ fn assign_post_yield_preserves_the_script_points_position_topology() {
     host.entities.push(Some(native_test_soldier()));
     host.bindings.script_location_count = 1;
     host.bindings.script_point_count = 1;
-    host.bindings.location_positions = std::sync::Arc::new(vec![(1231.0, 1065.0)]);
-    host.bindings.location_layers = std::sync::Arc::new(vec![0]);
-    host.bindings.location_sectors = std::sync::Arc::new(vec![7]);
+    host.bindings.location_positions = std::sync::Arc::new(vec![(780.0, 995.0)]);
+    host.bindings.location_layers = std::sync::Arc::new(vec![3]);
+    host.bindings.location_sectors = std::sync::Arc::new(vec![97]);
+    let source_arena = crate::fast_find_grid::SectorIndex::new(89).unwrap();
+    let middle_arena = crate::fast_find_grid::SectorIndex::new(72).unwrap();
+    let goal_arena = crate::fast_find_grid::SectorIndex::new(97).unwrap();
+    let exact_sector = crate::position_interface::SectorHandle::new(97)
+        .unwrap()
+        .with_arena_index(goal_arena);
+    host.bindings.location_sector_handles = std::sync::Arc::new(vec![Some(exact_sector)]);
+
+    let mut doors = vec![crate::gate::Door::default(); 123];
+    doors[120] = crate::gate::Door {
+        active: true,
+        point_out: crate::coordinates::MapPoint::new(608.0, 1193.0),
+        point_in: crate::coordinates::MapPoint::new(700.0, 1100.0),
+        sector_out: crate::sector::SectorNumber::new(89),
+        sector_in: crate::sector::SectorNumber::new(72),
+        sector_out_index: Some(source_arena),
+        sector_in_index: Some(middle_arena),
+        ..crate::gate::Door::default()
+    };
+    doors[122] = crate::gate::Door {
+        active: true,
+        point_out: crate::coordinates::MapPoint::new(700.0, 1100.0),
+        point_in: crate::coordinates::MapPoint::new(780.0, 995.0),
+        sector_out: crate::sector::SectorNumber::new(72),
+        sector_in: crate::sector::SectorNumber::new(97),
+        sector_out_index: Some(middle_arena),
+        sector_in_index: Some(goal_arena),
+        ..crate::gate::Door::default()
+    };
+    crate::gate::build_gate_links(&mut doors);
+    let auth = host
+        .entities
+        .get_legacy_slot(0)
+        .unwrap()
+        .1
+        .actor_auth_info();
+    let route = crate::gate::find_path_gates_with_sector_indices(
+        &doors,
+        (608.0, 1193.0),
+        89,
+        Some(source_arena),
+        (780.0, 995.0),
+        97,
+        Some(goal_arena),
+        Some(&auth),
+        false,
+        &|_| true,
+        &|_| None,
+    )
+    .expect("exact ReturnToDuty post must route through the two retained gates");
+    assert_eq!(
+        route
+            .iter()
+            .map(|step| u32::from(step.door_index))
+            .collect::<Vec<_>>(),
+        vec![120, 122]
+    );
+    assert!(
+        crate::gate::find_path_gates_with_sector_indices(
+            &doors,
+            (608.0, 1193.0),
+            89,
+            Some(source_arena),
+            (780.0, 995.0),
+            97,
+            crate::fast_find_grid::SectorIndex::new(98),
+            Some(&auth),
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .is_none(),
+        "a foreign sector with the same public number is not the authored RTD post"
+    );
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let point = ScriptHandleCodec::location_handle_from_index(0);
 
@@ -2259,17 +2333,74 @@ fn assign_post_yield_preserves_the_script_points_position_topology() {
             operation: crate::interp::NativeOperation::EngineAction(
                 crate::interp::SynchronousScriptRequest::AssignPost {
                     actor: yielded_actor,
-                    post_x: 1231.0,
-                    post_y: 1065.0,
-                    post_sector: 7,
-                    post_level: 0,
+                    post_x: 780.0,
+                    post_y: 995.0,
+                    post_sector,
+                    post_level: 3,
                     direction: 3,
                     native_return: 0,
                 },
             ),
             resume: crate::interp::ResumePolicy::Fixed(0),
-        }) if yielded_actor == actor
+        }) if yielded_actor == actor && post_sector == exact_sector
     ));
+}
+
+#[test]
+fn assign_post_static_legacy_binding_preserves_number_only_compatibility() {
+    let mut host = BoundScriptEffects::new();
+    host.entities.push(Some(native_test_soldier()));
+    host.bindings.script_location_count = 1;
+    host.bindings.script_point_count = 1;
+    host.bindings.location_positions = std::sync::Arc::new(vec![(780.0, 995.0)]);
+    host.bindings.location_layers = std::sync::Arc::new(vec![3]);
+    host.bindings.location_sectors = std::sync::Arc::new(vec![97]);
+    host.bindings.location_sector_handles = std::sync::Arc::new(vec![None]);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let point = ScriptHandleCodec::location_handle_from_index(0);
+
+    let mut assign = NativeStack::default();
+    assign.push_i32(actor);
+    assign.push_i32(point);
+    assign.push_i32(3);
+    assert!(matches!(
+        HostFunctions::call(&mut host, NativeFn::AssignPost as u32, &mut assign),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::AssignPost {
+                    post_sector,
+                    post_level: 3,
+                    ..
+                },
+            ),
+            ..
+        }) if post_sector == crate::position_interface::SectorHandle::new(97).unwrap()
+            && post_sector.arena_index().is_none()
+    ));
+}
+
+#[test]
+#[should_panic(expected = "exact RHposition provenance is required")]
+fn assign_post_rejects_number_only_computed_location() {
+    let mut host = BoundScriptEffects::new();
+    host.entities.push(Some(native_test_soldier()));
+    host.state
+        .computed_locations
+        .push(Some(ComputedScriptLocation {
+            position: (780.0, 995.0),
+            layer: Some(3),
+            sector: Some(97),
+            sector_handle: None,
+            active: true,
+            legacy_dummy: false,
+        }));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let point = ScriptHandleCodec::location_handle_from_index(0);
+    let mut assign = NativeStack::default();
+    assign.push_i32(actor);
+    assign.push_i32(point);
+    assign.push_i32(3);
+    let _ = HostFunctions::call(&mut host, NativeFn::AssignPost as u32, &mut assign);
 }
 
 #[test]

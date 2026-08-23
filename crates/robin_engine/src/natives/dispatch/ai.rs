@@ -319,7 +319,8 @@ impl NativeContext<'_, '_> {
                     tracing::warn!("AssignPost: invalid location handle {loc}");
                     return 0;
                 };
-                let Some((post_level, post_sector)) = self.resolve_location_layer_sector(loc)
+                let Some((post_level, post_sector)) =
+                    self.resolve_location_layer_sector_handle(loc)
                 else {
                     tracing::warn!("AssignPost: location handle {loc} has no position topology");
                     return 0;
