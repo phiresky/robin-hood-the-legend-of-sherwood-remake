@@ -2136,15 +2136,11 @@ mod tests {
 
         let sim = crate::sim_rng::test_context();
         let (mut engine, pc, goal) = door_fight_route_fixture(0);
-        engine
-            .get_entity_mut(pc)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(InstalledActorOrder {
-                order_id: std::num::NonZeroU32::new(2).unwrap(),
-                order_type: OrderType::WaitingUpright,
-            });
+        let actor = engine.get_entity_mut(pc).unwrap().actor_data_mut().unwrap();
+        actor.installed_order = Some(InstalledActorOrder {
+            order_id: std::num::NonZeroU32::new(2).unwrap(),
+            order_type: OrderType::WaitingUpright,
+        });
 
         let (_, draws) = with_draw_trace(|| {
             engine.send_before_door_to_fight_pc(&sim, pc, goal, 4, 10, None);
