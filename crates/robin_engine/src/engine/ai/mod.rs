@@ -2483,6 +2483,24 @@ pub(super) fn extract_forecast_input(
     })
 }
 
+/// Extract the live `ForecastDestinationForIA` input with the complete
+/// `RHposition` sector pointer that Original reads from the target actor.
+///
+/// Legacy saves can leave the entity's compact sector handle number-only.
+/// AI-facing forecasts must restore that omitted identity from the loaded
+/// arena at the same boundary as other `Position(actor)` snapshots; otherwise
+/// a perfectly valid forecast becomes an unroutable mixed exact/number-only
+/// `GoTo` destination.
+pub(super) fn extract_exact_forecast_input(
+    engine: &EngineInner,
+    entity: &Entity,
+    is_passing_door: bool,
+) -> Option<crate::ai::ForecastInput> {
+    let mut input = extract_forecast_input(entity, is_passing_door)?;
+    input.sector_handle = ai_view_position_sector(engine, entity.element_data());
+    Some(input)
+}
+
 /// Map the position returned by Original AI `Position(actor)` during
 /// SeekArea's nearby-friend scan. A PassDoor sequence reports its committed
 /// destination side even while the sprite is still interpolating along the
@@ -3542,7 +3560,8 @@ fn build_one_entity_view(
     if matches!(
         entity,
         Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-    ) && let Some(input) = extract_forecast_input(entity, stamp.selected_door.is_some())
+    ) && let Some(input) =
+        extract_exact_forecast_input(engine, entity, stamp.selected_door.is_some())
     {
         view.forecasted_destination = crate::ai::prepare_forecast_destination_for_ia(
             &input,
@@ -3714,6 +3733,33 @@ mod ai_view_position_sector_tests {
                 .and_then(|sector| sector.arena_index()),
             SectorIndex::new(goal)
         );
+        let forecast_input = extract_exact_forecast_input(
+            &engine,
+            engine.get_entity(target).expect("test PC exists"),
+            false,
+        )
+        .expect("PC has forecast input");
+        assert_eq!(
+            forecast_input
+                .sector_handle
+                .and_then(|sector| sector.arena_index()),
+            SectorIndex::new(goal),
+            "ForecastDestinationForIA must receive the same exact live sector as Position(PC)",
+        );
+        let forecast = crate::ai::prepare_forecast_destination_for_ia(
+            &forecast_input,
+            &[],
+            &engine.world.fast_grid.level.sectors,
+            &engine.world.fast_grid.level.sector_number_map,
+        )
+        .resolve(&crate::sim_rng::SimulationContext::with_seed(1));
+        assert_eq!(
+            forecast
+                .position
+                .sector
+                .and_then(|sector| sector.arena_index()),
+            SectorIndex::new(goal),
+        );
 
         let door = Door {
             sector_out: SectorNumber::new(77),
@@ -3792,6 +3838,19 @@ mod ai_view_position_sector_tests {
                 .sector
                 .and_then(|sector| sector.arena_index()),
             None
+        );
+        let forecast_input = extract_exact_forecast_input(
+            &engine,
+            engine.get_entity(target).expect("test PC exists"),
+            false,
+        )
+        .expect("PC has forecast input");
+        assert_eq!(
+            forecast_input
+                .sector_handle
+                .and_then(|sector| sector.arena_index()),
+            None,
+            "an empty compatibility grid cannot invent exact forecast topology",
         );
     }
 

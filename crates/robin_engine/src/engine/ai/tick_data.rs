@@ -596,7 +596,8 @@ impl EngineInner {
                         target_id.index()
                     )
                 });
-                let input = extract_forecast_input(
+                let input = extract_exact_forecast_input(
+                    self,
                     target,
                     selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
                 )
@@ -801,7 +802,8 @@ impl EngineInner {
             && enemy_ai.missed_pc != 0
             && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
             && let Some(missed_entity) = self.world.entities.get(missed_id)
-            && let Some(input) = extract_forecast_input(
+            && let Some(input) = extract_exact_forecast_input(
+                self,
                 missed_entity,
                 selected_actor_is_passing_door(&self.orders.sequence_manager, missed_id),
             )
@@ -1085,7 +1087,8 @@ impl EngineInner {
             matches!(self.world.entities.get(target_id), Some(Entity::Pc(_)));
         if build_forecasts
             && let Some(target_entity) = self.world.entities.get(target_id)
-            && let Some(input) = extract_forecast_input(
+            && let Some(input) = extract_exact_forecast_input(
+                self,
                 target_entity,
                 selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
             )

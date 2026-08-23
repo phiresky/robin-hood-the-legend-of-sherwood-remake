@@ -2090,7 +2090,8 @@ impl EngineInner {
                     target_id.index()
                 )
             });
-            let mut input = extract_forecast_input(
+            let mut input = extract_exact_forecast_input(
+                self,
                 target,
                 selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
             )
