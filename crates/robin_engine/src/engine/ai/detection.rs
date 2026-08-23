@@ -2993,14 +2993,12 @@ impl EngineInner {
             if viewer.camp == Camp::Lacklandists
                 && let Some(enemy_ai) = npc.ai_brain.enemy_mut()
             {
-                // Pre-resolve target metadata (position, posture,
-                // animation) from the pc_snapshots cache when the
-                // primary target is a PC. Used by
-                // `reconsider_enemy_approach` for live-target reads.
-                // Carrier position is left None here — the
-                // on-shoulders branch is handled in the separate
-                // timer / reach-point dispatch paths that have
-                // direct entity access.
+                // Pre-resolve target metadata when the primary target is a
+                // PC. Original's ReconsiderEnemyApproach reads
+                // Position(mpPrimaryTarget), including its exact RHSector*
+                // and its door/carrier projection. The owner-boundary AI
+                // position map is that source; the optical PC snapshot keeps
+                // raw feet geometry for visibility and is not interchangeable.
                 let (primary_target_position, primary_target_posture, primary_target_animation) = {
                     let target_handle = enemy_ai.base.primary_target;
                     if target_handle != 0
@@ -3009,12 +3007,7 @@ impl EngineInner {
                             .find(|p| p.id == EntityId::Pc(crate::entity_id::PcId(target_handle)))
                     {
                         (
-                            Some(crate::ai::Position {
-                                x: pc.position.x,
-                                y: pc.position.y,
-                                sector: crate::position_interface::SectorHandle::new(pc.sector_num),
-                                level: pc.layer,
-                            }),
+                            Some(fighter_ai_position(&world.ai_positions, pc.id)),
                             Some(pc.posture),
                             Some(pc.order_type),
                         )

@@ -423,7 +423,7 @@ impl EngineInner {
                 crate::ai::Position {
                     x: boundary.map.x,
                     y: boundary.map.y,
-                    sector: position_entity.element_data().sector(),
+                    sector: super::ai_view_position_sector(self, position_entity.element_data()),
                     level: position_entity.element_data().layer(),
                 }
             },
@@ -1325,6 +1325,74 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::{is_archer_from_bow, object_detection_world_position};
+
+    #[test]
+    fn owner_boundary_ai_position_recovers_duplicate_public_sector_identity() {
+        use crate::coordinates::{MapBBox, MapPoint};
+        use crate::fast_find_grid::{GridSector, SectorIndex};
+        use crate::sector::{SectorNumber, SectorType};
+
+        let grid_sector = |min, max| GridSector {
+            points: vec![
+                MapPoint::new(min, min),
+                MapPoint::new(max, min),
+                MapPoint::new(max, max),
+                MapPoint::new(min, max),
+            ],
+            bounding_box: MapBBox::from_coords(min, min, max, max),
+            sector_type: SectorType::MOTION | SectorType::AREA,
+            layer: 2,
+            sector_number: SectorNumber::new(88),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+
+        let mut engine = crate::engine::EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let wrong = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(grid_sector(300.0, 350.0), 2);
+        let exact = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(grid_sector(100.0, 200.0), 2);
+        assert_ne!(wrong, exact);
+
+        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        }));
+        let element = engine
+            .get_entity_mut(target)
+            .expect("test PC exists")
+            .element_data_mut();
+        element.set_position_map(MapPoint::new(150.0, 150.0));
+        element.set_layer(2);
+        element.set_sector(crate::position_interface::SectorHandle::new(88));
+
+        let position = engine.ai_position_at_owner_boundary(target, None);
+        assert_eq!(
+            position.sector.and_then(|sector| sector.arena_index()),
+            SectorIndex::new(exact)
+        );
+    }
 
     #[test]
     fn bow_presence_defines_archer_even_with_zero_normal_range() {
