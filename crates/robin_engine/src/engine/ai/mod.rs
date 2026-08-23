@@ -1128,6 +1128,130 @@ mod parity_tests {
     }
 
     #[test]
+    fn pending_move_condolation_owns_failure_before_engine_completion_surface() {
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let sequence = engine.orders.sequence_manager.launch_element(
+            crate::sequence::SequenceElement::new_movement(
+                1,
+                crate::element::Command::MoveOk,
+                Some(owner),
+                crate::order::OrderType::RunningUpright,
+            ),
+        );
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .orders
+            .sequence_manager
+            .element_impossible(sequence, 0);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_pending_couldnt_reachpoint_condolation(owner)
+        );
+
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier has AI");
+        ai.completion_latch_inside_think = true;
+        ai.couldnt_reachpoint = true;
+
+        engine.surface_synchronous_completion_events_for_owner(owner);
+
+        let ai = engine
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI");
+        assert!(ai.couldnt_reachpoint);
+        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_pending_couldnt_reachpoint_condolation(owner),
+            "the suspended Original callback must remain next in line"
+        );
+    }
+
+    #[test]
+    fn selected_move_preflight_failure_has_condolation_provenance() {
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let sequence = engine.orders.sequence_manager.launch_element(
+            crate::sequence::SequenceElement::new_movement(
+                1,
+                crate::element::Command::MoveOk,
+                Some(owner),
+                crate::order::OrderType::RunningUpright,
+            ),
+        );
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier has AI");
+        ai.completion_latch_inside_think = true;
+        ai.couldnt_reachpoint = true;
+
+        engine.surface_synchronous_completion_events_for_owner(owner);
+
+        let ai = engine
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI");
+        assert_eq!(ai.outbox.reentrant.self_stimuli.len(), 1);
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli[0].stimulus_type,
+            crate::ai::StimulusType::EventCouldntReachPoint
+        );
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli[0].origin,
+            crate::ai::SelfStimulusOrigin::Condolation
+        );
+    }
+
+    #[test]
     fn suspended_look_there_tail_surfaces_engine_deferred_route_rejection() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
@@ -1167,6 +1291,10 @@ mod parity_tests {
         assert_eq!(
             ai.outbox.reentrant.self_stimuli,
             [crate::ai::StimulusType::EventCouldntReachPoint]
+        );
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli[0].origin,
+            crate::ai::SelfStimulusOrigin::EngineCompletion
         );
 
         // A genuine outside-Think operation still has no EndThink delivery
@@ -7606,7 +7734,7 @@ impl EngineInner {
         );
         let invoke_finished_callback = if let Some(stimulus) = Self::speech_finished_stimulus(flags)
         {
-            ai.outbox.reentrant.self_stimuli.insert(0, stimulus);
+            ai.outbox.reentrant.self_stimuli.insert(0, stimulus.into());
             true
         } else {
             false
@@ -7960,7 +8088,7 @@ impl EngineInner {
                 }
                 let invoke_finished_callback =
                     if let Some(stimulus) = Self::speech_finished_stimulus(flags) {
-                        ai.outbox.reentrant.self_stimuli.insert(0, stimulus);
+                        ai.outbox.reentrant.self_stimuli.insert(0, stimulus.into());
                         true
                     } else {
                         false
@@ -8188,7 +8316,7 @@ impl EngineInner {
             if let Some(stimulus) =
                 Self::speech_finished_stimulus(SpeechFlags::from_bits_truncate(flags))
             {
-                ai.outbox.reentrant.self_stimuli.push(stimulus);
+                ai.outbox.reentrant.self_stimuli.push(stimulus.into());
             }
             self.drain_direct_ai_owner_boundary(sim, actor_id, assets);
         }
@@ -13505,6 +13633,28 @@ impl EngineInner {
                 self.control.frame_counter,
                 npc_id.index(),
             );
+        // A movement element's Impossible transition already owns a pending
+        // synchronous SendCondolationCard callback. Original delivers that
+        // callback directly from SetState before any enclosing stack can
+        // return to EndThink. Rust's suspended card must therefore win this
+        // boundary; surfacing the same latch first mislabels a genuine
+        // movement condolation as an engine completion.
+        let pending_couldnt_condolation = self
+            .orders
+            .sequence_manager
+            .has_pending_couldnt_reachpoint_condolation(npc_id);
+        // A preflight rejection can occur before Rust has materialized the
+        // replacement movement element and its Impossible condolence card.
+        // If the actor still has an authored movement selected, Original's
+        // replacement arbitration reaches the movement SetState callback and
+        // reports the rejection as EVENT_COULDNT_REACHPOINT from
+        // SendCondolationCard. A nonmovement selection (notably the attentive
+        // transition in the lift-entry continuation) instead belongs to the
+        // engine-completion bridge.
+        let selected_movement_owns_failure = self
+            .orders
+            .sequence_manager
+            .actor_has_selected_movement(npc_id);
         let ai = self
             .world
             .entities
@@ -13540,8 +13690,9 @@ impl EngineInner {
                 .outbox
                 .reentrant
                 .civilian_report_alert_officer_completion_pending;
-        let retain_couldnt_reachpoint =
-            ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
+        let retain_couldnt_reachpoint = ai.completion_latch_inside_think
+            && ai.couldnt_reachpoint
+            && (typed_tail_pending || pending_couldnt_condolation);
         // Owner-work prefixes (notably Enemy SetState's synchronous callback)
         // can ask for a completion surface while the caller-tail GoTo is still
         // queued on the controller. Original cannot close that EndThink yet:
@@ -13585,7 +13736,17 @@ impl EngineInner {
         ai.already_turned = false;
         if let Some(event) = event {
             ai.engine_completion_verdict_resolved = false;
-            ai.outbox.reentrant.self_stimuli.push(event);
+            let origin = if selected_movement_owns_failure
+                && event == crate::ai::StimulusType::EventCouldntReachPoint
+            {
+                crate::ai::SelfStimulusOrigin::Condolation
+            } else {
+                crate::ai::SelfStimulusOrigin::EngineCompletion
+            };
+            ai.outbox
+                .reentrant
+                .self_stimuli
+                .push(crate::ai::QueuedSelfStimulus::new(event, origin));
         } else if !retain_couldnt_reachpoint && !typed_tail_pending && !engine_verdict_pending {
             // A successful engine-side authorization produces no recursive
             // completion event. This is the point where Original returns
@@ -15434,7 +15595,7 @@ impl EngineInner {
         let mut dispatched = 0usize;
 
         loop {
-            let stimulus_type = {
+            let queued_stimulus = {
                 let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     return;
                 };
@@ -15500,7 +15661,7 @@ impl EngineInner {
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
             };
-            let stimulus = crate::ai::Stimulus::new(stimulus_type);
+            let stimulus = crate::ai::Stimulus::from_queued_self(queued_stimulus);
             if owner_local_no_forecast {
                 match self.world.entities.get(npc_id) {
                     Some(Entity::Soldier(_)) => {

@@ -112,7 +112,8 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         !ai.outbox
             .reentrant
             .self_stimuli
-            .contains(&crate::ai::StimulusType::EventReturnToDuty),
+            .iter()
+            .any(|queued| queued.stimulus_type == crate::ai::StimulusType::EventReturnToDuty),
         "the interrupted old UnlockAi must not schedule ReturnToDuty"
     );
 }

@@ -401,7 +401,7 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
     ai.outbox
         .reentrant
         .self_stimuli
-        .push(StimulusType::EventTimer);
+        .push(StimulusType::EventTimer.into());
     let soldier_id = engine.add_entity(soldier_entity);
 
     engine.drain_ai_owner_work_for(
@@ -2352,7 +2352,8 @@ fn tower_guard_alert_officer_tail_consumes_ignored_route_failure() {
             .outbox
             .reentrant
             .self_stimuli
-            .contains(&StimulusType::EventCouldntReachPoint)
+            .iter()
+            .any(|queued| queued.stimulus_type == StimulusType::EventCouldntReachPoint)
     );
 }
 
@@ -2419,7 +2420,8 @@ fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
             .outbox
             .reentrant
             .self_stimuli
-            .contains(&StimulusType::EventCouldntReachPoint)
+            .iter()
+            .any(|queued| queued.stimulus_type == StimulusType::EventCouldntReachPoint)
     );
     assert_eq!(
         ai.seek_flags,
@@ -5575,7 +5577,7 @@ fn run_synchronous_civilian_alert(
             .outbox
             .reentrant
             .self_stimuli
-            .push(trigger);
+            .push(trigger.into());
         engine.drain_direct_ai_owner_boundary(sim, civilian_id, &assets);
     } else {
         let stimulus = if trigger == StimulusType::EventSeesSoldier {

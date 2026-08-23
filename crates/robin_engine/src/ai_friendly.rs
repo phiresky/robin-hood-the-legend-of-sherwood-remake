@@ -538,7 +538,7 @@ impl FriendlyAi {
                 .outbox
                 .reentrant
                 .self_stimuli
-                .push(StimulusType::EventReachPoint),
+                .push(StimulusType::EventReachPoint.into()),
             AlertContinuation::CivilianSawSoldier => {
                 self.base.say(Remark::CivCallsSoldier);
                 let target = self.base.antagonist;
@@ -799,7 +799,7 @@ impl FriendlyAi {
             self.base.already_on_point = false;
             self.base.already_turned = false;
             if let Some(event) = event {
-                self.base.outbox.reentrant.self_stimuli.push(event);
+                self.base.outbox.reentrant.self_stimuli.push(event.into());
                 // Original dispatches this event recursively before the
                 // decrement, so the frame stays open until the cascade's
                 // innermost Think unwinds (see `open_end_think_frames`).
@@ -2365,7 +2365,7 @@ impl FriendlyAi {
                                 .outbox
                                 .reentrant
                                 .self_stimuli
-                                .push(StimulusType::EventCouldntReachPoint);
+                                .push(StimulusType::EventCouldntReachPoint.into());
                         }
                         self.base.stuck_counter = 0;
                     }

@@ -432,9 +432,8 @@ fn change_way_binds_assignment_callback_before_explicit_virtual_tail() {
 
     ai.execute_next_macro_command(&crate::sim_rng::test_context(), &ctx);
 
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [],
+    assert!(
+        ai.outbox.reentrant.self_stimuli.is_empty(),
         "the exact assignment callback must be isolated from unrelated sibling stimuli"
     );
     assert!(ai.outbox.actor.orders.is_empty());
@@ -2228,7 +2227,10 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
     outbox.actor.halt = true;
     outbox.actor.stop_menace = true;
     outbox.actor.quit_swordfight = true;
-    outbox.reentrant.self_stimuli.push(StimulusType::EventDone);
+    outbox
+        .reentrant
+        .self_stimuli
+        .push(StimulusType::EventDone.into());
     outbox
         .reentrant
         .owner_work
@@ -2304,6 +2306,34 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
 }
 
 #[test]
+fn self_stimulus_provenance_is_live_only_and_survives_queue_conversion() {
+    let queued = QueuedSelfStimulus::new(
+        StimulusType::EventCouldntReachPoint,
+        SelfStimulusOrigin::EngineCompletion,
+    );
+    let stimulus = Stimulus::from_queued_self(queued);
+    assert_eq!(stimulus.stimulus_type, StimulusType::EventCouldntReachPoint);
+    assert_eq!(stimulus.self_origin, SelfStimulusOrigin::EngineCompletion);
+
+    let encoded = serde_json::to_string(&queued).expect("serialize queued self-stimulus");
+    assert_eq!(
+        encoded,
+        serde_json::to_string(&StimulusType::EventCouldntReachPoint)
+            .expect("serialize legacy self-stimulus")
+    );
+    let decoded: QueuedSelfStimulus =
+        serde_json::from_str(&encoded).expect("deserialize queued self-stimulus");
+    assert_eq!(decoded.stimulus_type, StimulusType::EventCouldntReachPoint);
+    assert_eq!(decoded.origin, SelfStimulusOrigin::Ordinary);
+
+    assert_eq!(
+        robin_util::state_hash::compute(&vec![queued]),
+        robin_util::state_hash::compute(&vec![StimulusType::EventCouldntReachPoint]),
+        "runtime provenance must not perturb the prior replay-state hash"
+    );
+}
+
+#[test]
 fn owner_fifo_preserves_and_hashes_say_setstate_both_orders() {
     let state = AiOwnerWork::StateChange(AiStateChangeNotification {
         outgoing_state: AiState::Default,
@@ -2359,7 +2389,7 @@ fn clear_all_pending_clears_every_outbox_barrier() {
     ai.outbox
         .reentrant
         .self_stimuli
-        .push(StimulusType::EventDone);
+        .push(StimulusType::EventDone.into());
     ai.outbox
         .reentrant
         .owner_work

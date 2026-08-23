@@ -1736,7 +1736,7 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
     ai.outbox
         .reentrant
         .self_stimuli
-        .push(StimulusType::EventTimer);
+        .push(StimulusType::EventTimer.into());
     ai.stimulus_queue = vec![
         Stimulus::new(StimulusType::EventAfterScriptGoOn),
         Stimulus::with_position(
@@ -1937,7 +1937,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
             ai.outbox
                 .reentrant
                 .self_stimuli
-                .push(StimulusType::EventDone);
+                .push(StimulusType::EventDone.into());
         }
     }
     engine.tick_ai_queued_stimuli_for_npc(sim, retained_owner, &assets);

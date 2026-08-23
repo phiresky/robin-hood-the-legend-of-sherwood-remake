@@ -92,7 +92,7 @@ pub struct AiReentrantOutbox {
     #[state_hash(skip)]
     pub engine_drains_after_script_go_on: bool,
     pub cross_npc_actions: Vec<CrossNpcAction>,
-    pub self_stimuli: Vec<StimulusType>,
+    pub self_stimuli: Vec<QueuedSelfStimulus>,
     /// Finish an outside-Think multi-point patrol macro after its synthetic
     /// `EventReachPoint` recursion has settled. The nested reach-point path
     /// may write a new macro deadline; the outer completion then clears only

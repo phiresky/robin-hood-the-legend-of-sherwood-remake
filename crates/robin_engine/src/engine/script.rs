@@ -3891,7 +3891,7 @@ impl EngineInner {
                             .outbox
                             .reentrant
                             .self_stimuli
-                            .push(callback);
+                            .push(callback.into());
                         if owner_local_no_forecast {
                             self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
                         } else {
@@ -4062,8 +4062,13 @@ impl EngineInner {
                         if ai.current_state == crate::ai::AiState::Default
                             && ai.current_substate == crate::ai::Substate::DefaultGotoPost
                             && ai.outbox.actor.orders.is_empty()
-                            && ai.outbox.reentrant.self_stimuli.last()
-                                == Some(&crate::ai::StimulusType::EventReachPoint)
+                            && ai
+                                .outbox
+                                .reentrant
+                                .self_stimuli
+                                .last()
+                                .map(|queued| queued.stimulus_type)
+                                == Some(crate::ai::StimulusType::EventReachPoint)
                         {
                             ai.outbox.reentrant.self_stimuli.pop();
                         }

@@ -89,7 +89,7 @@ fn post_reentrant_macro_cleanup_preserves_nested_wait_deadline() {
         ai.outbox
             .reentrant
             .self_stimuli
-            .push(StimulusType::EventDone);
+            .push(StimulusType::EventDone.into());
         ai.outbox.reentrant.finish_macro_after_self_stimuli = true;
     }
 
@@ -149,7 +149,7 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
             .outbox
             .reentrant
             .self_stimuli
-            .push(StimulusType::EventPanic);
+            .push(StimulusType::EventPanic.into());
         friendly.base.execute_next_macro_command(
             sim,
             &AiContext {

@@ -39,7 +39,7 @@ impl EnemyAi {
                 .outbox
                 .reentrant
                 .self_stimuli
-                .push(StimulusType::EventWaspAway);
+                .push(StimulusType::EventWaspAway.into());
         }
 
         // Scotch — if stuck while fleeing to the map
@@ -192,7 +192,7 @@ impl EnemyAi {
                         .outbox
                         .reentrant
                         .self_stimuli
-                        .push(StimulusType::EventCouldntReachPoint);
+                        .push(StimulusType::EventCouldntReachPoint.into());
                 }
                 self.base.stuck_counter = 0;
             }

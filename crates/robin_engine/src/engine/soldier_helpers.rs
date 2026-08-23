@@ -1246,7 +1246,13 @@ impl EngineInner {
                 stimulus = ?st,
                 "send_condolation_card: fire EventDone/EventReachPoint to owner"
             );
-            ai.fire_self_stimulus(st);
+            ai.outbox
+                .reentrant
+                .self_stimuli
+                .push(crate::ai::QueuedSelfStimulus::new(
+                    st,
+                    crate::ai::SelfStimulusOrigin::Condolation,
+                ));
         }
     }
 

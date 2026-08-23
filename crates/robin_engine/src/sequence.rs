@@ -2901,6 +2901,30 @@ impl SequenceManager {
         std::mem::take(&mut self.pending_condolations)
     }
 
+    /// Whether Original's synchronous NPC condolence callback already owns
+    /// this owner's `EVENT_COULDNT_REACHPOINT` delivery.
+    ///
+    /// `RHSequenceElement::SetState(RHSEQ_IMPOSSIBLE)` calls
+    /// `SendCondolationCard` before it returns (`RHsequenceelement.cpp:405-420`),
+    /// and the NPC override dispatches this event for a final Move/MoveOk
+    /// action (`RHelementactornpc.cpp:6538-6568`). Rust suspends that callback
+    /// in `pending_condolations`, so an engine EndThink surface must not
+    /// overtake it with a second completion event.
+    pub fn has_pending_couldnt_reachpoint_condolation(&self, owner: EntityId) -> bool {
+        self.pending_condolations.iter().any(|pending| {
+            let card = pending.card;
+            card.owner == owner
+                && !card.from_halt
+                && !card.postponed_successor_pending
+                && card.terminal_state == SequenceState::Impossible
+                && matches!(
+                    card.command,
+                    Command::PassDoor | Command::Move | Command::MoveOk | Command::SitDown
+                )
+                && self.is_last_real_action(card.seq_id, usize::from(card.elem_idx))
+        })
+    }
+
     /// Restore a backlog detached around an owner-local synchronous boundary.
     /// The detached cards predate anything still queued, so they retain their
     /// original position at the front of the global FIFO.
@@ -3381,6 +3405,14 @@ impl SequenceManager {
             }
         }
         Some((first.sequence_id, first.element_index))
+    }
+
+    /// Whether the actor's Original-equivalent `mpSequenceElement` currently
+    /// names a movement element.
+    pub fn actor_has_selected_movement<I: Into<EntityId>>(&self, actor: I) -> bool {
+        self.current_element_for_actor(actor)
+            .and_then(|(sequence_id, element_index)| self.get_element(sequence_id, element_index))
+            .is_some_and(|element| element.data.is_movement())
     }
 
     /// Select the accepted element for the duration of its command

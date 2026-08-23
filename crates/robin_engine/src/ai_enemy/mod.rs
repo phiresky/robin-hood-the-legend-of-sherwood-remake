@@ -4147,7 +4147,7 @@ impl EnemyAi {
                     .outbox
                     .reentrant
                     .self_stimuli
-                    .push(StimulusType::EventCouldntReachPoint);
+                    .push(StimulusType::EventCouldntReachPoint.into());
                 queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
@@ -4164,7 +4164,7 @@ impl EnemyAi {
                     .outbox
                     .reentrant
                     .self_stimuli
-                    .push(StimulusType::EventReachPoint);
+                    .push(StimulusType::EventReachPoint.into());
                 queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
@@ -4181,7 +4181,7 @@ impl EnemyAi {
                     .outbox
                     .reentrant
                     .self_stimuli
-                    .push(StimulusType::EventDone);
+                    .push(StimulusType::EventDone.into());
                 queued_completion = true;
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;

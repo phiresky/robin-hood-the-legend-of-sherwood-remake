@@ -4681,7 +4681,7 @@ impl EnemyAi {
                             .outbox
                             .reentrant
                             .self_stimuli
-                            .push(StimulusType::EventReachPoint);
+                            .push(StimulusType::EventReachPoint.into());
                     }
                 } else {
                     // Officer busy — look for another

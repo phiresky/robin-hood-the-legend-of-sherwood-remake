@@ -475,7 +475,9 @@ impl EnemyAi {
                         // Ignore.
                     }
                     Substate::AttackingRunningToLadder
-                        if self.base.ai_log.iter().rev().any(|line| {
+                        if stimulus.self_origin
+                            == crate::ai::SelfStimulusOrigin::EngineCompletion
+                            && self.base.ai_log.iter().rev().any(|line| {
                             line.frame == ctx.frame
                                 && line.line_type == LogLineType::BattleDecision
                                 && line.info == Decision::Fight as u16

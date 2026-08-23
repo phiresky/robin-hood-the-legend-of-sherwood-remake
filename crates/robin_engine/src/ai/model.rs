@@ -2100,17 +2100,86 @@ pub enum StimulusInfo {
     LegacyInvalidType(i32),
 }
 
+/// Runtime-only provenance for a self-stimulus queued while the engine closes
+/// an Original synchronous callback boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum SelfStimulusOrigin {
+    #[default]
+    Ordinary,
+    Condolation,
+    EngineCompletion,
+}
+
+/// A queued self-stimulus. The transparent representation preserves the
+/// existing serialized `Vec<StimulusType>` shape; provenance exists only
+/// while the live engine is closing the same-frame callback stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct QueuedSelfStimulus {
+    pub stimulus_type: StimulusType,
+    #[serde(skip)]
+    pub(crate) origin: SelfStimulusOrigin,
+}
+
+impl robin_util::state_hash::StateHash for QueuedSelfStimulus {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Preserve the prior `Vec<StimulusType>` hash exactly. Runtime
+        // provenance is deliberately absent from deterministic snapshots.
+        robin_util::state_hash::StateHash::state_hash(&self.stimulus_type, state);
+    }
+}
+
+impl QueuedSelfStimulus {
+    pub(crate) fn new(stimulus_type: StimulusType, origin: SelfStimulusOrigin) -> Self {
+        Self {
+            stimulus_type,
+            origin,
+        }
+    }
+}
+
+impl From<StimulusType> for QueuedSelfStimulus {
+    fn from(stimulus_type: StimulusType) -> Self {
+        Self::new(stimulus_type, SelfStimulusOrigin::Ordinary)
+    }
+}
+
+impl PartialEq<StimulusType> for QueuedSelfStimulus {
+    fn eq(&self, other: &StimulusType) -> bool {
+        self.stimulus_type == *other
+    }
+}
+
+impl PartialEq<QueuedSelfStimulus> for StimulusType {
+    fn eq(&self, other: &QueuedSelfStimulus) -> bool {
+        *self == other.stimulus_type
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Stimulus
 // ---------------------------------------------------------------------------
 
 /// An event or call that is dispatched to an NPC's AI for processing.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Stimulus {
     pub stimulus_type: StimulusType,
     pub info: StimulusInfo,
     pub owner: NpcHandle,
     pub to_whole_patrol: bool,
+    #[serde(skip)]
+    pub(crate) self_origin: SelfStimulusOrigin,
+}
+
+impl robin_util::state_hash::StateHash for Stimulus {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Match the pre-provenance field sequence. `self_origin` is a live
+        // callback-stack discriminator, not persistent deterministic state.
+        robin_util::state_hash::StateHash::state_hash(&self.stimulus_type, state);
+        robin_util::state_hash::StateHash::state_hash(&self.info, state);
+        robin_util::state_hash::StateHash::state_hash(&self.owner, state);
+        robin_util::state_hash::StateHash::state_hash(&self.to_whole_patrol, state);
+    }
 }
 
 impl Stimulus {
@@ -2120,6 +2189,17 @@ impl Stimulus {
             info: StimulusInfo::None,
             owner: 0,
             to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
+        }
+    }
+
+    pub(crate) fn from_queued_self(queued: QueuedSelfStimulus) -> Self {
+        Self {
+            stimulus_type: queued.stimulus_type,
+            info: StimulusInfo::None,
+            owner: 0,
+            to_whole_patrol: false,
+            self_origin: queued.origin,
         }
     }
 
@@ -2129,6 +2209,7 @@ impl Stimulus {
             info: StimulusInfo::Noise(noise),
             owner: 0,
             to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
         }
     }
 
@@ -2138,6 +2219,7 @@ impl Stimulus {
             info: StimulusInfo::Position(pos),
             owner: 0,
             to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
         }
     }
 
@@ -2147,6 +2229,7 @@ impl Stimulus {
             info: StimulusInfo::Human(human),
             owner: 0,
             to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
         }
     }
 
@@ -2156,6 +2239,7 @@ impl Stimulus {
             info: StimulusInfo::DoorCombat(dc),
             owner: 0,
             to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
         }
     }
 

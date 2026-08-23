@@ -3713,6 +3713,7 @@ fn convert_stimulus(
             "local_ai.stimulus_queue.owner",
         )?,
         to_whole_patrol: saved.to_whole_patrol,
+        self_origin: crate::ai::SelfStimulusOrigin::Ordinary,
     })
 }
 

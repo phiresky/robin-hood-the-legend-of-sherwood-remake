@@ -1537,6 +1537,9 @@ impl AiController {
     /// The engine re-dispatches these as think() calls to the same NPC.
     pub fn take_pending_self_stimuli(&mut self) -> Vec<StimulusType> {
         std::mem::take(&mut self.outbox.reentrant.self_stimuli)
+            .into_iter()
+            .map(|queued| queued.stimulus_type)
+            .collect()
     }
 
     // -- Shield commands --
@@ -2213,7 +2216,7 @@ impl AiController {
         self.already_on_point = false;
         self.already_turned = false;
         if let Some(event) = event {
-            self.outbox.reentrant.self_stimuli.push(event);
+            self.outbox.reentrant.self_stimuli.push(event.into());
             // Original dispatches this event recursively before the
             // decrement, so the frame stays open until the cascade's
             // innermost Think unwinds (see `open_end_think_frames`).
@@ -2727,7 +2730,7 @@ impl AiController {
                                     .pop()
                                     .expect("ChangeWay assignment callback disappeared");
                                 assert_eq!(callback, StimulusType::EventReturnToDuty);
-                                Some(callback)
+                                Some(callback.stimulus_type)
                             } else {
                                 None
                             };
@@ -2971,8 +2974,13 @@ impl AiController {
                         self.go_to(next_wp, walk_flags, ctx);
                         let queued_outside_think_reach_point = self.think_recursion_depth == 0
                             && self.outbox.reentrant.self_stimuli.len() > self_stimuli_before
-                            && self.outbox.reentrant.self_stimuli.last()
-                                == Some(&StimulusType::EventReachPoint);
+                            && self
+                                .outbox
+                                .reentrant
+                                .self_stimuli
+                                .last()
+                                .map(|queued| queued.stimulus_type)
+                                == Some(StimulusType::EventReachPoint);
                         if queued_outside_think_reach_point {
                             // Original GoTo invokes this already-on-point
                             // EventReachPoint synchronously. The nested path
@@ -4323,7 +4331,10 @@ impl AiController {
             origin = %std::panic::Location::caller(),
             "self stimulus queued"
         );
-        self.outbox.reentrant.self_stimuli.push(stimulus_type);
+        self.outbox
+            .reentrant
+            .self_stimuli
+            .push(stimulus_type.into());
     }
 
     /// Turn to face a direction (0–15 sector).
@@ -5661,21 +5672,21 @@ impl AiController {
             self.outbox
                 .reentrant
                 .self_stimuli
-                .push(StimulusType::EventCouldntReachPoint);
+                .push(StimulusType::EventCouldntReachPoint.into());
         }
         if self.already_on_point {
             self.already_on_point = false;
             self.outbox
                 .reentrant
                 .self_stimuli
-                .push(StimulusType::EventReachPoint);
+                .push(StimulusType::EventReachPoint.into());
         }
         if self.already_turned {
             self.already_turned = false;
             self.outbox
                 .reentrant
                 .self_stimuli
-                .push(StimulusType::EventDone);
+                .push(StimulusType::EventDone.into());
         }
     }
 
