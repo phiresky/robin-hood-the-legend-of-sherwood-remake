@@ -3658,6 +3658,7 @@ mod tests {
 
         let mut attacker = object_view(ObjectType::None);
         attacker.kind = EntityKind::Pc;
+        attacker.position = Position::default();
         let mut views = AiEntityViewMap::new();
         views.insert(2, attacker);
         let ctx = AiContext {
@@ -3666,13 +3667,19 @@ mod tests {
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 1,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
 
         ai.think_alerting_event(
             &sim,
             &Stimulus::with_human(StimulusType::EventGotHit, 2),
             &mut AiGlobalState::default(),
             &ctx,
-            &AiPerTickData::stub(),
+            &tick,
             None,
         );
 
@@ -3917,6 +3924,7 @@ mod tests {
         attacker.kind = EntityKind::Pc;
         attacker.is_pc = true;
         attacker.camp = Camp::Royalists;
+        attacker.position = Position::default();
         let mut views = AiEntityViewMap::new();
         views.insert(2, attacker);
         let ctx = AiContext {
@@ -3924,13 +3932,19 @@ mod tests {
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 1,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
 
         ai.think_alerting_event(
             &sim,
             &Stimulus::with_human(StimulusType::EventGotHit, 2),
             &mut AiGlobalState::default(),
             &ctx,
-            &AiPerTickData::stub(),
+            &tick,
             None,
         );
 

@@ -4739,6 +4739,7 @@ mod tests {
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
             handle: 66,
+            raw_position: position(549.00867, 517.99506),
             is_friendly: true,
             is_archer_unit: true,
             ..FighterSnapshot::default()
@@ -4746,6 +4747,7 @@ mod tests {
         let active_bearer = FighterSnapshot {
             handle: 60,
             position: position(669.8923, 746.43475),
+            raw_position: position(669.8923, 746.43475),
             is_friendly: true,
             is_able_to_fight: true,
             is_shield_bearer: true,
@@ -4755,6 +4757,7 @@ mod tests {
         let inactive_bearer = FighterSnapshot {
             handle: 62,
             position: position(484.0, 701.0),
+            raw_position: position(484.0, 701.0),
             is_friendly: true,
             is_able_to_fight: false,
             is_shield_bearer: true,
