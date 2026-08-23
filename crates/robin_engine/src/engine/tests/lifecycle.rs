@@ -5821,7 +5821,12 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         .active = true;
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let hotspot = crate::coordinates::SpriteLocalPoint::new(7.0, 9.0);
+    // Keep the synthetic strangle hotspot within the victim's effective
+    // sword range after the failed placement. Original AttackEnemy truncates
+    // the raw norm to UWORD and compares it with standard range + 10; the old
+    // (7, 9) offset truncates to 11 and correctly authors an approach Move,
+    // obscuring the synchronous EnterSwordfight behavior this test covers.
+    let hotspot = crate::coordinates::SpriteLocalPoint::new(6.0, 7.0);
     let script = SpriteScript {
         action_id: OrderType::Strangling as u16,
         action_done: 1,
