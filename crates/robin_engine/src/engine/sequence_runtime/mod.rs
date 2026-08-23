@@ -230,16 +230,28 @@ impl PositionAssertionContext<'_> {
                 _ => None,
             });
 
-        let entity = self.entities.get(owner);
-        let live_position = entity.map(|entity| entity.element_data().position_map());
-        let live_sector = entity.and_then(|entity| entity.element_data().sector());
+        let Some(entity) = self.entities.get(owner) else {
+            tracing::warn!(
+                ?owner,
+                ?seq_id,
+                elem_idx,
+                "interrupting AssertPosition because its owner no longer exists"
+            );
+            self.sequence_manager.element_interrupted(
+                seq_id,
+                elem_idx,
+                crate::sequence::CascadeFlags::NEXT_LEVEL,
+            );
+            return OwnerActionBarrier::Skip;
+        };
+        let live_position = entity.element_data().position_map();
+        let live_sector = entity.element_data().sector();
         let mismatches = movement.is_some_and(|(destination, expected_sector, tolerance)| {
             if let Some(expected_sector) = expected_sector {
                 live_sector != Some(expected_sector)
             } else {
-                let position = live_position.unwrap_or_default();
-                let delta_x = position.x - destination.x;
-                let delta_y = position.y - destination.y;
+                let delta_x = live_position.x - destination.x;
+                let delta_y = live_position.y - destination.y;
                 // Preserve Original's literal mismatch predicate from
                 // `RHElementActor::Translate`. Its `MaxNorm() >= limit`
                 // comparison is false for qNaN, so a route built from a

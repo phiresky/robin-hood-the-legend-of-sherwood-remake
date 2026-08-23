@@ -837,10 +837,11 @@ fn make_action_transition_actor(
         return false;
     };
     let posture = entity.element_data().posture;
-    let action_state = entity
-        .actor_data()
-        .map(|a| a.action_state)
-        .unwrap_or_default();
+    let Some(actor) = entity.actor_data() else {
+        tracing::warn!(?owner, "make_action_transition: owner has no actor data");
+        return false;
+    };
+    let action_state = actor.action_state;
 
     if action_state == ActionState::Waiting {
         return true;
@@ -966,12 +967,17 @@ fn make_action_transition_human(
     flags: EX,
 ) -> bool {
     let Some(entity) = engine.get_entity(owner) else {
+        tracing::warn!(?owner, "make_action_transition_human: entity gone");
         return false;
     };
-    let action_state = entity
-        .actor_data()
-        .map(|a| a.action_state)
-        .unwrap_or_default();
+    let Some(actor) = entity.actor_data() else {
+        tracing::warn!(
+            ?owner,
+            "make_action_transition_human: owner has no actor data"
+        );
+        return false;
+    };
+    let action_state = actor.action_state;
     let posture = entity.element_data().posture;
     let is_anonymous_archer = posture == Posture::AnonymousArcher;
 

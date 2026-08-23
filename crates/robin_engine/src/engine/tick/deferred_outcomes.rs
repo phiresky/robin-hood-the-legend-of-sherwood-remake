@@ -1010,35 +1010,57 @@ impl EngineInner {
         // * Scrolls route through `take_scroll` which fires
         //   `IScrollScript::IsTaken`.
         for (taker, object) in pickups {
+            let Some(taker_entity) = self.world.entities.get(taker) else {
+                tracing::warn!(
+                    ?taker,
+                    ?object,
+                    "dropping deferred pickup because its taker no longer exists"
+                );
+                continue;
+            };
+            let taker_is_pc = taker_entity.is_pc();
+            if !taker_is_pc && !taker_entity.is_npc() {
+                tracing::warn!(
+                    ?taker,
+                    ?object,
+                    "dropping deferred pickup because its taker is not an actor"
+                );
+                continue;
+            }
+
             // Scrolls are not ObjectData carriers — they have their
             // own Entity::Scroll variant and a script-driven
             // `IsTaken` dispatch.
-            let is_scroll = matches!(
-                self.world.entities.get(object),
-                Some(crate::element::Entity::Scroll(_))
-            );
+            let Some(object_entity) = self.world.entities.get(object) else {
+                tracing::warn!(
+                    ?taker,
+                    ?object,
+                    "dropping deferred pickup because its object no longer exists"
+                );
+                continue;
+            };
+            let is_scroll = matches!(object_entity, crate::element::Entity::Scroll(_));
             if is_scroll {
                 self.scroll_is_taken(sim, assets, object, taker);
                 continue;
             }
 
-            let object_type = self
-                .world
-                .entities
-                .get(object)
-                .and_then(|e| e.object_data())
-                .map(|o| o.object_type);
+            let object_type = object_entity.object_data().map(|o| o.object_type);
             // Original's special net pickup arm is selected by the
             // RHElementNet class. An inventory RHElementBonus whose object
             // type is BONUS_NET follows ordinary TakeObject instead: it uses
             // the usual capacity/quantity split and is only deactivated when
             // the bonus is fully consumed.
-            let is_landed_net = self
-                .world
-                .entities
-                .get(object)
-                .is_some_and(|entity| matches!(entity, Entity::Net(_)));
-            let taker_is_pc = self.get_entity(taker).map(|e| e.is_pc()).unwrap_or(false);
+            let is_landed_net = matches!(object_entity, Entity::Net(_));
+
+            if object_type.is_none() {
+                tracing::warn!(
+                    ?taker,
+                    ?object,
+                    "dropping deferred pickup because the object has no object data"
+                );
+                continue;
+            }
 
             match object_type {
                 Some(_) if is_landed_net => {
@@ -1127,26 +1149,46 @@ impl EngineInner {
         // the soldier's NPC data via `ai_brain`; `profile.beer` is
         // the per-profile increment (see profiles.rs).
         for soldier in drink_done {
-            let profile_idx = self
+            let Some(profile_idx) = self
                 .world
                 .entities
                 .get(soldier)
-                .and_then(|e| e.soldier_data())
-                .map(|sd| sd.soldier_profile_index);
-            let beer = profile_idx
-                .and_then(|idx| assets.profile_manager.get_soldier(idx))
-                .map(|prof| prof.beer)
-                .unwrap_or(0);
+                .and_then(Entity::soldier_data)
+                .map(|soldier| soldier.soldier_profile_index)
+            else {
+                tracing::warn!(
+                    ?soldier,
+                    "dropping deferred DrinkAle completion because its owner is missing or is not a soldier"
+                );
+                continue;
+            };
+            let Some(profile) = assets.profile_manager.get_soldier(profile_idx) else {
+                tracing::warn!(
+                    ?soldier,
+                    ?profile_idx,
+                    "dropping deferred DrinkAle completion because its soldier profile is missing"
+                );
+                continue;
+            };
+            let beer = profile.beer;
             if beer == 0 {
                 continue;
             }
-            if let Some(entity) = self.world.entities.get_mut(soldier)
-                && let Some(npc) = entity.npc_data_mut()
-                && let Some(base) = npc.ai_brain.base_mut()
-            {
-                let new_val = (base.blood_alcohol as u16 + beer).min(100);
-                base.blood_alcohol = new_val as u8;
-            }
+            let Some(base) = self
+                .world
+                .entities
+                .get_mut(soldier)
+                .and_then(Entity::npc_data_mut)
+                .and_then(|npc| npc.ai_brain.base_mut())
+            else {
+                tracing::warn!(
+                    ?soldier,
+                    "dropping deferred DrinkAle completion because its soldier has no AI controller"
+                );
+                continue;
+            };
+            let new_val = (base.blood_alcohol as u16 + beer).min(100);
+            base.blood_alcohol = new_val as u8;
         }
     }
 
@@ -1154,26 +1196,53 @@ impl EngineInner {
         // SEARCHING DONE — NPC-on-NPC pickpocket money transfer:
         // thief.money += victim.money; victim.money = 0.
         for (thief, victim) in pickpockets {
-            let stolen = self
+            let Some(stolen) = self
                 .world
                 .entities
                 .get(victim)
                 .and_then(|e| e.npc_data())
                 .map(|n| n.money)
-                .unwrap_or(0);
+            else {
+                tracing::warn!(
+                    ?thief,
+                    ?victim,
+                    "dropping deferred pickpocket because its victim is missing or is not an NPC"
+                );
+                continue;
+            };
             if stolen == 0 {
                 continue;
             }
-            if let Some(entity) = self.world.entities.get_mut(victim)
-                && let Some(npc) = entity.npc_data_mut()
+
+            if self
+                .world
+                .entities
+                .get(thief)
+                .and_then(|entity| entity.npc_data())
+                .is_none()
             {
-                npc.money = 0;
+                tracing::warn!(
+                    ?thief,
+                    ?victim,
+                    "dropping deferred pickpocket because its thief is missing or is not an NPC"
+                );
+                continue;
             }
-            if let Some(entity) = self.world.entities.get_mut(thief)
-                && let Some(npc) = entity.npc_data_mut()
-            {
-                npc.money = npc.money.saturating_add(stolen);
-            }
+
+            self.world
+                .entities
+                .get_mut(victim)
+                .and_then(Entity::npc_data_mut)
+                .expect("validated deferred pickpocket victim disappeared")
+                .money = 0;
+            let thief_money = &mut self
+                .world
+                .entities
+                .get_mut(thief)
+                .and_then(Entity::npc_data_mut)
+                .expect("validated deferred pickpocket thief disappeared")
+                .money;
+            *thief_money = thief_money.saturating_add(stolen);
         }
     }
 
@@ -1294,5 +1363,50 @@ impl EngineInner {
                 Some(speaker),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{ActorSoldier, ElementData, ElementKind, Posture};
+
+    fn test_soldier() -> Entity {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        })
+    }
+
+    #[test]
+    fn deferred_pickpocket_keeps_victim_money_when_thief_disappears() {
+        let mut engine = EngineInner::new();
+        let thief = engine.add_entity(test_soldier());
+        let victim = engine.add_entity(test_soldier());
+        engine
+            .get_entity_mut(victim)
+            .and_then(Entity::npc_data_mut)
+            .expect("test victim NPC")
+            .money = 125;
+        engine.remove_entity(thief);
+
+        engine.drain_pickpockets(vec![(thief, victim)]);
+
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .and_then(Entity::npc_data)
+                .expect("test victim NPC")
+                .money,
+            125,
+            "a stale deferred thief must not destroy the victim's money"
+        );
     }
 }

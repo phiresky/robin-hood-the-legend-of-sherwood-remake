@@ -8709,6 +8709,8 @@ mod bow_command_body_parity_tests {
             door_type: crate::gate::DoorType::LiftHigh,
             sector_in: sector_number,
             sector_out: crate::sector::SectorNumber::new(0),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(0),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(1),
             ..crate::gate::Door::default()
         };
         engine.script_domains.interactables.doors.push(door.clone());
@@ -9016,10 +9018,12 @@ mod soldier_take_drink_parity_tests {
     }
 
     #[test]
-    fn soldier_drinking_ale_sets_goal_and_turns_toward_antagonist() {
+    fn soldier_drinking_ale_turns_toward_existing_goal() {
+        let mut soldier = make_soldier_at(0.0, 0.0);
+        soldier.element_data_mut().set_direction_goal(1);
         let (engine, actor_id) = launch_interaction_and_tick(
             Command::DrinkAle,
-            make_soldier_at(0.0, 0.0),
+            soldier,
             make_bonus_object_at(ObjectType::Ale, 100.0, 0.0),
         );
 
