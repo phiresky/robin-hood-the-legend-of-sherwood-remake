@@ -111,7 +111,9 @@ self_test() {
         printf 'self-test failure: invalid corpus emitted a partial manifest\n' >&2
         return 1
     fi
-    if ! rg -q 'replay-004\.complete' "$test_root/error"; then
+    # grep, not rg: capture workers run this self-test on hosts that carry only
+    # the base toolchain.
+    if ! grep -q 'replay-004\.complete' "$test_root/error"; then
         printf 'self-test failure: orphan marker error omitted its path\n' >&2
         return 1
     fi
