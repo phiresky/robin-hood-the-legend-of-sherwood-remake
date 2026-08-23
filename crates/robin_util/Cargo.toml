@@ -1,22 +1,22 @@
 [package]
 name = "robin_util"
-version = "0.0.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "robin_util"
 
 [dependencies]
-geo = "0.33"
-fastrand = "2"
+geo.workspace = true
+fastrand.workspace = true
 rustc-hash = "2"
-serde = { version = "1", features = ["derive", "rc"] }
-thiserror = "2"
-nonmax = "0.5"
-enum-map = "2"
-indexmap = "2"
+serde = { workspace = true, features = ["derive", "rc"] }
+thiserror.workspace = true
+nonmax.workspace = true
+enum-map.workspace = true
+indexmap.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
-serde_json = "1"
+tempfile.workspace = true
+serde_json.workspace = true

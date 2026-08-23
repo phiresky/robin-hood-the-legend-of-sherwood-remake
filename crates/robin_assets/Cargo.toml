@@ -1,23 +1,23 @@
 [package]
 name = "robin_assets"
-version = "0.0.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "robin_assets"
 
 [dependencies]
-robin_util = { path = "../robin_util" }
-robin_engine = { path = "../robin_engine" }
-serde = { version = "1", features = ["derive", "rc"] }
-tracing = "0.1"
-anyhow = "1"
-bytemuck = "1"
+robin_util.workspace = true
+robin_engine.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+tracing.workspace = true
+anyhow.workspace = true
+bytemuck.workspace = true
 flate2 = "1"
-bitcode = { version = "0.6", features = ["serde"] }
-serde_json = "1"
-zstd = "0.13"
+bitcode.workspace = true
+serde_json.workspace = true
+zstd.workspace = true
 winit = { version = "0.30", default-features = false, features = ["serde"] }
 # Official libjxl Rust port (https://github.com/libjxl/jxl-rs). Used to
 # decode terrain `.map` files when the converter has transcoded them to
@@ -37,7 +37,7 @@ jxl = { version = "0.4", default-features = false }
 bzip2 = "0.6"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 # The library keeps winit platform-neutral for wasm consumers. Standalone
 # Linux test targets still need one native backend selected so winit compiles.

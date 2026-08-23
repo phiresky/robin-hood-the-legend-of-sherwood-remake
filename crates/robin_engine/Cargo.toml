@@ -1,8 +1,8 @@
 [package]
 name = "robin_engine"
-version = "0.0.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "robin_engine"
@@ -15,32 +15,32 @@ default = []
 test-helpers = []
 
 [dependencies]
-serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json.workspace = true
 serde_json_any_key = "2"
-tracing = "0.1"
-thiserror = "2"
+tracing.workspace = true
+thiserror.workspace = true
 # Drop-in for `std::time::{Instant, SystemTime}` that works on
 # `wasm32-unknown-unknown`.  std's types compile fine for that target
 # but `Instant::now()` panics at runtime with "time not implemented
 # on this platform"; web-time uses `performance.now()` instead.
-web-time = "1"
-fastrand = "2"
-bitflags = { version = "2", features = ["serde"] }
+web-time.workspace = true
+fastrand.workspace = true
+bitflags = { workspace = true, features = ["serde"] }
 num_enum = "0.7"
 strum = "0.28.0"
 strum_macros = "0.28.0"
 md5_crate = { package = "md-5", version = "0.11" }
-geo = { version = "0.33", features = ["serde"] }
-robin_util = { path = "../robin_util" }
-robin_state_hash_derive = { path = "../robin_state_hash_derive" }
-nonmax = { version = "0.5", features = ["serde"] }
-bitcode = { version = "0.6", features = ["serde"] }
-bincode = { version = "2", features = ["serde"] }
-zip = { version = "8", default-features = false, features = ["deflate"] }
-enum-map = { version = "2", features = ["serde"] }
-indexmap = { version = "2", features = ["serde"] }
+geo = { workspace = true, features = ["serde"] }
+robin_util.workspace = true
+robin_state_hash_derive.workspace = true
+nonmax = { workspace = true, features = ["serde"] }
+bitcode.workspace = true
+bincode.workspace = true
+zip.workspace = true
+enum-map = { workspace = true, features = ["serde"] }
+indexmap = { workspace = true, features = ["serde"] }
 [dev-dependencies]
-tempfile = "3"
-tracing-subscriber = "0.3"
-syn = { version = "2", features = ["full", "visit"] }
+tempfile.workspace = true
+tracing-subscriber.workspace = true
+syn = { workspace = true, features = ["full", "visit"] }

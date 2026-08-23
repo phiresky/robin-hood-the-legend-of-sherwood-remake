@@ -1,34 +1,27 @@
 [package]
 name = "robin_lua"
-version = "0.0.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "robin_lua"
 
 [dependencies]
-robin_engine = { path = "../robin_engine" }
-robin_util = { path = "../robin_util" }
-# `vendored` builds Lua 5.4 from source so we don't need a system Lua.
-# `send` makes `Lua` `Send` — required because `Engine` (and anything that
-# holds the script host) is moved across threads in the rollback pipeline.
-# `luau` (Roblox's safer Lua dialect) is vendored by default — no
-# `vendored` feature needed. `send` makes `Lua` `Send` so the host
-# can move it across rollback boundaries. We choose Luau over Lua 5.4
-# specifically for `Lua::sandbox`: it freezes the globals table and
-# routes script-local writes through a per-script environment, which
-# is the right safety story for running arbitrary downloaded
-# missions.
-mlua = { version = "0.12", features = ["luau", "send"] }
-tracing = "0.1"
-thiserror = "2"
-serde_json = "1"
+robin_engine.workspace = true
+robin_util.workspace = true
+# Luau is vendored by default, so no system Lua or `vendored` feature is
+# needed. `send` lets the script host move across rollback boundaries, while
+# Luau's `Lua::sandbox` isolates arbitrary downloaded missions.
+mlua.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
-tracing-subscriber = "0.3"
+tempfile.workspace = true
+tracing-subscriber.workspace = true
 # Used by the `check_mod_lua` example to walk downloaded mission
 # zips. Examples reuse dev-dependencies, so this stays out of the
 # library's release-mode dep graph.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip.workspace = true

@@ -1,8 +1,8 @@
 [package]
 name = "robin_rs"
 version = "0.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [lib]
 name = "robin_rs"
@@ -13,41 +13,41 @@ name = "robin_rs"
 crate-type = ["rlib"]
 
 [dependencies]
-robin_engine = { path = "../robin_engine" }
-robin_assets = { path = "../robin_assets" }
-robin_lua = { path = "../robin_lua" }
-robin_util = { path = "../robin_util" }
-mlua = { version = "0.12", features = ["luau", "send"] }
-tempfile = "3"
+robin_engine.workspace = true
+robin_assets.workspace = true
+robin_lua.workspace = true
+robin_util.workspace = true
+mlua.workspace = true
+tempfile.workspace = true
 ab_glyph = "0.2"
-geo = { version = "0.33", features = ["serde"] }
+geo = { workspace = true, features = ["serde"] }
 earcutr = "0.5"
-bitflags = { version = "2", features = ["serde"] }
-enum-map = { version = "2", features = ["serde"] }
-serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
+bitflags = { workspace = true, features = ["serde"] }
+enum-map = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json.workspace = true
 serde_urlencoded = "0.7"
 serde-value = "0.7"
-tracing = "0.1"
-thiserror = "2"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing.workspace = true
+thiserror.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 jiff = "0.2"
-fastrand = "2"
+fastrand.workspace = true
 rand = "0.10"
-anyhow = "1"
+anyhow.workspace = true
 libc = "0.2"
-bytemuck = { version = "1", features = ["derive"] }
+bytemuck = { workspace = true, features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 dirs = { version = "6", optional = true }
 ffmpeg-next = { version = "9", optional = true }
 png = "0.18"
-bitcode = { version = "0.6", features = ["serde"] }
+bitcode.workspace = true
 # Engine snapshots for multiplayer mid-mission joins.  Bitcode caps
 # enum variants at 256; some sim enums exceed that, so the snapshot
 # path uses bincode instead (no enum-size limit, slightly larger
 # wire payload — fine for a one-shot send at handshake time).
-bincode = { version = "2", features = ["serde"] }
-zstd = "0.13"
+bincode.workspace = true
+zstd.workspace = true
 base64 = "0.22"
 sha2 = "0.11"
 # Windowing + input
@@ -78,7 +78,7 @@ async-channel = "2"
 # `web-time` is a drop-in replacement for `std::time::{Instant, SystemTime}`
 # that uses `performance.now()` on wasm and the std types on native.
 # `std::time::Instant::now()` panics on `wasm32-unknown-unknown`.
-web-time = "1"
+web-time.workspace = true
 
 # Native-only: tiny blocking HTTP server for the script-RPC endpoint.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -96,7 +96,7 @@ parking_lot = "0.12"
 # Real memory / CPU-frequency queries for the options-menu hardware line.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 # Read .zip mod packs for the custom-mission selector.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip.workspace = true
 # Serverless matchmaking: hosts announce games on a well-known
 # iroh-gossip topic whose peers are found through the BitTorrent
 # Mainline DHT (distributed-topic-tracker) — no broker, no
@@ -156,7 +156,7 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 
 [dev-dependencies]
 qoi = "0.4"
-robin_engine = { path = "../robin_engine", features = ["test-helpers"] }
+robin_engine = { workspace = true, features = ["test-helpers"] }
 
 [features]
 default = ["native-fs", "audio", "video"]
