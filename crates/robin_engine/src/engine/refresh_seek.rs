@@ -827,7 +827,7 @@ impl crate::engine::EngineInner {
                     super::movement::current_door_for_route_source(e);
                 (
                     elem.position_map(),
-                    elem.sector(),
+                    super::ai::ai_view_position_sector(self, elem),
                     door_handle,
                     door_direction,
                 )
@@ -1428,7 +1428,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_seek_recovers_moved_target_exact_sector_before_indexed_route() {
+    fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
         use crate::coordinates::MapBBox;
         use crate::fast_find_grid::{GridSector, SectorIndex};
         use crate::gate::{Door, DoorIndex, build_gate_links};
@@ -1468,6 +1468,10 @@ mod tests {
             .world
             .fast_grid_mut()
             .add_sector(grid_sector(88, 2, 450.0, 450.0, 500.0, 500.0), 2);
+        let wrong_source = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(grid_sector(0, 0, 450.0, 150.0, 500.0, 200.0), 0);
         let source = engine
             .world
             .fast_grid_mut()
@@ -1481,6 +1485,7 @@ mod tests {
             .fast_grid_mut()
             .add_sector(grid_sector(88, 2, 300.0, 10.0, 400.0, 100.0), 2);
         assert_ne!(wrong_target, exact_target);
+        assert_ne!(wrong_source, source);
 
         let mut doors = (0..114)
             .map(|_| Door {
@@ -1518,7 +1523,10 @@ mod tests {
         let owner = engine.add_entity(test_pc_at(50.0, 50.0, 0));
         {
             let owner_position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
-            owner_position.set_sector_topology(SectorHandle::new(0), Some(arena(source)));
+            // The adopted PC carries only the public sector. Original's
+            // GetSector() still supplies the exact RHSector* to
+            // AppendMoveToSequence, so recover the containing duplicate here.
+            owner_position.set_sector(SectorHandle::new(0));
             owner_position.set_move_box(crate::coordinates::MoveBox::from_coords(
                 -4.0, -4.0, 4.0, 4.0,
             ));
