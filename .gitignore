@@ -58,9 +58,6 @@ __pycache__/
 
 # temporary
 
-/extra-content/
-/prompt.md
-/todo-tmp.md
 /parity-hang-diagnostics
 /parity-random-save-replays*
 /parity-save-replays
@@ -69,7 +66,3 @@ __pycache__/
 /factorio-mods
 /mission-maps
 /mods
-
-# Dover splat tooling build artifacts
-scripts/dover_splat_renderer/target/
-__pycache__/

@@ -1,13 +1,10 @@
 # Build-speed tweaks for this workspace.
 #
-# - rustc-wrapper = sccache: cache rustc invocations across clean builds and
-#   branch switches. Incremental builds are unaffected.
 # - Wild linker: debug/validation link time is usually the bottleneck in Rust;
 #   Wild cuts it dramatically versus the default GNU bfd linker.
-
-[build]
-jobs = 8
-rustc-wrapper = "/home/phire/.cargo/bin/sccache"
+#
+# Machine-local settings like `rustc-wrapper = sccache` or `jobs = N` belong in
+# your user-level ~/.cargo/config.toml, not here.
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
