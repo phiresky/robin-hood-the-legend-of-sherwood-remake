@@ -6655,7 +6655,7 @@ fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
             TRACE_NATIVE_ZSTD_LEVEL,
         )
         .unwrap_or_else(|error| panic!("start native parity trace compression: {error}"));
-        configure_cache_compression(&mut encoder);
+        configure_cache_compression(&mut encoder, expected_native_stream_bytes(trace_path));
         write_binary_record(&mut encoder, &header, "native parity trace header");
 
         let mut records = lines.enumerate();
@@ -6934,12 +6934,81 @@ fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHea
 /// matching with the platform-maximum window (the CLI's `--long=31`), so
 /// frames can match against state snapshots from anywhere earlier in the
 /// trace. The cache readers already accept windows up to the same maximum.
-fn configure_cache_compression<W: Write>(encoder: &mut zstd::stream::write::Encoder<'_, W>) {
+/// A compression window wide enough for `expected_bytes` of encoded stream,
+/// never wider than the reader accepts. A streaming encoder cannot know how
+/// much is coming, so it reserves the whole window up front: pinning every
+/// trace at the 2 GiB maximum costs ~1.9 GiB of resident memory per conversion
+/// even for a trace whose stream is a few hundred MiB. Capture hosts run one
+/// conversion per capture job, so that reservation is the difference between
+/// fitting in RAM and not, and it buys nothing — a window that already spans
+/// the whole stream matches just as far as a larger one.
+fn native_stream_window_log(expected_bytes: Option<u64>) -> u32 {
+    let Some(bytes) = expected_bytes else {
+        return TRACE_ZSTD_WINDOW_LOG_MAX;
+    };
+    // ceil(log2(bytes)): the smallest window that still spans the estimate.
+    let spanning = u64::BITS
+        - bytes
+            .max(1)
+            .checked_next_power_of_two()
+            .unwrap_or(u64::MAX)
+            .leading_zeros()
+        - 1;
+    // Below ~1 MiB the window stops being what limits matching, and a stream
+    // that outgrows the estimate only loses long-range matches, never data.
+    spanning.clamp(20, TRACE_ZSTD_WINDOW_LOG_MAX)
+}
+
+/// How much bitcode a recording is expected to encode into. Measured traces
+/// pack to roughly a fifth of their JSONL; a quarter leaves room for one that
+/// packs worse. `None` when the recording's uncompressed size is unknown, and
+/// the window then falls back to the maximum.
+fn expected_native_stream_bytes(trace_path: &std::path::Path) -> Option<u64> {
+    Some(recording_uncompressed_bytes(trace_path)? / 4)
+}
+
+/// The uncompressed byte count of a JSONL recording: the file length, or the
+/// content size a `.zst` recording declares in its frame header.
+fn recording_uncompressed_bytes(trace_path: &std::path::Path) -> Option<u64> {
+    let length = std::fs::metadata(trace_path).ok()?.len();
+    if !trace_path.as_os_str().to_string_lossy().ends_with(".zst") {
+        return Some(length);
+    }
+    // A zstd frame header is at most 18 bytes.
+    let mut header = [0_u8; 18];
+    let read = {
+        let mut file = File::open(trace_path).ok()?;
+        read_up_to(&mut file, &mut header).ok()?
+    };
+    // An unknown content size is reported as an error or as zero; either way
+    // the caller falls back to the widest window rather than guessing small.
+    match zstd::zstd_safe::get_frame_content_size(&header[..read]) {
+        Ok(Some(size)) if size > 0 => Some(size),
+        _ => None,
+    }
+}
+
+/// Fill `buffer` as far as the reader allows, returning how much was read.
+fn read_up_to<R: Read>(reader: &mut R, buffer: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match reader.read(&mut buffer[filled..])? {
+            0 => break,
+            read => filled += read,
+        }
+    }
+    Ok(filled)
+}
+
+fn configure_cache_compression<W: Write>(
+    encoder: &mut zstd::stream::write::Encoder<'_, W>,
+    expected_bytes: Option<u64>,
+) {
     encoder
         .long_distance_matching(true)
         .unwrap_or_else(|error| panic!("enable cache long-distance matching: {error}"));
     encoder
-        .window_log(TRACE_ZSTD_WINDOW_LOG_MAX)
+        .window_log(native_stream_window_log(expected_bytes))
         .unwrap_or_else(|error| panic!("configure cache compression window: {error}"));
 }
 
@@ -7015,7 +7084,7 @@ fn bench_trace_encodings(trace_path: &Path) {
         let started = Instant::now();
         let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), level)
             .unwrap_or_else(|error| panic!("start zstd level {level}: {error}"));
-        configure_cache_compression(&mut encoder);
+        configure_cache_compression(&mut encoder, Some(bytes.len() as u64));
         encoder
             .write_all(bytes)
             .unwrap_or_else(|error| panic!("zstd level {level}: {error}"));
@@ -11208,6 +11277,54 @@ mod tests {
             .read_to_string(&mut decoded)
             .unwrap();
         assert_eq!(decoded.as_bytes(), jsonl);
+    }
+
+    #[test]
+    fn compression_window_spans_the_stream_without_reserving_the_maximum() {
+        // No estimate: the encoder keeps the widest window it may ever need.
+        assert_eq!(native_stream_window_log(None), TRACE_ZSTD_WINDOW_LOG_MAX);
+        // 192 MiB of stream fits a 256 MiB window, so long-range matching still
+        // reaches every earlier byte without reserving 2 GiB to do it.
+        assert_eq!(native_stream_window_log(Some(192 * 1024 * 1024)), 28);
+        assert_eq!(native_stream_window_log(Some(256 * 1024 * 1024)), 28);
+        assert_eq!(native_stream_window_log(Some(256 * 1024 * 1024 + 1)), 29);
+        // Tiny and absurd estimates stay inside the encoder's accepted range.
+        assert_eq!(native_stream_window_log(Some(0)), 20);
+        assert_eq!(native_stream_window_log(Some(1)), 20);
+        assert_eq!(
+            native_stream_window_log(Some(u64::MAX)),
+            TRACE_ZSTD_WINDOW_LOG_MAX
+        );
+    }
+
+    #[test]
+    fn recording_size_comes_from_the_zstd_frame_when_the_recording_is_compressed() {
+        let directory = tempfile::tempdir().unwrap();
+        let jsonl = vec![b'{'; 4096];
+
+        let plain = directory.path().join("plain.jsonl");
+        std::fs::write(&plain, &jsonl).unwrap();
+        assert_eq!(recording_uncompressed_bytes(&plain), Some(4096));
+
+        // A recording compressed as a single frame declares its content size,
+        // which is what the window has to be sized against -- the file length
+        // would size the window against the compressed bytes instead.
+        let compressed = directory.path().join("declared.jsonl.zst");
+        std::fs::write(&compressed, zstd::bulk::compress(&jsonl, 1).unwrap()).unwrap();
+        assert!(std::fs::metadata(&compressed).unwrap().len() < 4096);
+        assert_eq!(recording_uncompressed_bytes(&compressed), Some(4096));
+
+        // A streamed frame may not declare one; the caller then falls back to
+        // the widest window rather than guessing a small one.
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 1).unwrap();
+        encoder.write_all(&jsonl).unwrap();
+        let streamed = directory.path().join("undeclared.jsonl.zst");
+        std::fs::write(&streamed, encoder.finish().unwrap()).unwrap();
+        assert_eq!(recording_uncompressed_bytes(&streamed), None);
+        assert_eq!(
+            native_stream_window_log(expected_native_stream_bytes(&streamed)),
+            TRACE_ZSTD_WINDOW_LOG_MAX
+        );
     }
 
     #[test]
