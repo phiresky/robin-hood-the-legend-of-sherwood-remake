@@ -13,6 +13,9 @@ printf 'pass\n' >"$traces/01-pass.jsonl.zst"
 printf 'fail\n' >"$traces/02-fail.jsonl.zst"
 printf 'after\n' >"$traces/03-after.jsonl.zst"
 printf 'nonexact\n' >"$traces/04-nonexact.jsonl.zst"
+# A converted trace: only the native artifact exists on disk, but the sweep
+# still addresses it by its logical .jsonl.zst identity.
+printf 'native\n' >"$traces/05-native.jsonl.zst.parity.bitcode.zst"
 
 runner="$test_root/fake-runner"
 invocation_log="$test_root/runner-invocations"
@@ -24,7 +27,7 @@ trace=${!#}
 name=${trace##*/}
 printf '%s\n' "$name" >>"$FAKE_RUNNER_INVOCATIONS"
 case "$name" in
-    01-pass.jsonl.zst|03-after.jsonl.zst)
+    01-pass.jsonl.zst|03-after.jsonl.zst|05-native.jsonl.zst)
         printf '%s\n' 'parity trace matched every recorded frame'
         ;;
     02-fail.jsonl.zst)
@@ -304,6 +307,15 @@ fi
 [[ "$(<"$(status_for "$missing_audit" "$missing_trace")")" == missing ]]
 [[ ! -e "$(status_for "$missing_audit" "$traces/03-after.jsonl.zst")" ]]
 assert_no_temporaries "$missing_audit"
+
+# A converted trace (native artifact only, addressed by its logical
+# .jsonl.zst identity) is dispatched to the runner rather than marked missing.
+native_audit="$test_root/native"
+mkdir -p "$native_audit"
+printf '%s\n' "$traces/05-native.jsonl.zst" >"$native_audit/traces.snapshot"
+run_sweep "$native_audit" PARITY_SWEEP_FAIL_FAST=1
+[[ "$(<"$(status_for "$native_audit" "$traces/05-native.jsonl.zst")")" == 0 ]]
+assert_no_temporaries "$native_audit"
 
 # Default mode preserves the historical collect-all behavior.
 default_audit="$test_root/default"

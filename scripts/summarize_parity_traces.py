@@ -10,6 +10,10 @@ than a corpus. A capture that produced a .complete marker already had its
 rng_suffix terminator checked at capture time.
 
 JOBS controls parallelism (default 6).
+
+This is a capture-time tool: it reads the JSONL recordings themselves, so run
+it before recordings are converted into native .parity.bitcode.zst artifacts
+(conversion deletes the JSONL).
 """
 
 import json

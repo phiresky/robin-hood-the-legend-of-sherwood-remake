@@ -37,14 +37,19 @@ list_complete_traces() {
         # Current corpora use one marker for every completed replay and one or
         # more session traces beneath it. Accept the pre-session spelling too,
         # but never admit any compressed trace merely because it exists.
-        if [[ -f "$marker_dir/$replay_stem.jsonl.zst" ]]; then
+        # A trace's logical identity is its .jsonl.zst path even after the
+        # recording was converted to the native .parity.bitcode.zst artifact.
+        if [[ -f "$marker_dir/$replay_stem.jsonl.zst" \
+            || -f "$marker_dir/$replay_stem.jsonl.zst.parity.bitcode.zst" ]]; then
             matches+=("$marker_dir/$replay_stem.jsonl.zst")
         fi
         while IFS= read -r -d '' trace; do
             matches+=("$trace")
         done < <(
             find "$marker_dir" -maxdepth 1 -type f \
-                -name "$replay_stem-session-*.jsonl.zst" -print0
+                \( -name "$replay_stem-session-*.jsonl.zst" \
+                -o -name "$replay_stem-session-*.jsonl.zst.parity.bitcode.zst" \) \
+                -print0 | sed -z 's/\.parity\.bitcode\.zst$//' | sort -zu
         )
 
         if (( ${#matches[@]} == 0 )); then
@@ -80,13 +85,17 @@ self_test() {
     touch "$corpus/save-a/replay-002-session-0001.jsonl.zst"
     touch "$corpus/save-a/replay-002-session-0002.jsonl.zst"
     touch "$corpus/save-b/replay-003-session-0001.jsonl.zst"
+    # A converted replay: completion marker plus native artifact, no JSONL.
+    touch "$corpus/save-a/replay-005.complete"
+    touch "$corpus/save-a/replay-005-session-0001.jsonl.zst.parity.bitcode.zst"
 
     local actual expected
     actual=$(list_complete_traces "$corpus" "$corpus")
     expected=$(printf '%s\n' \
         "$corpus/save-a/replay-001-session-0001.jsonl.zst" \
         "$corpus/save-a/replay-002-session-0001.jsonl.zst" \
-        "$corpus/save-a/replay-002-session-0002.jsonl.zst")
+        "$corpus/save-a/replay-002-session-0002.jsonl.zst" \
+        "$corpus/save-a/replay-005-session-0001.jsonl.zst")
     if [[ "$actual" != "$expected" ]]; then
         printf 'self-test failure: manifest mismatch\nexpected:\n%s\nactual:\n%s\n' \
             "$expected" "$actual" >&2

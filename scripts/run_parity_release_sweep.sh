@@ -184,7 +184,9 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         exec {trace_lock_fd}>&-
         continue
     fi
-    if [[ ! -f "$trace" ]]; then
+    # A converted trace exists only as its native artifact; the runner
+    # resolves the logical .jsonl.zst path to it on its own.
+    if [[ ! -f "$trace" && ! -f "$trace.parity.bitcode.zst" ]]; then
         if ! write_status "$status" missing; then
             exec {trace_lock_fd}>&-
             if [[ "$fail_fast" == 1 ]]; then

@@ -122,7 +122,9 @@ write_complete_trace_manifest() {
         marker=${trace%-session-*}.complete
         [[ -f "$marker" || -f "$trace.complete" ]] || continue
         printf '%s\n' "$trace" >>"$temporary"
-    done < <(find "$campaign/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
+    done < <(find "$campaign/traces" -type f \( -name '*.jsonl.zst' \
+        -o -name '*.jsonl.zst.parity.bitcode.zst' \) -print0 \
+        | sed -z 's/\.parity\.bitcode\.zst$//' | sort -zu)
 
     mv -f -- "$temporary" "$destination"
 }

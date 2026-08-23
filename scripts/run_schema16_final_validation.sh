@@ -56,8 +56,12 @@ build_complete_manifest() {
     mapfile -d '' -t markers < <(
         find "$campaign/traces" -type f -name '*.complete' -print0 | LC_ALL=C sort -z
     )
+    # Logical .jsonl.zst identities: a converted recording exists only as
+    # <identity>.parity.bitcode.zst, so match both and strip the suffix.
     mapfile -d '' -t traces < <(
-        find "$campaign/traces" -type f -name '*.jsonl.zst' -print0 | LC_ALL=C sort -z
+        find "$campaign/traces" -type f \( -name '*.jsonl.zst' \
+            -o -name '*.jsonl.zst.parity.bitcode.zst' \) -print0 \
+            | sed -z 's/\.parity\.bitcode\.zst$//' | LC_ALL=C sort -zu
     )
 
     if (( ${#markers[@]} != expected || ${#traces[@]} != expected )); then
@@ -76,7 +80,9 @@ build_complete_manifest() {
         while IFS= read -r -d '' trace; do
             matches+=("$trace")
         done < <(find "${stem%/*}" -maxdepth 1 -type f \
-            -name "${stem##*/}-session-*.jsonl.zst" -print0 | LC_ALL=C sort -z)
+            \( -name "${stem##*/}-session-*.jsonl.zst" \
+            -o -name "${stem##*/}-session-*.jsonl.zst.parity.bitcode.zst" \) \
+            -print0 | sed -z 's/\.parity\.bitcode\.zst$//' | LC_ALL=C sort -zu)
         if (( ${#matches[@]} != 1 )); then
             printf 'error: completion marker must own exactly one zst trace: %s (found %s)\n' \
                 "$marker" "${#matches[@]}" >&2

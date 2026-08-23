@@ -41,15 +41,19 @@ refresh_snapshot() {
         return 1
     fi
 
-    # User-driven schema-16 recordings are compressed only after the recorder
-    # closes them, so every .jsonl.zst in this directory is publishable. Keep
-    # them ahead of batch corpora to provide immediate interactive feedback.
+    # User-driven schema-16 recordings are converted only after the recorder
+    # closes them, so every published trace in this directory is replayable.
+    # Keep them ahead of batch corpora for immediate interactive feedback.
+    # Converted recordings exist only as <identity>.parity.bitcode.zst, so
+    # match both spellings and reduce to the logical .jsonl.zst identity.
     if [[ -d parity-save-replays/interactive ]]; then
         while IFS= read -r -d '' trace; do
             printf '%s\n' "$trace" >>"$generated_tmp"
         done < <(
             find parity-save-replays/interactive \
-                -type f -name '*.jsonl.zst' -print0 | sort -z
+                -type f \( -name '*.jsonl.zst' \
+                -o -name '*.jsonl.zst.parity.bitcode.zst' \) -print0 \
+                | sed -z 's/\.parity\.bitcode\.zst$//' | sort -zu
         )
     fi
 
@@ -64,7 +68,9 @@ refresh_snapshot() {
             marker=${trace%-session-*}.complete
             [[ -f "$marker" || -f "$trace.complete" ]] || continue
             printf '%s\n' "$trace" >>"$generated_tmp"
-        done < <(find "$campaign/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
+        done < <(find "$campaign/traces" -type f \( -name '*.jsonl.zst' \
+            -o -name '*.jsonl.zst.parity.bitcode.zst' \) -print0 \
+            | sed -z 's/\.parity\.bitcode\.zst$//' | sort -zu)
     done < <(
         find parity-save-replays/60s-random-input \
             -mindepth 1 -maxdepth 1 -type d -name 'schema16-seed*' -print0 \

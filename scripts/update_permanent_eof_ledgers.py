@@ -120,7 +120,15 @@ def main() -> None:
         permanent = update(group, discovered)
         environment = campaign_environment(campaign / "campaign.env")
         planned = int(environment["EXPECTED_LOGICAL_REPLAYS"])
-        captured = len(list((campaign / "traces").rglob("*.jsonl.zst")))
+        # Count logical traces: a converted recording exists only as
+        # <identity>.jsonl.zst.parity.bitcode.zst but is the same capture.
+        captured = len(
+            {
+                str(path).removesuffix(".parity.bitcode.zst")
+                for pattern in ("*.jsonl.zst", "*.jsonl.zst.parity.bitcode.zst")
+                for path in (campaign / "traces").rglob(pattern)
+            }
+        )
         schema16_summaries[group] = {
             "eof": len(permanent),
             "planned": planned,

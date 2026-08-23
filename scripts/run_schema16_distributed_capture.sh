@@ -235,7 +235,8 @@ collect() {
     # retransferring and revalidating every earlier result.
     ssh_worker "cd '$remote_root' && { \
         find '${relative}/traces' -type f \
-            \( -name '*.jsonl.zst' -o -name '*.complete' \) \
+            \( -name '*.jsonl.zst' -o -name '*.jsonl.zst.parity.bitcode.zst' \
+            -o -name '*.complete' \) \
             -newer '${relative}/.distributed-remote-start' -printf '%p\\n'; \
         find '${relative}/logs' -type f -name '*.log' \
             -newer '${relative}/.distributed-remote-start' -printf '%p\\n'; \
@@ -253,7 +254,11 @@ collect() {
         "$remote_host:$remote_root/" "$incoming/"
     while IFS= read -r rel; do
         file="$incoming/$rel"; destination="$workspace/$rel"
-        if [[ "$file" == *.jsonl.zst ]]; then zstd -t -q --long=31 -- "$file"; fi
+        if [[ "$file" == *.parity.bitcode.zst ]]; then
+            # Native parity traces end in a 36-byte fixed footer after the
+            # zstd payload; its magic being present proves a full transfer.
+            [[ "$(tail -c 36 -- "$file" | head -c 16)" == 'RHPRTRACEFOOTER!' ]]
+        elif [[ "$file" == *.jsonl.zst ]]; then zstd -t -q --long=31 -- "$file"; fi
         mkdir -p -- "${destination%/*}"
         if [[ -e "$destination" ]]; then
             if cmp -s -- "$file" "$destination"; then

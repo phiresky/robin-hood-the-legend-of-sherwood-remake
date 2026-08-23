@@ -77,7 +77,11 @@ mkdir -p -- "$status_dir" "$log_dir"
 
 trace_list="$(mktemp)"
 trap 'rm -f -- "$trace_list"' EXIT
-find "${replacement_roots[@]}" -type f -name '*.jsonl.zst' -print | sort >"$trace_list"
+# Logical .jsonl.zst identities; converted recordings only exist as
+# <identity>.parity.bitcode.zst on disk.
+find "${replacement_roots[@]}" -type f \( -name '*.jsonl.zst' \
+    -o -name '*.jsonl.zst.parity.bitcode.zst' \) -print \
+    | sed 's/\.parity\.bitcode\.zst$//' | sort -u >"$trace_list"
 trace_count="$(wc -l <"$trace_list")"
 if [[ "$trace_count" -ne 98 ]]; then
     printf 'refusing unexpected replacement count: got %s, expected 98\n' "$trace_count" >&2

@@ -69,6 +69,16 @@ trace_is_complete() {
     fi
 }
 
+# Traces are addressed by their logical `.jsonl.zst` identity. A recording
+# that was converted to the native format exists on disk only as
+# `<identity>.parity.bitcode.zst`, so enumerate both spellings, strip the
+# native suffix, and deduplicate.
+list_logical_traces() {
+    find "$1" -type f \
+        \( -name '*.jsonl.zst' -o -name '*.jsonl.zst.parity.bitcode.zst' \) \
+        -print0 | sed -z 's/\.parity\.bitcode\.zst$//' | sort -zu
+}
+
 while IFS= read -r -d '' trace; do
     relative=${trace#"$old_corpus/traces/"}
     save=${relative%/replay-*}
@@ -78,7 +88,7 @@ while IFS= read -r -d '' trace; do
         trace_is_complete "$trace" || continue
         printf '%s\n' "$trace"
     fi
-done < <(find "$old_corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z) > "$snapshot_tmp"
+done < <(list_logical_traces "$old_corpus/traces") > "$snapshot_tmp"
 
 for corpus in "${corpora[@]}"; do
     while IFS= read -r -d '' trace; do
@@ -86,7 +96,7 @@ for corpus in "${corpora[@]}"; do
             trace_is_complete "$trace" || continue
             printf '%s\n' "$trace"
         fi
-    done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
+    done < <(list_logical_traces "$corpus/traces")
 done | sort >> "$snapshot_tmp"
 
 # Current schema-15/schema-16 recaptures supersede retired historical paths.
@@ -97,7 +107,7 @@ for corpus in "${replacement_corpora[@]}"; do
         [[ ! -v "retired_traces[$trace]" ]] || continue
         trace_is_complete "$trace" || continue
         printf '%s\n' "$trace"
-    done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
+    done < <(list_logical_traces "$corpus/traces")
 done | sort >> "$snapshot_tmp"
 
 # The seed-1000000 campaign is curated separately because individual stale

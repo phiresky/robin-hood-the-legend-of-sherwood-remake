@@ -50,7 +50,15 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceHeader {
     #[serde(rename = "type")]
@@ -83,7 +91,17 @@ struct TraceHeader {
 }
 
 #[derive(
-    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, bincode::Encode, bincode::Decode,
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    PartialEq,
+    Eq,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(deny_unknown_fields)]
 struct TraceInitialNpcTransient {
@@ -91,7 +109,15 @@ struct TraceInitialNpcTransient {
     maximal_visibility: u16,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceInitialSave {
     format: String,
     source_profile: TraceSaveSourceProfile,
@@ -106,7 +132,17 @@ struct TraceInitialSave {
 }
 
 #[derive(
-    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, bincode::Encode, bincode::Decode,
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceSaveSourceProfile {
@@ -218,7 +254,15 @@ impl TraceInitialSave {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSimConfig {
     difficulty: TraceDifficulty,
     script_enabled: bool,
@@ -246,7 +290,17 @@ impl TraceSimConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(rename_all = "snake_case")]
 enum TraceDifficulty {
     Easy,
@@ -265,7 +319,17 @@ impl From<TraceDifficulty> for robin_engine::player_profile::DifficultyLevel {
 }
 
 #[derive(
-    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, bincode::Encode, bincode::Decode,
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceStartState {
@@ -533,12 +597,12 @@ fn apply_legacy_interactive_chain_macro_fallback(
         return 0;
     }
     let Some(previous_path) = preceding_interactive_session_path(trace_path, header.session_index)
-        .filter(|path| path.is_file())
+        .filter(|path| path.is_file() || native_binary_trace_path(path).is_file())
     else {
         return 0;
     };
-    let previous_cache = ensure_binary_trace_cache(&previous_path);
-    let mut reader = BinaryTraceReader::open(&previous_cache);
+    let previous_native = ensure_native_binary_trace(&previous_path);
+    let mut reader = BinaryTraceReader::open(&previous_native);
     let previous_header = reader.read_header().trace;
     if previous_header.schema != 16
         || previous_header.session_index.checked_add(1) != Some(header.session_index)
@@ -606,7 +670,15 @@ fn validate_trace_start(start_state: TraceStartState, session_index: u32, initia
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceCampaign {
     version: u32,
     values: Vec<i32>,
@@ -631,7 +703,15 @@ struct TraceCampaign {
     production_sectors: Vec<TraceProductionSector>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceCampaignMission {
     profile_index: u32,
     profile_id: u32,
@@ -643,7 +723,15 @@ struct TraceCampaignMission {
     ares_state_succeeded: i8,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceCampaignCharacter {
     profile_index: u32,
     profile_name: String,
@@ -651,7 +739,15 @@ struct TraceCampaignCharacter {
     status: TracePcStatus,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TracePcStatus {
     hand_to_hand: TraceSkill,
     bow: TraceSkill,
@@ -670,13 +766,29 @@ struct TracePcStatus {
     beam_me_index_in_sherwood: i16,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSkill {
     capacity: u32,
     experience: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceProductionSector {
     r#type: u32,
     speed: u16,
@@ -686,7 +798,15 @@ struct TraceProductionSector {
     occupants: Vec<TraceProductionOccupant>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceProductionOccupant {
     character_index: usize,
     x: TraceFloat,
@@ -694,18 +814,42 @@ struct TraceProductionOccupant {
     obstacle: u16,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceMotionGrid {
     layers: Vec<TraceMotionLayer>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceMotionLayer {
     layer: u16,
     lines: Vec<TraceMotionLine>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceMotionLine {
     index: u16,
     a: TracePoint,
@@ -715,14 +859,33 @@ struct TraceMotionLine {
     active: bool,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceMotionLineChange {
     layer: u16,
     index: u16,
     active: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 enum TracePathEvent {
     Queued {
@@ -759,7 +922,16 @@ enum TracePathEvent {
     },
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceRngBatch {
     first_index: usize,
@@ -823,7 +995,17 @@ impl TraceRngBatch {
 }
 
 #[derive(
-    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, bincode::Encode, bincode::Decode,
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    PartialEq,
+    Eq,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceRngDomain {
@@ -831,7 +1013,15 @@ enum TraceRngDomain {
     Audio,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceRngPrefix {
     #[allow(dead_code)]
@@ -867,6 +1057,8 @@ struct TraceRecordMarker {
     Ord,
     bincode::Encode,
     bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 struct TraceEntityId {
     kind: TraceEntityKind,
@@ -885,6 +1077,8 @@ struct TraceEntityId {
     Ord,
     bincode::Encode,
     bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceEntityKind {
@@ -916,7 +1110,17 @@ impl From<TraceEntityId> for EntityId {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceFloat {
     bits: u32,
 }
@@ -927,7 +1131,17 @@ impl TraceFloat {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TracePoint {
     x: TraceFloat,
     y: TraceFloat,
@@ -939,7 +1153,17 @@ impl From<TracePoint> for MapPoint {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TracePoint3 {
     x: TraceFloat,
     y: TraceFloat,
@@ -952,7 +1176,15 @@ impl From<TracePoint3> for WorldPoint3D {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TraceCommand {
     BoxSelect {
@@ -971,16 +1203,21 @@ enum TraceCommand {
     LaunchInteraction {
         actor: TraceEntityId,
         target: TraceEntityId,
+        /// Original's raw numeric command; `original_command_name` is its
+        /// stable name and drives replay. Retained for lossless caching.
+        original_command: u32,
         original_command_name: String,
         running: bool,
     },
     LaunchSelfAbility {
         actor: TraceEntityId,
+        original_command: u32,
         original_command_name: String,
     },
     LaunchGroundTarget {
         actor: TraceEntityId,
         target: TracePoint3,
+        original_command: u32,
         original_command_name: String,
         original_target_field: u32,
         titbit_layer: u16,
@@ -993,6 +1230,9 @@ enum TraceCommand {
     SwordStrike {
         actor: TraceEntityId,
         target: TraceEntityId,
+        /// Absent only in synthetic pre-audit fixtures; the recorder always
+        /// pairs the numeric command with its name.
+        original_command: u32,
         original_command_name: String,
         with_seek: bool,
         #[serde(default)]
@@ -1009,13 +1249,21 @@ enum TraceCommand {
     SelectAction {
         pc: TraceEntityId,
         action: TraceAction,
+        /// Original's raw numeric action, retained so the cache round trip is
+        /// lossless. `action` is its resolved name; replay uses the name.
+        original_action: u32,
     },
     CancelAction {
         #[serde(default)]
         pc: Option<TraceEntityId>,
+        /// Always `no_action`: MSG_SELECT_ACTION with RHACTION_NOACTION is
+        /// recorded as cancel_action, but the recorder still emits the pair.
+        action: TraceAction,
+        original_action: u32,
     },
     OrientActionAt {
         action: TraceAction,
+        original_action: u32,
         actor: TraceEntityId,
         mouse_map: TracePoint,
         target: TracePoint3,
@@ -1025,9 +1273,10 @@ enum TraceCommand {
     },
     CrouchDown,
     StandUp,
-    // Keep newly supported variants at the end: the native parity cache uses
-    // bincode's enum discriminants, so appending preserves existing cache
-    // compatibility.
+    // NOTE: with the bitcode-encoded native format, ANY change to this enum
+    // (adding, removing, or editing a variant, anywhere) changes the on-disk
+    // shape. Bump TRACE_NATIVE_VERSION and migrate existing native traces —
+    // converted recordings may no longer have a JSONL source to rebuild from.
     DropAleAt {
         actor: TraceEntityId,
         target: TracePoint,
@@ -1090,6 +1339,7 @@ enum TraceCommand {
     HeroRefusedAction {
         actor: TraceEntityId,
         action: TraceAction,
+        original_action: u32,
         #[serde(default)]
         target: Option<TraceEntityId>,
         reason: String,
@@ -1100,7 +1350,17 @@ enum TraceCommand {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceAction {
@@ -1182,13 +1442,13 @@ fn split_late_refresh_orientations(
 
     for (index, command) in commands.into_iter().enumerate() {
         match &command {
-            TraceCommand::SelectAction { pc, action } => {
+            TraceCommand::SelectAction { pc, action, .. } => {
                 actions_selected_this_boundary.insert(*pc, *action);
             }
-            TraceCommand::CancelAction { pc: Some(pc) } => {
+            TraceCommand::CancelAction { pc: Some(pc), .. } => {
                 actions_selected_this_boundary.remove(pc);
             }
-            TraceCommand::CancelAction { pc: None } => {
+            TraceCommand::CancelAction { pc: None, .. } => {
                 actions_selected_this_boundary.clear();
             }
             TraceCommand::OrientActionAt { actor, action, .. }
@@ -1372,6 +1632,7 @@ impl TraceCommand {
             Self::LaunchInteraction {
                 actor,
                 target,
+                original_command: _,
                 original_command_name,
                 running,
             } => PlayerCommand::LaunchInteraction {
@@ -1382,6 +1643,7 @@ impl TraceCommand {
             },
             Self::LaunchSelfAbility {
                 actor,
+                original_command: _,
                 original_command_name,
             } => PlayerCommand::LaunchSelfAbility {
                 actor: entity_map.translate(actor),
@@ -1390,6 +1652,7 @@ impl TraceCommand {
             Self::LaunchGroundTarget {
                 actor,
                 target,
+                original_command: _,
                 original_command_name,
                 original_target_field,
                 titbit_layer,
@@ -1425,6 +1688,7 @@ impl TraceCommand {
             Self::SwordStrike {
                 actor,
                 target,
+                original_command: _,
                 original_command_name,
                 with_seek,
                 seek_distance,
@@ -1443,11 +1707,11 @@ impl TraceCommand {
             Self::StopPc { pc } => PlayerCommand::StopPc {
                 pc_id: entity_map.translate(pc),
             },
-            Self::SelectAction { pc, action } => PlayerCommand::SelectResolvedAction {
+            Self::SelectAction { pc, action, .. } => PlayerCommand::SelectResolvedAction {
                 pc_id: entity_map.translate(pc),
                 action: action.into(),
             },
-            Self::CancelAction { pc } => match pc {
+            Self::CancelAction { pc, .. } => match pc {
                 Some(pc) => PlayerCommand::CancelAction {
                     pc_id: entity_map.translate(pc),
                 },
@@ -1458,6 +1722,7 @@ impl TraceCommand {
                 actor,
                 mouse_map,
                 target,
+                original_action: _,
             } => PlayerCommand::PerformResolvedOrientation {
                 pc_id: entity_map.translate(actor),
                 action: action.into(),
@@ -1572,6 +1837,7 @@ impl TraceCommand {
             Self::HeroRefusedAction {
                 actor,
                 action,
+                original_action: _,
                 target: _,
                 reason,
             } => {
@@ -1636,7 +1902,15 @@ fn command_from_stable_name(name: &str) -> Command {
         .unwrap_or_else(|_| panic!("unsupported stable Original RHcommand name {name:?}"))
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceElement {
     entity_id: TraceEntityId,
     creation_order: u32,
@@ -1683,7 +1957,15 @@ struct TraceElement {
     runtime: Option<TraceJsonValue>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceActor {
     action_state: u32,
     animation: u32,
@@ -1713,14 +1995,30 @@ struct TraceActor {
     position_interface: Option<TraceJsonValue>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TracePassDoor {
     gate_id: u32,
     direct: bool,
     direction: i16,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSequenceElement {
     id: u32,
     #[serde(rename = "type")]
@@ -1748,7 +2046,15 @@ struct TraceSequenceElement {
     movement_payload: Option<TraceJsonValue>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSequenceMovement {
     /// Absent in current schema-16 traces when the movement-element
     /// constructor does not initialize `maction` (for example WAIT_FREE_LIFT).
@@ -1793,7 +2099,15 @@ fn active_pass_door_keys_match(
     expected.map(trace_pass_door_key) == actual
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceHuman {
     life_points: i16,
     dead: bool,
@@ -1808,7 +2122,15 @@ struct TraceHuman {
     opponent_jump_lines: Option<Vec<Option<TraceJumpLine>>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceJumpLine {
     a: TracePoint,
@@ -1828,12 +2150,28 @@ fn runtime_jump_line_bits(line: &robin_engine::jump_line::JumpLine) -> [u32; 4] 
     ]
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceElementPc {
     ammo: TraceElementAmmo,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceElementAmmo {
     ales: u16,
     apples: u16,
@@ -1855,7 +2193,15 @@ where
     Option::<u16>::deserialize(deserializer).map(Some)
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceAi {
     state: u32,
     substate: u32,
@@ -1900,7 +2246,15 @@ where
     Option::<TraceJumpLine>::deserialize(deserializer).map(Some)
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceDetection {
     suspects: Vec<u16>,
     maximal_suspect: u16,
@@ -1910,7 +2264,15 @@ struct TraceDetection {
     detectables: Vec<TraceDetectable>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceDetectable {
     #[serde(rename = "type")]
     detectable_type: u32,
@@ -1923,7 +2285,16 @@ struct TraceDetectable {
     last_visibility: TraceFloat,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceVisibilityQuery {
     origin: TracePoint3,
     destination: TracePoint3,
@@ -1936,7 +2307,16 @@ struct TraceVisibilityQuery {
     blocking_obstacle: Option<TraceSightObstacle>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSightObstacle {
     id: u32,
     index: i64,
@@ -1950,7 +2330,16 @@ struct TraceSightObstacle {
     points: Vec<TraceSightObstaclePoint>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSightObstacleTypes {
     solid: bool,
     opaque: bool,
@@ -1960,13 +2349,31 @@ struct TraceSightObstacleTypes {
     show_shadow_polygon: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSightObstacleBox {
     min: TracePoint,
     max: TracePoint,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceSightObstaclePoint {
     x: TraceFloat,
     y: TraceFloat,
@@ -1974,7 +2381,15 @@ struct TraceSightObstaclePoint {
     z_bottom: TraceFloat,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceResolvedExclamation {
     actor: TraceEntityId,
     identifier: u32,
@@ -1987,7 +2402,16 @@ struct TraceResolvedExclamation {
 /// One exact, ordered Original `RHSprite::PerformMotion` position commit.
 /// This additive diagnostic is absent unless the Original recorder was run
 /// with `RH_PARITY_MOVEMENT_STEPS` enabled.
-#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceMovementStep {
     entity: TraceEntityId,
     order_id: u32,
@@ -2012,7 +2436,16 @@ struct TraceMovementStep {
 }
 
 /// One exact, ordered Original `RHSprite::PerformFlight` execution.
-#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceFlightStep {
     entity: TraceEntityId,
     order_id: u32,
@@ -2034,7 +2467,15 @@ struct TraceFlightStep {
     snapped_to_goal: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceRouteConstructionEvent {
     kind: String,
     actor: TraceEntityId,
@@ -2052,7 +2493,15 @@ struct TraceRouteConstructionEvent {
     draft_diagnostics: BTreeMap<String, TraceJsonValue>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct TraceRouteGate {
     gate_id: u32,
     direct: bool,
@@ -2122,8 +2571,12 @@ fn resolve_schema_sixteen_group_move_route(
         .unwrap_or_default()
         .iter()
         .filter_map(|event| {
-            let ordinal = match event.draft_diagnostics.get("ordinal") {
-                Some(TraceJsonValue::Unsigned(ordinal)) => *ordinal,
+            let ordinal = match event
+                .draft_diagnostics
+                .get("ordinal")
+                .map(TraceJsonValue::tree)
+            {
+                Some(TraceJsonTree::Unsigned(ordinal)) => ordinal,
                 other => panic!("schema-16 route event lacks an unsigned ordinal: {other:?}"),
             };
             if consumed_route_ordinals.contains(&ordinal)
@@ -2157,8 +2610,8 @@ fn resolve_schema_sixteen_group_move_route(
         assert!(
             matching.iter().all(|(_, event)| {
                 !matches!(
-                    event.draft_diagnostics.get("result"),
-                    Some(TraceJsonValue::String(result)) if result == "success"
+                    event.draft_diagnostics.get("result").map(TraceJsonValue::tree),
+                    Some(TraceJsonTree::String(result)) if result == "success"
                 ) || event
                     .gates
                     .last()
@@ -2192,8 +2645,8 @@ fn resolve_schema_sixteen_group_move_route(
             .iter()
             .filter(|(_, event)| {
                 matches!(
-                    event.draft_diagnostics.get("result"),
-                    Some(TraceJsonValue::String(result)) if result == "success"
+                    event.draft_diagnostics.get("result").map(TraceJsonValue::tree),
+                    Some(TraceJsonTree::String(result)) if result == "success"
                 ) && !event.gates.is_empty()
             })
             .map(|(_, event)| {
@@ -2212,8 +2665,8 @@ fn resolve_schema_sixteen_group_move_route(
         .iter()
         .filter(|(_, event)| {
             matches!(
-                event.draft_diagnostics.get("result"),
-                Some(TraceJsonValue::String(result)) if result == "failure"
+                event.draft_diagnostics.get("result").map(TraceJsonValue::tree),
+                Some(TraceJsonTree::String(result)) if result == "failure"
             )
         })
         .map(|(_, event)| {
@@ -2274,8 +2727,12 @@ fn resolve_schema_sixteen_drop_ale(
         .unwrap_or_default()
         .iter()
         .filter_map(|event| {
-            let ordinal = match event.draft_diagnostics.get("ordinal") {
-                Some(TraceJsonValue::Unsigned(ordinal)) => *ordinal,
+            let ordinal = match event
+                .draft_diagnostics
+                .get("ordinal")
+                .map(TraceJsonValue::tree)
+            {
+                Some(TraceJsonTree::Unsigned(ordinal)) => ordinal,
                 other => panic!("schema-16 route event lacks an unsigned ordinal: {other:?}"),
             };
             if consumed_route_ordinals.contains(&ordinal)
@@ -2304,14 +2761,30 @@ fn resolve_schema_sixteen_drop_ale(
     })
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TracePointBox {
     top_left: TracePoint,
     bottom_right: TracePoint,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TracePopupEvent {
     #[serde(default)]
@@ -2339,7 +2812,15 @@ struct TracePopupEvent {
     remove_mouse: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceForecastGate {
     gate_id: u32,
@@ -2354,7 +2835,15 @@ struct TraceForecastGate {
     penalty: TraceFloat,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceAiForecastInput {
     position: TracePoint,
@@ -2369,7 +2858,15 @@ struct TraceAiForecastInput {
     door: Option<TraceForecastGate>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceAiForecastResolved {
     position: TracePoint,
@@ -2379,7 +2876,15 @@ struct TraceAiForecastResolved {
     direction: Option<u16>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceAiForecastEvent {
     ordinal: u64,
@@ -2394,7 +2899,15 @@ struct TraceAiForecastEvent {
     selected_building_exit: Option<TraceForecastGate>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceAlertEligibility {
     rank: bool,
@@ -2408,7 +2921,15 @@ struct TraceAlertEligibility {
     think: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceAlertFormationEvent {
     #[serde(default)]
@@ -2483,14 +3004,30 @@ struct TraceAlertFormationEvent {
     final_sector: Option<u16>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceGoToSource {
     point: TracePoint,
     layer: u16,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceGoToDestination {
     point: TracePoint,
@@ -2498,7 +3035,15 @@ struct TraceGoToDestination {
     layer: u16,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceGoToAuthorizationEvent {
     ordinal: u64,
@@ -2516,7 +3061,15 @@ struct TraceGoToAuthorizationEvent {
     path_authorized: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum TraceTargetLifecyclePayload {
     ActivateSword,
@@ -2532,7 +3085,15 @@ enum TraceTargetLifecyclePayload {
     },
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceTargetLifecycleEvent {
     ordinal: u64,
@@ -2557,7 +3118,15 @@ struct TraceTargetLifecycleEvent {
     class_instantiated: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceStrikeProposalEvent {
     invocation: u32,
@@ -2607,7 +3176,15 @@ struct TraceStrikeProposalEvent {
     parry_time_eligible: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceSequenceLifecycleEvent {
     ordinal: u64,
@@ -2635,7 +3212,15 @@ struct TraceSequenceLifecycleEvent {
     accepted: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceFrame {
     #[serde(rename = "type")]
@@ -2683,7 +3268,15 @@ struct TraceFrame {
     flight_steps: Vec<TraceFlightStep>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceEngineState {
     cheat_used_flags: u32,
@@ -2724,25 +3317,25 @@ struct TraceEngineState {
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
-/// Cache-safe recursive JSON used for high-volume authoritative snapshots.
+/// Recursive JSON tree used for high-volume authoritative snapshots.
 ///
-/// `serde_json::Value` deliberately has no native `bincode::Encode`
-/// implementation. This equivalent tree keeps schema-13 frame parsing strict
-/// without making the native trace cache serialize a JSON string per frame.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, bincode::Decode, bincode::Encode)]
+/// `serde_json::Value` deliberately has no native binary-codec derives. This
+/// equivalent tree keeps schema-13 frame parsing strict; it is the serde
+/// (JSONL) view of [`TraceJsonValue`], which stores the same data flat.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
-enum TraceJsonValue {
+enum TraceJsonTree {
     Null(()),
     Bool(bool),
     Unsigned(u64),
     Signed(i64),
     Float(f64),
     String(String),
-    Array(Vec<TraceJsonValue>),
-    Object(BTreeMap<String, TraceJsonValue>),
+    Array(Vec<TraceJsonTree>),
+    Object(BTreeMap<String, TraceJsonTree>),
 }
 
-impl TraceJsonValue {
+impl TraceJsonTree {
     fn to_json(&self) -> serde_json::Value {
         match self {
             Self::Null(()) => serde_json::Value::Null,
@@ -2757,6 +3350,128 @@ impl TraceJsonValue {
                 .map(|(key, value)| (key.clone(), value.to_json()))
                 .collect(),
         }
+    }
+
+    fn flatten_into(&self, tokens: &mut Vec<TraceJsonToken>) {
+        match self {
+            Self::Null(()) => tokens.push(TraceJsonToken::Null),
+            Self::Bool(value) => tokens.push(TraceJsonToken::Bool(*value)),
+            Self::Unsigned(value) => tokens.push(TraceJsonToken::Unsigned(*value)),
+            Self::Signed(value) => tokens.push(TraceJsonToken::Signed(*value)),
+            Self::Float(value) => tokens.push(TraceJsonToken::Float(*value)),
+            Self::String(value) => tokens.push(TraceJsonToken::String(value.clone())),
+            Self::Array(values) => {
+                tokens.push(TraceJsonToken::Array(
+                    u32::try_from(values.len()).expect("JSON array length exceeds u32"),
+                ));
+                for value in values {
+                    value.flatten_into(tokens);
+                }
+            }
+            Self::Object(values) => {
+                tokens.push(TraceJsonToken::Object(
+                    u32::try_from(values.len()).expect("JSON object length exceeds u32"),
+                ));
+                for (key, value) in values {
+                    tokens.push(TraceJsonToken::Key(key.clone()));
+                    value.flatten_into(tokens);
+                }
+            }
+        }
+    }
+
+    fn unflatten(tokens: &mut std::slice::Iter<'_, TraceJsonToken>) -> Self {
+        match tokens.next().expect("flat JSON token stream ended early") {
+            TraceJsonToken::Null => Self::Null(()),
+            TraceJsonToken::Bool(value) => Self::Bool(*value),
+            TraceJsonToken::Unsigned(value) => Self::Unsigned(*value),
+            TraceJsonToken::Signed(value) => Self::Signed(*value),
+            TraceJsonToken::Float(value) => Self::Float(*value),
+            TraceJsonToken::String(value) => Self::String(value.clone()),
+            TraceJsonToken::Array(len) => {
+                Self::Array((0..*len).map(|_| Self::unflatten(tokens)).collect())
+            }
+            TraceJsonToken::Object(len) => Self::Object(
+                (0..*len)
+                    .map(|_| {
+                        let TraceJsonToken::Key(key) = tokens
+                            .next()
+                            .expect("flat JSON object ended before its key")
+                        else {
+                            panic!("flat JSON object entry does not start with a key")
+                        };
+                        (key.clone(), Self::unflatten(tokens))
+                    })
+                    .collect(),
+            ),
+            TraceJsonToken::Key(key) => {
+                panic!("unexpected flat JSON key {key:?} in value position")
+            }
+        }
+    }
+}
+
+/// One pre-order token of a flattened [`TraceJsonTree`]. `Array`/`Object`
+/// carry their child count; object entries are `Key` followed by a value.
+#[derive(
+    Clone, Debug, PartialEq, bincode::Decode, bincode::Encode, bitcode::Decode, bitcode::Encode,
+)]
+enum TraceJsonToken {
+    Null,
+    Bool(bool),
+    Unsigned(u64),
+    Signed(i64),
+    Float(f64),
+    String(String),
+    Array(u32),
+    Object(u32),
+    Key(String),
+}
+
+/// Cache-safe JSON value: a [`TraceJsonTree`] stored as a flat pre-order
+/// token list. bitcode's derives cannot encode recursive types (the derived
+/// encoder would be infinitely sized), so the binary codecs see a plain
+/// `Vec<TraceJsonToken>` while serde still reads and writes the JSON shape.
+#[derive(
+    Clone, Debug, PartialEq, bincode::Decode, bincode::Encode, bitcode::Decode, bitcode::Encode,
+)]
+struct TraceJsonValue {
+    tokens: Vec<TraceJsonToken>,
+}
+
+impl TraceJsonValue {
+    fn tree(&self) -> TraceJsonTree {
+        let mut tokens = self.tokens.iter();
+        let tree = TraceJsonTree::unflatten(&mut tokens);
+        assert!(
+            tokens.next().is_none(),
+            "flat JSON token stream has trailing tokens"
+        );
+        tree
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        self.tree().to_json()
+    }
+}
+
+impl From<TraceJsonTree> for TraceJsonValue {
+    fn from(tree: TraceJsonTree) -> Self {
+        let mut tokens = Vec::new();
+        tree.flatten_into(&mut tokens);
+        Self { tokens }
+    }
+}
+
+impl Serialize for TraceJsonValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.tree().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TraceJsonValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        TraceJsonTree::deserialize(deserializer).map(Self::from)
     }
 }
 
@@ -2806,7 +3521,15 @@ fn print_schema_sixteen_actor_diagnostics(elements: &[TraceElement]) {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct TraceFailedPathRequest {
     actor: TraceEntityId,
@@ -2995,19 +3718,45 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 64;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v64.native-bincode.zst";
-const TRACE_CACHE_FOOTER_MAGIC: [u8; 16] = *b"RHPRCACHEFOOTER!";
-const TRACE_CACHE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
+const TRACE_NATIVE_VERSION: u32 = 66;
+/// The native parity trace is the authoritative artifact once its JSONL
+/// source has been converted (and possibly deleted), so its name carries no
+/// version: compatibility is enforced through the versioned header/footer,
+/// and an incompatible file must be migrated, never silently regenerated.
+/// The suffix appends to the full recording name (`X.jsonl.zst` becomes
+/// `X.jsonl.zst.parity.bitcode.zst`) because the `.jsonl.zst` path is the
+/// stable trace identity used by sweep status keys, EOF ledgers, and
+/// completion markers.
+const TRACE_NATIVE_SUFFIX: &str = ".parity.bitcode.zst";
+const TRACE_NATIVE_FOOTER_MAGIC: [u8; 16] = *b"RHPRTRACEFOOTER!";
+const TRACE_NATIVE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
 // Keep the reader bounded at zstd's platform maximum while accepting those
 // valid trace frames.
 const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
-const TRACE_CACHE_ZSTD_LEVEL: i32 = 0;
+// bitcode + zstd 19 measured ~2.8x smaller caches than the previous bincode +
+// zstd default, and bitcode's dense output keeps high-level zstd fast (the
+// `--bench-encodings` experiment; see git history for the numbers).
+const TRACE_NATIVE_ZSTD_LEVEL: i32 = 19;
+/// Frames per on-disk block. bitcode gets its size win from packing many
+/// values into one buffer, so records are grouped into blocks; a few hundred
+/// records already captured nearly all of the whole-trace win in the format
+/// experiment, and 1024 keeps writer memory bounded while squeezing out the
+/// remainder. Readers accept any block size, so this can change without a
+/// cache-version bump.
+const TRACE_NATIVE_BLOCK_RECORDS: usize = 1024;
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 struct BinaryTraceHeader {
     version: u32,
     source_fingerprint: String,
@@ -3015,7 +3764,15 @@ struct BinaryTraceHeader {
     rng_prefix: TraceRngPrefix,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug,
+    Deserialize,
+    Serialize,
+    bincode::Encode,
+    bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 enum BinaryTraceRecord {
     Frame(TraceFrame),
     End {
@@ -3029,6 +3786,8 @@ struct BinaryTraceReader {
     path: PathBuf,
     reader: Box<dyn Read>,
     footer: BinaryTraceFooter,
+    /// Records of the current block not yet handed out by [`Self::read_record`].
+    pending: VecDeque<BinaryTraceRecord>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3179,6 +3938,8 @@ struct Options {
     http_server: Option<u16>,
     start_paused: bool,
     frame_zero_screenshot_dir: Option<PathBuf>,
+    bench_encodings: bool,
+    convert: bool,
 }
 
 struct DumpOptions {
@@ -3538,6 +4299,14 @@ impl VisualReplay {
 
 fn main() {
     let options = parse_options();
+    if options.convert {
+        convert_recording_to_native(&options.trace_path);
+        return;
+    }
+    if options.bench_encodings {
+        bench_trace_encodings(&options.trace_path);
+        return;
+    }
     if options.frame_zero_screenshot_dir.is_some() {
         let exit = robin_rs::window::run_with_game_visibility(
             "Robin Hood — Original parity frame-zero capture",
@@ -3573,10 +4342,7 @@ async fn capture_full_frame_zero_screenshot(
 ) -> i32 {
     let invocation_dir =
         std::env::current_dir().expect("resolve invocation directory for frame-zero screenshot");
-    let trace_path = options
-        .trace_path
-        .canonicalize()
-        .unwrap_or_else(|error| panic!("canonicalize parity trace: {error}"));
+    let trace_path = canonicalize_trace_identity(&options.trace_path);
     let output_dir = options
         .frame_zero_screenshot_dir
         .expect("frame-zero capture lost its output directory");
@@ -3587,8 +4353,8 @@ async fn capture_full_frame_zero_screenshot(
     };
     let output_path = frame_zero_screenshot_path(&output_dir, &trace_path);
 
-    let cache_path = ensure_binary_trace_cache(&trace_path);
-    let header = read_binary_trace_header(&cache_path).trace;
+    let native_path = ensure_native_binary_trace(&trace_path);
+    let header = read_binary_trace_header(&native_path).trace;
     validate_trace_header(&header);
     let initial_save = decode_and_validate_initial_save(&header);
 
@@ -3643,16 +4409,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let trace_path = options.trace_path;
     let http_server = options.http_server;
     let mut manual_pause = options.start_paused;
-    let trace_path = trace_path
-        .canonicalize()
-        .unwrap_or_else(|e| panic!("canonicalize {}: {e}", trace_path.display()));
-    let cache_path = ensure_binary_trace_cache(&trace_path);
+    let trace_path = canonicalize_trace_identity(&trace_path);
+    let native_path = ensure_native_binary_trace(&trace_path);
     let mut dump = options.dump.map(|options| {
         let file = File::create(&options.path)
             .unwrap_or_else(|e| panic!("create diagnostic dump {}: {e}", options.path.display()));
         (options, BufWriter::new(file))
     });
-    let cached_header = read_binary_trace_header(&cache_path);
+    let cached_header = read_binary_trace_header(&native_path);
     // Normally grow the replay RNG one frame at a time so loading the trace
     // does not decode every large frame twice. Zero-prefix loaded saves need
     // future draws during deterministic reconstruction. The environment
@@ -3664,7 +4428,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         std::env::var_os("PARITY_PRELOAD_RNG").is_some(),
     );
     let initial_rng_draws = if preload_complete_rng_stream {
-        read_all_rng_draws(&cache_path)
+        read_all_rng_draws(&native_path)
     } else {
         simulation_rng_draws(&cached_header.rng_prefix.draws)
     };
@@ -3682,7 +4446,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     }
     robin_rs::main_entry::register_language_data_paths_for_tool();
 
-    let mut records = BinaryTraceReader::open(&cache_path);
+    let mut records = BinaryTraceReader::open(&native_path);
     let stream_header = records.read_header();
     assert_eq!(stream_header.trace.schema, header.schema);
     assert_eq!(stream_header.trace.session_index, header.session_index);
@@ -4622,8 +5386,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 .validate_terminator(frame_count, final_frame)
                 .unwrap_or_else(|error| {
                     panic!(
-                        "parity trace cache {} has an invalid terminal record: {error}",
-                        cache_path.display()
+                        "native parity trace {} has an invalid terminal record: {error}",
+                        native_path.display()
                     )
                 });
             assert_eq!(
@@ -4646,7 +5410,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             frame_count: None,
         } => panic!("parity trace ended without a clean rng_suffix terminator"),
         BinaryTraceRecord::End { .. } => {
-            panic!("parity trace cache contains a partially populated terminator")
+            panic!("native parity trace contains a partially populated terminator")
         }
         BinaryTraceRecord::Frame(_) => unreachable!("replay loop exits only on a terminator"),
     }
@@ -4680,9 +5444,11 @@ fn parse_options() -> Options {
         [--frame-zero-screenshot-only] \
         [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
-        [--dump-entity KIND:INDEX]...] TRACE.jsonl[.zst]";
+        [--dump-entity KIND:INDEX]...] [--bench-encodings] [--convert] TRACE.jsonl[.zst]";
 
     let mut args = std::env::args_os().skip(1);
+    let mut bench_encodings = false;
+    let mut convert = false;
     let mut scan_all = false;
     let mut no_auto_dump = false;
     let mut visual = false;
@@ -4698,6 +5464,8 @@ fn parse_options() -> Options {
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--scan-all") => scan_all = true,
+            Some("--bench-encodings") => bench_encodings = true,
+            Some("--convert") => convert = true,
             Some("--no-auto-dump") => no_auto_dump = true,
             Some("--visual") => visual = true,
             Some("--frame-zero-screenshot-dir") => {
@@ -4766,6 +5534,8 @@ fn parse_options() -> Options {
         http_server,
         start_paused,
         frame_zero_screenshot_dir,
+        bench_encodings,
+        convert,
         dump: dump_path.map(|path| DumpOptions {
             path,
             from_frame: dump_from,
@@ -5329,15 +6099,52 @@ fn trace_source_fingerprint(trace_path: &Path) -> String {
         .as_nanos();
     let content_sha256 = trace_content_sha256(trace_path);
     format!(
-        "parity-cache-v{TRACE_CACHE_VERSION}:length={}:modified={modified}:sha256={content_sha256}",
+        "native-parity-v{TRACE_NATIVE_VERSION}:length={}:modified={modified}:sha256={content_sha256}",
         metadata.len()
     )
 }
 
-fn binary_trace_cache_path(trace_path: &std::path::Path) -> PathBuf {
-    let mut cache_name = trace_path.as_os_str().to_owned();
-    cache_name.push(TRACE_CACHE_SUFFIX);
-    PathBuf::from(cache_name)
+/// Canonicalize the logical trace path even when only its native artifact
+/// still exists on disk (a converted recording is deleted, but its
+/// `.jsonl.zst` path remains the trace's identity).
+fn canonicalize_trace_identity(trace_path: &Path) -> PathBuf {
+    if trace_path.exists() {
+        return trace_path
+            .canonicalize()
+            .unwrap_or_else(|error| panic!("canonicalize {}: {error}", trace_path.display()));
+    }
+    let file_name = trace_path.file_name().unwrap_or_else(|| {
+        panic!(
+            "parity trace path {} has no file name",
+            trace_path.display()
+        )
+    });
+    let parent = match trace_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    parent
+        .canonicalize()
+        .unwrap_or_else(|error| {
+            panic!(
+                "canonicalize parity trace directory {}: {error}",
+                parent.display()
+            )
+        })
+        .join(file_name)
+}
+
+fn native_binary_trace_path(trace_path: &std::path::Path) -> PathBuf {
+    let mut native_name = trace_path.as_os_str().to_owned();
+    // A plain `.jsonl` capture converts to the same artifact name its
+    // compressed spelling would have produced: the `.jsonl.zst` path is the
+    // stable trace identity in ledgers, sweep status keys, and completion
+    // markers, so skipping the interim zstd recording must not change it.
+    if trace_path.as_os_str().to_string_lossy().ends_with(".jsonl") {
+        native_name.push(".zst");
+    }
+    native_name.push(TRACE_NATIVE_SUFFIX);
+    PathBuf::from(native_name)
 }
 
 fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
@@ -5377,9 +6184,357 @@ fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
     }
 }
 
-fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
-    let cache_path = binary_trace_cache_path(trace_path);
-    let mut lock_name = cache_path.as_os_str().to_owned();
+/// Normalize a trace JSON tree for the cache round-trip audit. Two declared,
+/// information-preserving differences between the raw JSONL and the typed
+/// representation are erased on BOTH sides so everything else must match
+/// exactly:
+///
+/// * `{"bits": N, "value": F}` float objects lose the redundant decimal
+///   rendering `value`; `bits` alone is authoritative.
+/// * `null` object entries are removed: serde cannot distinguish an absent
+///   optional field from an explicit `null` once re-serialized (both are
+///   `None`), and the two fields where Original's `null` is meaningful keep
+///   the distinction in their typed `Option<Option<_>>` form. Array elements
+///   are never removed.
+/// * Empty array/object entries are removed after their children normalize:
+///   schema-gated `#[serde(default)]` collection fields parse from an absent
+///   key but re-serialize as an empty collection, so the typed schema
+///   deliberately identifies the two.
+fn normalize_trace_json_for_roundtrip(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.len() == 2
+                && map.get("bits").is_some_and(serde_json::Value::is_u64)
+                && map.get("value").is_some_and(|value| {
+                    // RHParity's FloatState renders non-finite floats as
+                    // strings; `bits` alone carries the information.
+                    value.is_number()
+                        || matches!(value.as_str(), Some("nan" | "infinity" | "-infinity"))
+                })
+            {
+                map.remove("value");
+            }
+            for child in map.values_mut() {
+                normalize_trace_json_for_roundtrip(child);
+            }
+            map.retain(|_, child| match child {
+                serde_json::Value::Null => false,
+                serde_json::Value::Array(items) => !items.is_empty(),
+                serde_json::Value::Object(entries) => !entries.is_empty(),
+                _ => true,
+            });
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                normalize_trace_json_for_roundtrip(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// First path where the two normalized JSON trees disagree, or `None` when
+/// they match. Paths make cache-build failures actionable on multi-hundred-KB
+/// trace lines.
+fn first_json_difference(
+    path: &str,
+    original: &serde_json::Value,
+    reserialized: &serde_json::Value,
+) -> Option<String> {
+    use serde_json::Value;
+    match (original, reserialized) {
+        (Value::Object(original), Value::Object(reserialized)) => {
+            for (key, original_child) in original {
+                let Some(reserialized_child) = reserialized.get(key) else {
+                    return Some(format!(
+                        "{path}.{key} is dropped by the typed representation (recorded {original_child})"
+                    ));
+                };
+                if let Some(difference) = first_json_difference(
+                    &format!("{path}.{key}"),
+                    original_child,
+                    reserialized_child,
+                ) {
+                    return Some(difference);
+                }
+            }
+            reserialized
+                .keys()
+                .find(|key| !original.contains_key(*key))
+                .map(|key| format!("{path}.{key} is invented by the typed representation"))
+        }
+        (Value::Array(original), Value::Array(reserialized)) => {
+            if original.len() != reserialized.len() {
+                return Some(format!(
+                    "{path} has {} recorded elements but {} typed elements",
+                    original.len(),
+                    reserialized.len()
+                ));
+            }
+            original.iter().zip(reserialized).enumerate().find_map(
+                |(index, (original_child, reserialized_child))| {
+                    first_json_difference(
+                        &format!("{path}[{index}]"),
+                        original_child,
+                        reserialized_child,
+                    )
+                },
+            )
+        }
+        _ if original == reserialized => None,
+        _ => Some(format!("{path}: recorded {original} became {reserialized}")),
+    }
+}
+
+/// Panic unless the typed record re-serializes to the JSON it was parsed
+/// from, modulo [`normalize_trace_json_for_roundtrip`]. Running this on every
+/// line during cache conversion is what lets the binary cache stand in for
+/// the recording: a field the typed schema silently drops or reshapes fails
+/// the build instead of becoming data loss.
+///
+/// Building JSON trees for both sides of every frame is expensive, so
+/// [`ensure_native_binary_trace`] audits frame lines on a worker pool
+/// ([`spawn_roundtrip_audit_workers`]) while the writer thread streams
+/// records into the cache; a failed audit aborts conversion before the
+/// temporary cache file is published.
+fn verify_trace_line_roundtrip<T: Serialize>(record: &T, line: &str, line_number: usize) {
+    let mut original: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|error| {
+        panic!("reparse trace line {line_number} for the round-trip audit: {error}")
+    });
+    let mut reserialized = serde_json::to_value(record).unwrap_or_else(|error| {
+        panic!("reserialize trace line {line_number} for the round-trip audit: {error}")
+    });
+    normalize_trace_json_for_roundtrip(&mut original);
+    normalize_trace_json_for_roundtrip(&mut reserialized);
+    if let Some(difference) = first_json_difference("$", &original, &reserialized) {
+        panic!(
+            "trace line {line_number} does not survive the typed cache round trip: {difference}"
+        );
+    }
+}
+
+/// Re-parse and round-trip-audit one trace line (any line after the header
+/// and RNG prefix: frames and the rng_suffix terminator).
+fn audit_trace_line(line: &str, line_number: usize) {
+    if let Some(frame) = parse_trace_frame(line, line_number) {
+        verify_trace_line_roundtrip(&frame, line, line_number);
+    } else {
+        let suffix: TraceRngOnly = serde_json::from_str(line).unwrap_or_else(|error| {
+            panic!(
+                "reparse RNG suffix on trace line {line_number} for the round-trip audit: {error}"
+            )
+        });
+        verify_trace_line_roundtrip(&suffix, line, line_number);
+    }
+}
+
+/// Fan trace lines out to audit workers. Returns the sender; drop it to let
+/// the workers drain and finish. Worker panics (i.e. audit failures)
+/// propagate when the enclosing [`std::thread::scope`] joins.
+fn spawn_roundtrip_audit_workers<'scope, 'env>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+) -> std::sync::mpsc::SyncSender<(usize, String)> {
+    // Bounded so a fast reader cannot buffer a whole multi-GB trace.
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<(usize, String)>(64);
+    let receiver = std::sync::Arc::new(std::sync::Mutex::new(receiver));
+    let workers = std::thread::available_parallelism()
+        .map(|threads| threads.get().saturating_sub(1).clamp(1, 8))
+        .unwrap_or(1);
+    for _ in 0..workers {
+        let receiver = std::sync::Arc::clone(&receiver);
+        scope.spawn(move || {
+            loop {
+                let received = receiver
+                    .lock()
+                    .expect("audit line channel lock is never poisoned")
+                    .recv();
+                match received {
+                    Ok((line_number, line)) => audit_trace_line(&line, line_number),
+                    Err(_) => return,
+                }
+            }
+        });
+    }
+    sender
+}
+
+/// Panic unless the native trace at `native_path` carries the current format
+/// version in both its fixed footer and its decoded header. Used when there
+/// is no JSONL source to regenerate from, so the only correct responses to a
+/// mismatch are migration or restoring the recording — never regeneration.
+fn validate_standalone_native_trace(native_path: &Path) {
+    let footer = read_binary_trace_footer(native_path).unwrap_or_else(|error| {
+        panic!(
+            "native parity trace {} has a corrupt or missing fixed footer: {error};              its JSONL source is gone, so restore or migrate the native file",
+            native_path.display()
+        )
+    });
+    let header = read_binary_trace_header(native_path);
+    assert!(
+        footer.version == TRACE_NATIVE_VERSION && header.version == TRACE_NATIVE_VERSION,
+        "native parity trace {} is version {} (footer {}) but this runner expects          {TRACE_NATIVE_VERSION}; its JSONL source is gone, so it must be migrated          with a runner that still reads its version",
+        native_path.display(),
+        header.version,
+        footer.version,
+    );
+}
+
+/// `--convert`: turn a JSONL recording into its native parity trace and
+/// delete the recording once losslessness is assured. Safety gates, in
+/// order:
+///
+/// 1. Conversion itself round-trip audits every line (see
+///    [`verify_trace_line_roundtrip`]) — an unfaithful typed representation
+///    aborts before the native file is published.
+/// 2. The published native file is independently re-read from disk: every
+///    block must decode, the frame timeline must be contiguous, and the
+///    terminator must agree with the fixed footer.
+/// 3. The decoded frame count must match the recording's own line count.
+///
+/// Only then is the JSONL deleted, along with obsolete `.parity-cache-v*`
+/// derivations of it. Completion markers (`*.complete`) are left in place —
+/// they carry the trace's capture provenance and its identity persists.
+fn convert_recording_to_native(trace_path: &Path) {
+    let display = trace_path.display();
+    assert!(
+        !trace_path
+            .as_os_str()
+            .to_string_lossy()
+            .ends_with(TRACE_NATIVE_SUFFIX),
+        "{display} already is a native parity trace"
+    );
+    assert!(
+        trace_path.is_file(),
+        "recording {display} does not exist; nothing to convert"
+    );
+    let source_bytes = std::fs::metadata(trace_path)
+        .expect("stat recording before conversion")
+        .len();
+    let native_path = ensure_native_binary_trace(trace_path);
+
+    // Independent re-read of the published artifact.
+    let mut reader = BinaryTraceReader::open(&native_path);
+    let header = reader.read_header();
+    assert_eq!(
+        header.version,
+        TRACE_NATIVE_VERSION,
+        "native parity trace {} decodes with the wrong version",
+        native_path.display()
+    );
+    let mut timeline = TraceTimeline::new(header.trace.initial_frame);
+    let mut decoded_frames = 0_u64;
+    loop {
+        match reader.read_record() {
+            BinaryTraceRecord::Frame(frame) => {
+                timeline
+                    .observe(frame.frame_before, frame.frame_after)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "native parity trace {} breaks the frame timeline: {error}",
+                            native_path.display()
+                        )
+                    });
+                decoded_frames += 1;
+            }
+            BinaryTraceRecord::End {
+                final_frame,
+                frame_count,
+                ..
+            } => {
+                let final_frame = final_frame.expect("native End record lost its final frame");
+                let frame_count = frame_count.expect("native End record lost its frame count");
+                assert_eq!(frame_count, decoded_frames);
+                timeline
+                    .validate_terminator(frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "native parity trace {} terminator disagrees with its frames: {error}",
+                            native_path.display()
+                        )
+                    });
+                reader
+                    .validate_terminator(frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "native parity trace {} disagrees with its fixed footer: {error}",
+                            native_path.display()
+                        )
+                    });
+                break;
+            }
+        }
+    }
+
+    // The recording has exactly header, RNG prefix, one line per frame, and
+    // the rng_suffix terminator.
+    let recorded_lines = open_jsonl_trace(trace_path)
+        .lines()
+        .map(|line| line.expect("re-read recording line count"))
+        .count() as u64;
+    assert_eq!(
+        recorded_lines,
+        decoded_frames + 3,
+        "recording {display} has {recorded_lines} lines but the native trace decoded {decoded_frames} frames"
+    );
+
+    std::fs::remove_file(trace_path)
+        .unwrap_or_else(|error| panic!("delete converted recording {display}: {error}"));
+    let mut removed_derived = 0_usize;
+    if let (Some(parent), Some(name)) = (trace_path.parent(), trace_path.file_name()) {
+        let obsolete_prefix = format!("{}.parity-cache-v", name.to_string_lossy());
+        for entry in std::fs::read_dir(parent).expect("list recording directory for cleanup") {
+            let entry = entry.expect("read recording directory entry");
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&obsolete_prefix)
+            {
+                std::fs::remove_file(entry.path()).unwrap_or_else(|error| {
+                    panic!(
+                        "delete obsolete derivation {}: {error}",
+                        entry.path().display()
+                    )
+                });
+                removed_derived += 1;
+            }
+        }
+    }
+    let native_bytes = std::fs::metadata(&native_path)
+        .expect("stat native parity trace after conversion")
+        .len();
+    eprintln!(
+        "converted {display} ({:.2} MiB) into {} ({:.2} MiB, {decoded_frames} frames);          deleted the recording and {removed_derived} obsolete derived files",
+        source_bytes as f64 / (1024.0 * 1024.0),
+        native_path.display(),
+        native_bytes as f64 / (1024.0 * 1024.0),
+    );
+}
+
+fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
+    if trace_path
+        .as_os_str()
+        .to_string_lossy()
+        .ends_with(TRACE_NATIVE_SUFFIX)
+    {
+        // The native trace itself was passed; it is the artifact, not a
+        // derivation of one.
+        validate_standalone_native_trace(trace_path);
+        return trace_path.to_owned();
+    }
+    let native_path = native_binary_trace_path(trace_path);
+    if !trace_path.exists() {
+        assert!(
+            native_path.is_file(),
+            "parity trace {} does not exist and has no native counterpart {}",
+            trace_path.display(),
+            native_path.display()
+        );
+        // The recording was converted and deleted; the native trace is the
+        // authoritative replacement.
+        validate_standalone_native_trace(&native_path);
+        return native_path;
+    }
+    let mut lock_name = native_path.as_os_str().to_owned();
     lock_name.push(".lock");
     let lock_path = PathBuf::from(lock_name);
     let lock_file = OpenOptions::new()
@@ -5389,109 +6544,115 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
         .open(&lock_path)
         .unwrap_or_else(|error| {
             panic!(
-                "open parity trace cache lock {}: {error}",
+                "open native parity trace lock {}: {error}",
                 lock_path.display()
             )
         });
     lock_file.lock_exclusive().unwrap_or_else(|error| {
         panic!(
-            "lock parity trace cache generation {}: {error}",
+            "lock native parity trace generation {}: {error}",
             lock_path.display()
         )
     });
     let fingerprint = trace_source_fingerprint(trace_path);
-    match try_read_binary_trace_header(&cache_path) {
+    match try_read_binary_trace_header(&native_path) {
         Ok(header)
-            if header.version == TRACE_CACHE_VERSION
+            if header.version == TRACE_NATIVE_VERSION
                 && header.source_fingerprint == fingerprint =>
         {
-            let footer = read_binary_trace_footer(&cache_path).unwrap_or_else(|error| {
+            let footer = read_binary_trace_footer(&native_path).unwrap_or_else(|error| {
                 panic!(
-                    "parity trace cache {} has a corrupt or missing fixed footer: {error}; remove the derived cache and retry",
-                    cache_path.display()
+                    "native parity trace {} has a corrupt or missing fixed footer: {error}; remove the derived native file and retry (its JSONL source is still present)",
+                    native_path.display()
                 )
             });
             validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
                 panic!(
-                    "parity trace cache {} has an invalid fixed footer: {error}; remove the derived cache and retry",
-                    cache_path.display()
+                    "native parity trace {} has an invalid fixed footer: {error}; remove the derived native file and retry (its JSONL source is still present)",
+                    native_path.display()
                 )
             });
-            eprintln!("loaded parity trace cache {}", cache_path.display());
-            return cache_path;
+            eprintln!("loaded native parity trace {}", native_path.display());
+            return native_path;
         }
         Ok(header) => eprintln!(
-            "rebuilding stale parity trace cache {} (version {}, fingerprint {:?})",
-            cache_path.display(),
+            "rebuilding stale native parity trace {} (version {}, fingerprint {:?})",
+            native_path.display(),
             header.version,
             header.source_fingerprint
         ),
-        Err(error) if cache_path.exists() => panic!(
-            "parity trace cache {} is unreadable: {error}; remove the derived cache and retry",
-            cache_path.display()
+        Err(error) if native_path.exists() => panic!(
+            "native parity trace {} is unreadable: {error}; remove the derived native file and retry (its JSONL source is still present)",
+            native_path.display()
         ),
         Err(_) => eprintln!(
-            "building parity trace cache {} with bincode + zstd level {TRACE_CACHE_ZSTD_LEVEL}",
-            cache_path.display()
+            "building native parity trace {} with bitcode + zstd level {TRACE_NATIVE_ZSTD_LEVEL}",
+            native_path.display()
         ),
     }
 
     let mut lines = open_jsonl_trace(trace_path).lines();
-    let trace: TraceHeader = serde_json::from_str(
-        &lines
-            .next()
-            .expect("parity trace has no header")
-            .expect("read parity trace header"),
-    )
-    .expect("parse parity trace header");
+    let header_line = lines
+        .next()
+        .expect("parity trace has no header")
+        .expect("read parity trace header");
+    let trace: TraceHeader = serde_json::from_str(&header_line).expect("parse parity trace header");
+    verify_trace_line_roundtrip(&trace, &header_line, 1);
     validate_trace_header(&trace);
-    let rng_prefix: TraceRngPrefix = serde_json::from_str(
-        &lines
-            .next()
-            .expect("parity trace has no RNG prefix")
-            .expect("read parity RNG prefix"),
-    )
-    .expect("parse parity RNG prefix");
+    let rng_prefix_line = lines
+        .next()
+        .expect("parity trace has no RNG prefix")
+        .expect("read parity RNG prefix");
+    let rng_prefix: TraceRngPrefix =
+        serde_json::from_str(&rng_prefix_line).expect("parse parity RNG prefix");
+    verify_trace_line_roundtrip(&rng_prefix, &rng_prefix_line, 2);
     assert_eq!(
         rng_prefix.r#type, "rng_prefix",
         "invalid RNG prefix record type"
     );
     rng_prefix.draws.validate();
     let header = BinaryTraceHeader {
-        version: TRACE_CACHE_VERSION,
+        version: TRACE_NATIVE_VERSION,
         source_fingerprint: fingerprint,
         trace,
         rng_prefix,
     };
 
-    let parent = cache_path
+    let parent = native_path
         .parent()
-        .expect("parity trace cache path has no parent");
+        .expect("native parity trace path has no parent");
     let mut temporary = tempfile::NamedTempFile::new_in(parent).unwrap_or_else(|error| {
         panic!(
-            "create temporary parity trace cache beside {}: {error}",
-            cache_path.display()
+            "create temporary native parity trace beside {}: {error}",
+            native_path.display()
         )
     });
     let started = std::time::Instant::now();
     let mut frame_count = 0_u64;
     let mut trace_timeline = TraceTimeline::new(header.trace.initial_frame);
-    let final_frame;
-    {
+    // The closure returns the terminal frame purely so the scope's value
+    // documents a completed conversion; the footer consumed it inside.
+    let _final_frame = std::thread::scope(|scope| {
+        let audit_sender = spawn_roundtrip_audit_workers(scope);
         let mut encoder = zstd::stream::write::Encoder::new(
             BufWriter::new(temporary.as_file_mut()),
-            TRACE_CACHE_ZSTD_LEVEL,
+            TRACE_NATIVE_ZSTD_LEVEL,
         )
-        .unwrap_or_else(|error| panic!("start parity trace cache compression: {error}"));
-        write_binary_record(&mut encoder, &header, "parity trace cache header");
+        .unwrap_or_else(|error| panic!("start native parity trace compression: {error}"));
+        configure_cache_compression(&mut encoder);
+        write_binary_record(&mut encoder, &header, "native parity trace header");
 
         let mut records = lines.enumerate();
         let mut terminal_metadata = None;
+        let mut block: Vec<BinaryTraceRecord> = Vec::with_capacity(TRACE_NATIVE_BLOCK_RECORDS);
         while let Some((record_index, line)) = records.next() {
             let line_number = record_index + 3;
             let line = line.unwrap_or_else(|error| {
                 panic!("read parity trace record on line {line_number}: {error}")
             });
+            audit_sender
+                .send((line_number, line.clone()))
+                .expect("parity round-trip audit workers stopped early");
             if let Some(frame) = parse_trace_frame(&line, line_number) {
                 validate_trace_frame_envelope(header.trace.schema, &frame);
                 trace_timeline
@@ -5499,11 +6660,11 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
                     .unwrap_or_else(|error| {
                         panic!("invalid parity frame timeline on line {line_number}: {error}")
                     });
-                write_binary_record(
-                    &mut encoder,
-                    &BinaryTraceRecord::Frame(frame),
-                    "parity trace frame",
-                );
+                block.push(BinaryTraceRecord::Frame(frame));
+                if block.len() >= TRACE_NATIVE_BLOCK_RECORDS {
+                    write_binary_record(&mut encoder, block.as_slice(), "parity trace frame block");
+                    block.clear();
+                }
                 frame_count += 1;
                 if frame_count.is_multiple_of(500) {
                     eprintln!("cached {frame_count} parity frames");
@@ -5522,15 +6683,11 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
                     .unwrap_or_else(|error| {
                         panic!("invalid parity terminator timeline on line {line_number}: {error}")
                     });
-                write_binary_record(
-                    &mut encoder,
-                    &BinaryTraceRecord::End {
-                        rng_suffix: Some(suffix.draws),
-                        final_frame: Some(suffix.final_frame),
-                        frame_count: Some(suffix.frame_count),
-                    },
-                    "parity trace cache terminator",
-                );
+                block.push(BinaryTraceRecord::End {
+                    rng_suffix: Some(suffix.draws),
+                    final_frame: Some(suffix.final_frame),
+                    frame_count: Some(suffix.frame_count),
+                });
                 terminal_metadata = Some((suffix.frame_count, suffix.final_frame));
                 if let Some((trailing_index, trailing)) = records.next() {
                     let trailing_line = trailing_index + 3;
@@ -5545,72 +6702,86 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
             }
         }
         let (terminal_frame_count, terminal_final_frame) = terminal_metadata.unwrap_or_else(|| {
-            panic!("parity trace ended without an rng_suffix terminator; refusing to publish cache")
+            panic!("parity trace ended without an rng_suffix terminator; refusing to publish the native trace")
         });
         assert_eq!(terminal_frame_count, frame_count);
-        final_frame = terminal_final_frame;
+        let final_frame = terminal_final_frame;
+        write_binary_record(
+            &mut encoder,
+            block.as_slice(),
+            "native parity trace final block",
+        );
         let mut writer = encoder
             .finish()
-            .unwrap_or_else(|error| panic!("finish parity trace cache compression: {error}"));
+            .unwrap_or_else(|error| panic!("finish native parity trace compression: {error}"));
         write_binary_trace_footer(
             &mut writer,
             BinaryTraceFooter {
-                version: TRACE_CACHE_VERSION,
+                version: TRACE_NATIVE_VERSION,
                 frame_count,
                 final_frame,
             },
         )
-        .unwrap_or_else(|error| panic!("write parity trace cache fixed footer: {error}"));
+        .unwrap_or_else(|error| panic!("write native parity trace fixed footer: {error}"));
         writer
             .flush()
-            .unwrap_or_else(|error| panic!("flush parity trace cache: {error}"));
-    }
+            .unwrap_or_else(|error| panic!("flush native parity trace: {error}"));
+        final_frame
+    });
     temporary
         .as_file()
         .sync_all()
-        .unwrap_or_else(|error| panic!("sync parity trace cache: {error}"));
-    temporary.persist(&cache_path).unwrap_or_else(|error| {
+        .unwrap_or_else(|error| panic!("sync native parity trace: {error}"));
+    temporary.persist(&native_path).unwrap_or_else(|error| {
         panic!(
-            "persist parity trace cache {}: {}",
-            cache_path.display(),
+            "persist native parity trace {}: {}",
+            native_path.display(),
             error.error
         )
     });
-    let compressed_bytes = std::fs::metadata(&cache_path)
-        .expect("stat completed parity trace cache")
+    let compressed_bytes = std::fs::metadata(&native_path)
+        .expect("stat completed native parity trace")
         .len();
     eprintln!(
         "cached {frame_count} frames in {} ({:.1} MiB, {:.1}s)",
-        cache_path.display(),
+        native_path.display(),
         compressed_bytes as f64 / (1024.0 * 1024.0),
         started.elapsed().as_secs_f64()
     );
-    cache_path
+    native_path
 }
 
 impl BinaryTraceReader {
     fn open(path: &std::path::Path) -> Self {
         let footer = read_binary_trace_footer(path).unwrap_or_else(|error| {
             panic!(
-                "read parity trace cache fixed footer {}: {error}",
+                "read native parity trace fixed footer {}: {error}",
                 path.display()
             )
         });
         let file = File::open(path)
-            .unwrap_or_else(|error| panic!("open parity trace cache {}: {error}", path.display()));
+            .unwrap_or_else(|error| panic!("open native parity trace {}: {error}", path.display()));
         let compressed_len = file
             .metadata()
-            .expect("stat parity trace cache before decompression")
+            .expect("stat native parity trace before decompression")
             .len()
-            .checked_sub(TRACE_CACHE_FOOTER_LEN)
-            .expect("validated parity trace cache is shorter than its footer");
+            .checked_sub(TRACE_NATIVE_FOOTER_LEN)
+            .expect("validated native parity trace is shorter than its footer");
         // The fixed footer is outside the zstd stream so it can be checked
-        // without decoding a potentially ABI-incompatible cache. Bound zstd
+        // without decoding a potentially ABI-incompatible file. Bound zstd
         // to the compressed bytes or it treats the footer as another frame.
-        let decoder =
-            zstd::stream::read::Decoder::new(file.take(compressed_len)).unwrap_or_else(|error| {
+        let mut decoder = zstd::stream::read::Decoder::new(file.take(compressed_len))
+            .unwrap_or_else(|error| {
                 panic!(
-                    "start parity trace cache decompression {}: {error}",
+                    "start native parity trace decompression {}: {error}",
+                    path.display()
+                )
+            });
+        decoder
+            .window_log_max(TRACE_ZSTD_WINDOW_LOG_MAX)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "configure native parity trace decompression {}: {error}",
                     path.display()
                 )
             });
@@ -5618,22 +6789,36 @@ impl BinaryTraceReader {
             path: path.to_owned(),
             reader: Box::new(decoder),
             footer,
+            pending: VecDeque::new(),
         }
     }
 
     fn read_header(&mut self) -> BinaryTraceHeader {
-        read_binary_record(&mut self.reader, "parity trace cache header").unwrap_or_else(|error| {
+        read_binary_record(&mut self.reader, "native parity trace header").unwrap_or_else(|error| {
             panic!(
-                "read parity trace cache header {}: {error}",
+                "read native parity trace header {}: {error}",
                 self.path.display()
             )
         })
     }
 
     fn read_record(&mut self) -> BinaryTraceRecord {
-        read_binary_record(&mut self.reader, "parity trace cache record").unwrap_or_else(|error| {
+        if let Some(record) = self.pending.pop_front() {
+            return record;
+        }
+        let block: Vec<BinaryTraceRecord> =
+            read_binary_record(&mut self.reader, "native parity trace block").unwrap_or_else(
+                |error| {
+                    panic!(
+                        "read native parity trace block {}: {error}",
+                        self.path.display()
+                    )
+                },
+            );
+        self.pending.extend(block);
+        self.pending.pop_front().unwrap_or_else(|| {
             panic!(
-                "read parity trace cache record {}: {error}",
+                "native parity trace {} contains an empty record block",
                 self.path.display()
             )
         })
@@ -5646,10 +6831,18 @@ impl BinaryTraceReader {
                 self.footer.frame_count, self.footer.final_frame
             ));
         }
+        if !self.pending.is_empty() {
+            return Err(
+                "decoded native trace contains records after its first End record in the same block"
+                    .to_owned(),
+            );
+        }
         let mut trailing = [0_u8; 1];
         match self.reader.read(&mut trailing) {
             Ok(0) => Ok(()),
-            Ok(_) => Err("decoded cache contains data after its first End record".to_owned()),
+            Ok(_) => {
+                Err("decoded native trace contains data after its first End record".to_owned())
+            }
             Err(error) => Err(format!(
                 "decompress cache after its first End record: {error}"
             )),
@@ -5661,7 +6854,7 @@ fn write_binary_trace_footer(
     writer: &mut impl Write,
     footer: BinaryTraceFooter,
 ) -> std::io::Result<()> {
-    writer.write_all(&TRACE_CACHE_FOOTER_MAGIC)?;
+    writer.write_all(&TRACE_NATIVE_FOOTER_MAGIC)?;
     writer.write_all(&footer.version.to_le_bytes())?;
     writer.write_all(&footer.frame_count.to_le_bytes())?;
     writer.write_all(&footer.final_frame.to_le_bytes())?;
@@ -5671,19 +6864,19 @@ fn write_binary_trace_footer(
 fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter, String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let length = file.metadata().map_err(|error| error.to_string())?.len();
-    if length < TRACE_CACHE_FOOTER_LEN {
+    if length < TRACE_NATIVE_FOOTER_LEN {
         return Err(format!(
-            "file is {length} bytes, shorter than the {TRACE_CACHE_FOOTER_LEN}-byte footer"
+            "file is {length} bytes, shorter than the {TRACE_NATIVE_FOOTER_LEN}-byte footer"
         ));
     }
     file.seek(SeekFrom::End(
-        -i64::try_from(TRACE_CACHE_FOOTER_LEN).unwrap(),
+        -i64::try_from(TRACE_NATIVE_FOOTER_LEN).unwrap(),
     ))
     .map_err(|error| error.to_string())?;
-    let mut magic = [0_u8; TRACE_CACHE_FOOTER_MAGIC.len()];
+    let mut magic = [0_u8; TRACE_NATIVE_FOOTER_MAGIC.len()];
     file.read_exact(&mut magic)
         .map_err(|error| error.to_string())?;
-    if magic != TRACE_CACHE_FOOTER_MAGIC {
+    if magic != TRACE_NATIVE_FOOTER_MAGIC {
         return Err(format!("footer magic is {magic:?}"));
     }
     let mut version = [0_u8; 4];
@@ -5703,9 +6896,9 @@ fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter, String> {
 }
 
 fn validate_binary_trace_footer(footer: &BinaryTraceFooter) -> Result<(), String> {
-    if footer.version != TRACE_CACHE_VERSION {
+    if footer.version != TRACE_NATIVE_VERSION {
         return Err(format!(
-            "footer version {} does not match runner version {TRACE_CACHE_VERSION}",
+            "footer version {} does not match runner version {TRACE_NATIVE_VERSION}",
             footer.version
         ));
     }
@@ -5715,21 +6908,40 @@ fn validate_binary_trace_footer(footer: &BinaryTraceFooter) -> Result<(), String
 fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHeader, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
     let mut decoder = zstd::stream::read::Decoder::new(file).map_err(|error| error.to_string())?;
-    read_binary_record(&mut decoder, "parity trace cache header")
+    decoder
+        .window_log_max(TRACE_ZSTD_WINDOW_LOG_MAX)
+        .map_err(|error| error.to_string())?;
+    read_binary_record(&mut decoder, "native parity trace header")
+}
+
+/// zstd tuning shared by the cache writer and its tests: long-distance
+/// matching with the platform-maximum window (the CLI's `--long=31`), so
+/// frames can match against state snapshots from anywhere earlier in the
+/// trace. The cache readers already accept windows up to the same maximum.
+fn configure_cache_compression<W: Write>(encoder: &mut zstd::stream::write::Encoder<'_, W>) {
+    encoder
+        .long_distance_matching(true)
+        .unwrap_or_else(|error| panic!("enable cache long-distance matching: {error}"));
+    encoder
+        .window_log(TRACE_ZSTD_WINDOW_LOG_MAX)
+        .unwrap_or_else(|error| panic!("configure cache compression window: {error}"));
 }
 
 fn read_binary_trace_header(path: &std::path::Path) -> BinaryTraceHeader {
     try_read_binary_trace_header(path).unwrap_or_else(|error| {
         panic!(
-            "read parity trace cache header {} after conversion: {error}",
+            "read native parity trace header {} after conversion: {error}",
             path.display()
         )
     })
 }
 
-fn write_binary_record<T: bincode::Encode>(writer: &mut impl Write, value: &T, label: &str) {
-    let encoded = bincode::encode_to_vec(value, bincode::config::standard())
-        .unwrap_or_else(|error| panic!("encode {label}: {error}"));
+fn write_binary_record<T: bitcode::Encode + ?Sized>(
+    writer: &mut impl Write,
+    value: &T,
+    label: &str,
+) {
+    let encoded = bitcode::encode(value);
     let length = u64::try_from(encoded.len()).expect("binary record length exceeds u64");
     writer
         .write_all(&length.to_le_bytes())
@@ -5739,7 +6951,7 @@ fn write_binary_record<T: bincode::Encode>(writer: &mut impl Write, value: &T, l
         .unwrap_or_else(|error| panic!("write {label}: {error}"));
 }
 
-fn read_binary_record<T: bincode::Decode<()>>(
+fn read_binary_record<T: bitcode::DecodeOwned>(
     reader: &mut dyn Read,
     label: &str,
 ) -> Result<T, String> {
@@ -5760,19 +6972,240 @@ fn read_binary_record<T: bincode::Decode<()>>(
     reader
         .read_exact(&mut encoded)
         .map_err(|error| format!("read {label} payload: {error}"))?;
-    let (value, consumed) = bincode::decode_from_slice(&encoded, bincode::config::standard())
-        .map_err(|error| format!("decode {label}: {error}"))?;
-    if consumed != encoded.len() {
-        return Err(format!(
-            "decode {label}: consumed {consumed} of {} bytes",
-            encoded.len()
-        ));
-    }
-    Ok(value)
+    bitcode::decode(&encoded).map_err(|error| format!("decode {label}: {error}"))
 }
 
-fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
-    let mut reader = BinaryTraceReader::open(cache_path);
+/// Storage experiment for the canonical-trace-format decision: re-encode the
+/// cached records of one trace with bincode and bitcode in several layouts
+/// and report raw and zstd-compressed sizes. Layouts are compared on the same
+/// decoded records, so the only variable is the encoding.
+///
+/// `PARITY_BENCH_ZSTD_LEVELS` (default `3,19`) and `PARITY_BENCH_BLOCKS`
+/// (default `16,64,256`) tune the sweep.
+fn bench_trace_encodings(trace_path: &Path) {
+    fn env_list(name: &str, default: &str) -> Vec<usize> {
+        std::env::var(name)
+            .unwrap_or_else(|_| default.to_owned())
+            .split(',')
+            .map(|item| {
+                item.trim()
+                    .parse()
+                    .unwrap_or_else(|error| panic!("parse {name} item {item:?}: {error}"))
+            })
+            .collect()
+    }
+
+    fn zstd_size(bytes: &[u8], level: i32) -> (usize, Duration) {
+        let started = Instant::now();
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), level)
+            .unwrap_or_else(|error| panic!("start zstd level {level}: {error}"));
+        configure_cache_compression(&mut encoder);
+        encoder
+            .write_all(bytes)
+            .unwrap_or_else(|error| panic!("zstd level {level}: {error}"));
+        let compressed = encoder
+            .finish()
+            .unwrap_or_else(|error| panic!("finish zstd level {level}: {error}"));
+        (compressed.len(), started.elapsed())
+    }
+
+    fn bincode_record<T: bincode::Encode>(out: &mut Vec<u8>, value: &T) {
+        let encoded = bincode::encode_to_vec(value, bincode::config::standard())
+            .unwrap_or_else(|error| panic!("bincode: {error}"));
+        out.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+        out.extend_from_slice(&encoded);
+    }
+
+    fn bitcode_record<T: bitcode::Encode + ?Sized>(out: &mut Vec<u8>, value: &T) {
+        let encoded = bitcode::encode(value);
+        out.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+        out.extend_from_slice(&encoded);
+    }
+
+    let zstd_levels: Vec<i32> = env_list("PARITY_BENCH_ZSTD_LEVELS", "3,19")
+        .into_iter()
+        .map(|level| i32::try_from(level).expect("zstd level fits i32"))
+        .collect();
+    let block_sizes = env_list("PARITY_BENCH_BLOCKS", "16,64,256");
+
+    let native_path = ensure_native_binary_trace(trace_path);
+    let source_bytes = std::fs::metadata(trace_path)
+        .expect("stat source trace")
+        .len();
+    let cache_bytes = std::fs::metadata(&native_path)
+        .expect("stat trace cache")
+        .len();
+
+    let started = Instant::now();
+    let mut reader = BinaryTraceReader::open(&native_path);
+    let header = reader.read_header();
+    let mut records = Vec::new();
+    loop {
+        let record = reader.read_record();
+        let is_end = matches!(record, BinaryTraceRecord::End { .. });
+        records.push(record);
+        if is_end {
+            break;
+        }
+    }
+    let frame_count = records.len() - 1;
+    eprintln!(
+        "loaded {frame_count} frames from {} in {:.1}s",
+        native_path.display(),
+        started.elapsed().as_secs_f64()
+    );
+
+    // Viability probe. bitcode's *serde* backend panics ("type changed") on
+    // `TraceJsonValue`, because `#[serde(untagged)]` values of differing
+    // shapes share one sequence/map slot. The native derives handle enums
+    // properly, so that is what a real switch would use; confirm the native
+    // derives round-trip a frame and time a whole-trace decode.
+    if let Some(first_frame) = records.first() {
+        let encoded = bitcode::encode(first_frame);
+        bitcode::decode::<BinaryTraceRecord>(&encoded)
+            .expect("bitcode native round-trip of a frame");
+        eprintln!("bitcode native round-trip of a frame: ok");
+    }
+
+    let mut rows: Vec<(String, Vec<u8>, Duration)> = Vec::new();
+
+    let started = Instant::now();
+    let mut out = Vec::new();
+    bincode_record(&mut out, &header);
+    for record in &records {
+        bincode_record(&mut out, record);
+    }
+    rows.push((
+        "bincode per-record (former cache)".into(),
+        out,
+        started.elapsed(),
+    ));
+
+    let started = Instant::now();
+    let mut out = Vec::new();
+    bitcode_record(&mut out, &header);
+    for record in &records {
+        bitcode_record(&mut out, record);
+    }
+    rows.push(("bitcode per-record".into(), out, started.elapsed()));
+
+    for &block in &block_sizes {
+        let started = Instant::now();
+        let mut out = Vec::new();
+        bitcode_record(&mut out, &header);
+        for chunk in records.chunks(block) {
+            bitcode_record(&mut out, chunk);
+        }
+        let marker = if block == TRACE_NATIVE_BLOCK_RECORDS {
+            " (current cache)"
+        } else {
+            ""
+        };
+        rows.push((
+            format!("bitcode blocks of {block}{marker}"),
+            out,
+            started.elapsed(),
+        ));
+    }
+
+    // bitcode has no `Encode` for references, so the whole-trace layouts
+    // encode an owned tuple; both whole-trace decodes are timed for the
+    // "one block" discussion (they must materialize every frame).
+    let whole = (header, records);
+
+    let started = Instant::now();
+    let out =
+        bincode::encode_to_vec(&whole, bincode::config::standard()).expect("bincode whole trace");
+    let encode_time = started.elapsed();
+    let started = Instant::now();
+    let (decoded, _): ((BinaryTraceHeader, Vec<BinaryTraceRecord>), usize) =
+        bincode::decode_from_slice(&out, bincode::config::standard())
+            .expect("bincode decode whole trace");
+    eprintln!(
+        "bincode whole-trace decode: {} records in {:.2}s",
+        decoded.1.len(),
+        started.elapsed().as_secs_f64()
+    );
+    drop(decoded);
+    rows.push(("bincode whole-trace".into(), out, encode_time));
+
+    let started = Instant::now();
+    let out = bitcode::encode(&whole);
+    let encode_time = started.elapsed();
+    let started = Instant::now();
+    let decoded: (BinaryTraceHeader, Vec<BinaryTraceRecord>) =
+        bitcode::decode(&out).expect("bitcode decode whole trace");
+    eprintln!(
+        "bitcode whole-trace decode: {} records in {:.2}s",
+        decoded.1.len(),
+        started.elapsed().as_secs_f64()
+    );
+    drop(decoded);
+    rows.push(("bitcode whole-trace".into(), out, encode_time));
+
+    let baseline_raw = rows[0].1.len();
+    let mut results: Vec<(String, Duration, usize, Vec<(i32, usize, Duration)>)> = Vec::new();
+    for (name, bytes, encode_time) in &rows {
+        let mut compressed = Vec::new();
+        for &level in &zstd_levels {
+            let (size, time) = zstd_size(bytes, level);
+            compressed.push((level, size, time));
+        }
+        eprintln!("measured {name}");
+        results.push((name.clone(), *encode_time, bytes.len(), compressed));
+    }
+
+    let mib = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
+    println!();
+    println!("trace: {} ({} frames)", trace_path.display(), frame_count);
+    println!(
+        "source jsonl.zst: {:.2} MiB; existing cache (bitcode + zstd {TRACE_NATIVE_ZSTD_LEVEL}): {:.2} MiB",
+        mib(source_bytes as usize),
+        mib(cache_bytes as usize)
+    );
+    println!();
+    let mut head = format!(
+        "| {:<36} | {:>10} | {:>8} |",
+        "encoding", "raw MiB", "enc s"
+    );
+    let mut sep = format!("|{:-<38}|{:->12}|{:->10}|", "", "", "");
+    for level in &zstd_levels {
+        head.push_str(&format!(
+            " {:>13} | {:>8} |",
+            format!("zstd-{level} MiB"),
+            "zstd s"
+        ));
+        sep.push_str(&format!("{:->15}|{:->10}|", "", ""));
+    }
+    println!("{head}");
+    println!("{sep}");
+    for (name, encode_time, raw, compressed) in &results {
+        let mut line = format!(
+            "| {:<36} | {:>5.2} {:>4.0}% | {:>8.2} |",
+            name,
+            mib(*raw),
+            100.0 * *raw as f64 / baseline_raw as f64,
+            encode_time.as_secs_f64()
+        );
+        for (index, (_, size, time)) in compressed.iter().enumerate() {
+            let baseline = results[0].3[index].1;
+            line.push_str(&format!(
+                " {:>6.2} {:>5.0}% | {:>8.2} |",
+                mib(*size),
+                100.0 * *size as f64 / baseline as f64,
+                time.as_secs_f64()
+            ));
+        }
+        println!("{line}");
+    }
+    println!();
+    println!(
+        "percentages are relative to the current per-record bincode layout at the same zstd level"
+    );
+}
+
+fn read_all_rng_draws(native_path: &std::path::Path) -> Vec<u32> {
+    let mut reader = BinaryTraceReader::open(native_path);
     let header = reader.read_header();
     let mut result = Vec::new();
     let mut original_index = 0_usize;
@@ -5814,8 +7247,8 @@ fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
                     .validate_terminator(terminal_frame_count, final_frame)
                     .unwrap_or_else(|error| {
                         panic!(
-                            "parity trace cache {} has an invalid terminal record during RNG pre-scan: {error}",
-                            cache_path.display()
+                            "native parity trace {} has an invalid terminal record during RNG pre-scan: {error}",
+                            native_path.display()
                         )
                     });
                 break;
@@ -5825,7 +7258,7 @@ fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
     eprintln!(
         "loaded {} simulation RNG draws from {}",
         result.len(),
-        cache_path.display()
+        native_path.display()
     );
     result
 }
@@ -9153,11 +10586,22 @@ mod tests {
     }
 
     #[test]
-    fn native_cache_suffix_tracks_binary_header_version() {
-        assert!(
-            TRACE_CACHE_SUFFIX.contains(&format!("-v{TRACE_CACHE_VERSION}.")),
-            "native parity-cache suffix {TRACE_CACHE_SUFFIX:?} does not identify header version {TRACE_CACHE_VERSION}"
+    fn native_suffix_appends_to_the_recording_identity() {
+        // The `.jsonl.zst` path is the stable trace identity; the native
+        // artifact must derive from it by appending, never by renaming.
+        let native = native_binary_trace_path(Path::new("dir/replay-001-session-0001.jsonl.zst"));
+        assert_eq!(
+            native,
+            PathBuf::from(format!(
+                "dir/replay-001-session-0001.jsonl.zst{TRACE_NATIVE_SUFFIX}"
+            ))
         );
+        assert!(!TRACE_NATIVE_SUFFIX.contains("-v"));
+
+        // Direct-from-capture conversions skip the interim zstd recording
+        // but keep the identical artifact identity.
+        let uncompressed = native_binary_trace_path(Path::new("dir/replay-001-session-0001.jsonl"));
+        assert_eq!(uncompressed, native);
     }
 
     #[test]
@@ -9222,7 +10666,7 @@ mod tests {
         );
     }
 
-    fn write_test_cache_records(
+    fn write_test_native_records(
         records: &[BinaryTraceRecord],
         footer: Option<BinaryTraceFooter>,
     ) -> tempfile::NamedTempFile {
@@ -9230,11 +10674,15 @@ mod tests {
         {
             let mut encoder = zstd::stream::write::Encoder::new(
                 BufWriter::new(file.as_file_mut()),
-                TRACE_CACHE_ZSTD_LEVEL,
+                TRACE_NATIVE_ZSTD_LEVEL,
             )
             .unwrap();
             for record in records {
-                write_binary_record(&mut encoder, record, "test parity cache record");
+                write_binary_record(
+                    &mut encoder,
+                    std::slice::from_ref(record),
+                    "test native trace block",
+                );
             }
             let mut writer = encoder.finish().unwrap();
             if let Some(footer) = footer {
@@ -9424,13 +10872,13 @@ mod tests {
     }
 
     #[test]
-    fn fixed_cache_footer_rejects_early_end_and_trailing_records() {
+    fn fixed_native_footer_rejects_early_end_and_trailing_records() {
         let footer = BinaryTraceFooter {
-            version: TRACE_CACHE_VERSION,
+            version: TRACE_NATIVE_VERSION,
             frame_count: 2,
             final_frame: 12,
         };
-        let early = write_test_cache_records(&[complete_test_end(1, 11)], Some(footer));
+        let early = write_test_native_records(&[complete_test_end(1, 11)], Some(footer));
         let mut reader = BinaryTraceReader::open(early.path());
         assert!(matches!(
             reader.read_record(),
@@ -9444,11 +10892,11 @@ mod tests {
         );
 
         let footer = BinaryTraceFooter {
-            version: TRACE_CACHE_VERSION,
+            version: TRACE_NATIVE_VERSION,
             frame_count: 0,
             final_frame: 10,
         };
-        let trailing = write_test_cache_records(
+        let trailing = write_test_native_records(
             &[complete_test_end(0, 10), complete_test_end(0, 10)],
             Some(footer),
         );
@@ -9463,11 +10911,47 @@ mod tests {
                 .unwrap_err()
                 .contains("first End")
         );
+
+        // Same trailing record, but inside the End's own block.
+        let footer = BinaryTraceFooter {
+            version: TRACE_NATIVE_VERSION,
+            frame_count: 0,
+            final_frame: 10,
+        };
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        {
+            let mut encoder = zstd::stream::write::Encoder::new(
+                BufWriter::new(file.as_file_mut()),
+                TRACE_NATIVE_ZSTD_LEVEL,
+            )
+            .unwrap();
+            // Coerce to a slice: bitcode encodes fixed-size arrays without a
+            // length, which would not decode as the reader's `Vec` blocks.
+            write_binary_record(
+                &mut encoder,
+                [complete_test_end(0, 10), complete_test_end(0, 10)].as_slice(),
+                "test native trace block",
+            );
+            let mut writer = encoder.finish().unwrap();
+            write_binary_trace_footer(&mut writer, footer).unwrap();
+            writer.flush().unwrap();
+        }
+        let mut reader = BinaryTraceReader::open(file.path());
+        assert!(matches!(
+            reader.read_record(),
+            BinaryTraceRecord::End { .. }
+        ));
+        assert!(
+            reader
+                .validate_terminator(0, 10)
+                .unwrap_err()
+                .contains("first End")
+        );
     }
 
     #[test]
-    fn fixed_cache_footer_rejects_missing_and_malformed_data() {
-        let missing = write_test_cache_records(&[complete_test_end(0, 10)], None);
+    fn fixed_native_footer_rejects_missing_and_malformed_data() {
+        let missing = write_test_native_records(&[complete_test_end(0, 10)], None);
         let missing_error = read_binary_trace_footer(missing.path()).unwrap_err();
         assert!(
             missing_error.contains("footer magic") || missing_error.contains("shorter than"),
@@ -9476,7 +10960,7 @@ mod tests {
 
         let mut malformed = tempfile::NamedTempFile::new().unwrap();
         malformed
-            .write_all(&vec![0_u8; TRACE_CACHE_FOOTER_LEN as usize])
+            .write_all(&vec![0_u8; TRACE_NATIVE_FOOTER_LEN as usize])
             .unwrap();
         assert!(
             read_binary_trace_footer(malformed.path())
@@ -9581,12 +11065,9 @@ mod tests {
         assert_eq!(flight.post_position_map.x.bits, 0x4448_4eb3);
         assert!(flight.snapped_to_goal);
 
-        let encoded = bincode::encode_to_vec(&parsed, bincode::config::standard())
-            .expect("encode instrumented frame with cache-v58 layout");
-        let (roundtrip, consumed): (TraceFrame, usize) =
-            bincode::decode_from_slice(&encoded, bincode::config::standard())
-                .expect("decode instrumented frame with cache-v58 layout");
-        assert_eq!(consumed, encoded.len());
+        let encoded = bitcode::encode(&parsed);
+        let roundtrip: TraceFrame =
+            bitcode::decode(&encoded).expect("decode instrumented frame with the cache layout");
         assert_eq!(roundtrip.movement_steps.len(), 1);
         assert_eq!(roundtrip.movement_steps[0].entity.index, 344);
         assert_eq!(
@@ -9607,6 +11088,7 @@ mod tests {
             "type": "sword_strike",
             "actor": { "kind": "pc", "index": 3 },
             "target": { "kind": "soldier", "index": 7 },
+            "original_command": 78,
             "original_command_name": "swordstrike_thrust_a",
             "with_seek": true
         }))
@@ -9843,12 +11325,9 @@ mod tests {
         .expect("parse authoritative null soldier jump line");
         assert!(matches!(ai.my_line_jump, Some(None)));
 
-        let encoded = bincode::encode_to_vec(&(human, ai), bincode::config::standard())
-            .expect("cache typed jump-line snapshots");
-        let ((cached_human, cached_ai), consumed): ((TraceHuman, TraceAi), usize) =
-            bincode::decode_from_slice(&encoded, bincode::config::standard())
-                .expect("restore typed jump-line snapshots");
-        assert_eq!(consumed, encoded.len());
+        let encoded = bitcode::encode(&(human, ai));
+        let (cached_human, cached_ai): (TraceHuman, TraceAi) =
+            bitcode::decode(&encoded).expect("restore typed jump-line snapshots");
         assert_eq!(cached_human.opponent_jump_lines.as_ref().unwrap().len(), 1);
         assert!(matches!(cached_ai.my_line_jump, Some(None)));
 
@@ -9967,10 +11446,8 @@ mod tests {
                 ..
             }
         ));
-        let encoded = bincode::encode_to_vec(&event, bincode::config::standard()).unwrap();
-        let (cached, consumed): (TraceTargetLifecycleEvent, usize) =
-            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-        assert_eq!(consumed, encoded.len());
+        let encoded = bitcode::encode(&event);
+        let cached: TraceTargetLifecycleEvent = bitcode::decode(&encoded).unwrap();
         assert!(cached.sequence_id.is_none());
         assert_eq!(cached.payload_observed, Some(false));
     }
@@ -10064,12 +11541,8 @@ mod tests {
             Some(&serde_json::json!(12))
         );
 
-        let encoded =
-            bincode::encode_to_vec([&wait_free_lift, &movement], bincode::config::standard())
-                .unwrap();
-        let (cached, consumed): ([TraceSequenceElement; 2], usize) =
-            bincode::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-        assert_eq!(consumed, encoded.len());
+        let encoded = bitcode::encode(&[wait_free_lift, movement]);
+        let cached: [TraceSequenceElement; 2] = bitcode::decode(&encoded).unwrap();
         assert_eq!(cached[0].movement.as_ref().unwrap().action, None);
         assert_eq!(cached[1].movement.as_ref().unwrap().action, Some(12));
     }
@@ -10555,12 +12028,9 @@ mod tests {
                 .draft_diagnostics
                 .contains_key("score")
         );
-        let encoded = bincode::encode_to_vec(&frame, bincode::config::standard())
-            .expect("encode schema-16 frame into native cache representation");
-        let (cached, consumed): (TraceFrame, usize) =
-            bincode::decode_from_slice(&encoded, bincode::config::standard())
-                .expect("decode schema-16 frame from native cache representation");
-        assert_eq!(consumed, encoded.len());
+        let encoded = bitcode::encode(&frame);
+        let cached: TraceFrame = bitcode::decode(&encoded)
+            .expect("decode schema-16 frame from native cache representation");
         assert_eq!(cached.alert_formation_events.as_ref().unwrap().len(), 1);
         assert_eq!(
             cached.target_lifecycle_events.as_ref().unwrap()[0].sequence_id,
@@ -10631,6 +12101,7 @@ mod tests {
             "type": "hero_refused_action",
             "actor": {"kind": "pc", "index": 0},
             "action": "bow",
+            "original_action": 1,
             "target": {"kind": "soldier", "index": 3},
             "reason": "anonymous_archer_contest",
         }))
@@ -10648,6 +12119,7 @@ mod tests {
             "type": "hero_refused_action",
             "actor": {"kind": "pc", "index": 0},
             "action": "no_action",
+            "original_action": 0,
             "reason": "locked_patch",
         }))
         .expect("refused patch click decodes");
@@ -10859,6 +12331,85 @@ mod tests {
                 "domains": []
             }
         })
+    }
+
+    #[test]
+    fn cache_round_trip_audit_normalizes_floats_and_nulls_and_reports_drops() {
+        // A real minimal frame passes the audit end to end.
+        let line = minimal_frame_json().to_string();
+        let frame: TraceFrame = serde_json::from_str(&line).unwrap();
+        verify_trace_line_roundtrip(&frame, &line, 3);
+
+        // The two declared normalizations erase identically on both sides:
+        // redundant float renderings and null object entries — while null
+        // array elements and bits/value-shaped data inside retained JSON
+        // payloads survive untouched.
+        let mut recorded = serde_json::json!({
+            "elevation": {"bits": 7, "value": 1.5},
+            "actor": null,
+            "list": [null, {"bits": 7, "value": 1.5, "extra": 0}]
+        });
+        let mut typed = serde_json::json!({
+            "elevation": {"bits": 7},
+            "list": [null, {"bits": 7, "value": 1.5, "extra": 0}]
+        });
+        normalize_trace_json_for_roundtrip(&mut recorded);
+        normalize_trace_json_for_roundtrip(&mut typed);
+        assert_eq!(first_json_difference("$", &recorded, &typed), None);
+        assert_eq!(recorded["list"][1]["value"], serde_json::json!(1.5));
+
+        // Differences are reported with a path into the line.
+        let recorded = serde_json::json!({"a": {"b": [{"c": 1, "d": 2}]}});
+        let typed = serde_json::json!({"a": {"b": [{"c": 1}]}});
+        assert!(
+            first_json_difference("$", &recorded, &typed)
+                .unwrap()
+                .contains("$.a.b[0].d is dropped")
+        );
+
+        // A field that a lenient struct silently ignores fails the audit:
+        // TraceElement does not deny unknown fields, so parsing accepts the
+        // stray key and only the round-trip audit reports the loss.
+        let mut stray = minimal_frame_json();
+        stray["elements"] = serde_json::json!([{
+            "entity_id": {"kind": "pc", "index": 1},
+            "creation_order": 1,
+            "class_id": 0,
+            "kind": "pc",
+            "active": true,
+            "blipped": false,
+            "unreachable": false,
+            "surface_id": 0,
+            "posture": 0,
+            "position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "old_position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "position_goal_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "elevation": {"bits": 0},
+            "old_elevation": {"bits": 0},
+            "increment_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "movement_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "layer": 0,
+            "layer_goal": 0,
+            "sector": 0,
+            "direction": 0,
+            "direction_goal": 0,
+            "moving": false,
+            "moving_map": false,
+            "sprite_row": 0,
+            "sprite_frame": 0,
+            "novel_recorder_field": 123
+        }]);
+        let line = stray.to_string();
+        let frame: TraceFrame = serde_json::from_str(&line).unwrap();
+        let panic =
+            std::panic::catch_unwind(|| verify_trace_line_roundtrip(&frame, &line, 3)).unwrap_err();
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("round-trip audit panics with a formatted message");
+        assert!(
+            message.contains("$.elements[0].novel_recorder_field is dropped"),
+            "unexpected audit failure message: {message}"
+        );
     }
 
     #[test]
@@ -11680,10 +13231,14 @@ mod tests {
     fn global_action_cancel_accepts_the_original_no_pc_shape() {
         let command: TraceCommand = serde_json::from_value(serde_json::json!({
             "type": "cancel_action",
+            "action": "no_action",
             "original_action": 0
         }))
         .expect("parse Original global action cancellation");
-        assert!(matches!(command, TraceCommand::CancelAction { pc: None }));
+        assert!(matches!(
+            command,
+            TraceCommand::CancelAction { pc: None, .. }
+        ));
     }
 
     /// Every resolved-command type the recorder can emit must decode.  A
@@ -11753,7 +13308,7 @@ mod tests {
     }
 
     #[test]
-    fn native_bincode_cache_handles_heterogeneous_command_variants() {
+    fn native_bitcode_trace_handles_heterogeneous_command_variants() {
         let commands = [
             TraceCommand::CrouchDown,
             TraceCommand::LaunchGroundTarget {
@@ -11772,6 +13327,7 @@ mod tests {
                         bits: 0.0_f32.to_bits(),
                     },
                 },
+                original_command: 86,
                 original_command_name: "throw_purse".to_owned(),
                 original_target_field: 30,
                 titbit_layer: 0,
@@ -11845,6 +13401,7 @@ mod tests {
         };
         let orientation = || TraceCommand::OrientActionAt {
             action: TraceAction::Purse,
+            original_action: 4,
             actor: pc,
             mouse_map: point,
             target,
@@ -11854,6 +13411,7 @@ mod tests {
             TraceCommand::SelectAction {
                 pc,
                 action: TraceAction::Purse,
+                original_action: 4,
             },
             orientation(),
         ];
@@ -11884,6 +13442,7 @@ mod tests {
         };
         let orientation = || TraceCommand::OrientActionAt {
             action: TraceAction::Purse,
+            original_action: 4,
             actor: pc,
             mouse_map: point,
             target,
@@ -11914,6 +13473,7 @@ mod tests {
         };
         let command = TraceCommand::OrientActionAt {
             action: TraceAction::Bow,
+            original_action: 1,
             actor: pc,
             mouse_map: TracePoint {
                 x: TraceFloat { bits: 0 },
@@ -12050,10 +13610,13 @@ mod tests {
             goal_level: 8,
             gates: Vec::new(),
             draft_diagnostics: BTreeMap::from([
-                ("ordinal".to_owned(), TraceJsonValue::Unsigned(ordinal)),
+                (
+                    "ordinal".to_owned(),
+                    TraceJsonValue::from(TraceJsonTree::Unsigned(ordinal)),
+                ),
                 (
                     "result".to_owned(),
-                    TraceJsonValue::String("success".to_owned()),
+                    TraceJsonValue::from(TraceJsonTree::String("success".to_owned())),
                 ),
             ]),
         }
@@ -12221,7 +13784,7 @@ mod tests {
         route.goal_sector = 292;
         route.draft_diagnostics.insert(
             "result".to_owned(),
-            TraceJsonValue::String("failure".to_owned()),
+            TraceJsonValue::from(TraceJsonTree::String("failure".to_owned())),
         );
         let routes = [route];
         let map = group_move_route_map(53);
@@ -12275,7 +13838,7 @@ mod tests {
         route.goal_level = 6;
         route.draft_diagnostics.insert(
             "result".to_owned(),
-            TraceJsonValue::String("failure".to_owned()),
+            TraceJsonValue::from(TraceJsonTree::String("failure".to_owned())),
         );
         let mut consumed = BTreeSet::new();
 
@@ -12394,7 +13957,7 @@ mod tests {
             gates: Vec::new(),
             draft_diagnostics: BTreeMap::from([(
                 "ordinal".to_owned(),
-                TraceJsonValue::Unsigned(7),
+                TraceJsonValue::from(TraceJsonTree::Unsigned(7)),
             )]),
         }
     }

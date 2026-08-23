@@ -754,13 +754,33 @@ ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
 ```
 
 The first run converts the JSONL source into an adjacent
-`*.parity-cache-v4.native-bincode.zst` file. The cache contains the typed trace
-header, RNG prefix/suffix, and every frame as length-delimited native bincode
-records inside a streaming zstd level-0 payload. Subsequent runs read only that
-cache. Its source-length and modification-time fingerprint automatically
-invalidates it when the JSONL changes, and conversion is written to a temporary
-file before being atomically persisted so an interrupted conversion is never
-accepted as complete.
+`*.jsonl.zst.parity.bitcode.zst` file — the **native parity trace**, the
+authoritative replacement for the recording rather than a cache of it. It
+contains the typed trace header, then RNG prefix/suffix and frames as
+length-delimited native bitcode blocks (1024 records per block) inside a
+streaming zstd level-19 payload with long-distance matching and the
+platform-maximum window. During conversion every line is round-trip audited
+(parse → typed record → re-serialize → compare against the recorded JSON,
+modulo redundant float renderings, null-vs-absent optionals, and
+empty-vs-absent collections), so a field the typed schema would silently drop
+fails the build instead of becoming data loss. Subsequent runs read only the
+native trace. While the JSONL still exists, a source-length and
+modification-time fingerprint automatically rebuilds the native file when the
+JSONL changes; conversion is written to a temporary file before being
+atomically persisted so an interrupted conversion is never accepted as
+complete.
+
+`--convert TRACE.jsonl[.zst]` performs the conversion, independently re-reads
+and validates the published native trace (every block decodes, the frame
+timeline is contiguous, the terminator matches the fixed footer and the
+recording's own line count), then deletes the JSONL recording and any obsolete
+`*.parity-cache-v*` derivations. Completion markers stay in place: the
+`.jsonl.zst` path remains the trace's logical identity in sweep status keys,
+EOF ledgers, and markers, and the runner accepts that path directly even after
+the recording is gone (it resolves to the native artifact). The file's name
+carries no format version — the versioned header/footer inside it is the
+compatibility contract, and a version mismatch on a source-less native trace
+is a hard error demanding migration, never silent regeneration.
 
 On the first logical or RNG divergence, this default run writes a complete
 JSONL snapshot for the divergent frame and its 32 predecessors to a unique

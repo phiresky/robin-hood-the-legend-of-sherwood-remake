@@ -166,7 +166,9 @@ write_verdict_if_ready() {
             failed=$((failed + 1))
             printf '%s\t%s\n' "$value" "$trace" >>"$failures_tmp"
         fi
-    done < <(find "$campaign/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
+    done < <(find "$campaign/traces" -type f \( -name '*.jsonl.zst' \
+        -o -name '*.jsonl.zst.parity.bitcode.zst' \) -print0 \
+        | sed -z 's/\.parity\.bitcode\.zst$//' | sort -zu)
 
     if (( total != expected_replays || completed != expected_replays )); then
         rm -f -- "$failures_tmp"
