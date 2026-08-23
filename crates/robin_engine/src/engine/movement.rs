@@ -256,7 +256,9 @@ mod group_move_authorization_tests {
         let mut level = crate::fast_find_grid::LevelGrid::default();
         level.sectors.push(replay_goal_sector(421, 6));
         level.sectors.push(replay_goal_sector(421, 6));
-        level.sectors.push(replay_goal_sector(422, 2));
+        // The recorded movement level is an RHPosition property, independent
+        // from the retained RHSector pointer's own topology layer.
+        level.sectors.push(replay_goal_sector(422, 8));
         let exact_421 = crate::fast_find_grid::SectorIndex::new(1).unwrap();
         let exact_422 = crate::fast_find_grid::SectorIndex::new(2).unwrap();
 
@@ -3388,8 +3390,10 @@ fn group_move_route_goal_index(
 
 /// Prefer the exact sparse FastFindGrid slot retained by replay translation.
 /// A public sector number is not unique in retained topology, so an explicit
-/// slot must agree with the recorded public identity rather than falling back
-/// to a coincident spatial hit.
+/// slot must agree with the recorded public sector number rather than falling
+/// back to a coincident spatial hit. Original passes the RHSector pointer and
+/// the RHPosition goal level independently; a sector's topology layer is not
+/// an identity component here.
 fn resolve_group_move_route_goal_index(
     recorded_goal: Option<(crate::sector::SectorNumber, u16)>,
     exact_goal_index: Option<crate::fast_find_grid::SectorIndex>,
@@ -3400,16 +3404,15 @@ fn resolve_group_move_route_goal_index(
     level: &crate::fast_find_grid::LevelGrid,
 ) -> Option<crate::fast_find_grid::SectorIndex> {
     if let Some(index) = exact_goal_index {
-        let (recorded_sector, recorded_layer) = recorded_goal.unwrap_or_else(|| {
+        let (recorded_sector, _recorded_layer) = recorded_goal.unwrap_or_else(|| {
             panic!("replay group-move exact goal index requires a recorded goal identity")
         });
         let sector = level.sectors.get(usize::from(index)).unwrap_or_else(|| {
             panic!("replay group-move exact goal index {index:?} is absent from retained topology")
         });
         assert_eq!(
-            (sector.sector_number, sector.layer),
-            (recorded_sector, recorded_layer),
-            "replay group-move exact goal index disagrees with its recorded public sector"
+            sector.sector_number, recorded_sector,
+            "replay group-move exact goal index disagrees with its recorded public sector number"
         );
         return Some(index);
     }
