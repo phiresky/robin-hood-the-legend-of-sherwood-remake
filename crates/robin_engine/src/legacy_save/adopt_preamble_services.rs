@@ -24,16 +24,16 @@ use super::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LegacyPreambleHostState {
-    pub(crate) sound_system_ready: Option<bool>,
-    pub(crate) three_d_sound: Option<bool>,
-    pub(crate) sound_active: Option<bool>,
-    pub(crate) dummy_channel: Option<i16>,
-    pub(crate) stream_position: Option<u32>,
-    pub(crate) draw_hidden: bool,
-    pub(crate) campaign_map_displayed: bool,
-    pub(crate) start_mission_widget_enabled: bool,
-    pub(crate) quit_mission_widget_enabled: bool,
+pub struct LegacyPreambleHostState {
+    pub sound_system_ready: Option<bool>,
+    pub three_d_sound: Option<bool>,
+    pub sound_active: Option<bool>,
+    pub dummy_channel: Option<i16>,
+    pub stream_position: Option<u32>,
+    pub draw_hidden: bool,
+    pub campaign_map_displayed: bool,
+    pub start_mission_widget_enabled: bool,
+    pub quit_mission_widget_enabled: bool,
 }
 
 #[derive(Debug)]

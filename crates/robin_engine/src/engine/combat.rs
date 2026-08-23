@@ -2200,6 +2200,7 @@ fn soldier_piercing_protection(
         .map(|w| w.piercing_protection)
 }
 
+#[cfg(test)]
 fn soldier_shield_dimensions(
     profile_manager: &crate::profiles::ProfileManager,
     profile_index: crate::profiles::SoldierProfileIdx,

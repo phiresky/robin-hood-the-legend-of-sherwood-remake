@@ -45,6 +45,7 @@ fn damage_parry_handoff_debug_config() -> Option<&'static DamageParryHandoffDebu
 pub(crate) enum AttentiveModeCaller {
     AiOwnerEffect,
     ConsoleCheat,
+    #[cfg(test)]
     Unclassified,
 }
 
@@ -313,6 +314,7 @@ impl EngineInner {
     /// `SequenceElement`.  The officer variant is only chosen when
     /// `fast_variant` is set *and* the sprite actually has the officer
     /// transition animation.
+    #[cfg(test)]
     pub(crate) fn set_soldier_attentive_mode(
         &mut self,
         entity_id: EntityId,

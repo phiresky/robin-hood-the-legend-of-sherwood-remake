@@ -425,11 +425,8 @@ struct EnemyOpticalTarget {
     posture: crate::element::Posture,
     action_state: crate::element::ActionState,
     building_sector: Option<crate::position_interface::SectorHandle>,
-    /// Absent for a dead target awaiting live-list cleanup, or for an
-    /// incomplete non-detectable fixture posture. A live list entry must have
-    /// this and fails contextually at the visibility read when it does not.
-    eye_z: Option<f32>,
-    /// `ComputeDetectionPoint` in world space. Absent alongside `eye_z`.
+    /// `ComputeDetectionPoint` in world space. Absent for a dead target
+    /// awaiting live-list cleanup.
     detection_point: Option<crate::coordinates::WorldPoint3D>,
     /// 16-sector facing.  Only used for `LeaningOut`: the detection
     /// point projects `direction × 40` forward.
@@ -4035,9 +4032,6 @@ impl EngineInner {
                         // result unchanged. A living loaded PC with
                         // RHPOSTURE_UNDEFINED therefore has a valid
                         // zero-offset detection point.
-                        eye_z: (!dead).then(|| {
-                            ground_z + crate::stealth::detection_z_for_posture(posture, false)
-                        }),
                         detection_point: (!dead).then(|| {
                             crate::stealth::detection_point_world(
                                 boundary.world,
@@ -4089,10 +4083,6 @@ impl EngineInner {
                         posture,
                         action_state: soldier.actor.action_state,
                         building_sector: self.entity_building_sector(soldier.element.sector()),
-                        eye_z: (!dead).then(|| {
-                            soldier.element.position().z
-                                + crate::stealth::detection_z_for_posture(posture, is_rider)
-                        }),
                         detection_point: (!dead).then(|| {
                             crate::stealth::detection_point_world(
                                 position_world,
@@ -4533,7 +4523,6 @@ impl EngineInner {
                 viewer_in_building,
                 viewer_building_sector,
                 is_night_or_fog,
-                level: &self.world.fast_grid.level,
                 view_radius_cache,
                 eye_status,
                 view_speed,
@@ -4573,7 +4562,6 @@ impl EngineInner {
                 viewer_in_building,
                 viewer_building_sector,
                 is_night_or_fog,
-                level: &self.world.fast_grid.level,
                 view_radius_cache,
                 eye_status,
                 view_speed,
@@ -4629,7 +4617,6 @@ impl EngineInner {
                 viewer_in_building,
                 viewer_building_sector,
                 is_night_or_fog,
-                level: &self.world.fast_grid.level,
                 view_radius_cache,
                 eye_status,
                 view_speed,
@@ -4682,7 +4669,6 @@ impl EngineInner {
                 viewer_in_building,
                 viewer_building_sector,
                 is_night_or_fog,
-                level: &self.world.fast_grid.level,
                 view_radius_cache,
                 eye_status,
                 view_speed,
@@ -4789,7 +4775,6 @@ impl EngineInner {
                 viewer_in_building,
                 viewer_building_sector,
                 is_night_or_fog,
-                level: &self.world.fast_grid.level,
                 view_radius_cache,
                 eye_status,
                 view_speed,
@@ -5542,7 +5527,6 @@ struct ViewContext<'a> {
     viewer_in_building: bool,
     viewer_building_sector: Option<crate::position_interface::SectorHandle>,
     is_night_or_fog: bool,
-    level: &'a crate::fast_find_grid::LevelGrid,
     view_radius_cache: &'a OwnerViewRadiusCache,
     eye_status: crate::element::EyeStatus,
     view_speed: u16,

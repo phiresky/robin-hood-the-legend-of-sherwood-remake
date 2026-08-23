@@ -220,6 +220,7 @@ pub(crate) struct ViewRadiusCache {
 }
 
 impl ViewRadiusCache {
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.ground.is_none() && self.obstacles.iter().all(Option::is_none)
     }

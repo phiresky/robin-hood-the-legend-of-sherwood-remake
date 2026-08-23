@@ -4241,6 +4241,7 @@ impl SequenceManager {
     /// shots: the sequence element has already been registered and reached
     /// the human, but is retained in `mShootList` before Actor::Instruct can
     /// resolve priority, stamp transition state, or translate the command.
+    #[cfg(test)]
     pub(crate) fn hold_deferred_element(&mut self, sequence_id: SequenceId, element_index: usize) {
         let element = self
             .get_element(sequence_id, element_index)

@@ -5892,65 +5892,6 @@ impl EngineInner {
         // separate drain-and-rebook step.
     }
 
-    // ─── EventReachPoint dispatch ───────────────────────────────
-
-    /// Dispatch `EventReachPoint` stimulus to NPCs whose movement just
-    /// completed.
-    ///
-    /// `send_condolation_card` calls `think(EVENT_REACHPOINT)` when a
-    /// MOVE sequence element reaches the terminated state.  Originally
-    /// this fires through the owner-local pending-condolation drain after
-    /// movement terminates the selected element. This helper remains for
-    /// non-movement callers that explicitly synthesize the same stimulus.
-    ///
-    /// Any new orders produced by the AI (e.g. "walk to next waypoint")
-    /// will be drained on the next frame by `process_pending_ai_orders`.
-    pub(super) fn dispatch_reach_point_events(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entities: &[EntityId],
-    ) {
-        let scratch = self.build_sim_scratch(sim, assets);
-        let current_frame = self.control.frame_counter;
-
-        for &entity_id in entities {
-            // Build ctx in a read-only scope so we can then call
-            // `dispatch_filtered_stimulus`, which needs `&mut self`.
-            let in_uninterruptible_command = self.is_very_very_busy(entity_id);
-            let ctx = {
-                let Some(entity) = self.world.entities.get(entity_id) else {
-                    continue;
-                };
-                let mut ctx = build_ai_context_from_entity(
-                    entity,
-                    current_frame,
-                    None,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &assets.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
-                );
-                ctx.in_uninterruptible_command = in_uninterruptible_command;
-                ctx
-            };
-            let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint);
-            // Centralized builder: assembles primary target metadata,
-            // friend-swap candidates, avenger-on-roof wait position,
-            // and a seeded enemy_sq_distances.  Non-enemy-NPC entities
-            // get a stub.
-            let tick_data = self.build_npc_tick_data(sim, entity_id, &scratch, assets);
-
-            self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
-        }
-    }
-
     // ─── EventGaloppLoopEnd dispatch ────────────────────────────
 
     #[cfg(test)]

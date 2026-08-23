@@ -227,10 +227,6 @@ impl LegacyVmArenaPlan {
         Ok(slice.start)
     }
 
-    pub(crate) fn location_count(&self) -> usize {
-        self.locations.len()
-    }
-
     #[cfg(test)]
     pub(crate) fn empty_for_tests() -> Self {
         Self {

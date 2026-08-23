@@ -81,7 +81,7 @@ impl EngineInner {
     /// following pointer-change test returns before the acceptance epilogue
     /// writes `mmotionState = RHMOTION_IN_PROGRESS`
     /// (`original-code/RHelementactor.cpp:1468-1476`).
-    pub(crate) fn dispatch_sword_strike(
+    pub(in crate::engine) fn dispatch_sword_strike(
         &mut self,
         _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

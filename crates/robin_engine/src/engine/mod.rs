@@ -1853,6 +1853,7 @@ impl EngineInner {
     /// Caller invariant: `elem.owner` is `Some`.  The returned
     /// `SequenceId` is for the freshly-minted single-element sequence;
     /// the element sits at index 0.
+    #[cfg(test)]
     pub(crate) fn launch_element_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2262,6 +2263,7 @@ impl EngineInner {
     /// with `TO_JUMP` fires, hand the element off to the carrier with
     /// `TO_JUMP` and `SEEK` cleared — the carrier walks to the jump
     /// point with the rider in tow.
+    #[cfg(test)]
     fn redirect_move_to_jump_if_carried(
         &self,
         elem: &mut crate::sequence::SequenceElement,

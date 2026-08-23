@@ -2930,6 +2930,7 @@ pub(crate) fn current_door_for_route_source(
 /// Original's GoTo branch compares `RHSector*` values directly
 /// (`RHartificialintelligence.cpp:2566`), so equal script-facing sector
 /// numbers do not imply that the positions occupy the same motion sector.
+#[cfg(test)]
 pub(super) fn sector_hits_have_distinct_identity(
     source: crate::fast_find_grid::SectorHit,
     goal: crate::fast_find_grid::SectorHit,

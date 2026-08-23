@@ -252,7 +252,7 @@ impl<'a> NativeSessionCapabilities<'a> {
     }
 
     #[doc(hidden)]
-    pub fn view_radius_cache_option(
+    pub(crate) fn view_radius_cache_option(
         &self,
     ) -> Option<RefMut<'_, crate::ai_vision::ViewRadiusCache>> {
         self.view_radius_cache

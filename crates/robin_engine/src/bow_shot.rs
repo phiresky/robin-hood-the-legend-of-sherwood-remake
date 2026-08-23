@@ -3834,7 +3834,6 @@ fn tick_arrows_matching(
         /// re-check after the belt miss.
         leaning_out: bool,
         is_pc: bool,
-        is_soldier: bool,
         is_civilian: bool,
         camp: Option<crate::element::Camp>,
         holding_shield: bool,
@@ -3903,7 +3902,6 @@ fn tick_arrows_matching(
                 eyes,
                 leaning_out: posture == crate::element::Posture::LeaningOut,
                 is_pc: e.is_pc(),
-                is_soldier: e.is_soldier(),
                 is_civilian: e.is_civilian(),
                 camp,
                 holding_shield,

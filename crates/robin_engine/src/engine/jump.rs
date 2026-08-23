@@ -49,11 +49,6 @@ const GRAVITY: f32 = -8.01;
 /// PC mass for the jump trajectory.
 const MASS_CHARACTER: f32 = 0.7;
 
-/// Frames per trajectory segment.  Each airborne `JumpingLong` step
-/// runs for this many frames before the next trajectory waypoint takes
-/// over.
-pub const TIME_FLYSEGMENT: u16 = 4;
-
 /// A single step in a jump sequence.
 ///
 /// Each step installs one `active_ai_anim` with completion

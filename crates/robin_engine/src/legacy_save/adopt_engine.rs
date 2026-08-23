@@ -334,6 +334,12 @@ pub struct LegacyKnownHostState {
 }
 
 impl LegacyKnownHostState {
+    /// Host-owned sound, input, and mission-widget state decoded from the
+    /// Original save. The frontend applies these values to its local systems.
+    pub fn preamble(&self) -> &LegacyPreambleHostState {
+        &self.preamble
+    }
+
     /// Restore the host-owned display state serialized by the Original.
     ///
     /// Replay callers have two display-state holders (the logical replay
