@@ -4182,13 +4182,40 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
 fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fallback() {
     use crate::ai::{AiContext, AiState, Position, Substate};
     use crate::coordinates::MapPoint;
+    use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex};
     use crate::order::OrderType;
-    use crate::sector::SectorNumber;
+    use crate::sector::{SectorNumber, SectorType};
     use crate::sequence::{SequenceElement, SequenceElementData};
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
+    {
+        let level = engine.world.fast_grid_mut().level_mut();
+        level.sectors = (0..=2)
+            .map(|number| GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: SectorType::MOTION | SectorType::AREA,
+                layer: 0,
+                sector_number: SectorNumber::new(number),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            })
+            .collect();
+        level.sector_number_map = (0..=2)
+            .map(|number| (SectorNumber::new(number), number as usize))
+            .collect();
+    }
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
@@ -4206,6 +4233,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let me_sector = crate::position_interface::SectorHandle::new(1);
+    let me_sector_index = crate::fast_find_grid::SectorIndex::new(1);
 
     for (id, position) in [
         (owner_id, MapPoint::new(100.0, 0.0)),
@@ -4214,7 +4242,9 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         let entity = engine.get_entity_mut(id).expect("roof-wait actor exists");
         entity.element_data_mut().active = true;
         entity.element_data_mut().set_position_map(position);
-        entity.element_data_mut().set_sector(me_sector);
+        entity
+            .position_iface_mut()
+            .set_sector_topology(me_sector, me_sector_index);
     }
     let owner = engine
         .get_entity_mut(owner_id)

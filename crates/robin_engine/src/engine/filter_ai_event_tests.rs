@@ -5670,6 +5670,8 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
             door_type: DoorType::Building,
             sector_out: SectorNumber::new(7),
             sector_in: building_sector,
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(1),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(0),
             point_out: crate::coordinates::MapPoint::new(0.0, 0.0),
             point_in: crate::coordinates::MapPoint::new(10.0, 0.0),
             ..Door::default()
@@ -5678,31 +5680,42 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
             door_type: DoorType::Building,
             sector_out: SectorNumber::new(9),
             sector_in: building_sector,
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(2),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(0),
             point_out: crate::coordinates::MapPoint::new(100.0, 0.0),
             point_in: crate::coordinates::MapPoint::new(90.0, 0.0),
             ..Door::default()
         },
     ];
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
-    level.sector_number_map.insert(building_sector, 0);
-    level.sectors.push(GridSector {
-        points: Vec::new(),
-        bounding_box: crate::coordinates::MapBBox::new(),
-        sector_type: SectorType::BUILDING,
-        layer: 0,
-        sector_number: building_sector,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
-    });
+    for (index, sector_number) in [building_sector, SectorNumber::new(7), SectorNumber::new(9)]
+        .into_iter()
+        .enumerate()
+    {
+        level.sector_number_map.insert(sector_number, index);
+        level.sectors.push(GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: if index == 0 {
+                SectorType::BUILDING
+            } else {
+                SectorType::MOTION | SectorType::AREA
+            },
+            layer: 0,
+            sector_number,
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+    }
     door_actor
 }
 
@@ -5725,8 +5738,12 @@ fn select_unrelated_pass_door_fixture(engine: &mut EngineInner, door_actor: Enti
         Some(door_actor),
         crate::order::OrderType::WalkingUpright,
     );
-    if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut pass.data {
+    if let crate::sequence::SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    {
         *gate_id = Some(DoorIndex(0));
+        *direction = 1;
     } else {
         unreachable!("PassDoor fixture must be a movement element")
     }

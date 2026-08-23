@@ -3274,9 +3274,11 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
     };
     let me_position = resolve_position(me_id);
     let target_position = resolve_position(target_id);
-    let me_sector: u16 = me_position.sector?.into();
-    let target_sector: u16 = target_position.sector?.into();
-    if me_sector == target_sector {
+    let me_sector = me_position.sector?;
+    let target_sector = target_position.sector?;
+    if me_sector.get() == target_sector.get()
+        && me_sector.arena_index() == target_sector.arena_index()
+    {
         return None;
     }
 
@@ -3298,7 +3300,7 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
     Some(crate::ai::Position {
         x: wait.x,
         y: wait.y,
-        sector: crate::position_interface::SectorHandle::new(wait.sector),
+        sector: Some(wait.sector),
         level: wait.layer,
     })
 }

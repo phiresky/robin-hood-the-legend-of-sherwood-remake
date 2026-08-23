@@ -1813,7 +1813,7 @@ pub fn find_path_to_door(
 pub struct GateWaitPosition {
     pub x: f32,
     pub y: f32,
-    pub sector: u16,
+    pub sector: crate::position_interface::SectorHandle,
     pub layer: u16,
 }
 
@@ -1835,21 +1835,23 @@ pub struct GateWaitPosition {
 pub fn compute_avenger_wait_position(
     doors: &[Door],
     avenger_pos: (f32, f32),
-    avenger_sector: u16,
+    avenger_sector: crate::position_interface::SectorHandle,
     avenger_auth: &ActorAuthInfo,
     me_pos: (f32, f32),
-    me_sector: u16,
+    me_sector: crate::position_interface::SectorHandle,
     me_auth: &ActorAuthInfo,
     building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<GateWaitPosition> {
     // A* runs avenger → me, gated by the avenger's authorization.
-    let path = find_path_gates(
+    let path = find_path_gates_with_sector_indices(
         doors,
         avenger_pos,
-        avenger_sector,
+        avenger_sector.get(),
+        avenger_sector.arena_index(),
         me_pos,
-        me_sector,
+        me_sector.get(),
+        me_sector.arena_index(),
         Some(avenger_auth),
         false,
         building_is_authorized,
@@ -1879,11 +1881,26 @@ pub fn compute_avenger_wait_position(
         }
         // Blocking gate found.  Wait position is the me-side endpoint
         // along the avenger's forward direction.
-        let (pt, sector, layer) = if step.direct {
-            (door.point_in, u16::from(door.sector_in), door.layer_in)
+        let (pt, sector_number, sector_index, layer) = if step.direct {
+            (
+                door.point_in,
+                u16::from(door.sector_in),
+                door.sector_in_index,
+                door.layer_in,
+            )
         } else {
-            (door.point_out, u16::from(door.sector_out), door.layer_out)
+            (
+                door.point_out,
+                u16::from(door.sector_out),
+                door.sector_out_index,
+                door.layer_out,
+            )
         };
+        let mut sector = crate::position_interface::SectorHandle::new(sector_number)
+            .expect("door endpoint sector cannot use the no-sector sentinel");
+        if let Some(sector_index) = sector_index {
+            sector = sector.with_arena_index(sector_index);
+        }
         return Some(GateWaitPosition {
             x: pt.x,
             y: pt.y,
@@ -1943,6 +1960,10 @@ mod tests {
 
     fn no_lift(_: SectorNumber) -> Option<LiftType> {
         None
+    }
+
+    fn sector_handle(number: u16) -> crate::position_interface::SectorHandle {
+        crate::position_interface::SectorHandle::new(number).expect("test sector handle")
     }
 
     #[test]
@@ -2985,10 +3006,10 @@ mod tests {
         let wait = compute_avenger_wait_position(
             &doors,
             (100.0, 300.0),
-            2,
+            sector_handle(2),
             &avenger,
             (100.0, 0.0),
-            1,
+            sector_handle(1),
             &me,
             &|_| true,
             &no_lift,
@@ -3000,7 +3021,7 @@ mod tests {
         // Wait position = GetPositionOut = (100, 100) in sector 1.
         assert_eq!(wait.x, 100.0);
         assert_eq!(wait.y, 100.0);
-        assert_eq!(wait.sector, 1);
+        assert_eq!(wait.sector.get(), 1);
     }
 
     /// Path direction avenger→me goes out→in (step.direct = true);
@@ -3025,10 +3046,10 @@ mod tests {
         let wait = compute_avenger_wait_position(
             &doors,
             (100.0, 300.0),
-            2,
+            sector_handle(2),
             &avenger,
             (100.0, 0.0),
-            1,
+            sector_handle(1),
             &me,
             &|_| true,
             &no_lift,
@@ -3037,7 +3058,7 @@ mod tests {
 
         assert_eq!(wait.x, 100.0);
         assert_eq!(wait.y, 100.0);
-        assert_eq!(wait.sector, 1);
+        assert_eq!(wait.sector.get(), 1);
     }
 
     /// The reverse me→avenger scan must apply the same live building
@@ -3072,10 +3093,10 @@ mod tests {
         let wait = compute_avenger_wait_position(
             &doors,
             (40.0, 0.0),
-            3,
+            sector_handle(3),
             &avenger,
             (0.0, 0.0),
-            1,
+            sector_handle(1),
             &me,
             &full,
             &no_lift,
@@ -3083,16 +3104,16 @@ mod tests {
         .expect("full building is the first reverse-direction blocker");
         assert_eq!(wait.x, 10.0);
         assert_eq!(wait.y, 0.0);
-        assert_eq!(wait.sector, 1);
+        assert_eq!(wait.sector.get(), 1);
 
         let available = |_: SectorNumber| true;
         let wait = compute_avenger_wait_position(
             &doors,
             (40.0, 0.0),
-            3,
+            sector_handle(3),
             &avenger,
             (0.0, 0.0),
-            1,
+            sector_handle(1),
             &me,
             &available,
             &no_lift,
@@ -3100,7 +3121,7 @@ mod tests {
         .expect("later soldier lock blocks once the building has capacity");
         assert_eq!(wait.x, 30.0);
         assert_eq!(wait.y, 0.0);
-        assert_eq!(wait.sector, 2);
+        assert_eq!(wait.sector.get(), 2);
     }
 
     /// Me can pass every gate on the path — caller-misuse case.
@@ -3122,10 +3143,10 @@ mod tests {
         let wait = compute_avenger_wait_position(
             &doors,
             (100.0, 300.0),
-            2,
+            sector_handle(2),
             &avenger,
             (100.0, 0.0),
-            1,
+            sector_handle(1),
             &me,
             &|_| true,
             &no_lift,
@@ -3144,10 +3165,10 @@ mod tests {
         let wait = compute_avenger_wait_position(
             &doors,
             (100.0, 300.0),
-            2,
+            sector_handle(2),
             &avenger,
             (100.0, 0.0),
-            1,
+            sector_handle(1),
             &me,
             &|_| true,
             &no_lift,

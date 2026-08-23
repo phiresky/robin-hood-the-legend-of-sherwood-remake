@@ -1259,28 +1259,21 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
 }
 
 #[test]
-fn think_with_drain_preserves_missing_ai_as_an_unhandled_noop() {
+#[should_panic(expected = "missing its required AI controller while applying recovery state")]
+fn think_with_drain_rejects_a_soldier_missing_its_required_ai() {
     use crate::ai::{AiContext, AiPerTickData, Stimulus, StimulusType};
 
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let npc_id = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
 
-    let handled = engine.dispatch_think_with_drain(
+    engine.dispatch_think_with_drain(
         sim,
         npc_id,
         &Stimulus::new(StimulusType::EventDone),
         &AiContext::default(),
         &AiPerTickData::stub(),
         &LevelAssets::new(),
-    );
-
-    assert!(!handled);
-    assert!(
-        engine
-            .get_entity(npc_id)
-            .is_some_and(|entity| entity.ai_controller().is_none()),
-        "the unhandled no-op must not fabricate or mutate an AI controller"
     );
 }
 
@@ -2124,8 +2117,12 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         Some(door_actor),
         crate::order::OrderType::WalkingUpright,
     );
-    if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut pass.data {
+    if let crate::sequence::SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    {
         *gate_id = Some(DoorIndex(0));
+        *direction = 1;
     } else {
         unreachable!("PassDoor fixture must be a movement element")
     }
@@ -2141,6 +2138,8 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
             door_type: DoorType::Building,
             sector_out: SectorNumber::new(7),
             sector_in: building_sector,
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(1),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(0),
             point_out: MapPoint::new(0.0, 0.0),
             point_in: MapPoint::new(10.0, 0.0),
             ..Door::default()
@@ -2149,31 +2148,42 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
             door_type: DoorType::Building,
             sector_out: SectorNumber::new(9),
             sector_in: building_sector,
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(2),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(0),
             point_out: MapPoint::new(100.0, 0.0),
             point_in: MapPoint::new(90.0, 0.0),
             ..Door::default()
         },
     ];
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
-    level.sector_number_map.insert(building_sector, 0);
-    level.sectors.push(GridSector {
-        points: Vec::new(),
-        bounding_box: crate::coordinates::MapBBox::new(),
-        sector_type: SectorType::BUILDING,
-        layer: 0,
-        sector_number: building_sector,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
-    });
+    for (index, sector_number) in [building_sector, SectorNumber::new(7), SectorNumber::new(9)]
+        .into_iter()
+        .enumerate()
+    {
+        level.sector_number_map.insert(sector_number, index);
+        level.sectors.push(GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: if index == 0 {
+                SectorType::BUILDING
+            } else {
+                SectorType::MOTION | SectorType::AREA
+            },
+            layer: 0,
+            sector_number,
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+    }
     engine.scripts.mission = Some(
         MissionScript::from_scb(ScbFile {
             version: SCB_VERSION,
@@ -5234,7 +5244,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
     soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
     soldier.npc.eye_status = crate::element::EyeStatus::Stare;
 
-    for (pc_id, x) in [(old_target_id, -200.0), (viewed_target_id, 40.0)] {
+    for (pc_id, x) in [(old_target_id, -200.0), (viewed_target_id, 5.0)] {
         let Entity::Pc(pc) = engine
             .get_entity_mut(pc_id)
             .expect("target-rebind PC exists")
