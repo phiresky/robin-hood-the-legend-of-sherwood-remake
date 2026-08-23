@@ -4067,18 +4067,21 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
         Door {
             point_in: MapPoint::new(101.0, 102.0),
             sector_in: SectorNumber::new(11),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(11),
             layer_in: 3,
             ..Door::default()
         },
         Door {
             point_out: MapPoint::new(201.0, 202.0),
             sector_out: SectorNumber::new(22),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(22),
             layer_out: 4,
             ..Door::default()
         },
         Door {
             point_in: MapPoint::new(301.0, 302.0),
             sector_in: SectorNumber::new(33),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(33),
             layer_in: 5,
             ..Door::default()
         },
@@ -4225,6 +4228,8 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     let mut door = Door {
         sector_out: SectorNumber::new(1),
         sector_in: SectorNumber::new(2),
+        sector_out_index: crate::fast_find_grid::SectorIndex::new(1),
+        sector_in_index: crate::fast_find_grid::SectorIndex::new(2),
         point_out: MapPoint::new(100.0, 100.0),
         point_in: MapPoint::new(100.0, 200.0),
         ..Door::default()
@@ -4886,6 +4891,8 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
         door_type: DoorType::Default,
         sector_out: SectorNumber::new(7),
         sector_in: SectorNumber::new(8),
+        sector_out_index: crate::fast_find_grid::SectorIndex::new(7),
+        sector_in_index: crate::fast_find_grid::SectorIndex::new(8),
         layer_out: 3,
         layer_in: 4,
         point_out: MapPoint::new(120.0, 5.0),
@@ -5005,6 +5012,8 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
             door_type: DoorType::Default,
             sector_out: SectorNumber::new(7),
             sector_in: SectorNumber::new(8),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(7),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(8),
             point_out: MapPoint::new(600.0, 0.0),
             point_in: MapPoint::new(580.0, 0.0),
             ..Door::default()
@@ -5013,6 +5022,8 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
             door_type: DoorType::Default,
             sector_out: SectorNumber::new(9),
             sector_in: SectorNumber::new(10),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(9),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(10),
             point_out: MapPoint::new(20.0, 0.0),
             point_in: MapPoint::new(40.0, 0.0),
             ..Door::default()
@@ -5170,6 +5181,8 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     engine.script_domains.interactables.doors = vec![Door {
         point_out: MapPoint::new(718.0, 1179.0),
         point_in: MapPoint::new(735.0, 1156.0),
+        sector_out_index: crate::fast_find_grid::SectorIndex::new(0),
+        sector_in_index: crate::fast_find_grid::SectorIndex::new(1),
         ..Door::default()
     }];
     engine.scripts.mission = Some(

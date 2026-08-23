@@ -728,7 +728,7 @@ mod tests {
         ("PeasantReservistSurvival", 1),
         ("PhalanxAdvance", 1),
         ("PrincipalOpponent", 1),
-        ("PurseCoinScatter", 2),
+        ("PurseCoinScatter", 4),
         ("ReinforcementDoor", 1),
         ("ReinforcementJitter", 2),
         ("RescuePcFirstName", 1),

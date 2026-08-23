@@ -1778,6 +1778,7 @@ mod tests {
             GameMaterial::Bush,
             GameMaterial::Ice,
             GameMaterial::Hole,
+            GameMaterial::NumberOfMaterials,
             GameMaterial::LightShadow,
         ] {
             assert_eq!(
@@ -1785,7 +1786,7 @@ mod tests {
                 Some(material)
             );
         }
-        assert_eq!(GameMaterial::try_from_u32(9), None);
+        assert_eq!(GameMaterial::try_from_u32(11), None);
         assert_eq!(GameMaterial::try_from_u32(217_559_952), None);
     }
 

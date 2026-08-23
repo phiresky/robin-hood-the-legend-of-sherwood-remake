@@ -3752,6 +3752,13 @@ mod tests {
             posture: Posture::Flying,
             ..ElementData::default()
         };
+        // `PerformFlight` reads the live falling animation's frame count on
+        // every combat-flight tick. Production actors are sprite-hydrated;
+        // keep this synthetic actor subject to that same invariant.
+        element.sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            frame_ids: vec![0, 1],
+            ..Default::default()
+        }]);
         element.set_position(WorldPoint3D {
             x: 10.0,
             y: 20.0,

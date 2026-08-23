@@ -440,8 +440,8 @@ fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
 
     assert_eq!(
         engine.opponent_sword_strike_time_limit_for_actor(target, target),
-        Some(1000),
-        "schema-15 replays without a captured UB value retain the historical permissive result"
+        Some(i16::MIN),
+        "replays without captured allocator residue use the reviewed strict impossible deadline"
     );
 
     let target_creation_order = engine.world.original_creation_order(target);
@@ -628,6 +628,9 @@ fn action_test_assets(actions: [crate::profiles::Action; 3]) -> LevelAssets {
         actions,
         ..Default::default()
     });
+    profiles
+        .soldiers
+        .push(crate::profiles::SoldierProfile::default());
     LevelAssets {
         profile_manager: std::sync::Arc::new(profiles),
         ..LevelAssets::new()
@@ -670,6 +673,15 @@ fn give_flight(
     inc_y: f32,
     frames: u16,
 ) {
+    engine
+        .get_entity_mut(flyer)
+        .expect("test flight owner exists")
+        .element_data_mut()
+        .sprite
+        .scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+        frame_ids: vec![0, 1],
+        ..Default::default()
+    }]);
     let flyer_pos = engine
         .get_entity(flyer)
         .unwrap()
@@ -7061,6 +7073,15 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         .unwrap()
         .active_flight
         .expect("elevated landing plane must author a flight");
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+        frame_ids: vec![0, 1],
+        ..Default::default()
+    }]);
     assert_eq!(
         engine
             .get_entity(victim)
@@ -7191,6 +7212,15 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
         .unwrap()
         .active_flight
         .expect("elevated landing plane must author a hit flight");
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+        frame_ids: vec![0, 1],
+        ..Default::default()
+    }]);
     assert_eq!(
         engine
             .get_entity(victim)

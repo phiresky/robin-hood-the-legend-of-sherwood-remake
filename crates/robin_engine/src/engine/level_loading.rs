@@ -1691,6 +1691,33 @@ mod mission_level_builder_tests {
         })
     }
 
+    /// Minimal retained sparse-sector table for synthetic door fixtures.
+    /// Door endpoints in the shipped format are indices into Original's
+    /// `marraySectors`, so tests that exercise the production builder must
+    /// retain the same identity table instead of relying on public-number
+    /// guessing.
+    fn door_assets(slot_count: usize, building_slot: usize) -> LevelAssets {
+        assert!(building_slot < slot_count);
+        let mut sectors = vec![LegacyGridSectorAsset::NullOrOrdinary; slot_count];
+        sectors[building_slot] = LegacyGridSectorAsset::Building;
+        let mut assets = LevelAssets::new();
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors,
+            position_sector_numbers: (0..slot_count)
+                .map(|slot| Some(i16::try_from(slot).expect("test sector slot fits i16")))
+                .collect(),
+            position_sector_indices: (0..slot_count)
+                .map(|slot| {
+                    crate::fast_find_grid::SectorIndex::new(
+                        u32::try_from(slot).expect("test sector slot fits u32"),
+                    )
+                })
+                .collect(),
+            ..LegacyGridTopologyAssets::default()
+        });
+        assets
+    }
+
     #[test]
     fn door_stage_keeps_building_and_standalone_authored_order() {
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
@@ -1781,7 +1808,7 @@ mod mission_level_builder_tests {
             direction: 0,
         }];
         let builder = MissionLevelBuilder::new("no-script", false, &loaded);
-        let assets = LevelAssets::new();
+        let assets = door_assets(22, 1);
         let mut engine = EngineInner::new();
 
         let plan = builder
@@ -2105,7 +2132,7 @@ mod mission_level_builder_tests {
             arrow_reserve: false,
         }];
         let builder = MissionLevelBuilder::new("trap-tenant", false, &loaded);
-        let assets = LevelAssets::new();
+        let assets = door_assets(2, 1);
         let mut engine = EngineInner::new();
         engine.world.entities.push(Some(civilian()));
 
