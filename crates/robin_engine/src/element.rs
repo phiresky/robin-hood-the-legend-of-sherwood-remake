@@ -2304,6 +2304,12 @@ pub struct ProjectileData {
     pub terminal_material_impact_index: Option<u16>,
     #[serde(default)]
     pub trajectory_origin_sector: Option<u16>,
+    /// Exact arena half of Original's `mposStartOfTrajectory.pSector`.
+    /// The public number above remains for backward-compatible serialized
+    /// state, but AI projectile-hit callbacks must copy the complete sector
+    /// pointer identity into their stimulus position.
+    #[serde(default)]
+    pub trajectory_origin_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     #[serde(default)]
     pub trajectory_origin_layer: u16,
     /// Per-frame position delta for the current trajectory segment.
@@ -2377,6 +2383,7 @@ impl Default for ProjectileData {
             terminal_material_pending: false,
             terminal_material_impact_index: None,
             trajectory_origin_sector: None,
+            trajectory_origin_sector_index: None,
             trajectory_origin_layer: 0,
             velocity_increment: WorldVec3D::default(),
             flight_direction: 0,

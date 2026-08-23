@@ -651,6 +651,8 @@ impl Default for CameraState {
     Deserialize,
     bincode::Encode,
     bincode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
     robin_state_hash_derive::StateHash,
 )]
 #[serde(tag = "command", rename_all = "snake_case")]

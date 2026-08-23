@@ -551,10 +551,8 @@ impl EngineInner {
                 continue;
             };
             let layer = shooter_entity.element_data().layer();
-            let trajectory_origin_sector = shooter_entity
-                .element_data()
-                .sector()
-                .map(crate::position_interface::SectorHandle::get);
+            let trajectory_origin_sector =
+                super::ai::ai_view_position_sector(self, shooter_entity.element_data());
             let shooter_is_pc = shooter_entity.kind().is_pc();
 
             let Some(target_entity) = self.get_entity(result.target) else {
@@ -873,8 +871,11 @@ impl EngineInner {
             // trajectory. Its terminal Hourglass must therefore still take
             // the water-return path even when the recomputed fall ends dry.
             arrow_projectile.projectile.dive = terminal_lands_in_water;
-            arrow_projectile.projectile.trajectory_origin_sector = trajectory_origin_sector;
-            arrow_projectile.projectile.trajectory_origin_layer = layer;
+            set_projectile_trajectory_origin(
+                &mut arrow_projectile.projectile,
+                trajectory_origin_sector,
+                layer,
+            );
             let arrow_id = self.add_entity(arrow);
             if capture_collision_debug {
                 crate::sight_obstacle::validate_projectile_collision_debug_spawn(
@@ -1610,12 +1611,11 @@ impl EngineInner {
     ) {
         let target_id = target.expect("apple/stone throw selected without its required target");
         let (throw_pos, layer) = self.projectile_throw_origin(actor_id, "on_throw_projectile_done");
-        let trajectory_origin_sector = self
+        let thrower = self
             .get_entity(actor_id)
-            .unwrap_or_else(|| panic!("projectile thrower {actor_id:?} disappeared before Done"))
-            .element_data()
-            .sector()
-            .map(crate::position_interface::SectorHandle::get);
+            .unwrap_or_else(|| panic!("projectile thrower {actor_id:?} disappeared before Done"));
+        let trajectory_origin_sector =
+            super::ai::ai_view_position_sector(self, thrower.element_data());
         // Lead the victim's forecasted motion only when it's an NPC
         // (Soldier/Civilian); FX targets and fellow-PC victims fall
         // through to the centre branch with no movement lead.
@@ -1675,8 +1675,11 @@ impl EngineInner {
         let Entity::Projectile(projectile_data) = &mut projectile else {
             panic!("apple/stone spawn returned a non-projectile entity");
         };
-        projectile_data.projectile.trajectory_origin_sector = trajectory_origin_sector;
-        projectile_data.projectile.trajectory_origin_layer = layer;
+        set_projectile_trajectory_origin(
+            &mut projectile_data.projectile,
+            trajectory_origin_sector,
+            layer,
+        );
         let proj_id = self.add_entity(projectile);
         // Hydrate the accessory sprite (apple/stone) on demand.
         self.attach_accessory_sprite(assets, proj_id);
@@ -2211,17 +2214,43 @@ fn soldier_shield_dimensions(
         .map(|w| (w.shield_width, w.shield_height))
 }
 
+fn set_projectile_trajectory_origin(
+    projectile: &mut crate::element::ProjectileData,
+    sector: Option<crate::position_interface::SectorHandle>,
+    layer: u16,
+) {
+    projectile.trajectory_origin_sector = sector.map(crate::position_interface::SectorHandle::get);
+    projectile.trajectory_origin_sector_index = sector.and_then(|sector| sector.arena_index());
+    projectile.trajectory_origin_layer = layer;
+}
+
+fn projectile_trajectory_origin_sector(
+    projectile: &crate::element::ProjectileData,
+) -> Option<crate::position_interface::SectorHandle> {
+    match (
+        projectile.trajectory_origin_sector,
+        projectile.trajectory_origin_sector_index,
+    ) {
+        (None, None) => None,
+        (Some(public), index) => crate::position_interface::SectorHandle::new(public)
+            .map(|sector| index.map_or(sector, |index| sector.with_arena_index(index))),
+        (None, Some(index)) => panic!(
+            "projectile trajectory origin retains exact sector index {index:?} without its public sector number"
+        ),
+    }
+}
+
 fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> {
     match entity {
-        Entity::Projectile(p) => Some(crate::ai::Position {
-            x: p.projectile.start_of_trajectory_x,
-            y: p.projectile.start_of_trajectory_y,
-            sector: p
-                .projectile
-                .trajectory_origin_sector
-                .and_then(crate::position_interface::SectorHandle::new),
-            level: p.projectile.trajectory_origin_layer,
-        }),
+        Entity::Projectile(p) => {
+            let sector = projectile_trajectory_origin_sector(&p.projectile);
+            Some(crate::ai::Position {
+                x: p.projectile.start_of_trajectory_x,
+                y: p.projectile.start_of_trajectory_y,
+                sector,
+                level: p.projectile.trajectory_origin_layer,
+            })
+        }
         _ => None,
     }
 }
@@ -2230,7 +2259,8 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> 
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        projectile_trajectory_origin, soldier_piercing_protection, soldier_shield_dimensions,
+        projectile_trajectory_origin, projectile_trajectory_origin_sector,
+        set_projectile_trajectory_origin, soldier_piercing_protection, soldier_shield_dimensions,
     };
     use crate::element::{
         ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
@@ -3046,7 +3076,8 @@ mod tests {
 
     #[test]
     fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
-        let projectile = Entity::Projectile(ElementProjectile {
+        let exact_sector = crate::fast_find_grid::SectorIndex::new(41).unwrap();
+        let mut projectile = Entity::Projectile(ElementProjectile {
             element: ElementData {
                 kind: ElementKind::ObjectProjectile,
                 ..Default::default()
@@ -3055,16 +3086,35 @@ mod tests {
             projectile: ProjectileData {
                 start_of_trajectory_x: 572.0,
                 start_of_trajectory_y: 2360.0,
-                trajectory_origin_sector: Some(17),
-                trajectory_origin_layer: 11,
                 ..Default::default()
             },
         });
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            unreachable!()
+        };
+        let exact_handle = crate::position_interface::SectorHandle::new(17)
+            .unwrap()
+            .with_arena_index(exact_sector);
+        set_projectile_trajectory_origin(&mut projectile_data.projectile, Some(exact_handle), 11);
+        assert_eq!(
+            projectile_data.projectile.trajectory_origin_sector,
+            Some(17)
+        );
+        assert_eq!(
+            projectile_data.projectile.trajectory_origin_sector_index,
+            Some(exact_sector),
+            "the shared arrow/apple publication writer must retain exact origin topology"
+        );
 
         let origin = projectile_trajectory_origin(&projectile).unwrap();
         assert_eq!(origin.x, 572.0);
         assert_eq!(origin.y, 2360.0);
         assert_eq!(origin.sector.map(|sector| sector.get()), Some(17));
+        assert_eq!(
+            origin.sector.and_then(|sector| sector.arena_index()),
+            Some(exact_sector),
+            "EventGetArrow must copy Original's exact trajectory-origin sector pointer"
+        );
         assert_eq!(origin.level, 11);
 
         // The task-229 boundary lies on opposite sides of a direction-sector
@@ -3080,6 +3130,16 @@ mod tests {
             crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy + 105.001_01),
             9
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "without its public sector number")]
+    fn projectile_origin_rejects_orphan_exact_sector_identity() {
+        let projectile = ProjectileData {
+            trajectory_origin_sector_index: crate::fast_find_grid::SectorIndex::new(41),
+            ..Default::default()
+        };
+        let _ = projectile_trajectory_origin_sector(&projectile);
     }
 
     fn blocked_shoulder_pair() -> (
