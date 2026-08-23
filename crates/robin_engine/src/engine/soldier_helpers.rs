@@ -4,7 +4,9 @@
 //! the larger modules — attentive-mode requests, drunken-step
 //! perturbation, etc.
 
-use super::movement::{GoalShape, adapt_source_to_current_door, current_door_for_route_source};
+use super::movement::{
+    GoalShape, adapt_source_to_current_door_with_identity, current_door_for_route_source,
+};
 use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::{MapPoint, MapVec};
@@ -13,6 +15,14 @@ use crate::order::OrderType;
 use crate::sequence::{
     PendingCondolation, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
 };
+
+fn door_battle_outside_sector(door: &crate::gate::Door) -> crate::position_interface::SectorHandle {
+    let handle = crate::position_interface::SectorHandle::new(u16::from(door.sector_out))
+        .unwrap_or_else(|| panic!("door battle has invalid outside sector {}", door.sector_out));
+    door.sector_out_index
+        .map(|index| handle.with_arena_index(index))
+        .unwrap_or(handle)
+}
 
 struct DamageParryHandoffDebugConfig {
     frame: u32,
@@ -1492,7 +1502,7 @@ impl EngineInner {
 
         // Pick the unlocked door nearest to first_pos by MaxNorm of
         // (door.point_in - first_pos).
-        let (point_in, point_out, point_mid, out_layer, out_sector) = {
+        let (point_in, point_out, point_mid, out_layer, out_sector_handle) = {
             if self.scripts.mission.is_none() {
                 return;
             }
@@ -1527,12 +1537,24 @@ impl EngineInner {
             else {
                 return;
             };
+            let exact_graph = self
+                .script_domains
+                .interactables
+                .doors
+                .iter()
+                .any(|candidate| {
+                    candidate.sector_out_index.is_some() || candidate.sector_in_index.is_some()
+                });
+            assert!(
+                !exact_graph || door.sector_out_index.is_some(),
+                "selected door {best_idx} has no exact outside-sector identity in an exact gate graph"
+            );
             (
                 door.point_in,
                 door.point_out,
                 door.point_mid,
                 door.layer_out,
-                door.sector_out,
+                door_battle_outside_sector(door),
             )
         };
         let _ = point_in;
@@ -1550,6 +1572,10 @@ impl EngineInner {
         let num_fleeing = fleeing.len();
         debug_assert!(num_pursuing >= num_fleeing);
 
+        // Original copies `RHDoor::GetPositionOut()` into the battle center.
+        // The ensuing RHposition +/- vector arithmetic retains its RHSector*
+        // identity, including where multiple live sectors expose the same
+        // public number.
         for i in 0..num_pursuing {
             // Try 10 random dispersion vectors.  The dispersed
             // direction is `(base + rand(0..7) - 3) & 15`, and the
@@ -1599,13 +1625,13 @@ impl EngineInner {
             let defender_pos = Position {
                 x: defender.x,
                 y: defender.y,
-                sector: crate::position_interface::SectorHandle::new(u16::from(out_sector)),
+                sector: Some(out_sector_handle),
                 level: out_layer,
             };
             let attacker_pos = Position {
                 x: attacker.x,
                 y: attacker.y,
-                sector: crate::position_interface::SectorHandle::new(u16::from(out_sector)),
+                sector: Some(out_sector_handle),
                 level: out_layer,
             };
 
@@ -1781,7 +1807,6 @@ impl EngineInner {
                 door_direction,
             )
         });
-
         if let Some((
             raw_source_pos,
             Some(raw_source_sector),
@@ -1797,32 +1822,45 @@ impl EngineInner {
             // before it compares source and goal sectors. In particular, a
             // PC already leaving this building for the door-fight goal must
             // not construct (and draw the random wait for) a second exit.
-            let (source_pos, source_sector, _source_layer) = adapt_source_to_current_door(
-                &self.script_domains.interactables.doors,
-                door_handle,
-                door_direction,
-            )
-            .map(|(point, sector, layer)| {
-                (
-                    point,
-                    crate::position_interface::SectorHandle::new(sector).unwrap_or_else(|| {
-                        panic!("door-fight route for {pc_id:?} adapted to invalid sector {sector}")
-                    }),
-                    layer,
+            let (source_pos, source_sector, _source_layer) =
+                adapt_source_to_current_door_with_identity(
+                    &self.script_domains.interactables.doors,
+                    door_handle,
+                    door_direction,
                 )
-            })
-            .unwrap_or((raw_source_pos, raw_source_sector, raw_source_layer));
+                .unwrap_or((raw_source_pos, raw_source_sector, raw_source_layer));
 
-            if source_sector != goal_sector {
+            let same_sector = match (source_sector.arena_index(), goal_sector.arena_index()) {
+                (Some(source), Some(goal)) => source == goal,
+                (None, None) => source_sector == goal_sector,
+                _ => false,
+            };
+            if !same_sector {
                 let path = {
                     let level = self.world.fast_grid.level.clone();
                     self.scripts.mission.as_ref().and_then(|_| {
-                        crate::gate::find_path_gates(
+                        let exact_graph =
+                            self.script_domains.interactables.doors.iter().any(|door| {
+                                door.sector_out_index.is_some() || door.sector_in_index.is_some()
+                            });
+                        if exact_graph {
+                            assert!(
+                                source_sector.arena_index().is_some(),
+                                "door-fight route for {pc_id:?} lacks exact source sector identity"
+                            );
+                            assert!(
+                                goal_sector.arena_index().is_some(),
+                                "door-fight route for {pc_id:?} lacks exact goal sector identity"
+                            );
+                        }
+                        crate::gate::find_path_gates_with_sector_indices(
                             &self.script_domains.interactables.doors,
                             (source_pos.x, source_pos.y),
                             source_sector.get(),
+                            source_sector.arena_index(),
                             (goal.x, goal.y),
                             goal_sector.get(),
+                            goal_sector.arena_index(),
                             Some(&auth),
                             false,
                             &|sector| self.building_sector_is_authorized(sector),
@@ -2161,6 +2199,61 @@ mod tests {
                 .map(|element| element.command)
                 .collect::<Vec<_>>(),
             [Command::WaitTimer, Command::AssertPosition]
+        );
+    }
+
+    #[test]
+    fn door_fight_fanout_retains_exact_goal_for_duplicate_public_sectors() {
+        use crate::fast_find_grid::SectorIndex;
+        use crate::sim_rng::{RngSite, with_draw_trace};
+
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, pc, mut goal) = door_fight_route_fixture(1);
+        let building_index = SectorIndex::new(0).unwrap();
+        let authored_outside_index = SectorIndex::new(1).unwrap();
+        let duplicate_outside_index = SectorIndex::new(2).unwrap();
+
+        {
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+            let duplicate = level.sectors[1].clone();
+            level.sectors.push(duplicate);
+        }
+        let door = &mut engine.script_domains.interactables.doors[0];
+        door.sector_in_index = Some(building_index);
+        door.sector_out_index = Some(authored_outside_index);
+        crate::gate::build_gate_links(&mut engine.script_domains.interactables.doors);
+        engine
+            .get_entity_mut(pc)
+            .unwrap()
+            .position_iface_mut()
+            .set_sector_topology(
+                Some(crate::position_interface::SectorHandle::new(118).unwrap()),
+                Some(building_index),
+            );
+
+        let writer_goal = door_battle_outside_sector(&engine.script_domains.interactables.doors[0]);
+        assert_eq!(writer_goal.get(), 0);
+        assert_eq!(writer_goal.arena_index(), Some(authored_outside_index));
+        assert_ne!(writer_goal.arena_index(), Some(duplicate_outside_index));
+        goal.sector = Some(writer_goal);
+
+        let (_, draws) = with_draw_trace(|| {
+            engine.send_before_door_to_fight_pc(&sim, pc, goal, 4, 10, None);
+        });
+        assert_eq!(
+            draws,
+            [
+                RngSite::RuntimeBuildingExitWait,
+                RngSite::RuntimeBuildingExitWait
+            ],
+            "the PC fanout must route from the exact building object to the selected door's exact outside object"
+        );
+        assert!(
+            door_fight_sequence(&engine, pc)
+                .elements
+                .iter()
+                .any(|element| element.command == Command::ChangePosition),
+            "the exact duplicate-public route must enter the gate builder"
         );
     }
 
