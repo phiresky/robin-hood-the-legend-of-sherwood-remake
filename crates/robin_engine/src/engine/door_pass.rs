@@ -2286,6 +2286,28 @@ mod tests {
     fn install_lift_sector(engine: &mut EngineInner, lift_type: LiftType) {
         let lift_sector = crate::sector::SectorNumber::new(42);
         let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+        if level.sectors.is_empty() {
+            let outside_sector = crate::sector::SectorNumber::new(7);
+            level.sector_number_map.insert(outside_sector, 0);
+            level.sectors.push(crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+                layer: 0,
+                sector_number: outside_sector,
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
         let index = level.sectors.len();
         level.sector_number_map.insert(lift_sector, index);
         level.sectors.push(crate::fast_find_grid::GridSector {

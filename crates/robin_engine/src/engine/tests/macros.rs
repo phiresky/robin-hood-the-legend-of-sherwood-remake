@@ -35,6 +35,9 @@ fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
     entity
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(10.0, 10.0));
+    entity
+        .element_data_mut()
+        .set_sector(crate::position_interface::SectorHandle::new(1));
     pc
 }
 

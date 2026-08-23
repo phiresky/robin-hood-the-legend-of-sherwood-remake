@@ -701,9 +701,39 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
     use crate::gate::{Door, DoorIndex, GatePathStep};
     use crate::order::OrderType;
     use crate::scb::{ClassEntry, Function, SCB_VERSION, ScbFile};
-    use crate::sector::SectorNumber;
+    use crate::sector::{SectorNumber, SectorType};
     use crate::sequence::{MoveFlags, SequenceElementData};
     use crate::vm::{Opcode, Quad};
+
+    let exact_sector = |number, arena| {
+        crate::position_interface::SectorHandle::new(number).map(|handle| {
+            handle.with_arena_index(
+                crate::fast_find_grid::SectorIndex::new(arena).expect("test sector index"),
+            )
+        })
+    };
+    let install_door_sectors = |engine: &mut EngineInner| {
+        let sector = |number| crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: SectorType::MOTION | SectorType::AREA,
+            layer: 0,
+            sector_number: SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+        level.sectors = vec![sector(0), sector(14)];
+    };
 
     let minimal_mission = || {
         let startup = ClassEntry {
@@ -740,6 +770,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
 
     let capture = |direct| {
         let mut engine = EngineInner::new();
+        install_door_sectors(&mut engine);
         engine.scripts.mission = Some(minimal_mission());
         let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
         engine.script_domains.interactables.doors = vec![Door {
@@ -747,6 +778,8 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             point_in: MapPoint::new(1382.0, 480.0),
             sector_out: SectorNumber::new(0),
             sector_in: SectorNumber::new(14),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(0),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(1),
             ..Door::default()
         }];
 
@@ -848,23 +881,18 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
     let (direct_direction, direct_position) = capture(true);
     assert_eq!(direct_direction, 1);
     assert_eq!((direct_position.x, direct_position.y), (1382.0, 480.0));
-    assert_eq!(
-        direct_position.sector,
-        crate::position_interface::SectorHandle::new(14)
-    );
+    assert_eq!(direct_position.sector, exact_sector(14, 1));
 
     let (indirect_direction, indirect_position) = capture(false);
     assert_eq!(indirect_direction, 0);
     assert_eq!((indirect_position.x, indirect_position.y), (1393.0, 502.0));
-    assert_eq!(
-        indirect_position.sector,
-        crate::position_interface::SectorHandle::new(0)
-    );
+    assert_eq!(indirect_position.sector, exact_sector(0, 0));
 
     let capture_locked_camera = |direct| {
         use crate::sequence::{Field, FieldValue};
 
         let mut engine = EngineInner::new();
+        install_door_sectors(&mut engine);
         engine.scripts.mission = Some(minimal_mission());
         let mut pc_entity = make_test_pc(crate::element::Posture::Upright);
         let Entity::Pc(pc) = &mut pc_entity else {
@@ -877,6 +905,8 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             point_in: MapPoint::new(1265.0, 505.0),
             sector_out: SectorNumber::new(0),
             sector_in: SectorNumber::new(14),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(0),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(1),
             locked_pc: true,
             unlockable: true,
             ..Door::default()
