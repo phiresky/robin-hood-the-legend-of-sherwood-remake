@@ -1048,12 +1048,7 @@ impl EngineInner {
 
         // Primary target metadata (position, posture, animation,
         // carrier) from the live entity store.
-        let target_meta = lookup_primary_target_metadata(
-            &self.world.entities,
-            &self.orders.sequence_manager,
-            self.script_domains.interactables.doors.as_slice(),
-            target_id,
-        );
+        let target_meta = lookup_primary_target_metadata(self, target_id);
 
         if let Some((pos, posture, anim, carrier_pos, carrier_handle)) = target_meta {
             tick.primary_target_position = Some(pos);

@@ -3164,32 +3164,40 @@ fn resolve_ai_position_with_selected(
 }
 
 pub(super) fn lookup_primary_target_metadata(
-    entities: &crate::entities::Entities,
-    sequence_manager: &crate::sequence::SequenceManager,
-    doors: &[crate::gate::Door],
+    engine: &EngineInner,
     target_id: crate::element::EntityId,
 ) -> Option<PrimaryTargetMetadata> {
     if target_id.index() == 0 {
         return None;
     }
-    let target = entities.get(target_id)?;
+    let target = engine.world.entities.get(target_id)?;
     let elem = target.element_data();
-    let resolved = resolve_ai_position_with(entities, doors, sequence_manager, target_id, |id| {
-        let element = entities
-            .get(id)
-            .unwrap_or_else(|| panic!("AI metadata position owner {id:?} disappeared"))
-            .element_data();
-        crate::ai::Position {
-            x: element.position_map().x,
-            y: element.position_map().y,
-            sector: element.sector(),
-            level: element.layer(),
-        }
-    });
+    let resolved = resolve_ai_position_with(
+        &engine.world.entities,
+        engine.script_domains.interactables.doors.as_slice(),
+        &engine.orders.sequence_manager,
+        target_id,
+        |id| {
+            let element = engine
+                .world
+                .entities
+                .get(id)
+                .unwrap_or_else(|| panic!("AI metadata position owner {id:?} disappeared"))
+                .element_data();
+            crate::ai::Position {
+                x: element.position_map().x,
+                y: element.position_map().y,
+                sector: ai_view_position_sector(engine, element),
+                level: element.layer(),
+            }
+        },
+    );
     let posture = elem.posture;
     // Orders live on the target's owning `SequenceElement.orders` —
     // look up the current in-progress element for the target actor.
-    let animation = sequence_manager
+    let animation = engine
+        .orders
+        .sequence_manager
         .current_order_for_actor(target_id)
         .map(|(_, _, o)| o.order_type);
     Some((
@@ -3661,6 +3669,16 @@ mod ai_view_position_sector_tests {
             .add_sector(square_sector(77, 2, 10.0, 60.0), 2);
         assert_ne!(wrong, goal);
 
+        let _legacy_null_slot =
+            engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: Default::default(),
+            }));
         let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: crate::element::ElementData {
                 kind: crate::element::ElementKind::ActorPc,
@@ -3684,6 +3702,15 @@ mod ai_view_position_sector_tests {
         let goal_position = views.get(&target.index()).expect("PC view exists").position;
         assert_eq!(
             goal_position.sector.and_then(|sector| sector.arena_index()),
+            SectorIndex::new(goal)
+        );
+        let metadata_position = lookup_primary_target_metadata(&engine, target)
+            .expect("live primary target metadata exists")
+            .0;
+        assert_eq!(
+            metadata_position
+                .sector
+                .and_then(|sector| sector.arena_index()),
             SectorIndex::new(goal)
         );
 
@@ -3717,7 +3744,7 @@ mod ai_view_position_sector_tests {
 
     #[test]
     fn empty_compatibility_grid_keeps_number_only_ai_position() {
-        let engine = EngineInner::new();
+        let mut engine = EngineInner::new();
         let mut element = crate::element::ElementData::default();
         element.set_position_map(MapPoint::new(150.0, 150.0));
         element.set_layer(2);
@@ -3726,6 +3753,43 @@ mod ai_view_position_sector_tests {
             ai_view_position_sector(&engine, &element)
                 .unwrap()
                 .arena_index(),
+            None
+        );
+
+        let _legacy_null_slot =
+            engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: Default::default(),
+            }));
+        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        }));
+        let target_element = engine
+            .get_entity_mut(target)
+            .expect("test PC exists")
+            .element_data_mut();
+        target_element.set_position_map(MapPoint::new(150.0, 150.0));
+        target_element.set_layer(2);
+        target_element.set_sector(crate::position_interface::SectorHandle::new(88));
+        let metadata_position = lookup_primary_target_metadata(&engine, target)
+            .expect("compatibility primary target metadata exists")
+            .0;
+        assert_eq!(
+            metadata_position
+                .sector
+                .and_then(|sector| sector.arena_index()),
             None
         );
     }
