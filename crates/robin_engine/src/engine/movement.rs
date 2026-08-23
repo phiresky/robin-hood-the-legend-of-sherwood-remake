@@ -554,6 +554,56 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn ai_move_goal_kind_uses_exact_duplicate_sector_identity() {
+        use crate::fast_find_grid::{GridSector, SectorIndex};
+
+        let sector = |sector_type, door_index| GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type,
+            layer: 2,
+            sector_number: crate::sector::SectorNumber::new(59),
+            door_index,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+        let mut engine = EngineInner::new();
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+        level.sectors.push(sector(SectorType::DOOR, Some(68)));
+        level
+            .sectors
+            .push(sector(SectorType::MOTION | SectorType::AREA, None));
+        level
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(59), 0);
+
+        let exact_motion = crate::position_interface::SectorHandle::new(59)
+            .unwrap()
+            .with_arena_index(SectorIndex::new(1).unwrap());
+        assert_eq!(
+            ai_move_goal_door(&engine, exact_motion, exact_motion.arena_index()),
+            None,
+            "AI launch must classify the exact ordinary sector, not the conflicting public-number door overlay"
+        );
+        assert!(
+            engine
+                .grid_sector_by_number(crate::sector::SectorNumber::new(59))
+                .expect("numeric compatibility sector must resolve")
+                .sector_type
+                .is_door(),
+            "the regression requires the public-number map to select the conflicting door overlay"
+        );
+    }
+
+    #[test]
     fn non_sprite_movement_actions_return_authoritative_motion_states() {
         assert_eq!(
             non_sprite_movement_motion(OrderType::Freezing),
@@ -2176,6 +2226,19 @@ fn route_sector_by_exact_handle(
     sector: crate::position_interface::SectorHandle,
 ) -> Option<&crate::fast_find_grid::GridSector> {
     grid_sector_for_position_handle(&engine.world.fast_grid.level, sector)
+}
+
+fn ai_move_goal_door(
+    engine: &EngineInner,
+    goal_sector: crate::position_interface::SectorHandle,
+    goal_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+) -> Option<crate::gate::DoorIndex> {
+    let exact_goal_sector =
+        goal_sector_index.map_or(goal_sector, |index| goal_sector.with_arena_index(index));
+    route_sector_by_exact_handle(engine, exact_goal_sector)
+        .filter(|sector| sector.sector_type.is_door())
+        .and_then(|sector| sector.door_index)
+        .map(crate::gate::DoorIndex)
 }
 
 /// Timeout queue entry for a Move/Seek element whose pathfind failed.
@@ -7412,13 +7475,7 @@ impl EngineInner {
             // goal. A sector-only FindPathGates search cannot represent that
             // terminal condition because a door sector is not an ordinary
             // motion area.
-            let door_goal = self
-                .grid_sector_by_number(crate::sector::SectorNumber::new(
-                    u16::from(goal_sector) as i16
-                ))
-                .filter(|sector| sector.sector_type.is_door())
-                .and_then(|sector| sector.door_index)
-                .map(crate::gate::DoorIndex);
+            let door_goal = ai_move_goal_door(self, goal_sector, goal_sector_index);
             let gate_path = self.scripts.mission.as_ref().and_then(|_| {
                 if let Some(door_index) = door_goal {
                     crate::gate::find_path_into_door_with_sector_index(
@@ -7752,12 +7809,7 @@ impl EngineInner {
         let level = &self.world.fast_grid.level;
         let move_flags =
             crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
-        let exact_goal_sector =
-            goal_sector_index.map_or(goal_sector, |index| goal_sector.with_arena_index(index));
-        let door_goal = route_sector_by_exact_handle(self, exact_goal_sector)
-            .filter(|sector| sector.sector_type.is_door())
-            .and_then(|sector| sector.door_index)
-            .map(crate::gate::DoorIndex);
+        let door_goal = ai_move_goal_door(self, goal_sector, goal_sector_index);
         let goal = (intent.target_x, intent.target_y);
         find_ai_move_gate_path(
             &self.script_domains.interactables.doors,
