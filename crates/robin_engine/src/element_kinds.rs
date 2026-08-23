@@ -1234,6 +1234,9 @@ pub enum GameMaterial {
     Bush,
     Ice,
     Hole,
+    /// Original `RHMATERIAL_NUMBER_OF_MATERIALS` sentinel stored on ordinary
+    /// non-material projectile trajectory points.
+    NumberOfMaterials,
     LightShadow,
 }
 
@@ -1249,6 +1252,7 @@ impl GameMaterial {
             6 => Some(Self::Bush),
             7 => Some(Self::Ice),
             8 => Some(Self::Hole),
+            9 => Some(Self::NumberOfMaterials),
             10 => Some(Self::LightShadow),
             _ => None,
         }
@@ -1270,6 +1274,7 @@ impl GameMaterial {
             Self::Bush => 6,
             Self::Ice => 7,
             Self::Hole => 8,
+            Self::NumberOfMaterials => 9,
             Self::LightShadow => 10,
         }
     }

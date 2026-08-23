@@ -29,11 +29,27 @@ use super::EngineInner;
 use crate::bow_shot::{self, COIN_SCATTER_MIN, NUMBER_OF_COINS_IN_PURSE};
 use crate::coordinates::MapPoint;
 use crate::coordinates::WorldPoint3D;
-use crate::element::{Animation, DetectableType, Entity, EntityId, ObjectType};
-use crate::fast_find_grid::SectorHit;
+use crate::element::{Animation, DetectableType, ElementProjectile, Entity, EntityId, ObjectType};
+use crate::entity_id::EntityIdKind;
 
 /// Purse-impact FX id.
 const FX_PURSE_IMPACT: u32 = 506;
+
+#[cfg(test)]
+thread_local! {
+    static WATER_IMPACT_ORDER: std::cell::RefCell<Vec<&'static str>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
+#[cfg(test)]
+fn observe_water_impact_stage(stage: &'static str) {
+    WATER_IMPACT_ORDER.with(|order| order.borrow_mut().push(stage));
+}
+
+#[cfg(not(test))]
+#[inline]
+fn observe_water_impact_stage(_stage: &'static str) {}
 
 /// Per-material coin-shower FX ids.
 fn coin_fx_for_material(material: crate::element::GameMaterial) -> u32 {
@@ -49,6 +65,466 @@ fn coin_fx_for_material(material: crate::element::GameMaterial) -> u32 {
 }
 
 impl EngineInner {
+    fn add_projectile_water_titbit(&mut self, position: WorldPoint3D, layer: u16) {
+        use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
+        self.feedback.titbit_manager.add_titbit(
+            position,
+            layer,
+            TitbitKind::Plouf,
+            ElementHandle::INVALID,
+            0,
+            ElementHandle::INVALID,
+            false,
+            INVALID_ID,
+            true,
+            None,
+            None,
+        );
+        observe_water_impact_stage("titbit");
+    }
+
+    fn finish_projectile_water_impact(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        projectile_id: EntityId,
+        position: WorldPoint3D,
+        layer: u16,
+    ) {
+        let map = MapPoint::from_world_xyz(position.x, position.y, position.z);
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
+            crate::ai::NoiseType::Plouf,
+            map,
+            layer,
+            crate::parameters_ai::NOISE_VOLUME_PLOUF as u16,
+            position.z.max(0.0) as u16,
+            Some(projectile_id),
+        );
+        observe_water_impact_stage("noise");
+        self.feedback
+            .pending_side_effects
+            .sounds
+            .push(super::SoundCommand::Fx {
+                fx_id: 470,
+                position: map,
+                material: None,
+            });
+        observe_water_impact_stage("fx");
+    }
+
+    /// Execute Original's complete constructor/virtual-Hourglass/AddElement
+    /// boundary for a freshly thrown purse. The purse's creation order is
+    /// consumed first, but its entity-array slot is assigned only after any
+    /// child coins created by `HitObstacle` have been published.
+    pub(super) fn publish_new_purse(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        thrower: EntityId,
+        mut entity: Entity,
+    ) -> EntityId {
+        let creation_order = self.world.reserve_next_original_creation_order();
+        let (origin_map, origin_sector, origin_layer) = {
+            let thrower = self
+                .get_entity(thrower)
+                .unwrap_or_else(|| panic!("ThrowPurseAt lost required thrower {thrower}"));
+            let element = thrower.element_data();
+            (element.position_map(), element.sector(), element.layer())
+        };
+        let Entity::Projectile(purse) = &mut entity else {
+            panic!("ThrowPurseAt received a non-projectile entity")
+        };
+        assert_eq!(purse.object.object_type, ObjectType::Purse);
+        self.hydrate_unpublished_projectile(assets, purse);
+        self.materialize_terminal_projectile_runtime(assets, purse);
+
+        let exhausted = purse.advance_projectile_hourglass();
+        let old = purse.element.sprite.position_iface.old_position();
+        let new = purse.element.position();
+        let shield = bow_shot::projectile_shield_holder(
+            &self.world.entities,
+            purse.projectile.shooter,
+            old,
+            new,
+            purse.projectile.velocity_increment,
+        );
+
+        if let Some(holder) = shield {
+            let future_id =
+                EntityId::new(self.world.entities.len() as u32, EntityIdKind::Projectile);
+            self.process_projectile_tick_results(
+                sim,
+                assets,
+                vec![bow_shot::ArrowTickResult {
+                    arrow: future_id,
+                    hit_target: None,
+                    shield_hit: Some(holder),
+                    fx_target_hit: None,
+                    despawn: false,
+                    damage: 0,
+                    impact_fx: Some(FX_PURSE_IMPACT),
+                    impact_pos: self
+                        .expect_entity(holder, "purse primer shield holder")
+                        .element_data()
+                        .position_map(),
+                    human_hit_old_position: None,
+                }],
+            );
+        }
+        // TODO(original parity): Projectile::FindHumanVictim has no PURSE arm
+        // in its target-point switch and reads an uninitialized C++ point.
+        // Do not invent a belt/eyes anchor without a binary diagnostic that
+        // pins this undefined behavior for the shipped executable.
+
+        if exhausted && shield.is_none() {
+            let material = purse.element.material();
+            if material == crate::element::GameMaterial::Water || purse.projectile.dive {
+                let future_purse_id =
+                    EntityId::new(self.world.entities.len() as u32, EntityIdKind::Projectile);
+                let position = purse.element.position();
+                let layer = purse.element.layer();
+                self.add_projectile_water_titbit(position, layer);
+                purse.projectile.trajectory_frame_count = 0;
+                purse.projectile.trajectory.clear();
+                purse.projectile.trajectory_runtime.clear();
+                observe_water_impact_stage("reset");
+                self.finish_projectile_water_impact(sim, assets, future_purse_id, position, layer);
+            } else if material != crate::element::GameMaterial::Hole && !purse.projectile.disappear
+            {
+                let future_purse_id = EntityId::new(
+                    self.world.entities.len() as u32 + u32::from(NUMBER_OF_COINS_IN_PURSE),
+                    EntityIdKind::Projectile,
+                );
+                let impact_sound_position =
+                    self.burst_unpublished_purse(sim, assets, future_purse_id, purse);
+                self.feedback
+                    .pending_side_effects
+                    .sounds
+                    .push(super::SoundCommand::Fx {
+                        fx_id: FX_PURSE_IMPACT,
+                        position: impact_sound_position,
+                        material: None,
+                    });
+            }
+        }
+
+        // Derived Purse::Hourglass animation runs after every base branch,
+        // including synchronous HitObstacle child publication.
+        purse
+            .element
+            .sprite
+            .perform_virgin_increment(sim, crate::sprite::FrameProgression::SkipShadow);
+
+        // Original SetStartOfTrajectory follows the entire virtual call,
+        // including any synchronous obstacle/coin side effects.
+        purse.projectile.start_of_trajectory_x = origin_map.x;
+        purse.projectile.start_of_trajectory_y = origin_map.y;
+        purse.projectile.trajectory_origin_sector = origin_sector.map(|sector| sector.get());
+        purse.projectile.trajectory_origin_layer = origin_layer;
+        // TODO: retain the arena half of `origin_sector`; the legacy field is
+        // currently only the public u16 and must not be spatially guessed.
+
+        let id = self.add_entity_with_reserved_creation_order(entity, creation_order);
+        if let Entity::Projectile(purse) = self.expect_entity(id, "published primed purse") {
+            for &child in &purse.projectile.purse.child_coins {
+                let Entity::Projectile(coin) = self.expect_entity(child, "published purse child")
+                else {
+                    panic!("purse child {child} is not a projectile")
+                };
+                assert_eq!(coin.projectile.purse.source_purse, Some(id));
+            }
+        }
+        id
+    }
+
+    fn hydrate_unpublished_projectile(
+        &self,
+        assets: &crate::engine::LevelAssets,
+        projectile: &mut ElementProjectile,
+    ) {
+        let prototype = assets
+            .accessory_sprite_prototypes
+            .get(&projectile.object.object_type)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing {:?} accessory master during pre-publication Hourglass",
+                    projectile.object.object_type
+                )
+            });
+        let position_iface = projectile.element.sprite.position_iface.clone();
+        projectile.element.sprite = prototype.clone();
+        projectile.element.sprite.position_iface = position_iface;
+        projectile
+            .element
+            .sprite
+            .force_animation(Animation::ObjectFlying, 0);
+    }
+
+    /// Replace the generated free-flight sentinel on the exact terminal raw
+    /// impact point. ComputeTrajectory has already bound the terminal
+    /// obstacle, so this lookup must use that identity and must not resolve
+    /// membership again.
+    fn materialize_terminal_projectile_runtime(
+        &self,
+        assets: &crate::engine::LevelAssets,
+        projectile: &mut ElementProjectile,
+    ) {
+        if !projectile.projectile.terminal_material_pending {
+            return;
+        }
+        assert_eq!(
+            projectile.projectile.trajectory_runtime.len(),
+            projectile.projectile.trajectory.len(),
+            "generated projectile trajectory/runtime arrays lost lockstep"
+        );
+        let impact_index = usize::from(
+            projectile
+                .projectile
+                .terminal_material_impact_index
+                .take()
+                .expect("terminal material pending without exact raw collision waypoint"),
+        );
+        assert!(
+            impact_index < projectile.projectile.trajectory.len(),
+            "terminal raw collision waypoint is outside the generated trajectory"
+        );
+        let raw_impact = projectile.projectile.trajectory[impact_index]
+            .position
+            .to_map();
+        let obstacles = self.sight_obstacles(assets);
+        let obstacle = projectile.element.obstacle_index().map(|handle| {
+            obstacles
+                .get(usize::from(handle))
+                .unwrap_or_else(|| panic!("terminal projectile obstacle {handle} disappeared"))
+        });
+        let material = if projectile.projectile.dive {
+            crate::element::GameMaterial::Water
+        } else if projectile.projectile.disappear {
+            crate::element::GameMaterial::Hole
+        } else {
+            assets
+                .material_sectors
+                .material_at_with_obstacle(obstacle, raw_impact)
+        };
+        projectile.projectile.trajectory_runtime[impact_index].bounce = true;
+        projectile.projectile.trajectory_runtime[impact_index].material = material.as_u32();
+        projectile.projectile.terminal_material_pending = false;
+    }
+
+    pub(super) fn publish_primed_coin(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        mut entity: Entity,
+        corrected_source: MapPoint,
+        source_sector: Option<crate::position_interface::SectorHandle>,
+        source_layer: u16,
+    ) -> EntityId {
+        let creation_order = self.world.reserve_next_original_creation_order();
+        let future_id = EntityId::new(self.world.entities.len() as u32, EntityIdKind::Projectile);
+        let Entity::Projectile(coin) = &mut entity else {
+            panic!("coin primer received non-projectile entity")
+        };
+        assert_eq!(coin.object.object_type, ObjectType::Coin);
+        self.hydrate_unpublished_projectile(assets, coin);
+        self.materialize_terminal_projectile_runtime(assets, coin);
+        let exhausted = coin.advance_projectile_hourglass();
+        let shield = bow_shot::projectile_shield_holder(
+            &self.world.entities,
+            coin.projectile.shooter,
+            coin.element.sprite.position_iface.old_position(),
+            coin.element.position(),
+            coin.projectile.velocity_increment,
+        );
+        if let Some(holder) = shield {
+            self.process_projectile_tick_results(
+                sim,
+                assets,
+                vec![bow_shot::ArrowTickResult {
+                    arrow: future_id,
+                    hit_target: None,
+                    shield_hit: Some(holder),
+                    fx_target_hit: None,
+                    despawn: false,
+                    damage: 0,
+                    impact_fx: None,
+                    impact_pos: self
+                        .expect_entity(holder, "coin primer shield holder")
+                        .element_data()
+                        .position_map(),
+                    human_hit_old_position: None,
+                }],
+            );
+        }
+        if exhausted && shield.is_none() {
+            let material = coin.element.material();
+            if material == crate::element::GameMaterial::Water || coin.projectile.dive {
+                let position = coin.element.position();
+                let layer = coin.element.layer();
+                self.add_projectile_water_titbit(position, layer);
+                coin.projectile.trajectory_frame_count = 0;
+                coin.projectile.trajectory.clear();
+                coin.projectile.trajectory_runtime.clear();
+                observe_water_impact_stage("reset");
+                self.finish_projectile_water_impact(sim, assets, future_id, position, layer);
+            } else if material != crate::element::GameMaterial::Hole && !coin.projectile.disappear {
+                if coin.projectile.purse.layer_goal == u16::MAX {
+                    coin.element.clear_layer();
+                } else {
+                    coin.element.set_layer(coin.projectile.purse.layer_goal);
+                }
+                coin.element.set_sector(coin.projectile.purse.sector_goal);
+                self.add_detectable_for_all_npc(future_id, DetectableType::Object);
+            }
+        }
+        coin.element
+            .sprite
+            .perform_virgin_increment(sim, crate::sprite::FrameProgression::SkipShadow);
+        coin.projectile.start_of_trajectory_x = corrected_source.x;
+        coin.projectile.start_of_trajectory_y = corrected_source.y;
+        coin.projectile.trajectory_origin_sector = source_sector.map(|sector| sector.get());
+        coin.projectile.trajectory_origin_layer = source_layer;
+        let id = self.add_entity_with_reserved_creation_order(entity, creation_order);
+        assert_eq!(
+            id, future_id,
+            "coin publication order changed during its virtual primer"
+        );
+        id
+    }
+
+    fn burst_unpublished_purse(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        future_purse_id: EntityId,
+        purse: &mut ElementProjectile,
+    ) -> MapPoint {
+        assert!(
+            purse.projectile.purse.number_of_coins >= NUMBER_OF_COINS_IN_PURSE,
+            "purse {future_purse_id} has {} coins before required three-coin burst",
+            purse.projectile.purse.number_of_coins
+        );
+        let shooter = purse
+            .projectile
+            .shooter
+            .unwrap_or_else(|| panic!("new purse {future_purse_id} lacks required shooter"));
+        let move_box = *self
+            .expect_entity(shooter, "purse burst shooter")
+            .position_iface()
+            .get_move_box();
+        let raw_impact = purse.element.position();
+        let raw_map = purse.element.position_map();
+        let layer = purse.element.layer();
+        let sector = purse.element.sector();
+        let mut box_at_pos = move_box.translated(raw_map);
+        let corrected_map = if layer != u16::MAX
+            && self
+                .world
+                .fast_grid
+                .find_authorized_position(&mut box_at_pos, layer)
+        {
+            box_at_pos.center()
+        } else {
+            raw_map
+        };
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
+            crate::ai::NoiseType::Pling,
+            corrected_map,
+            layer,
+            crate::parameters_ai::NOISE_VOLUME_PLING as u16,
+            raw_impact.z.max(0.0) as u16,
+            Some(future_purse_id),
+        );
+
+        let material = purse.element.material();
+
+        let mut children = Vec::with_capacity(usize::from(NUMBER_OF_COINS_IN_PURSE));
+        for _ in 0..NUMBER_OF_COINS_IN_PURSE {
+            let mut vector = crate::coordinates::MapVec::ZERO;
+            for _ in 0..bow_shot::COIN_SCATTER_ATTEMPTS {
+                let direction =
+                    (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 15)
+                        as i16;
+                let magnitude = COIN_SCATTER_MIN
+                    + (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 31)
+                        as f32;
+                let (ux, uy) = crate::element::direction_vector_16(direction);
+                let candidate_vector = crate::coordinates::MapVec {
+                    x: ux * magnitude,
+                    y: uy * magnitude * crate::position_interface::ASPECT_RATIO,
+                };
+                let candidate = MapPoint::new(
+                    raw_map.x + candidate_vector.x,
+                    raw_map.y + candidate_vector.y,
+                );
+                if layer != u16::MAX
+                    && self.world.fast_grid.is_straight_movement_authorized(
+                        corrected_map,
+                        candidate,
+                        layer,
+                        &move_box,
+                    )
+                {
+                    vector = candidate_vector;
+                    break;
+                }
+            }
+            let stored_goal = MapPoint::new(corrected_map.x + vector.x, corrected_map.y + vector.y);
+            let target =
+                self.position_to_point_3d(assets, sector, layer, stored_goal.x, stored_goal.y);
+            let coin = {
+                let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+                    fast_find_grid: &self.world.fast_grid,
+                    layer,
+                    sight_obstacles: self.sight_obstacles(assets),
+                    water_zones: Some(&assets.water_zones),
+                };
+                bow_shot::spawn_coin(
+                    Some(future_purse_id),
+                    raw_impact,
+                    target,
+                    layer,
+                    layer,
+                    sector,
+                    bow_shot::APEX_COIN,
+                    Some(&obstacle_check),
+                )
+            };
+            children.push(self.publish_primed_coin(
+                sim,
+                assets,
+                coin,
+                corrected_map,
+                sector,
+                layer,
+            ));
+        }
+        assert_eq!(
+            self.world.entities.len() as u32,
+            future_purse_id.index(),
+            "synchronous purse burst published an unexpected number of elements"
+        );
+        purse.projectile.purse.number_of_coins -= NUMBER_OF_COINS_IN_PURSE;
+        purse.projectile.purse.child_coins = children;
+        purse.projectile.purse.burst = true;
+        // Original decrements/books every child before PlayCoinFx, then
+        // deactivates the purse after the sound call.
+        self.feedback
+            .pending_side_effects
+            .sounds
+            .push(super::SoundCommand::Fx {
+                fx_id: coin_fx_for_material(material),
+                position: raw_map,
+                material: None,
+            });
+        purse.element.active = false;
+        raw_map
+    }
+
     /// Per-frame tick for purses and coins.  Drives:
     ///
     /// * **Purse trajectory advancement** until impact, then burst.
@@ -83,7 +559,7 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         id: EntityId,
     ) -> bool {
-        let (was_flying, object_type, base_result) = match self.get_entity(id) {
+        let (was_flying, object_type, mut base_result) = match self.get_entity(id) {
             Some(Entity::Projectile(projectile)) => (
                 projectile.projectile.flying,
                 projectile.object.object_type,
@@ -103,7 +579,7 @@ impl EngineInner {
             PurseLanded { pos: WorldPoint3D, layer: u16 },
             CoinLanded { pos: WorldPoint3D, layer: u16 },
         }
-        let impact = {
+        let (mut impact, segment) = {
             let Some(Entity::Projectile(proj)) = self.world.entities.get_mut(id) else {
                 return false;
             };
@@ -112,13 +588,13 @@ impl EngineInner {
                 || !proj.element.active
                 || !proj.projectile.flying
             {
-                None
+                (None, None)
             } else {
                 // Advance trajectory by one frame via the shared helper that
                 // also drives arrow ticks. Returns true when the trajectory
                 // ran out — the projectile has landed.
-                let exhausted = proj.advance_trajectory_one_frame();
-                exhausted.then(|| match object_type {
+                let exhausted = proj.advance_projectile_hourglass();
+                let impact = exhausted.then(|| match object_type {
                     ObjectType::Purse => ImpactKind::PurseLanded {
                         pos: proj.element.position(),
                         layer: proj.element.layer(),
@@ -128,9 +604,55 @@ impl EngineInner {
                         layer: proj.element.layer(),
                     },
                     _ => unreachable!(),
-                })
+                });
+                (
+                    impact,
+                    Some((
+                        proj.projectile.shooter,
+                        proj.element.sprite.position_iface.old_position(),
+                        proj.element.position(),
+                        proj.projectile.velocity_increment,
+                    )),
+                )
             }
         };
+
+        // Projectile::Hourglass checks shields after movement and returns
+        // before HitObstacle. Purse/Coin inherit the base no-op HitShield;
+        // only the impact sound/parry side effect and early return apply.
+        if let Some((shooter, old, new, increment)) = segment {
+            if let Some(holder) = crate::bow_shot::projectile_shield_holder(
+                &self.world.entities,
+                shooter,
+                old,
+                new,
+                increment,
+            ) {
+                impact = None;
+                self.process_projectile_tick_results(
+                    sim,
+                    assets,
+                    vec![crate::bow_shot::ArrowTickResult {
+                        arrow: id,
+                        hit_target: None,
+                        shield_hit: Some(holder),
+                        fx_target_hit: None,
+                        despawn: false,
+                        damage: 0,
+                        impact_fx: (object_type == ObjectType::Purse).then_some(FX_PURSE_IMPACT),
+                        impact_pos: self
+                            .get_entity(holder)
+                            .expect("projectile shield holder vanished during Hourglass")
+                            .element_data()
+                            .position_map(),
+                        human_hit_old_position: None,
+                    }],
+                );
+            }
+            // TODO(original parity): Purse FindHumanVictim is formal C++ UB
+            // because its switch initializes target points only for
+            // Arrow/Apple/Stone. Skip rather than inventing a belt anchor.
+        }
 
         // ── Phase 2: handle impacts ────────────────────────────────
         //
@@ -138,16 +660,63 @@ impl EngineInner {
         // call back into `&mut self` for noise broadcasts, detectable
         // dispatch, and child-coin spawning.
         if let Some(kind) = impact {
-            let resolution = self.apply_projectile_landing_resolution(assets, id);
-            let landed_layer = resolution
-                .filter(|r| !r.blocked_by_motion_obstacle)
-                .map(|r| r.layer);
             match kind {
                 ImpactKind::PurseLanded { pos, layer } => {
-                    self.burst_purse(sim, assets, id, pos, landed_layer.unwrap_or(layer))
+                    let (material, dive, disappear) =
+                        match self.expect_entity(id, "registered purse terminal continuation") {
+                            Entity::Projectile(purse) => (
+                                purse.element.material(),
+                                purse.projectile.dive,
+                                purse.projectile.disappear,
+                            ),
+                            _ => panic!("registered purse terminal changed entity kind"),
+                        };
+                    if material == crate::element::GameMaterial::Water || dive {
+                        self.add_projectile_water_titbit(pos, layer);
+                        if let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(id) {
+                            purse.projectile.trajectory_frame_count = 0;
+                            purse.projectile.trajectory.clear();
+                            purse.projectile.trajectory_runtime.clear();
+                            purse.element.active = false;
+                        }
+                        observe_water_impact_stage("reset");
+                        self.finish_projectile_water_impact(sim, assets, id, pos, layer);
+                        base_result = false;
+                    } else if material == crate::element::GameMaterial::Hole || disappear {
+                        let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(id)
+                        else {
+                            unreachable!("registered hole purse changed entity kind")
+                        };
+                        purse.element.active = false;
+                        base_result = false;
+                    } else {
+                        // ComputeTrajectory already bound exact dry terminal
+                        // sector/layer/obstacle membership; do not re-query.
+                        self.burst_purse(sim, assets, id, pos, layer);
+                    }
                 }
                 ImpactKind::CoinLanded { pos, layer } => {
-                    self.coin_landed(id, pos, landed_layer.unwrap_or(layer))
+                    let (material, dive, disappear) =
+                        match self.expect_entity(id, "registered coin terminal continuation") {
+                            Entity::Projectile(coin) => (
+                                coin.element.material(),
+                                coin.projectile.dive,
+                                coin.projectile.disappear,
+                            ),
+                            _ => panic!("registered coin terminal changed entity kind"),
+                        };
+                    if material == crate::element::GameMaterial::Water || dive {
+                        self.add_projectile_water_titbit(pos, layer);
+                        if let Some(Entity::Projectile(coin)) = self.world.entities.get_mut(id) {
+                            coin.projectile.trajectory_frame_count = 0;
+                            coin.projectile.trajectory.clear();
+                            coin.projectile.trajectory_runtime.clear();
+                        }
+                        observe_water_impact_stage("reset");
+                        self.finish_projectile_water_impact(sim, assets, id, pos, layer);
+                    } else if material != crate::element::GameMaterial::Hole && !disappear {
+                        self.coin_landed(id, pos, layer);
+                    }
                 }
             }
         }
@@ -165,8 +734,7 @@ impl EngineInner {
         let should_prune = matches!(
             self.get_entity(id),
             Some(Entity::Projectile(p))
-                if p.element.active
-                    && p.object.object_type == ObjectType::Purse
+                if p.object.object_type == ObjectType::Purse
                     && p.projectile.purse.burst
                     && !p.projectile.purse.child_coins.is_empty()
         );
@@ -206,7 +774,15 @@ impl EngineInner {
             let progression = if was_flying {
                 crate::sprite::FrameProgression::SkipShadow
             } else {
-                projectile.object.animation = crate::element::Animation::ObjectBursting;
+                if projectile.element.sprite.last_action
+                    != crate::element::Animation::ObjectBursting
+                {
+                    projectile.object.animation = crate::element::Animation::ObjectBursting;
+                    projectile
+                        .element
+                        .sprite
+                        .force_animation(crate::element::Animation::ObjectBursting, 0);
+                }
                 crate::sprite::FrameProgression::FreezeWhenTerminated
             };
             projectile
@@ -242,18 +818,19 @@ impl EngineInner {
         // ── Resolve the shooter's MoveBox ──────────────────────────
         //
         // Used both for impact-position correction and the per-coin
-        // accessibility loop.  Without a shooter (e.g. a purse loaded
-        // from a save with no live thrower), fall back to a 1-unit box
-        // so the grid checks still terminate.
-        let shooter_id = self.get_entity(purse_id).and_then(|e| match e {
-            Entity::Projectile(p) => p.projectile.shooter,
-            _ => None,
-        });
-        let shooter_move_box = shooter_id
-            .and_then(|sid| self.get_entity(sid))
-            .map(|e| e.position_iface())
-            .map(|pi| *pi.get_move_box())
-            .unwrap_or_else(|| crate::coordinates::MoveBox::from_coords(-1.0, -1.0, 1.0, 1.0));
+        // accessibility loop. Original unconditionally dereferences
+        // GetShooter here, so a missing thrower is corrupted state.
+        let shooter_id = match self.expect_entity(purse_id, "purse burst owner") {
+            Entity::Projectile(purse) => purse
+                .projectile
+                .shooter
+                .unwrap_or_else(|| panic!("purse {purse_id} burst without required shooter")),
+            _ => panic!("purse burst owner changed entity kind"),
+        };
+        let shooter_move_box = *self
+            .expect_entity(shooter_id, "purse burst shooter")
+            .position_iface()
+            .get_move_box();
 
         // ── Position correction ────────────────────────────────────
         //
@@ -266,10 +843,11 @@ impl EngineInner {
             y: impact_pos.y,
         };
         let mut box_at_pos = shooter_move_box.translated(MapPoint::new(impact_pos.x, impact_pos.y));
-        if self
-            .world
-            .fast_grid
-            .find_authorized_position(&mut box_at_pos, layer)
+        if layer != u16::MAX
+            && self
+                .world
+                .fast_grid
+                .find_authorized_position(&mut box_at_pos, layer)
         {
             corrected_2d = box_at_pos.center();
         }
@@ -291,54 +869,15 @@ impl EngineInner {
             Some(purse_id),
         );
 
-        // Resolve the landing material via the obstacle-aware
-        // `material_at_with_obstacle`, called from the purse / coin
-        // trajectory builder at every landing point.  Branches:
-        //   * no obstacle: scan SECTOR_SOUND polygons, fall back to the
-        //     default material.
-        //   * obstacle present: iterate the obstacle's material
-        //     sub-sectors, falling back to the obstacle's own material.
-        //     Honours heterogeneous surfaces — e.g. a stone inlay on a
-        //     wooden platform.
-        // Result is written onto the element so `coin_fx_for_material`
-        // (and later readers) see the correct material instead of the
-        // default `Ground`.
-        let impact_map = crate::coordinates::MapPoint::new(source_pos.x, source_pos.y);
-        let landing_obstacle_idx = self.get_entity(purse_id).and_then(|e| match e {
-            Entity::Projectile(p) => p.element.obstacle_index(),
-            _ => None,
-        });
-        let obstacle_list = self.sight_obstacles(assets);
-        let landing_obstacle = landing_obstacle_idx.and_then(|h| obstacle_list.get(usize::from(h)));
-        let material = assets
-            .material_sectors
-            .material_at_with_obstacle(landing_obstacle, impact_map);
-        if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(purse_id) {
-            p.element.set_material(material);
-        }
-
-        // PlayCoinFx — material-keyed coin-shower SFX.  Use the raw
-        // `impact_pos` (uncorrected 2D position captured before
-        // `find_authorized_position` shifts it) instead of the
-        // corrected `source_pos`.
-        self.feedback
-            .pending_side_effects
-            .sounds
-            .push(super::SoundCommand::Fx {
-                fx_id: coin_fx_for_material(material),
-                position: MapPoint::new(impact_pos.x, impact_pos.y),
-                material: None,
-            });
-
-        // Bonus impact FX (the purse hitting the ground itself).
-        self.feedback
-            .pending_side_effects
-            .sounds
-            .push(super::SoundCommand::Fx {
-                fx_id: FX_PURSE_IMPACT,
-                position: MapPoint::new(source_pos.x, source_pos.y),
-                material: None,
-            });
+        // ComputeTrajectory authored the terminal material in the waypoint
+        // runtime and Projectile::Hourglass installed it before dispatching
+        // HitObstacle. Do not perform a second spatial/material query here:
+        // it can select a different overlapping obstacle after membership
+        // has already been reconciled.
+        let material = match self.expect_entity(purse_id, "purse impact material") {
+            Entity::Projectile(purse) => purse.element.material(),
+            _ => panic!("purse impact material owner changed entity kind"),
+        };
 
         // ── Spawn child coins ──────────────────────────────────────
         //
@@ -349,10 +888,7 @@ impl EngineInner {
         let mut spawned_children: Vec<EntityId> =
             Vec::with_capacity(NUMBER_OF_COINS_IN_PURSE as usize);
         for _ in 0..NUMBER_OF_COINS_IN_PURSE {
-            let mut goal_2d = MapPoint {
-                x: source_pos.x,
-                y: source_pos.y,
-            };
+            let mut scatter = crate::coordinates::MapVec::ZERO;
             for _ in 0..bow_shot::COIN_SCATTER_ATTEMPTS {
                 // Original: `RHElementPurse::Burst` in
                 // `original-code/RHElementPurse.cpp:138-181` uses
@@ -369,19 +905,22 @@ impl EngineInner {
                 let scatter_x = ux * magnitude;
                 let scatter_y = uy * magnitude * crate::position_interface::ASPECT_RATIO;
                 let candidate = MapPoint {
-                    x: source_pos.x + scatter_x,
-                    y: source_pos.y + scatter_y,
+                    x: impact_pos.x + scatter_x,
+                    y: impact_pos.y + scatter_y,
                 };
-                if self.world.fast_grid.is_straight_movement_authorized(
-                    MapPoint::new(corrected_2d.x, corrected_2d.y),
-                    candidate,
-                    layer,
-                    &shooter_move_box,
-                ) {
-                    goal_2d = candidate;
+                if layer != u16::MAX
+                    && self.world.fast_grid.is_straight_movement_authorized(
+                        MapPoint::new(corrected_2d.x, corrected_2d.y),
+                        candidate,
+                        layer,
+                        &shooter_move_box,
+                    )
+                {
+                    scatter = crate::coordinates::MapVec::new(scatter_x, scatter_y);
                     break;
                 }
             }
+            let goal_2d = MapPoint::new(corrected_2d.x + scatter.x, corrected_2d.y + scatter.y);
             // Compute the goal Z via the projection-area top plane at
             // `(goal_2d.x, goal_2d.y)` on the purse's sector.  A
             // scattered coin landing on a ramp / stairs / neighbouring
@@ -396,30 +935,27 @@ impl EngineInner {
             let target_pos: WorldPoint3D =
                 self.position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y);
 
-            let goal_grid_pt = crate::coordinates::MapPoint::new(goal_2d.x, goal_2d.y);
-            let target_sector =
-                match self
-                    .world
-                    .fast_grid
-                    .get_sector(goal_grid_pt, goal_grid_pt, layer)
-                {
-                    SectorHit::Found { sector_number, .. } => u16::try_from(sector_number.get())
-                        .ok()
-                        .and_then(crate::position_interface::SectorHandle::new),
-                    SectorHit::Blocked | SectorHit::None => None,
+            let target_sector = purse_sector;
+            let coin = {
+                let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+                    fast_find_grid: &self.world.fast_grid,
+                    layer,
+                    sight_obstacles: self.sight_obstacles(assets),
+                    water_zones: Some(&assets.water_zones),
                 };
-            let coin = bow_shot::spawn_coin(
-                Some(purse_id),
-                source_pos,
-                target_pos,
-                layer,
-                layer,
-                target_sector,
-                bow_shot::APEX_COIN,
-                None,
-            );
-            let coin_id = self.add_entity(coin);
-            self.attach_accessory_sprite(assets, coin_id);
+                bow_shot::spawn_coin(
+                    Some(purse_id),
+                    impact_pos,
+                    target_pos,
+                    layer,
+                    layer,
+                    target_sector,
+                    bow_shot::APEX_COIN,
+                    Some(&obstacle_check),
+                )
+            };
+            let coin_id =
+                self.publish_primed_coin(sim, assets, coin, corrected_2d, purse_sector, layer);
             spawned_children.push(coin_id);
         }
 
@@ -427,14 +963,11 @@ impl EngineInner {
         //
         // The invariant `number_of_coins >= NUMBER_OF_COINS_IN_PURSE`
         // holds because `spawn_purse` initialises the counter to
-        // `NUMBER_OF_COINS_IN_PURSE`.  We use `saturating_sub`
-        // defensively so a save-loaded purse with a stale 0 counter
-        // still terminates cleanly.  The purse switches into its
-        // `ObjectBursting` animation row and becomes non-pickable; the
-        // element itself stays alive (the empty purse sprite remains
-        // as decoration).
+        // `NUMBER_OF_COINS_IN_PURSE`; a violated required state is a port/save
+        // error, not a zero-coin gameplay branch. The inactive purse remains
+        // published so child `source_purse` handles retain their identity.
         if let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(purse_id) {
-            debug_assert!(
+            assert!(
                 purse.projectile.purse.number_of_coins >= NUMBER_OF_COINS_IN_PURSE,
                 "purse {purse_id:?} should hold ≥ {NUMBER_OF_COINS_IN_PURSE} coins at burst time, \
                  found {}",
@@ -442,16 +975,37 @@ impl EngineInner {
             );
             purse.projectile.purse.burst = true;
             purse.projectile.purse.child_coins = spawned_children;
-            purse.projectile.purse.number_of_coins = purse
-                .projectile
-                .purse
-                .number_of_coins
-                .saturating_sub(NUMBER_OF_COINS_IN_PURSE);
-            purse.object.animation = Animation::ObjectBursting;
+            purse.projectile.purse.number_of_coins -= NUMBER_OF_COINS_IN_PURSE;
             // Burst does NOT mark the purse as taken — the takable
             // flag only flips when the player explicitly takes one of
             // its child coins and the pickup routes through `take_purse`.
         }
+
+        // PlayCoinFx follows every child AddElement and the purse bookkeeping
+        // in Original, but still precedes SetActive(false).
+        self.feedback
+            .pending_side_effects
+            .sounds
+            .push(super::SoundCommand::Fx {
+                fx_id: coin_fx_for_material(material),
+                position: MapPoint::new(impact_pos.x, impact_pos.y),
+                material: None,
+            });
+        let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(purse_id) else {
+            unreachable!("bookkept purse changed entity kind before deactivation")
+        };
+        purse.element.active = false;
+
+        // Projectile::Hourglass calls PlayImpactSound only after the virtual
+        // purse HitObstacle returns (and therefore after deactivation).
+        self.feedback
+            .pending_side_effects
+            .sounds
+            .push(super::SoundCommand::Fx {
+                fx_id: FX_PURSE_IMPACT,
+                position: MapPoint::new(impact_pos.x, impact_pos.y),
+                material: None,
+            });
 
         tracing::debug!(
             ?purse_id,
@@ -467,29 +1021,19 @@ impl EngineInner {
     /// coin as a `DETECTABLE_OBJECT` for every NPC so soldiers'
     /// `EventSeesObject` fires.  `layer` is the layer the trajectory
     /// finished at (used as fallback when no goal layer was recorded).
-    fn coin_landed(&mut self, coin_id: EntityId, impact_pos: WorldPoint3D, layer: u16) {
+    fn coin_landed(&mut self, coin_id: EntityId, impact_pos: WorldPoint3D, _layer: u16) {
         if let Some(Entity::Projectile(coin)) = self.world.entities.get_mut(coin_id) {
             // Snap to the resolved goal stored at spawn.  Falls back to
             // the trajectory-end layer when the scatter-time
             // accessibility search couldn't pin a goal sector (no
             // shooter MoveBox / unreachable scatter target).
-            coin.element
-                .set_layer(if coin.projectile.purse.layer_goal != 0 {
-                    coin.projectile.purse.layer_goal
-                } else {
-                    layer
-                });
-            if let Some(sg) = coin.projectile.purse.sector_goal {
-                coin.element.set_sector(Some(sg));
+            let goal_layer = coin.projectile.purse.layer_goal;
+            if goal_layer == u16::MAX {
+                coin.element.clear_layer();
+            } else {
+                coin.element.set_layer(goal_layer);
             }
-            // Eager `ObjectBursting` write — collapses what would
-            // otherwise be a one-frame gap before the next animation
-            // tick switches it; observably identical (the per-tick
-            // animation driver in `animation.rs` only advances frames,
-            // it doesn't re-check last-animation), and keeps the
-            // impact handler the single source of truth for the
-            // bursting state.
-            coin.object.animation = Animation::ObjectBursting;
+            coin.element.set_sector(coin.projectile.purse.sector_goal);
         }
 
         // Register as detectable — the AI distraction hook.  Per coin
@@ -552,6 +1096,35 @@ mod tests {
     use super::*;
     use crate::element::{ElementData, ElementProjectile, ObjectData, ProjectileData};
 
+    fn purse_test_assets() -> crate::engine::LevelAssets {
+        use crate::sprite::Sprite;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use std::sync::Arc;
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[Animation::ObjectFlying as usize] = 16;
+        conversion[Animation::ObjectBursting as usize] = 32;
+        let script = SpriteScript {
+            action_id: Animation::ObjectFlying as u16,
+            action_done: 4,
+            frame_ids: vec![1, 2, 3, 4, 5],
+            delays: vec![0; 5],
+            distances: vec![0; 5],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 5],
+            sound_ids: vec![0; 5],
+            ..Default::default()
+        };
+        let prototype = Sprite::new(Arc::new(vec![script; 33]), Arc::new(conversion));
+        let mut assets = crate::engine::LevelAssets::new();
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Purse, prototype.clone());
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Coin, prototype);
+        assets
+    }
+
     /// Place a flying purse with an empty trajectory so it lands on the
     /// next tick — easy to test the burst → coin spawn pipeline without
     /// the throw-velocity setup.
@@ -561,6 +1134,18 @@ mod tests {
         layer: u16,
         thrower: Option<EntityId>,
     ) -> EntityId {
+        let thrower = thrower.or_else(|| {
+            Some(engine.add_entity(Entity::Pc(crate::element::ActorPc {
+                element: ElementData {
+                    kind: crate::element::ElementKind::ActorPc,
+                    active: true,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: Default::default(),
+            })))
+        });
         let mut projectile = ProjectileData {
             flying: true,
             shooter: thrower,
@@ -589,8 +1174,91 @@ mod tests {
         engine.add_entity(entity)
     }
 
+    fn landing_coin(material: crate::element::GameMaterial, dive: bool, disappear: bool) -> Entity {
+        let pos = WorldPoint3D::new(100.0, 200.0, 0.0);
+        let mut element = ElementData {
+            kind: crate::element::ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        };
+        element.set_position(pos);
+        element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
+        element.set_layer(0);
+        element.set_material(material);
+        Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                associated_action: crate::profiles::Action::Purse,
+                object_type: ObjectType::Coin,
+                animation: Animation::ObjectFlying,
+                quantity: 1,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                flying: true,
+                dive,
+                disappear,
+                ..Default::default()
+            },
+        })
+    }
+
     fn tick_purses(engine: &mut EngineInner, assets: &crate::engine::LevelAssets) {
         engine.with_simulation_context(|engine, sim| engine.tick_purses_and_coins(sim, assets));
+    }
+
+    #[test]
+    fn generated_runtime_keeps_free_sentinel_and_materializes_exact_collision_point() {
+        use crate::element::{GameMaterial, TrajectoryPoint, TrajectoryPointRuntime};
+
+        let engine = EngineInner::new();
+        let mut projectile = ElementProjectile {
+            element: ElementData {
+                kind: crate::element::ElementKind::ObjectProjectile,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type: ObjectType::Coin,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                trajectory: vec![
+                    TrajectoryPoint {
+                        position: WorldPoint3D::new(5.0, 0.0, 5.0),
+                        time: 2,
+                    },
+                    TrajectoryPoint {
+                        position: WorldPoint3D::new(10.0, 0.0, 0.0),
+                        time: 1,
+                    },
+                ],
+                trajectory_runtime: vec![
+                    TrajectoryPointRuntime {
+                        bounce: false,
+                        material: GameMaterial::NumberOfMaterials.as_u32(),
+                    };
+                    2
+                ],
+                terminal_material_pending: true,
+                terminal_material_impact_index: Some(1),
+                ..Default::default()
+            },
+        };
+        engine.materialize_terminal_projectile_runtime(
+            &crate::engine::LevelAssets::new(),
+            &mut projectile,
+        );
+        assert_eq!(
+            GameMaterial::from_u32(projectile.projectile.trajectory_runtime[0].material),
+            GameMaterial::NumberOfMaterials
+        );
+        assert!(!projectile.projectile.trajectory_runtime[0].bounce);
+        assert_eq!(
+            GameMaterial::from_u32(projectile.projectile.trajectory_runtime[1].material),
+            GameMaterial::Ground
+        );
+        assert!(projectile.projectile.trajectory_runtime[1].bounce);
+        assert!(!projectile.projectile.terminal_material_pending);
     }
 
     #[test]
@@ -607,7 +1275,7 @@ mod tests {
             None,
         );
 
-        let assets = crate::engine::LevelAssets::new();
+        let assets = purse_test_assets();
         tick_purses(&mut engine, &assets);
 
         // Purse should be marked as burst with N child coin handles.
@@ -628,8 +1296,9 @@ mod tests {
             "burst should leave the purse takable until take_purse fires"
         );
         assert!(!p.projectile.flying, "burst purse should no longer fly");
-        // Animation switched to bursting row.
-        assert_eq!(p.object.animation, Animation::ObjectBursting);
+        // The same-call derived SkipShadow tail retains ObjectFlying;
+        // ObjectBursting is selected on the next grounded Hourglass.
+        assert_eq!(p.object.animation, Animation::ObjectFlying);
 
         // Each child coin should be present, point back at the purse,
         // and start out flying along its own trajectory.
@@ -642,6 +1311,215 @@ mod tests {
             assert_eq!(c.object.object_type, ObjectType::Coin);
             assert_eq!(c.projectile.purse.source_purse, Some(purse_id));
         }
+    }
+
+    #[test]
+    fn inactive_grounded_purse_enters_bursting_once_then_keeps_progressing() {
+        let mut engine = EngineInner::new();
+        let assets = purse_test_assets();
+        let purse_id =
+            spawn_landing_purse(&mut engine, WorldPoint3D::new(100.0, 200.0, 0.0), 0, None);
+        let prototype = assets
+            .accessory_sprite_prototypes
+            .get(&ObjectType::Purse)
+            .expect("test purse sprite prototype")
+            .clone();
+        let Some(Entity::Projectile(purse)) = engine.world.entities.get_mut(purse_id) else {
+            unreachable!()
+        };
+        purse.element.sprite = prototype;
+        purse
+            .element
+            .sprite
+            .force_animation(Animation::ObjectFlying, 0);
+        crate::sim_rng::with_seed(0xB057, |sim| {
+            engine.tick_purse_or_coin(sim, &assets, purse_id)
+        });
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("burst purse disappeared after landing tick")
+        };
+        assert!(!purse.element.active);
+        assert_eq!(purse.element.sprite.last_action, Animation::ObjectFlying);
+
+        crate::sim_rng::with_seed(0xB057, |sim| {
+            engine.tick_purse_or_coin(sim, &assets, purse_id)
+        });
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("inactive purse disappeared on grounded Hourglass")
+        };
+        assert_eq!(purse.object.animation, Animation::ObjectBursting);
+        assert_eq!(purse.element.sprite.last_action, Animation::ObjectBursting);
+        assert_eq!(purse.element.sprite.current_row, 32);
+        assert_eq!(purse.element.sprite.current_frame, 1);
+
+        crate::sim_rng::with_seed(0xB057, |sim| {
+            engine.tick_purse_or_coin(sim, &assets, purse_id)
+        });
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("already-bursting purse disappeared")
+        };
+        assert_eq!(purse.element.sprite.current_row, 32);
+        assert_eq!(
+            purse.element.sprite.current_frame, 2,
+            "already-bursting tail must not force frame zero again"
+        );
+    }
+
+    #[test]
+    fn registered_purse_water_and_hole_terminal_paths_never_burst() {
+        for (material, dive, disappear) in [
+            (crate::element::GameMaterial::Water, true, false),
+            (crate::element::GameMaterial::Hole, false, true),
+        ] {
+            let mut engine = EngineInner::new();
+            let purse_id =
+                spawn_landing_purse(&mut engine, WorldPoint3D::new(100.0, 200.0, 0.0), 0, None);
+            let Some(Entity::Projectile(purse)) = engine.world.entities.get_mut(purse_id) else {
+                unreachable!()
+            };
+            purse.element.set_material(material);
+            purse.projectile.dive = dive;
+            purse.projectile.disappear = disappear;
+
+            let assets = purse_test_assets();
+            let result = engine.with_simulation_context(|engine, sim| {
+                engine.tick_purse_or_coin(sim, &assets, purse_id)
+            });
+            assert!(!result, "flying purse WATER/HOLE base result must be false");
+            let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+                panic!("registered water/hole purse disappeared")
+            };
+            assert!(!purse.element.active);
+            assert!(!purse.projectile.purse.burst);
+            assert!(purse.projectile.purse.child_coins.is_empty());
+            assert_eq!(
+                purse.projectile.trajectory_frame_count,
+                if dive { 0 } else { u16::MAX }
+            );
+            if dive {
+                assert!(
+                    engine
+                        .feedback
+                        .pending_side_effects
+                        .sounds
+                        .iter()
+                        .any(|sound| matches!(
+                            sound,
+                            super::super::SoundCommand::Fx { fx_id: 470, .. }
+                        ))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn coin_water_runs_base_plouf_but_hole_skips_it_and_both_remain_active() {
+        for (material, dive, disappear, expect_plouf) in [
+            (crate::element::GameMaterial::Water, true, false, true),
+            (crate::element::GameMaterial::Hole, false, true, false),
+        ] {
+            let assets = purse_test_assets();
+
+            let mut registered = EngineInner::new();
+            let coin_id = registered.add_entity(landing_coin(material, dive, disappear));
+            WATER_IMPACT_ORDER.with(|order| order.borrow_mut().clear());
+            let result = registered.with_simulation_context(|engine, sim| {
+                engine.tick_purse_or_coin(sim, &assets, coin_id)
+            });
+            assert!(result, "Coin ignores Projectile's terminal false result");
+            let Some(Entity::Projectile(coin)) = registered.get_entity(coin_id) else {
+                panic!("registered terminal coin disappeared")
+            };
+            assert!(coin.element.active);
+            assert_eq!(
+                coin.projectile.trajectory_frame_count,
+                if dive { 0 } else { u16::MAX }
+            );
+            assert_eq!(
+                registered.feedback.titbit_manager.titbits().len(),
+                usize::from(expect_plouf)
+            );
+            assert_eq!(
+                registered
+                    .feedback
+                    .pending_side_effects
+                    .sounds
+                    .iter()
+                    .filter(|sound| matches!(
+                        sound,
+                        super::super::SoundCommand::Fx { fx_id: 470, .. }
+                    ))
+                    .count(),
+                usize::from(expect_plouf)
+            );
+            WATER_IMPACT_ORDER.with(|order| {
+                assert_eq!(
+                    order.borrow().as_slice(),
+                    if expect_plouf {
+                        &["titbit", "reset", "noise", "fx"][..]
+                    } else {
+                        &[]
+                    }
+                )
+            });
+
+            let mut unpublished = EngineInner::new();
+            WATER_IMPACT_ORDER.with(|order| order.borrow_mut().clear());
+            let new_id = unpublished.with_simulation_context(|engine, sim| {
+                engine.publish_primed_coin(
+                    sim,
+                    &assets,
+                    landing_coin(material, dive, disappear),
+                    MapPoint::new(100.0, 200.0),
+                    None,
+                    0,
+                )
+            });
+            let Some(Entity::Projectile(coin)) = unpublished.get_entity(new_id) else {
+                panic!("prepublication terminal coin disappeared")
+            };
+            assert!(coin.element.active);
+            assert_eq!(
+                coin.projectile.trajectory_frame_count,
+                if dive { 0 } else { u16::MAX }
+            );
+            assert_eq!(
+                unpublished.feedback.titbit_manager.titbits().len(),
+                usize::from(expect_plouf)
+            );
+            WATER_IMPACT_ORDER.with(|order| {
+                assert_eq!(
+                    order.borrow().as_slice(),
+                    if expect_plouf {
+                        &["titbit", "reset", "noise", "fx"][..]
+                    } else {
+                        &[]
+                    }
+                )
+            });
+        }
+
+        let assets = purse_test_assets();
+        let mut engine = EngineInner::new();
+        let mut dry = landing_coin(crate::element::GameMaterial::Ground, false, false);
+        let Entity::Projectile(coin) = &mut dry else {
+            unreachable!()
+        };
+        coin.element
+            .set_sector(crate::position_interface::SectorHandle::new(7));
+        coin.projectile.purse.sector_goal = None;
+        let coin_id = engine.add_entity(dry);
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_purse_or_coin(sim, &assets, coin_id)
+        });
+        let Some(Entity::Projectile(coin)) = engine.get_entity(coin_id) else {
+            panic!("ordinary landed coin disappeared")
+        };
+        assert_eq!(
+            coin.element.sector(),
+            None,
+            "None goal must clear terminal sector"
+        );
     }
 
     #[test]
@@ -658,7 +1536,7 @@ mod tests {
             None,
         );
         let mut live_pass = parent_only.clone();
-        let assets = crate::engine::LevelAssets::new();
+        let assets = purse_test_assets();
 
         crate::sim_rng::with_seed(0xC01A, |sim| {
             parent_only.tick_purse_or_coin(sim, &assets, purse_id)
@@ -671,18 +1549,24 @@ mod tests {
         };
         assert_eq!(child_ids.len(), NUMBER_OF_COINS_IN_PURSE as usize);
         for child_id in child_ids {
-            let primed_position = parent_only
-                .get_entity(child_id)
-                .expect("primed coin missing")
-                .element_data()
-                .position();
-            let same_frame_position = live_pass
-                .get_entity(child_id)
-                .expect("same-frame coin missing")
-                .element_data()
-                .position();
+            let primed = match parent_only.get_entity(child_id) {
+                Some(Entity::Projectile(coin)) => (
+                    coin.projectile.frame_count,
+                    coin.object.animation,
+                    coin.element.sprite.current_frame,
+                ),
+                _ => panic!("primed coin missing"),
+            };
+            let same_frame = match live_pass.get_entity(child_id) {
+                Some(Entity::Projectile(coin)) => (
+                    coin.projectile.frame_count,
+                    coin.object.animation,
+                    coin.element.sprite.current_frame,
+                ),
+                _ => panic!("same-frame coin missing"),
+            };
             assert_ne!(
-                same_frame_position, primed_position,
+                same_frame, primed,
                 "coin {child_id:?} must receive its element-array Hourglass after the explicit pre-insertion primer"
             );
         }
@@ -704,7 +1588,7 @@ mod tests {
             0,
             None,
         );
-        let assets = crate::engine::LevelAssets::new();
+        let assets = purse_test_assets();
         tick_purses(&mut engine, &assets);
         let coin_ids: Vec<EntityId> = match engine.get_entity(purse_id) {
             Some(Entity::Projectile(p)) => p.projectile.purse.child_coins.clone(),
@@ -762,7 +1646,7 @@ mod tests {
             0,
             None,
         );
-        let assets = crate::engine::LevelAssets::new();
+        let assets = purse_test_assets();
         tick_purses(&mut engine, &assets);
         let coin_ids: Vec<EntityId> = match engine.get_entity(purse_id) {
             Some(Entity::Projectile(p)) => p.projectile.purse.child_coins.clone(),
@@ -778,7 +1662,7 @@ mod tests {
         }
 
         // Run a tick — Hourglass drain should prune the child list…
-        let assets = crate::engine::LevelAssets::new();
+        let assets = purse_test_assets();
         tick_purses(&mut engine, &assets);
         let purse = engine
             .get_entity(purse_id)
@@ -790,10 +1674,11 @@ mod tests {
             p.projectile.purse.child_coins.is_empty(),
             "all dead/inactive children should be pruned from the list"
         );
-        // …but the purse itself stays active.
+        // …and the source-exact inactive purse remains published so coin
+        // back-references retain a stable identity.
         assert!(
-            p.element.active,
-            "purse element should remain active post-drain"
+            !p.element.active,
+            "HitObstacle must leave the retained purse inactive post-drain"
         );
         assert!(
             p.projectile.purse.burst,
@@ -817,7 +1702,7 @@ mod tests {
         );
         let initial_seed = live.rng_seed();
         let mut replay = live.clone();
-        let assets = crate::engine::LevelAssets::new();
+        let assets = purse_test_assets();
 
         tick_purses(&mut live, &assets);
         tick_purses(&mut replay, &assets);
@@ -848,7 +1733,7 @@ mod tests {
         let json = serde_json::to_string(&continuous).expect("serialize pre-burst engine");
         let mut restored: EngineInner =
             serde_json::from_str(&json).expect("deserialize pre-burst engine");
-        let assets = crate::engine::LevelAssets::new();
+        let assets = purse_test_assets();
 
         tick_purses(&mut continuous, &assets);
         tick_purses(&mut restored, &assets);

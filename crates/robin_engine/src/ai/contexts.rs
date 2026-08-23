@@ -396,6 +396,10 @@ pub struct AiContext {
     /// threaded through context so individual AI controllers do not each cache
     /// their own Arc attachment.
     pub hiking_paths: Arc<Vec<crate::level_data::RawHikingPath>>,
+    /// Exact sector handles keyed by stable `(hiking path, waypoint)`.
+    /// Real loaded missions always provide this; `None` explicitly denotes
+    /// synthetic number-only test data.
+    pub hiking_waypoint_sectors: Option<Arc<Vec<Vec<crate::position_interface::SectorHandle>>>>,
 
     /// Soldier load-order index → entity slot mapping (cloned from
     /// [`AiGlobalState::all_soldier_handles`]). Used by waypoint-macro
@@ -405,6 +409,32 @@ pub struct AiContext {
 }
 
 impl AiContext {
+    pub(crate) fn hiking_waypoint_sector(
+        &self,
+        path_index: usize,
+        waypoint_index: usize,
+        public_sector: u16,
+    ) -> Option<crate::position_interface::SectorHandle> {
+        let Some(paths) = &self.hiking_waypoint_sectors else {
+            return crate::position_interface::SectorHandle::new(public_sector);
+        };
+        let exact = paths
+            .get(path_index)
+            .and_then(|path| path.get(waypoint_index))
+            .copied()
+            .unwrap_or_else(|| {
+                panic!(
+                    "required exact hiking waypoint identity is missing for path {path_index} waypoint {waypoint_index}"
+                )
+            });
+        assert_eq!(
+            exact.get(),
+            public_sector,
+            "hiking waypoint path {path_index} waypoint {waypoint_index} public/exact identity conflict"
+        );
+        Some(exact)
+    }
+
     /// Import every surface entry stored for the current frame, keeping the
     /// viewer that wrote it. Entries belonging to other viewers have to be
     /// carried too: they are what makes this Think miss a surface an ally
@@ -715,6 +745,35 @@ impl AiContext {
     }
 }
 
+#[cfg(test)]
+mod hiking_waypoint_identity_tests {
+    use super::*;
+
+    #[test]
+    fn waypoint_route_position_carries_exact_arena_identity() {
+        let exact = crate::position_interface::SectorHandle::new(82)
+            .unwrap()
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(17).unwrap());
+        let ctx = AiContext {
+            hiking_waypoint_sectors: Some(Arc::new(vec![vec![exact]])),
+            ..AiContext::default()
+        };
+
+        let route_position = Position {
+            x: 1432.0,
+            y: 930.0,
+            sector: ctx.hiking_waypoint_sector(0, 0, 82),
+            level: 6,
+        };
+
+        assert_eq!(route_position.sector.unwrap().get(), 82);
+        assert_eq!(
+            route_position.sector.unwrap().arena_index(),
+            crate::fast_find_grid::SectorIndex::new(17)
+        );
+    }
+}
+
 /// Lightweight view of an entity other than the evaluating NPC, used
 /// by AI stimulus handlers. All fields come from the live entity at
 /// the moment the stimulus is dispatched.
@@ -889,6 +948,9 @@ pub struct AiPerTickData {
     /// Pre-computed destination forecast for the missed PC (if any).
     /// Used by `get_battle_overview` to re-predict position before seeking.
     pub missed_pc_forecast: Option<PreparedForecastDestination>,
+    /// Target identity paired with `missed_pc_forecast`. A queued Think can
+    /// change the AI's `missed_pc` after this snapshot was prepared.
+    pub missed_pc_forecast_handle: HumanHandle,
     /// True when `missed_pc` refers to a player character.
     pub missed_pc_is_pc: bool,
     /// Number of enemies this soldier personally detected (not shared by
@@ -1148,6 +1210,7 @@ impl AiPerTickData {
             enemy_detectable_live_world_positions: Vec::new(),
             primary_target_is_pc: false,
             missed_pc_forecast: None,
+            missed_pc_forecast_handle: 0,
             missed_pc_is_pc: false,
             personally_visible_enemies: 0,
             unconscious_enemies: Vec::new(),

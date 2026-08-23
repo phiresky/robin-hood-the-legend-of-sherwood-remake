@@ -793,6 +793,56 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
 }
 
 #[test]
+fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
+    use crate::ai::AttentiveModeEffect;
+    use crate::element::{AiBrain, Command, Posture};
+    use crate::order::{AiOrderIntent, OrderType};
+
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(500.0, 500.0);
+    let mut soldier_entity = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let enemy = soldier.npc.ai_brain.enemy_mut().expect("Enemy test AI");
+    enemy.attentive = true;
+    enemy.will_be_attentive = true;
+    enemy
+        .base
+        .outbox
+        .actor
+        .queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
+    let mut movement = AiOrderIntent::new(OrderType::WalkingUpright, 100.0, 90.0);
+    movement.after_attentive_mode = true;
+    enemy.base.outbox.actor.orders.push(movement);
+    let owner = engine.add_entity(soldier_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+
+    assert!(
+        engine.orders.pending_move_requests.is_empty(),
+        "GoTo following SetAttentiveMode must construct inline, not wait for the global movement drain"
+    );
+    let commands = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| element.command)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        [Command::LeaveAttentiveMode, Command::Move],
+        "attentive registration stays first while movement construction remains synchronous"
+    );
+}
+
+#[test]
 fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     use crate::ai::{LogLineType, Remark};
 
@@ -4134,7 +4184,22 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     use crate::sector::SectorNumber;
     use crate::sequence::{SequenceElement, SequenceElementData};
 
+    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "pending_lift_roof_wait_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission enables roof-wait tick construction"),
+    );
     let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let me_sector = crate::position_interface::SectorHandle::new(1);
@@ -4201,6 +4266,29 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     assert_eq!(wait.y, 100.0);
     assert_eq!(wait.sector, me_sector);
 
+    // The staged lift failure has not published couldnt_reachpoint when its
+    // EventCouldnt tick is built. The exact RunningToLadder timer provenance
+    // must still make the live gate lookup available to the handler.
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("roof-wait owner retains Enemy AI");
+    owner.base.current_state = AiState::Attacking;
+    owner.base.current_substate = Substate::AttackingRunningToLadder;
+    owner.base.couldnt_reachpoint = false;
+    owner.base.timer_is_running = true;
+    owner.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
+    owner.base.when_does_timer_ring = 30;
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    assert_eq!(
+        tick.avenger_wait_position_for(target_id.index()),
+        Some(wait),
+        "pending lift provenance must precompute the source-synchronous roof wait"
+    );
+
     let owner = engine
         .get_entity_mut(owner_id)
         .and_then(Entity::enemy_ai_mut)
@@ -4249,6 +4337,25 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
             &|_| None,
         )
         .is_none()
+    );
+
+    // Same false-latch timer provenance with no blocking gate is the f7938
+    // no-roof control: no synthetic wait may be added.
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("roof-wait owner retains Enemy AI");
+    owner.base.current_state = AiState::Attacking;
+    owner.base.current_substate = Substate::AttackingRunningToLadder;
+    owner.base.couldnt_reachpoint = false;
+    owner.base.timer_is_running = true;
+    owner.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
+    owner.base.when_does_timer_ring = 30;
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    assert!(
+        tick.avenger_wait_position_for(target_id.index()).is_none(),
+        "pending lift provenance must preserve the no-blocking-gate control"
     );
 }
 
@@ -4963,6 +5070,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
         &assets.hiking_paths,
+        &assets.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -5202,6 +5310,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
         &assets.hiking_paths,
+        &assets.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -5398,6 +5507,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -5563,6 +5673,7 @@ fn run_synchronous_civilian_alert(
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -5672,6 +5783,7 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
             &scratch.ai_sight_obstacles,
             &accepted.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &accepted.ai.global.all_soldier_handles,
             accepted.control.sim_config.difficulty,
         )
@@ -5839,6 +5951,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
         &assets.hiking_paths,
+        &assets.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -5897,6 +6010,7 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
         &assets.hiking_paths,
+        &assets.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -5991,6 +6105,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -6095,6 +6210,7 @@ fn review2_context_and_tick(
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
         &assets.hiking_paths,
+        &assets.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -6309,6 +6425,172 @@ fn resumed_return_to_duty_translates_its_goto_on_the_owner_work_boundary() {
             .flat_map(|sequence| sequence.elements.iter())
             .any(|element| element.owner == Some(owner) && element.command == Command::Move),
         "the return-to-post GoTo must already exist in the sequence manager"
+    );
+}
+
+#[test]
+fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
+    use crate::ai::{AiOwnerWork, AiState, DutyFlags, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::element::Command;
+    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::gate::Door;
+    use crate::sector::{SectorNumber, SectorType};
+
+    let make_sector = |sector_type| GridSector {
+        points: Vec::new(),
+        bounding_box: crate::coordinates::MapBBox::new(),
+        sector_type,
+        layer: 0,
+        sector_number: SectorNumber::new(64),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    };
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(500.0, 500.0);
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "adopted_return_to_duty_boundary_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission exposes the installed duplicate-public gate"),
+    );
+    {
+        let level = engine.world.fast_grid_mut().level_mut();
+        level.sectors = vec![
+            make_sector(SectorType::MOTION | SectorType::AREA | SectorType::BUILDING),
+            make_sector(SectorType::MOTION | SectorType::AREA),
+        ];
+        level.sector_number_map.insert(SectorNumber::new(64), 1);
+    }
+    engine.script_domains.interactables.doors = vec![Door {
+        point_out: MapPoint::new(160.0, 100.0),
+        point_in: MapPoint::new(120.0, 100.0),
+        sector_out: SectorNumber::new(64),
+        sector_in: SectorNumber::new(64),
+        sector_out_index: SectorIndex::new(1),
+        sector_in_index: SectorIndex::new(0),
+        ..Door::default()
+    }];
+    crate::gate::build_gate_links(&mut engine.script_domains.interactables.doors);
+
+    let source = crate::position_interface::SectorHandle::new(64)
+        .unwrap()
+        .with_arena_index(SectorIndex::new(0).unwrap());
+    let goal = crate::legacy_save::adopt_elements::adopt_position_sector_for_test(
+        vec![
+            crate::position_interface::SectorHandle::new(64),
+            crate::position_interface::SectorHandle::new(64),
+        ],
+        vec![SectorIndex::new(0), SectorIndex::new(1)],
+        1,
+    )
+    .expect("saved initial-position sector resolves");
+    assert_eq!(goal.arena_index(), SectorIndex::new(1));
+    assert_eq!(
+        crate::legacy_save::adopt_elements::adopt_position_sector_for_test(
+            vec![crate::position_interface::SectorHandle::new(64)],
+            vec![None],
+            0,
+        ),
+        crate::position_interface::SectorHandle::new(64),
+        "a genuinely missing retained index remains number-only"
+    );
+    let entity = engine.get_entity_mut(owner).unwrap();
+    entity.element_data_mut().active = true;
+    entity
+        .element_data_mut()
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    entity.element_data_mut().set_sector(Some(source));
+    let ai = entity.enemy_ai_mut().unwrap();
+    ai.base.me = owner.index();
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingGroupGetInstructedByOfficer;
+    ai.base.initial_position = crate::ai::Position {
+        x: 300.0,
+        y: 100.0,
+        sector: Some(goal),
+        level: 0,
+    };
+    ai.attentive = true;
+    ai.will_be_attentive = true;
+    let owner_boundary_positions = vec![(
+        owner.index(),
+        crate::ai::Position {
+            x: 100.0,
+            y: 100.0,
+            sector: Some(source),
+            level: 0,
+        },
+    )];
+
+    // Observe the exact live-outbox lifecycle rather than relying on a later
+    // global movement drain to hide a publication-order error.
+    engine.resume_return_to_duty_after_patrol_init_for_npc(
+        &sim,
+        owner,
+        &assets,
+        DutyFlags::empty(),
+        false,
+        &owner_boundary_positions,
+    );
+    {
+        let ai = engine
+            .get_entity(owner)
+            .and_then(Entity::enemy_ai)
+            .expect("return-to-duty owner retains Enemy AI after common tail");
+        assert_eq!(ai.base.outbox.actor.orders.len(), 1);
+        assert!(ai.base.outbox.actor.orders[0].after_attentive_mode);
+        assert!(ai.base.outbox.actor.has_pending_attentive_mode());
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::StateChange(_)]
+        ));
+    }
+
+    engine.drain_direct_ai_owner_boundary_mode(&sim, owner, &assets, true, true);
+    let commands = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(owner))
+        .map(|element| element.command)
+        .collect::<Vec<_>>();
+    assert_eq!(commands.first(), Some(&Command::LeaveAttentiveMode));
+    assert!(
+        commands.contains(&Command::Move),
+        "different exact arenas with the same public number can only publish Move after the gate graph accepts the route"
+    );
+    assert!(engine.orders.pending_move_requests.is_empty());
+    assert!(
+        !engine
+            .get_entity(owner)
+            .and_then(Entity::enemy_ai)
+            .unwrap()
+            .base
+            .couldnt_reachpoint
     );
 }
 

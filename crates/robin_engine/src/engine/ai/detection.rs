@@ -957,6 +957,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -1784,6 +1785,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -2167,6 +2169,7 @@ impl EngineInner {
                 )
             });
             tick_data.missed_pc_forecast = Some(forecast(target_id));
+            tick_data.missed_pc_forecast_handle = missed;
         }
         for soldier in &mut tick_data.camp_soldiers {
             // Only officers are ever selected as forecasted destinations by
@@ -3381,6 +3384,7 @@ impl EngineInner {
                             ai_substate: ss.ai_substate,
                             is_able_to_fight: ss.able_to_fight,
                             is_dead: ss.is_dead,
+                            knocked_out_in_money_fight: ss.knocked_out_in_money_fight,
                             primary_target: ss.primary_target,
                             pride: ss.pride,
                             is_able_to_help: ss.able_to_help,

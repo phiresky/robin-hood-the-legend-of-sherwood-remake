@@ -718,6 +718,24 @@ pub enum SectorHit {
     None,
 }
 
+impl SectorHit {
+    /// Convert a spatial hit into the public handle plus exact live arena
+    /// identity. Callers must use this instead of reconstructing a handle
+    /// from `sector_number` and silently discarding the `SectorIndex`.
+    pub fn sector_handle(self) -> Option<crate::position_interface::SectorHandle> {
+        let Self::Found {
+            sector_idx,
+            sector_number,
+        } = self
+        else {
+            return None;
+        };
+        let number = u16::try_from(sector_number.get()).ok()?;
+        crate::position_interface::SectorHandle::new(number)
+            .map(|handle| handle.with_arena_index(sector_idx))
+    }
+}
+
 /// Result of a multi-layer sector query (`get_sector_screen`).
 #[derive(Debug, Clone, Copy)]
 pub struct SectorScreenResult {
@@ -746,6 +764,14 @@ impl SectorScreenResult {
     /// Whether a valid sector was found.
     pub fn is_valid(&self) -> bool {
         self.sector_idx.is_some() && self.sector.is_some()
+    }
+
+    /// Public handle enriched with the exact sector selected by FastFind.
+    pub fn sector_handle(&self) -> Option<crate::position_interface::SectorHandle> {
+        let index = self.sector_idx?;
+        let number = u16::try_from(self.sector?.get()).ok()?;
+        crate::position_interface::SectorHandle::new(number)
+            .map(|handle| handle.with_arena_index(index))
     }
 
     #[inline]
@@ -3321,113 +3347,6 @@ impl FastFindGrid {
         }
 
         true
-    }
-
-    /// Opt-in parity trace for a single `IsReachableThick` decision.
-    ///
-    /// The caller supplies the frame because the fast grid is deliberately
-    /// independent of engine time.  All filters are checked before querying
-    /// grid lines, so disabled and non-matching calls remain read-only no-ops.
-    pub(crate) fn trace_reachable_thick_decision(
-        &self,
-        frame: u32,
-        p1: MapPoint,
-        p2: MapPoint,
-        layer: u16,
-        half_diagonal: MoveBoxHalfDiagonal,
-        result: bool,
-    ) {
-        if std::env::var_os("PARITY_DEBUG_REACHABILITY").is_none() {
-            return;
-        }
-        let required_u32 = |name: &str| {
-            let raw = std::env::var(name)
-                .unwrap_or_else(|_| panic!("PARITY_DEBUG_REACHABILITY requires {name}"));
-            raw.parse::<u32>()
-                .unwrap_or_else(|error| panic!("invalid {name}={raw:?}: {error}"))
-        };
-        let expected_frame = required_u32("PARITY_DEBUG_REACHABILITY_FRAME");
-        let expected_source_x = required_u32("PARITY_DEBUG_REACHABILITY_SOURCE_X_BITS");
-        let expected_source_y = required_u32("PARITY_DEBUG_REACHABILITY_SOURCE_Y_BITS");
-        let expected_goal_x = required_u32("PARITY_DEBUG_REACHABILITY_GOAL_X_BITS");
-        let expected_goal_y = required_u32("PARITY_DEBUG_REACHABILITY_GOAL_Y_BITS");
-        let expected_layer = required_u32("PARITY_DEBUG_REACHABILITY_LAYER");
-        if frame != expected_frame
-            || p1.x.to_bits() != expected_source_x
-            || p1.y.to_bits() != expected_source_y
-            || p2.x.to_bits() != expected_goal_x
-            || p2.y.to_bits() != expected_goal_y
-            || u32::from(layer) != expected_layer
-        {
-            return;
-        }
-
-        let corridor = Self::build_thick_move_corridor(p1, p2, half_diagonal);
-        let candidates = corridor
-            .as_ref()
-            .map(|corridor| {
-                self.get_active_motion_line_indices(layer, &corridor.bbox)
-                    .into_iter()
-                    .map(|index| {
-                        let line = &self.level.lines[usize::from(index)];
-                        let determinants = |point: MapPoint| {
-                            let d1 = geo2d::cross(
-                                corridor.vec1.to_geo(),
-                                MapVec::new(
-                                    point.x - corridor.seg1.start.x,
-                                    point.y - corridor.seg1.start.y,
-                                )
-                                .to_geo(),
-                            );
-                            let d2 = geo2d::cross(
-                                corridor.vec2.to_geo(),
-                                MapVec::new(
-                                    point.x - corridor.seg2.start.x,
-                                    point.y - corridor.seg2.start.y,
-                                )
-                                .to_geo(),
-                            );
-                            let d3 = geo2d::cross(
-                                corridor.vec3.to_geo(),
-                                MapVec::new(
-                                    point.x - corridor.seg1.end.x,
-                                    point.y - corridor.seg1.end.y,
-                                )
-                                .to_geo(),
-                            );
-                            let d4 = geo2d::cross(
-                                corridor.vec4.to_geo(),
-                                MapVec::new(
-                                    point.x - corridor.seg2.end.x,
-                                    point.y - corridor.seg2.end.y,
-                                )
-                                .to_geo(),
-                            );
-                            (d1.to_bits(), d2.to_bits(), d3.to_bits(), d4.to_bits())
-                        };
-                        (
-                            index,
-                            line.a.x.to_bits(),
-                            line.a.y.to_bits(),
-                            line.b.x.to_bits(),
-                            line.b.y.to_bits(),
-                            line.intersects_segment(corridor.seg1),
-                            line.intersects_segment(corridor.seg2),
-                            determinants(line.a),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        eprintln!(
-            "[REACHABILITY frame={frame} source={:08x},{:08x} goal={:08x},{:08x} layer={layer} half_diagonal={:08x},{:08x} corridor={corridor:?} candidates={candidates:?} result={result}]",
-            p1.x.to_bits(),
-            p1.y.to_bits(),
-            p2.x.to_bits(),
-            p2.y.to_bits(),
-            half_diagonal.x.to_bits(),
-            half_diagonal.y.to_bits(),
-        );
     }
 
     /// Check thin (zero-width) reachability between two points.

@@ -157,50 +157,19 @@ fn phalanx_advance_vectors(to_target: (f32, f32)) -> ((f32, f32), (f32, f32)) {
     (forward_step, right_step)
 }
 
-/// Recover the pointer identity inherited by an `RHposition +/- vector`
-/// result. Original copies the complete anchor position, including its
-/// `RHSector*`; resolving the derived slot point itself can select a
-/// different overlapping motion polygon.
-// TODO(parity): carry Original's arena-sector identity explicitly through
-// Position, door-side adaptation, saved mposSeekPosition values, and
-// AiOrderIntent. This recovery covers the observed phalanx call but cannot
-// represent every door-adapted or transitive inherited-position provenance.
-fn inherited_position_crosses_sector_identity(
-    grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    current: &Position,
-    anchor: &Position,
-) -> bool {
+/// Compare the exact sector identities inherited by an
+/// `RHposition +/- vector` result. `Position` copies its `SectorHandle`, whose
+/// optional arena companion is the live analogue of Original's `RHSector*`.
+fn inherited_position_crosses_sector_identity(current: &Position, anchor: &Position) -> bool {
     let (Some(current_sector), Some(anchor_sector)) = (current.sector, anchor.sector) else {
         return false;
     };
-    // RHArtificialIntelligence::GoTo compares the two RHSector pointers
-    // directly.  A distinct retained handle is therefore already decisive;
-    // the spatial recovery below is only needed for overlapping polygons
-    // whose compact Rust positions expose the same public handle.
-    if current_sector != anchor_sector || current.level != anchor.level {
-        return true;
-    }
-    let Some(grid) = grid else { return false };
-    let current_point = crate::coordinates::MapPoint::new(current.x, current.y);
-    let anchor_point = crate::coordinates::MapPoint::new(anchor.x, anchor.y);
-    match (
-        grid.get_sector(current_point, anchor_point, current.level),
-        grid.get_sector(anchor_point, current_point, anchor.level),
-    ) {
-        (
-            crate::fast_find_grid::SectorHit::Found {
-                sector_idx: current_idx,
-                sector_number: current_number,
-            },
-            crate::fast_find_grid::SectorHit::Found {
-                sector_idx: anchor_idx,
-                sector_number: anchor_number,
-            },
-        ) => {
-            let expected = crate::sector::SectorNumber::new(u16::from(current_sector) as i16);
-            current_number == expected && anchor_number == expected && current_idx != anchor_idx
-        }
-        _ => false,
+    match (current_sector.arena_index(), anchor_sector.arena_index()) {
+        (Some(current), Some(anchor)) => current != anchor,
+        // Compatibility for old Rust snapshots which predate arena identity.
+        // Never infer an identity from coordinates: only the public topology
+        // remains available on this path.
+        _ => current_sector != anchor_sector || current.level != anchor.level,
     }
 }
 
@@ -919,8 +888,13 @@ impl EnemyAi {
                 level: aggressor_line.layer,
                 sector: aggressor_line
                     .sector_index
-                    .and_then(|s| grid.level.sectors.get(usize::from(s)))
-                    .and_then(|s| SectorHandle::new(u16::from(s.sector_number)))
+                    .and_then(|index| {
+                        grid.level
+                            .sectors
+                            .get(usize::from(index))
+                            .and_then(|sector| SectorHandle::new(u16::from(sector.sector_number)))
+                            .map(|sector| sector.with_arena_index(index))
+                    })
                     .or(ctx.position.sector),
             };
             let cp = CombatPosition {
@@ -1002,7 +976,6 @@ impl EnemyAi {
         let shield_phalanx = crate::ai::Substate::AttackingPhalanx as u32;
         let shield_protecting = crate::ai::Substate::AttackingProtectingWithShield as u32;
 
-        let me_pos = ctx.position;
         let min_distance = archer::SHIELD_BEARER_MIN_DISTANCE as f32;
         let mut best: HumanHandle = 0;
         let mut best_distance = min_distance;
@@ -1024,11 +997,18 @@ impl EnemyAi {
             {
                 continue;
             }
-            // The reference truncates `MaxNormDistance` to UWORD before
-            // the comparison, and measures in world space (map Y plus
-            // elevation), not raw map coordinates.
-            let dist =
-                ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            // Original `MaxNormDistance(pSoldier)` subtracts the two raw
+            // `RHElement::GetPosition()` values. It does not call AI
+            // `Position()`, which may snap a door-passing bearer to the
+            // committed gate endpoint. Keep that accessor distinction here;
+            // slot construction below still intentionally uses the bearer's
+            // AI-facing position/seek position.
+            let dist = ai_max_norm_distance(
+                &f.raw_position,
+                f.elevation,
+                &me_snap.raw_position,
+                me_snap.elevation,
+            ) as u16;
             if crate::ai_enemy::battle_decision_debug_enabled() {
                 eprintln!(
                     "SHIELD_BEARER_CANDIDATE frame={} me={} candidate={} substate={} archer_behind={} dist={dist} min={min_distance}",
@@ -1355,7 +1335,9 @@ impl EnemyAi {
         if self.phalanx_aborted {
             return None;
         }
-        let nearest = self.get_nearest_free_shield_bearer(ctx, tick)?;
+        let Some(nearest) = self.get_nearest_free_shield_bearer(ctx, tick) else {
+            return None;
+        };
 
         // Walk left/right to find the end-of-phalanx anchors.
         let left_guy = self.walk_phalanx_end(nearest, true, ctx, tick);
@@ -1437,10 +1419,9 @@ impl EnemyAi {
         let me_pos = ctx.position;
         let sq_left = square_norm(pos_diff(&pos_left, &me_pos));
         let sq_right = square_norm(pos_diff(&pos_right, &me_pos));
-        let left_crosses_identity =
-            inherited_position_crosses_sector_identity(grid, &me_pos, &left_pos);
+        let left_crosses_identity = inherited_position_crosses_sector_identity(&me_pos, &left_pos);
         let right_crosses_identity =
-            inherited_position_crosses_sector_identity(grid, &me_pos, &right_pos);
+            inherited_position_crosses_sector_identity(&me_pos, &right_pos);
 
         match (left_accessible, right_accessible) {
             (true, true) => {
@@ -4443,94 +4424,49 @@ mod tests {
 
     #[test]
     fn vector_derived_phalanx_slot_retains_anchor_sector_identity() {
-        use crate::coordinates::{MapBBox, MapPoint};
-        use crate::fast_find_grid::{FastFindGrid, GridSector};
-        use crate::sector::{SectorNumber, SectorType};
+        use crate::fast_find_grid::SectorIndex;
 
-        let current_with_distinct_handle = Position {
-            x: 20.0,
-            y: 20.0,
-            sector: crate::position_interface::SectorHandle::new(17),
-            level: 0,
-        };
-        let anchor_with_distinct_handle = Position {
-            x: 80.0,
-            y: 20.0,
-            sector: crate::position_interface::SectorHandle::new(18),
-            level: 0,
-        };
-        assert!(inherited_position_crosses_sector_identity(
-            None,
-            &current_with_distinct_handle,
-            &anchor_with_distinct_handle,
-        ));
-
-        let mut grid = FastFindGrid::new();
-        grid.size_map(4, 4);
-        grid.allocate_layers(1);
-        let make_sector = |min_x: f32, max_x: f32| {
-            let points = vec![
-                MapPoint::new(min_x, 0.0),
-                MapPoint::new(max_x, 0.0),
-                MapPoint::new(max_x, 63.0),
-                MapPoint::new(min_x, 63.0),
-            ];
-            GridSector {
-                points,
-                bounding_box: MapBBox::from_coords(min_x, 0.0, max_x, 63.0),
-                sector_type: SectorType::AREA | SectorType::MOTION | SectorType::MOUSE,
-                layer: 0,
-                sector_number: SectorNumber::new(18),
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
-            }
-        };
-        grid.add_sector(make_sector(0.0, 63.0), 0);
-        grid.add_sector(make_sector(64.0, 127.0), 0);
-        let sector = crate::position_interface::SectorHandle::new(18);
         let current = Position {
             x: 20.0,
             y: 20.0,
-            sector,
+            sector: crate::position_interface::SectorHandle::new(18)
+                .map(|sector| sector.with_arena_index(SectorIndex::new(40).unwrap())),
             level: 0,
         };
         let anchor = Position {
             x: 80.0,
             y: 20.0,
-            sector,
+            sector: crate::position_interface::SectorHandle::new(18)
+                .map(|sector| sector.with_arena_index(SectorIndex::new(41).unwrap())),
             level: 0,
         };
+        let derived = Position {
+            x: anchor.x - 20.0,
+            y: anchor.y,
+            ..anchor
+        };
 
+        assert_eq!(derived.sector.unwrap().arena_index(), SectorIndex::new(41));
         assert!(inherited_position_crosses_sector_identity(
-            Some(&grid),
-            &current,
-            &anchor
+            &current, &derived
         ));
         assert!(!inherited_position_crosses_sector_identity(
-            Some(&grid),
-            &current,
-            &current
+            &anchor, &derived
         ));
     }
 
     #[test]
-    fn nescafe_phalanx_walks_from_nearest_bearer_to_sector_zero_chain_end() {
+    fn nescafe_phalanx_uses_raw_body_distance_then_ai_facing_chain_anchors() {
         use crate::position_interface::SectorHandle;
 
         // Schema-16 seed 1,000,000, Nescafe Restart, frame 1187. Original
-        // Soldier co163 (Rust 132) is a protecting bearer physically in
-        // sector 18, but the observed phalanx chain ends are co161/160
-        // (Rust 130/129), both running toward retained sector-0 seek points.
-        // FindPhalanxPlace must derive its new slot from an end, not co163.
+        // Soldier co160 (Rust 129) is passing door 95. AI `Position()` snaps
+        // it to the sector-0 endpoint (1307,2245), but its raw body is still
+        // near (1306.8123,2262.1873). Original MaxNormDistance reads the raw
+        // body and gets 43, so co160 beats co163/Rust132 at distance 58.
+        // Measuring the snapped point changes the ordering. After selection,
+        // FindPhalanxPlace deliberately returns to AI-facing current/seek
+        // positions and derives the slot from the sector-0 chain end.
         let sector_18 = SectorHandle::new(18).unwrap();
         let sector_0 = SectorHandle::new(0).unwrap();
         let mut ai = EnemyAi::new(128);
@@ -4541,6 +4477,12 @@ mod tests {
             is_friendly: true,
             is_shield_bearer: true,
             position: Position {
+                x: 1263.1832,
+                y: 2281.7712,
+                sector: Some(sector_18),
+                level: 0,
+            },
+            raw_position: Position {
                 x: 1263.1832,
                 y: 2281.7712,
                 sector: Some(sector_18),
@@ -4561,49 +4503,104 @@ mod tests {
                 sector: Some(sector_18),
                 level: 0,
             },
+            raw_position: Position {
+                x: 1322.0,
+                y: 2276.0,
+                sector: Some(sector_18),
+                level: 0,
+            },
             ..FighterSnapshot::default()
         });
-        for (handle, x, y, body_x, body_y) in [
-            (130, 1359.2433, 2211.426, 1500.0, 2000.0),
-            (129, 1310.3472, 2209.295, 1550.0, 2000.0),
-        ] {
-            tick.fighter_registry.push(FighterSnapshot {
-                handle,
+        tick.fighter_registry.extend([
+            FighterSnapshot {
+                handle: 129,
                 is_friendly: true,
                 is_shield_bearer: true,
                 current_substate: Substate::AttackingRunningToPhalanx as u32,
+                left_combat_neighbour: 133,
                 shield_bearer_direction: 8,
                 position: Position {
-                    x: body_x,
-                    y: body_y,
+                    x: 1307.0,
+                    y: 2245.0,
+                    sector: Some(sector_0),
+                    level: 0,
+                },
+                raw_position: Position {
+                    x: 1306.8123,
+                    y: 2262.1873,
                     sector: Some(sector_18),
                     level: 0,
                 },
                 shield_bearer_seek_position: Position {
-                    x,
-                    y,
+                    x: 1310.3472,
+                    y: 2209.295,
                     sector: Some(sector_0),
                     level: 0,
                 },
                 ..FighterSnapshot::default()
-            });
-        }
+            },
+            FighterSnapshot {
+                handle: 133,
+                is_friendly: true,
+                is_shield_bearer: true,
+                current_substate: Substate::AttackingPhalanx as u32,
+                left_combat_neighbour: 130,
+                right_combat_neighbour: 129,
+                position: Position {
+                    x: 1337.8904,
+                    y: 2213.9985,
+                    sector: Some(sector_0),
+                    level: 0,
+                },
+                raw_position: Position {
+                    x: 1337.8904,
+                    y: 2213.9985,
+                    sector: Some(sector_0),
+                    level: 0,
+                },
+                direction: 10,
+                ..FighterSnapshot::default()
+            },
+            FighterSnapshot {
+                handle: 130,
+                is_friendly: true,
+                is_shield_bearer: true,
+                current_substate: Substate::AttackingPhalanx as u32,
+                right_combat_neighbour: 133,
+                position: Position {
+                    x: 1359.2433,
+                    y: 2211.426,
+                    sector: Some(sector_0),
+                    level: 0,
+                },
+                raw_position: Position {
+                    x: 1359.2433,
+                    y: 2211.426,
+                    sector: Some(sector_0),
+                    level: 0,
+                },
+                direction: 10,
+                ..FighterSnapshot::default()
+            },
+        ]);
         let ctx = AiContext {
             position: tick.fighter_registry[0].position,
             ..AiContext::default()
         };
 
-        assert_eq!(ai.get_nearest_free_shield_bearer(&ctx, &tick), Some(132));
+        assert_eq!(ai.get_nearest_free_shield_bearer(&ctx, &tick), Some(129));
         let (slot, _, left, right, crosses_sector) = ai
             .find_phalanx_place(&ctx, &tick, None)
             .expect("nearby protecting shield bearer provides a slot");
 
         assert_eq!(slot.sector, Some(sector_0));
         assert!(crosses_sector);
-        assert!(
-            left == 129 || right == 130,
-            "slot must attach to a chain end"
-        );
+        // With no grid fixture both slots are authorized, so this focused
+        // control chooses the closer right slot. Crucially it is derived from
+        // co160's future seek anchor, not its raw body or door endpoint.
+        assert_eq!((left, right), (129, 0));
+        assert_eq!(slot.x.to_bits(), 1285.3472_f32.to_bits());
+        assert_eq!(slot.y.to_bits(), 2209.295_f32.to_bits());
     }
 
     #[test]

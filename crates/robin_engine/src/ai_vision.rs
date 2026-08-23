@@ -698,7 +698,8 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
     let dy = q.target_world.y - q.viewer_world.y;
     let sy = dy * INVERSE_ASPECT_RATIO;
     let dz = q.target_world.z - q.viewer_world.z;
-    let sqr_distance = dx * dx + sy * sy + dz * dz;
+    let sqr_distance_2d = dx * dx + sy * sy;
+    let sqr_distance = sqr_distance_2d + dz * dz;
 
     let (fx, fy) = q.view_forward;
     let view_radius = q.view_radius as f32;
@@ -738,7 +739,15 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
 
     // Raw distance-sharpness curve — objects are inanimate, so no
     // posture or action-state multiplier.
-    distance_sharpness(sqr_distance, view_radius)
+    // Original `ComputeVisibility(RHElementObject*)` uses the complete
+    // stretched 3D vector for the outer range and `IsDetecting` checks.
+    // `ComputeVisibility(SBGeoVector3D&)` selects its close-distance return
+    // from stretched XY only, then uses the complete 3D norm for the curve.
+    if sqr_distance_2d <= SQR_HALFCIRCLE_VIEW_RADIUS {
+        1.0
+    } else {
+        distance_sharpness(sqr_distance, view_radius)
+    }
 }
 
 /// Cone / halfcircle test plus the line-of-sight raycast.
@@ -3166,5 +3175,33 @@ mod tests {
         let sqr = dx * dx + sy * sy;
         let expected = distance_sharpness(sqr, DEFAULT_VIEW_RADIUS as f32);
         assert!((got - expected).abs() < 1e-5, "got {} vs {}", got, expected);
+    }
+
+    #[test]
+    fn object_sharpness_close_gate_ignores_vertical_delta() {
+        // Interactive 002-s0007 f9177: the coin is horizontally inside the
+        // 60-unit close-distance gate, while its 44-unit eye-height delta
+        // pushes the complete 3D norm outside. Original still publishes full
+        // object visibility because the final sharpness gate is 2D.
+        let mut q = obj_query(pt(0.0, 0.0), 4, pt(58.0, 0.0), &[]);
+        q.viewer_world = WorldPoint3D::new(0.0, 0.0, 45.0);
+        q.target_world = WorldPoint3D::new(58.0, 0.0, 1.0);
+
+        assert_eq!(compute_object_visibility(&q), 1.0);
+    }
+
+    #[test]
+    fn object_sharpness_outside_horizontal_close_gate_uses_distance_curve() {
+        let mut q = obj_query(pt(0.0, 0.0), 4, pt(61.0, 0.0), &[]);
+        q.viewer_world = WorldPoint3D::new(0.0, 0.0, 45.0);
+        q.target_world = WorldPoint3D::new(61.0, 0.0, 1.0);
+
+        let got = compute_object_visibility(&q);
+        let expected = distance_sharpness(
+            61.0_f32.powi(2) + 44.0_f32.powi(2),
+            DEFAULT_VIEW_RADIUS as f32,
+        );
+        assert!((got - expected).abs() < 1e-5, "got {got} vs {expected}");
+        assert!(got < 1.0);
     }
 }

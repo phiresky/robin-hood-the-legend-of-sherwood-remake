@@ -1402,6 +1402,52 @@ fn face_position_3d_measures_from_the_body_not_the_door_side_position() {
     );
 }
 
+/// Interactive session 002-s0005 frame 6025: Soldier 59 hears the
+/// drawbridge from below it. The normalized noise origin has no sector, but
+/// `RHnoise::uwElevation` still carries the height that Original recovers via
+/// `posOrigin.pSector` in `Face(RHposition)`.
+#[test]
+fn face_sectorless_noise_origin_uses_recorded_elevation() {
+    let mut ctx = face_to_ctx(crate::element::ActionState::Moving);
+    ctx.position = Position {
+        x: 1023.0087,
+        y: 1618.9951,
+        sector: None,
+        level: 4,
+    };
+    ctx.elevation = 400.001;
+    ctx.self_body_position_world = crate::coordinates::WorldPoint3D {
+        x: 1023.0087,
+        y: 2018.9961,
+        z: 400.001,
+    };
+    let noise = Noise {
+        origin: Position {
+            x: 1135.0,
+            y: 1843.0,
+            sector: None,
+            level: 0,
+        },
+        noise_type: NoiseType::Drawbridge,
+        volume: 274,
+        elevation: 220,
+        element_id: 0,
+    };
+
+    let mut normalized = AiController::new(1);
+    normalized.face_noise_origin_with_ctx(&noise, &ctx);
+    let normalized_orders = normalized.take_pending_orders();
+
+    assert_eq!(normalized_orders.len(), 1);
+    assert_eq!(normalized_orders[0].explicit_direction, Some(6));
+
+    let mut ground_level_control = AiController::new(1);
+    ground_level_control.face_position_3d_with_ctx(noise.origin, &ctx);
+    let ground_level_orders = ground_level_control.take_pending_orders();
+    assert_eq!(ground_level_orders.len(), 1);
+    assert_eq!(ground_level_orders[0].explicit_direction, Some(1));
+}
+
 #[test]
 fn fast_face_marks_the_turn_intent_without_changing_geometry() {
     let ctx = face_to_ctx(crate::element::ActionState::Moving);

@@ -154,6 +154,11 @@ pub struct AiReentrantOutbox {
     /// `SeekArea` around the civilian's report position.
     #[serde(default)]
     pub civilian_report_alert_officer_completion_pending: bool,
+    /// `WonderingBrawlHitting::EVENT_DONE` is suspended while the engine
+    /// performs its inline civilian sweep and synchronous officer callback.
+    /// The enclosing EndThink remains open until the brawler tail completes.
+    #[serde(default)]
+    pub brawl_hitting_completion_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -317,6 +322,11 @@ pub enum AiOwnerWork {
     ResumeCivilianReportAfterAlertOfficer {
         seek_position: Position,
     },
+    /// The money-brawl hit completion has a separate, inline civilian sweep
+    /// which calls `IsDetecting180Degrees`, unlike the shared
+    /// `NearbyCiviliansPanic()` callback's 360-degree detector. Appended to
+    /// preserve every existing serialized enum discriminant.
+    NearbyCiviliansPanic180,
 }
 
 #[derive(

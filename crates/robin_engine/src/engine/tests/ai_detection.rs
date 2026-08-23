@@ -2936,6 +2936,176 @@ fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
 }
 
 #[test]
+fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::element::{Camp, Entity, Posture};
+    use crate::sim_rng::{RngSite, with_draw_trace};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let victim_far = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let inactive = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let victim_near = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let dead = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let conscious = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let wrong_camp = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+    let victim_middle = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let ordinary_ko = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let stale_soldier_slot = engine.add_entity(make_test_civilian(Posture::Upright));
+
+    let fixtures = [
+        (owner_id, MapPoint::new(0.0, 0.0), true, 100, false, false),
+        (victim_far, MapPoint::new(300.0, 0.0), true, 100, true, true),
+        (inactive, MapPoint::new(5.0, 0.0), false, 100, true, true),
+        (
+            victim_near,
+            MapPoint::new(100.0, 0.0),
+            true,
+            100,
+            true,
+            true,
+        ),
+        (dead, MapPoint::new(6.0, 0.0), true, 0, true, true),
+        (conscious, MapPoint::new(7.0, 0.0), true, 100, false, true),
+        (wrong_camp, MapPoint::new(8.0, 0.0), true, 100, true, true),
+        (
+            victim_middle,
+            MapPoint::new(200.0, 0.0),
+            true,
+            100,
+            true,
+            true,
+        ),
+        (ordinary_ko, MapPoint::new(4.0, 0.0), true, 100, true, false),
+    ];
+    for (id, position, active, life_points, unconscious, money_fight_ko) in fixtures {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("fixture soldier exists")
+        else {
+            panic!("fixture changed entity kind")
+        };
+        soldier.element.active = active;
+        soldier.element.posture = if unconscious {
+            Posture::Lying
+        } else {
+            Posture::Upright
+        };
+        soldier.element.set_position_map(position);
+        soldier.npc.life_points = life_points;
+        soldier.human.unconscious = unconscious;
+        let ai = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("fixture soldier has Enemy AI");
+        ai.base.me = id.index();
+        ai.base.knocked_out_in_money_fight = money_fight_ko;
+    }
+    let owner = engine
+        .get_entity_mut(owner_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("owner has Enemy AI");
+    owner.base.current_state = AiState::Wondering;
+    owner.base.current_substate = Substate::WonderingWatchingForMoreMoney;
+    // A sleeping AI substate is not itself unconscious: Original reads the
+    // raw `mbUnconscious` flag. Keep this raw-false control out of the list.
+    engine
+        .get_entity_mut(conscious)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("sleeping-state control has Enemy AI")
+        .base
+        .current_substate = Substate::SleepingUnconscious;
+
+    // Deliberately differ from entity-slot order. This is the authored
+    // GetSoldier(camp, index) order, including one stale handle whose slot is
+    // now occupied by a civilian and must fail current typed validation.
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.ai.global.all_soldier_handles = std::sync::Arc::new(vec![
+        victim_middle.index(),
+        stale_soldier_slot.index(),
+        owner_id.index(),
+        inactive.index(),
+        victim_far.index(),
+        dead.index(),
+        wrong_camp.index(),
+        victim_near.index(),
+        conscious.index(),
+        ordinary_ko.index(),
+    ]);
+    engine.ai.standard_view_polygon_radius = 400;
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let ctx = crate::engine::ai::build_ai_context_from_entity(
+        engine.get_entity(owner_id).expect("owner exists"),
+        engine.control.frame_counter,
+        None,
+        engine.world.weather.is_forest_level,
+        engine.world.weather.ambiance,
+        engine.ai.standard_view_polygon_radius,
+        &scratch.ai_entity_views,
+        &scratch.ai_sight_obstacles,
+        &engine.world.fast_grid,
+        &assets.hiking_paths,
+        &assets.hiking_waypoint_sectors,
+        &engine.ai.global.all_soldier_handles,
+        engine.control.sim_config.difficulty,
+    );
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+
+    assert_eq!(
+        tick.camp_unconscious_soldiers
+            .iter()
+            .map(|candidate| (candidate.handle, candidate.knocked_out_in_money_fight))
+            .collect::<Vec<_>>(),
+        vec![
+            (victim_middle.index(), true),
+            (victim_far.index(), true),
+            (victim_near.index(), true),
+            (ordinary_ko.index(), false),
+        ],
+        "off-detection data keeps authored registry order and excludes stale-slot, inactive, dead, raw-conscious, and wrong-camp entries"
+    );
+
+    crate::sight_obstacle::begin_parity_visibility_capture();
+    let (_, draws) = with_draw_trace(|| {
+        engine.dispatch_think_with_drain(
+            &sim,
+            owner_id,
+            &Stimulus::new(StimulusType::EventDone),
+            &ctx,
+            &tick,
+            &assets,
+        );
+    });
+    let queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+    assert_eq!(queries.len(), 3);
+    assert_eq!(
+        queries
+            .iter()
+            .map(|query| query.destination[0])
+            .collect::<Vec<_>>(),
+        vec![200.0, 300.0, 100.0],
+        "detection queries retain camp-registry order before distance sorting"
+    );
+    assert!(
+        !draws.contains(&RngSite::MacroRand),
+        "a live victim keeps sequence-completion EVENT_DONE out of ReturnToDuty: {draws:?}"
+    );
+    let owner = engine
+        .get_entity(owner_id)
+        .and_then(Entity::enemy_ai)
+        .expect("owner retains Enemy AI");
+    assert_eq!(owner.base.current_state, AiState::Wondering);
+    assert_eq!(
+        owner.base.current_substate,
+        Substate::WonderingApproachingToLoot
+    );
+    assert_eq!(owner.base.detected_body, victim_near.index());
+}
+
+#[test]
 fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
     use crate::ai::{AiState, StimulusType, Substate};
     use crate::element::{AiBrain, Camp, Entity, EyeStatus, Posture};

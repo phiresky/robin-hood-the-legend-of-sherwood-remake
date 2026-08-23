@@ -831,6 +831,7 @@ impl EngineInner {
                         &scratch.ai_sight_obstacles,
                         &self.world.fast_grid,
                         &assets.hiking_paths,
+                        &assets.hiking_waypoint_sectors,
                         &self.ai.global.all_soldier_handles,
                         self.control.sim_config.difficulty,
                     );
@@ -3276,6 +3277,7 @@ impl EngineInner {
                 &fresh_scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -3557,6 +3559,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -3605,6 +3608,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -3656,6 +3660,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -3717,6 +3722,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -3751,6 +3757,113 @@ impl EngineInner {
                         "drain synchronous NearbyCiviliansPanic callback"
                     );
                     self.nearby_civilians_panic(sim, assets, owner);
+                    continue;
+                }
+                crate::ai::AiOwnerWork::NearbyCiviliansPanic180 => {
+                    tracing::trace!(
+                        target: "parity_nearby_panic",
+                        owner = owner.index(),
+                        "drain synchronous brawl NearbyCiviliansPanic180 callback"
+                    );
+                    self.nearby_civilians_panic_180(sim, assets, owner);
+
+                    // Original finishes every civilian Think, then calls
+                    // MaybeOfficerSeesMeFighting synchronously, and only
+                    // afterward executes the brawler's remaining state tail.
+                    // The ordinary drain policy consumes all owner-work
+                    // before cross-NPC work, so stage these boundaries here.
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let tick =
+                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!("brawl-hitting owner {} disappeared", owner.index())
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            self.control.frame_counter,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        )
+                    };
+                    ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!("brawl-hitting owner {} lost Enemy AI", owner.index())
+                        })
+                        .brawl_hitting_notify_officer(&ctx, &tick);
+                    ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+
+                    // No brawler tail is queued yet, so this recursively
+                    // settles only the officer call and anything it causes.
+                    self.process_synchronous_reentrant_actions_for(sim, owner, assets);
+
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let tick =
+                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!(
+                                "brawl-hitting owner {} disappeared after officer",
+                                owner.index()
+                            )
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            self.control.frame_counter,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        )
+                    };
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::enemy_ai_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "brawl-hitting owner {} lost Enemy AI after officer",
+                                owner.index()
+                            )
+                        })
+                        .resume_brawl_hitting_after_officer(&ctx, &tick);
+                    let ai = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "brawl-hitting owner {} lost AI at completion",
+                                owner.index()
+                            )
+                        });
+                    ai.outbox.reentrant.brawl_hitting_completion_pending = false;
+                    ai.resolve_engine_completion_verdict();
                     continue;
                 }
                 crate::ai::AiOwnerWork::ConsiderToBeginParade { attacker } => {
@@ -4201,6 +4314,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -4331,6 +4445,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -4563,6 +4678,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );

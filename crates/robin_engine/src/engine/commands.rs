@@ -103,6 +103,22 @@ enum RecordedInteractionIdentityError {
     MissingTarget,
 }
 
+/// Preserve `AppendMoveToSequence`'s sector test after adapting an actor
+/// already committed to a door onto that door's far side.
+///
+/// Original performs the adaptation before `pSectorGoal != pSectorSource`
+/// (`original-code/RHsequence.cpp`). If the far side is already the target
+/// sector, the route is a direct Move and must not gain a leading
+/// AssertPosition merely because the actor's raw sector differed earlier.
+fn target_interaction_assert_source_sector(
+    adapted_source_sector: u16,
+    target_sector: crate::position_interface::SectorHandle,
+) -> Result<Option<crate::position_interface::SectorHandle>, u16> {
+    let source_sector = crate::position_interface::SectorHandle::new(adapted_source_sector)
+        .ok_or(adapted_source_sector)?;
+    Ok((source_sector != target_sector).then_some(source_sector))
+}
+
 impl EngineInner {
     fn validate_recorded_interaction_identities(
         &self,
@@ -2992,15 +3008,12 @@ impl EngineInner {
             };
             (
                 path,
-                Some(
-                    crate::position_interface::SectorHandle::new(source_sector).unwrap_or_else(
-                        || {
-                            panic!(
-                                "target interaction for {actor:?} adapted to invalid source sector {source_sector}"
-                            )
-                        },
-                    ),
-                ),
+                target_interaction_assert_source_sector(source_sector, target_sector)
+                    .unwrap_or_else(|source_sector| {
+                        panic!(
+                            "target interaction for {actor:?} adapted to invalid source sector {source_sector}"
+                        )
+                    }),
             )
         };
 
@@ -4834,6 +4847,22 @@ mod tests {
     use crate::profiles::{Action, CharacterProfile, ProfileManager};
     use crate::sprite::Sprite;
     use crate::sprite_script::{SpriteScript, UNMAPPED};
+
+    #[test]
+    fn target_interaction_door_adaptation_omits_redundant_sector_assertion() {
+        let target_sector = crate::position_interface::SectorHandle::new(51).unwrap();
+
+        assert_eq!(
+            target_interaction_assert_source_sector(51, target_sector),
+            Ok(None),
+            "adapting door 10 from sector 48 onto its sector-51 far side must produce the Original's direct interaction Move"
+        );
+        assert_eq!(
+            target_interaction_assert_source_sector(48, target_sector),
+            Ok(crate::position_interface::SectorHandle::new(48)),
+            "a genuinely distinct adapted source must retain AppendMoveToSequence's leading AssertPosition"
+        );
+    }
 
     /// A legacy `SwordStrikeCmd` carries no resolved seek tolerance, so
     /// the distance has to be rebuilt from the command. Thrust A is the

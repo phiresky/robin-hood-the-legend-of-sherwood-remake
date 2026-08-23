@@ -373,6 +373,178 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn pc_group_move_routes_through_exact_gate_graph_and_retains_numeric_control() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(342));
+        let source_index = crate::fast_find_grid::SectorIndex::new(10).unwrap();
+        let goal_index = crate::fast_find_grid::SectorIndex::new(77).unwrap();
+        let source_exact = crate::position_interface::SectorHandle::new(1)
+            .unwrap()
+            .with_arena_index(source_index);
+        let exact_door = crate::gate::Door {
+            sector_out: crate::sector::SectorNumber::new(1),
+            sector_in: crate::sector::SectorNumber::new(77),
+            sector_out_index: Some(source_index),
+            sector_in_index: Some(goal_index),
+            point_out: MapPoint::new(0.0, 0.0),
+            point_in: MapPoint::new(10.0, 0.0),
+            ..crate::gate::Door::default()
+        };
+        let adapted = adapt_source_to_current_door_with_identity(
+            &[exact_door.clone()],
+            crate::position_interface::DoorHandle(0),
+            true,
+        )
+        .expect("current-door route source must resolve its canonical inside endpoint");
+        assert_eq!(adapted.1.get(), 77);
+        assert_eq!(adapted.1.arena_index(), Some(goal_index));
+        let exact_path = find_group_move_gate_path(
+            &[exact_door],
+            owner,
+            MapPoint::new(0.0, 0.0),
+            source_exact,
+            MapPoint::new(10.0, 0.0),
+            crate::sector::SectorNumber::new(77),
+            Some(goal_index),
+            1,
+            None,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("PC342-style exact group move must seed the exact door endpoint");
+        assert_eq!(exact_path.len(), 1);
+        assert!(exact_path[0].direct);
+
+        let numeric_door = crate::gate::Door {
+            sector_out: crate::sector::SectorNumber::new(1),
+            sector_in: crate::sector::SectorNumber::new(77),
+            point_out: MapPoint::new(0.0, 0.0),
+            point_in: MapPoint::new(10.0, 0.0),
+            ..crate::gate::Door::default()
+        };
+        let numeric_path = find_group_move_gate_path(
+            &[numeric_door],
+            owner,
+            MapPoint::new(0.0, 0.0),
+            crate::position_interface::SectorHandle::new(1).unwrap(),
+            MapPoint::new(10.0, 0.0),
+            crate::sector::SectorNumber::new(77),
+            None,
+            1,
+            None,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("legacy all-numeric group-move graph remains supported");
+        assert_eq!(numeric_path.len(), 1);
+        assert!(numeric_path[0].direct);
+
+        assert_eq!(
+            group_move_route_goal_index(
+                Some((crate::sector::SectorNumber::new(77), 1)),
+                Some(crate::sector::SectorNumber::new(77)),
+                Some(goal_index),
+                1,
+                None,
+                &crate::fast_find_grid::LevelGrid::default(),
+            ),
+            Some(goal_index),
+            "a recorded goal matching the spatial hit retains that hit's exact arena provenance"
+        );
+    }
+
+    fn cyrdach_path_waiter_doors(
+        exact: bool,
+    ) -> (
+        Vec<crate::gate::Door>,
+        Option<crate::fast_find_grid::SectorIndex>,
+        Option<crate::fast_find_grid::SectorIndex>,
+    ) {
+        let source_index = crate::fast_find_grid::SectorIndex::new(62).unwrap();
+        let shared_index = crate::fast_find_grid::SectorIndex::new(24).unwrap();
+        let goal_index = crate::fast_find_grid::SectorIndex::new(27).unwrap();
+        let mut doors = vec![crate::gate::Door::default(); 74];
+        for door in &mut doors {
+            door.active = false;
+        }
+        doors[73] = crate::gate::Door {
+            active: true,
+            sector_out: crate::sector::SectorNumber::new(24),
+            sector_in: crate::sector::SectorNumber::new(62),
+            sector_out_index: exact.then_some(shared_index),
+            sector_in_index: exact.then_some(source_index),
+            point_out: MapPoint::new(10.0, 0.0),
+            point_in: MapPoint::new(0.0, 0.0),
+            ..crate::gate::Door::default()
+        };
+        doors[18] = crate::gate::Door {
+            active: true,
+            sector_out: crate::sector::SectorNumber::new(24),
+            sector_in: crate::sector::SectorNumber::new(27),
+            sector_out_index: exact.then_some(shared_index),
+            sector_in_index: exact.then_some(goal_index),
+            point_out: MapPoint::new(20.0, 0.0),
+            point_in: MapPoint::new(30.0, 0.0),
+            ..crate::gate::Door::default()
+        };
+        crate::gate::build_gate_links(&mut doors);
+        (
+            doors,
+            exact.then_some(source_index),
+            exact.then_some(goal_index),
+        )
+    }
+
+    #[test]
+    fn path_waiter_preflight_accepts_exact_gate_73_then_18_and_numeric_legacy() {
+        for exact in [true, false] {
+            let (doors, source_index, goal_index) = cyrdach_path_waiter_doors(exact);
+            let path = find_ai_move_gate_path(
+                &doors,
+                MapPoint::new(0.0, 0.0),
+                crate::position_interface::SectorHandle::new(62).unwrap(),
+                source_index,
+                MapPoint::new(30.0, 0.0),
+                crate::position_interface::SectorHandle::new(27).unwrap(),
+                goal_index,
+                None,
+                None,
+                false,
+                &|_| true,
+                &|_| None,
+            )
+            .expect("path-waiter preflight must accept the authored gate chain");
+            assert_eq!(path.len(), 2);
+            assert_eq!(path[0].door_index, crate::gate::DoorIndex(73));
+            assert!(!path[0].direct);
+            assert_eq!(path[1].door_index, crate::gate::DoorIndex(18));
+            assert!(path[1].direct);
+        }
+    }
+
+    #[test]
+    fn path_waiter_preflight_rejects_duplicate_public_source_with_wrong_identity() {
+        let (doors, _, goal_index) = cyrdach_path_waiter_doors(true);
+        let duplicate_source_index = crate::fast_find_grid::SectorIndex::new(61).unwrap();
+        assert!(
+            find_ai_move_gate_path(
+                &doors,
+                MapPoint::new(0.0, 0.0),
+                crate::position_interface::SectorHandle::new(62).unwrap(),
+                Some(duplicate_source_index),
+                MapPoint::new(30.0, 0.0),
+                crate::position_interface::SectorHandle::new(27).unwrap(),
+                goal_index,
+                None,
+                None,
+                false,
+                &|_| true,
+                &|_| None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn non_sprite_movement_actions_return_authoritative_motion_states() {
         assert_eq!(
             non_sprite_movement_motion(OrderType::Freezing),
@@ -494,6 +666,46 @@ mod group_move_authorization_tests {
 /// The current actor sector is authoritative. In particular, an actor leaving
 /// a lift translates its movement action before the door callback changes the
 /// sector, while an actor approaching the lift from outside does not.
+pub(super) fn grid_sector_for_position_handle(
+    level: &crate::fast_find_grid::LevelGrid,
+    sector: crate::position_interface::SectorHandle,
+) -> Option<&crate::fast_find_grid::GridSector> {
+    match sector.arena_index() {
+        Some(index) => Some(level.sectors.get(usize::from(index)).unwrap_or_else(|| {
+            panic!(
+                "sector {} carries missing exact arena index {}",
+                sector.get(),
+                index.get()
+            )
+        })),
+        None => {
+            let number = crate::sector::SectorNumber::new(i16::from(sector));
+            level
+                .sector_number_map
+                .get(&number)
+                .and_then(|&index| level.sectors.get(index))
+        }
+    }
+}
+
+pub(super) fn lift_endpoint_points_for_sector(
+    sector: &crate::fast_find_grid::GridSector,
+) -> (MapPoint, MapPoint) {
+    let low = sector.low_exit_point.unwrap_or_else(|| {
+        panic!(
+            "DetermineMovementAnimation: lift sector {} missing low exit point",
+            sector.sector_number
+        )
+    });
+    let high = sector.high_exit_point.unwrap_or_else(|| {
+        panic!(
+            "DetermineMovementAnimation: lift sector {} missing high exit point",
+            sector.sector_number
+        )
+    });
+    (low, high)
+}
+
 pub(super) fn determine_lift_movement_animation_for(
     entity: &crate::element::Entity,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
@@ -512,13 +724,10 @@ pub(super) fn determine_lift_movement_animation_for(
     let Some(sector_handle) = elem.sector() else {
         return action;
     };
-    let sector_number = crate::sector::SectorNumber::new(i16::from(sector_handle));
-    let Some(sector) = fast_grid
-        .level
-        .sector_number_map
-        .get(&sector_number)
-        .and_then(|&index| fast_grid.level.sectors.get(index))
-    else {
+    // Original samples the actor's live `RHSector*`. Public sector numbers
+    // are not unique, so retain the arena identity carried by RHposition;
+    // number lookup is only the compatibility path for identity-less saves.
+    let Some(sector) = grid_sector_for_position_handle(&fast_grid.level, sector_handle) else {
         return action;
     };
     let Some(lift_type) = sector.lift_type else {
@@ -541,18 +750,7 @@ pub(super) fn determine_lift_movement_animation_for(
                 );
                 return action;
             }
-            let low = sector.low_exit_point.unwrap_or_else(|| {
-                panic!(
-                    "DetermineMovementAnimation: lift sector {} missing low exit point",
-                    sector.sector_number
-                )
-            });
-            let high = sector.high_exit_point.unwrap_or_else(|| {
-                panic!(
-                    "DetermineMovementAnimation: lift sector {} missing high exit point",
-                    sector.sector_number
-                )
-            });
+            let (low, high) = lift_endpoint_points_for_sector(sector);
             let position = elem.position_map();
             let ladder_dx = low.x - high.x;
             let ladder_dy = low.y - high.y;
@@ -573,6 +771,120 @@ pub(super) fn determine_lift_movement_animation_for(
         | Posture::HelpingToClimb
         | Posture::SimulatingBeggar => action,
         _ => lift_type.translate_upright_action(action),
+    }
+}
+
+#[cfg(test)]
+mod exact_lift_sector_tests {
+    use super::*;
+    use crate::element::{ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, PcData};
+    use crate::fast_find_grid::{FastFindGrid, GridSector, SectorIndex};
+    use crate::sector::{LiftType, SectorNumber, SectorType};
+
+    fn sector(number: SectorNumber, lift: Option<LiftType>) -> GridSector {
+        GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: lift.map_or(SectorType::AREA, |_| SectorType::LIFT),
+            layer: 3,
+            sector_number: number,
+            door_index: None,
+            lift_type: lift,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: lift.map(|_| MapPoint::new(2279.0, 1300.0)),
+            high_exit_point: lift.map(|_| MapPoint::new(2279.0, 1200.0)),
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
+    fn pc126(sector: crate::position_interface::SectorHandle) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            posture: crate::element::Posture::OnWall,
+            ..ElementData::default()
+        };
+        element.set_position_map(MapPoint::new(2278.8799, 1257.0005));
+        element.sprite.position_iface.set_sector_topology(
+            crate::position_interface::SectorHandle::new(sector.get()),
+            sector.arena_index(),
+        );
+        Entity::Pc(ActorPc {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })
+    }
+
+    #[test]
+    fn pc126_on_wall_uses_exact_duplicate_sector_for_climbing_down() {
+        let public = SectorNumber::new(62);
+        let ordinary_index = SectorIndex::new(0).unwrap();
+        let wall_index = SectorIndex::new(1).unwrap();
+        let mut grid = FastFindGrid::default();
+        let level = std::sync::Arc::make_mut(&mut grid.level);
+        level.sectors.push(sector(public, None));
+        level.sectors.push(sector(public, Some(LiftType::Wall)));
+        level
+            .sector_number_map
+            .insert(public, usize::from(ordinary_index));
+
+        let exact_wall = crate::position_interface::SectorHandle::new(62)
+            .unwrap()
+            .with_arena_index(wall_index);
+        assert_eq!(
+            determine_lift_movement_animation_for(
+                &pc126(exact_wall),
+                &grid,
+                crate::element::Posture::OnWall,
+                OrderType::WalkingUpright,
+                MapPoint::new(2279.0, 1269.0),
+            ),
+            OrderType::ClimbingWallDown,
+            "Pc126's gate-73 approach must use the exact Wall sector's downward action"
+        );
+
+        let exact_ordinary = crate::position_interface::SectorHandle::new(62)
+            .unwrap()
+            .with_arena_index(ordinary_index);
+        assert_eq!(
+            determine_lift_movement_animation_for(
+                &pc126(exact_ordinary),
+                &grid,
+                crate::element::Posture::OnWall,
+                OrderType::WalkingUpright,
+                MapPoint::new(2279.0, 1269.0),
+            ),
+            OrderType::WalkingUpright,
+            "an exact ordinary duplicate must not acquire Wall movement"
+        );
+
+        assert_eq!(
+            determine_lift_movement_animation_for(
+                &pc126(crate::position_interface::SectorHandle::new(62).unwrap()),
+                &grid,
+                crate::element::Posture::OnWall,
+                OrderType::WalkingUpright,
+                MapPoint::new(2279.0, 1269.0),
+            ),
+            OrderType::WalkingUpright,
+            "identity-less legacy positions retain the public-number fallback"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "sector 62 carries missing exact arena index 9")]
+    fn exact_sector_identity_never_falls_back_when_its_arena_object_is_missing() {
+        let grid = FastFindGrid::default();
+        let missing = crate::position_interface::SectorHandle::new(62)
+            .unwrap()
+            .with_arena_index(SectorIndex::new(9).unwrap());
+        let _ = grid_sector_for_position_handle(&grid.level, missing);
     }
 }
 
@@ -2022,6 +2334,13 @@ pub(crate) fn building_exit_wait_frames(sim: &crate::sim_rng::SimulationContext)
         + crate::sim_rng::u32(sim, crate::sim_rng::RngSite::RuntimeBuildingExitWait, 0..16)
 }
 
+fn route_sector_by_exact_handle(
+    engine: &EngineInner,
+    sector: crate::position_interface::SectorHandle,
+) -> Option<&crate::fast_find_grid::GridSector> {
+    grid_sector_for_position_handle(&engine.world.fast_grid.level, sector)
+}
+
 /// Timeout queue entry for a Move/Seek element whose pathfind failed.
 /// When the pathfinder returns no path, the request is stamped with the
 /// current universal frame counter and pushed onto this list.  After
@@ -2692,6 +3011,17 @@ pub(crate) fn adapt_source_to_current_door(
     door_handle: crate::position_interface::DoorHandle,
     door_direction: bool,
 ) -> Option<(MapPoint, u16, u16)> {
+    adapt_source_to_current_door_with_identity(doors, door_handle, door_direction)
+        .map(|(point, sector, layer)| (point, u16::from(sector), layer))
+}
+
+/// Identity-preserving form of [`adapt_source_to_current_door`]. Original
+/// copies the complete endpoint RHposition, including its RHSector pointer.
+pub(crate) fn adapt_source_to_current_door_with_identity(
+    doors: &[crate::gate::Door],
+    door_handle: crate::position_interface::DoorHandle,
+    door_direction: bool,
+) -> Option<(MapPoint, crate::position_interface::SectorHandle, u16)> {
     if door_handle.is_null() {
         return None;
     }
@@ -2699,9 +3029,21 @@ pub(crate) fn adapt_source_to_current_door(
     // door_direction true → use the "in" side of the door as the
     // source; false → use the "out" side.
     if door_direction {
-        Some((door.point_in, u16::from(door.sector_in), door.layer_in))
+        let handle = crate::position_interface::SectorHandle::new(u16::from(door.sector_in))?;
+        Some((
+            door.point_in,
+            door.sector_in_index
+                .map_or(handle, |index| handle.with_arena_index(index)),
+            door.layer_in,
+        ))
     } else {
-        Some((door.point_out, u16::from(door.sector_out), door.layer_out))
+        let handle = crate::position_interface::SectorHandle::new(u16::from(door.sector_out))?;
+        Some((
+            door.point_out,
+            door.sector_out_index
+                .map_or(handle, |index| handle.with_arena_index(index)),
+            door.layer_out,
+        ))
     }
 }
 
@@ -2964,6 +3306,33 @@ fn group_move_route_goal(
         .unwrap_or((selected_sector, selected_layer))
 }
 
+/// Recover the exact Original route-goal pointer without resolving a public
+/// number through the lossy number map. A recorded goal normally names the
+/// selected motion sector directly; patch/jump overlays retain an explicit
+/// `underlying_sector` edge to the authoritative route goal.
+fn group_move_route_goal_index(
+    recorded_goal: Option<(crate::sector::SectorNumber, u16)>,
+    selected_sector: Option<crate::sector::SectorNumber>,
+    selected_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    selected_layer: u16,
+    selected_grid_sector: Option<&crate::fast_find_grid::GridSector>,
+    level: &crate::fast_find_grid::LevelGrid,
+) -> Option<crate::fast_find_grid::SectorIndex> {
+    let Some((recorded_sector, recorded_layer)) = recorded_goal else {
+        return selected_sector_index;
+    };
+    if selected_sector == Some(recorded_sector) && selected_layer == recorded_layer {
+        return selected_sector_index;
+    }
+    selected_grid_sector
+        .and_then(|sector| sector.underlying_sector)
+        .filter(|&index| {
+            level.sectors.get(usize::from(index)).is_some_and(|sector| {
+                sector.sector_number == recorded_sector && sector.layer == recorded_layer
+            })
+        })
+}
+
 #[inline]
 fn group_move_door_selection(
     spatial_clicked_door_index: Option<u32>,
@@ -3017,6 +3386,95 @@ fn player_group_move_action(run: bool) -> OrderType {
         OrderType::RunningUpright
     } else {
         OrderType::WalkingUpright
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn find_group_move_gate_path(
+    doors: &[crate::gate::Door],
+    owner: EntityId,
+    source: MapPoint,
+    source_sector: crate::position_interface::SectorHandle,
+    goal: MapPoint,
+    goal_sector: crate::sector::SectorNumber,
+    goal_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    goal_layer: u16,
+    auth: Option<&crate::gate::ActorAuthInfo>,
+    building_is_authorized: &impl Fn(crate::sector::SectorNumber) -> bool,
+    sector_lift_type: &impl Fn(crate::sector::SectorNumber) -> Option<crate::sector::LiftType>,
+) -> Option<Vec<crate::gate::GatePathStep>> {
+    let source_sector_index = source_sector.arena_index();
+    let exact_graph = doors
+        .iter()
+        .any(|door| door.sector_out_index.is_some() || door.sector_in_index.is_some());
+    if exact_graph {
+        assert!(
+            source_sector_index.is_some(),
+            "TODO(parity): cross-sector group move for {owner:?} lacks exact source arena identity"
+        );
+        assert!(
+            goal_sector_index.is_some(),
+            "TODO(parity): authoritative group-move goal sector {} on layer {} lacks exact arena provenance",
+            u16::from(goal_sector),
+            goal_layer
+        );
+    }
+    crate::gate::find_path_gates_with_sector_indices(
+        doors,
+        (source.x, source.y),
+        u16::from(source_sector),
+        source_sector_index,
+        (goal.x, goal.y),
+        u16::from(goal_sector),
+        goal_sector_index,
+        auth,
+        false,
+        building_is_authorized,
+        sector_lift_type,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn find_ai_move_gate_path(
+    doors: &[crate::gate::Door],
+    source: MapPoint,
+    source_sector: crate::position_interface::SectorHandle,
+    source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    goal: MapPoint,
+    goal_sector: crate::position_interface::SectorHandle,
+    goal_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    goal_door: Option<crate::gate::DoorIndex>,
+    auth: Option<&crate::gate::ActorAuthInfo>,
+    allow_leave_map: bool,
+    building_is_authorized: &impl Fn(crate::sector::SectorNumber) -> bool,
+    sector_lift_type: &impl Fn(crate::sector::SectorNumber) -> Option<crate::sector::LiftType>,
+) -> Option<Vec<crate::gate::GatePathStep>> {
+    if let Some(goal_door) = goal_door {
+        crate::gate::find_path_into_door_with_sector_index(
+            doors,
+            (source.x, source.y),
+            u16::from(source_sector),
+            source_sector_index,
+            goal_door,
+            auth,
+            allow_leave_map,
+            building_is_authorized,
+            sector_lift_type,
+        )
+    } else {
+        crate::gate::find_path_gates_with_sector_indices(
+            doors,
+            (source.x, source.y),
+            u16::from(source_sector),
+            source_sector_index,
+            (goal.x, goal.y),
+            u16::from(goal_sector),
+            goal_sector_index,
+            auth,
+            allow_leave_map,
+            building_is_authorized,
+            sector_lift_type,
+        )
     }
 }
 
@@ -4290,24 +4748,6 @@ impl EngineInner {
         })
     }
 
-    pub(super) fn lift_endpoint_points(
-        &self,
-        sector_number: crate::sector::SectorNumber,
-    ) -> (MapPoint, MapPoint) {
-        let sector = self
-            .grid_sector_by_number(sector_number)
-            .expect("DetermineMovementAnimation: missing lift sector");
-        let low = sector.low_exit_point.unwrap_or_else(|| {
-            panic!("DetermineMovementAnimation: lift sector {sector_number} missing low exit point")
-        });
-        let high = sector.high_exit_point.unwrap_or_else(|| {
-            panic!(
-                "DetermineMovementAnimation: lift sector {sector_number} missing high exit point"
-            )
-        });
-        (low, high)
-    }
-
     fn determine_lift_movement_animation(
         &self,
         owner: EntityId,
@@ -4680,14 +5120,19 @@ impl EngineInner {
         // actor's still-visible near-side sector here would incorrectly
         // classify a return click as a same-sector Move and lose the reverse
         // gate traversal before the command is postponed.
-        let positions: Vec<(EntityId, MapPoint, u16, u16)> = pc_ids
+        let positions: Vec<(
+            EntityId,
+            MapPoint,
+            u16,
+            crate::position_interface::SectorHandle,
+        )> = pc_ids
             .iter()
             .filter_map(|&pc_id| {
                 self.get_entity(pc_id).map(|e| {
                     let elem = e.element_data();
                     let (position, sector, layer) = {
                         let (door_handle, door_direction) = current_door_for_route_source(e);
-                        adapt_source_to_current_door(
+                        adapt_source_to_current_door_with_identity(
                             &self.script_domains.interactables.doors,
                             door_handle,
                             door_direction,
@@ -4695,7 +5140,11 @@ impl EngineInner {
                         .unwrap_or_else(|| {
                             (
                                 elem.position_map(),
-                                elem.sector().map(u16::from).unwrap_or(0),
+                                elem.sector().unwrap_or_else(|| {
+                                    panic!(
+                                        "selected group-move actor {pc_id:?} has no source sector identity"
+                                    )
+                                }),
                                 elem.layer(),
                             )
                         })
@@ -4733,8 +5182,14 @@ impl EngineInner {
         let jump_underlying_sector = selected_grid_sector
             .filter(|sector| sector.sector_type.is_jump())
             .and_then(|sector| sector.underlying_sector)
-            .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
-            .map(|sector| (sector.sector_number, sector.layer));
+            .and_then(|index| {
+                self.world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(usize::from(index))
+                    .map(|sector| (sector.sector_number, index, sector.layer))
+            });
         let clicked_sector_door_index = selected_grid_sector.and_then(|sector| sector.door_index);
         let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
             door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
@@ -4749,6 +5204,14 @@ impl EngineInner {
             );
         let (route_goal_sector, route_goal_layer) =
             group_move_route_goal(goal_override, hit.sector, hit.layer);
+        let route_goal_sector_index = group_move_route_goal_index(
+            goal_override,
+            hit.sector,
+            hit.sector_idx,
+            hit.layer,
+            selected_grid_sector,
+            &self.world.fast_grid.level,
+        );
 
         let (
             goal_sector,
@@ -4877,20 +5340,26 @@ impl EngineInner {
                     panic!("selected group-move actor {pc_id:?} is missing");
                 };
                 let position = entity.position_iface();
+                let live_move_box_map = *position.get_move_box_map();
+                let upright_move_box = *position.get_move_box();
+                let actor_position = entity.element_data().position_map();
                 let mut bbox = group_move_mercenary_box(
-                    *position.get_move_box_map(),
-                    *position.get_move_box(),
-                    entity.element_data().position_map(),
+                    live_move_box_map,
+                    upright_move_box,
+                    actor_position,
                     center,
                     effective_click,
                     is_lift_click,
                 );
-                let authorized = bypass_formation_authorization
-                    || self.world.fast_grid.find_authorized_position_toward(
+                let authorized = if bypass_formation_authorization {
+                    true
+                } else {
+                    self.world.fast_grid.find_authorized_position_toward(
                         &mut bbox,
                         effective_click,
                         effective_layer,
-                    );
+                    )
+                };
                 if !authorized {
                     self.hero_speaking(
                         assets,
@@ -4905,6 +5374,7 @@ impl EngineInner {
                 formation_dest
             };
             let mut pc_goal_sector = goal_sector;
+            let mut pc_goal_sector_index = route_goal_sector_index;
             let mut pc_effective_layer = effective_layer;
             if is_jump_click {
                 // PerformGroupMove authorizes each formation slot before
@@ -4946,7 +5416,7 @@ impl EngineInner {
                         pc_pos,
                         resolved_jump_dest,
                         true,
-                        jump_underlying_sector.map(|(sector, _)| u16::from(sector)),
+                        jump_underlying_sector.map(|(sector, _, _)| u16::from(sector)),
                     )
                     .and_then(crate::jump_line::JumpLineIndex::new);
                 if let Some(source_line_idx) = source_line_idx {
@@ -5007,8 +5477,11 @@ impl EngineInner {
                         );
                     }
                     continue;
-                } else if let Some((underlying_sector, underlying_layer)) = jump_underlying_sector {
+                } else if let Some((underlying_sector, underlying_index, underlying_layer)) =
+                    jump_underlying_sector
+                {
                     pc_goal_sector = Some(underlying_sector);
+                    pc_goal_sector_index = Some(underlying_index);
                     pc_effective_layer = underlying_layer;
                     tracing::debug!(
                         actor = ?pc_id,
@@ -5040,7 +5513,7 @@ impl EngineInner {
                 is_valid,
                 pc_goal_sector,
                 pc_effective_layer,
-                *src_sector,
+                u16::from(*src_sector),
                 *pc_src_layer,
             ) {
                 // Door clicks skip the walkable snap entirely.
@@ -5164,7 +5637,7 @@ impl EngineInner {
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (pc_pos, path_src_sector, _path_src_layer) = {
                 let adapted = self.scripts.mission.as_ref().and_then(|_| {
-                    adapt_source_to_current_door(
+                    adapt_source_to_current_door_with_identity(
                         &self.script_domains.interactables.doors,
                         door_handle,
                         door_direction,
@@ -5194,10 +5667,11 @@ impl EngineInner {
             let level = self.world.fast_grid.level.clone();
             let door_goal_info = door_goal.and_then(|door_idx| {
                 self.scripts.mission.as_ref().and_then(|_| {
-                    let path = crate::gate::find_path_into_door(
+                    let path = crate::gate::find_path_into_door_with_sector_index(
                         &self.script_domains.interactables.doors,
                         (pc_pos.x, pc_pos.y),
-                        path_src_sector,
+                        u16::from(path_src_sector),
+                        path_src_sector.arena_index(),
                         crate::gate::DoorIndex(door_idx),
                         pc_auth.as_ref(),
                         false,
@@ -5299,14 +5773,16 @@ impl EngineInner {
                 };
                 let level = self.world.fast_grid.level.clone();
                 self.scripts.mission.as_ref().and_then(|_| {
-                    crate::gate::find_path_gates(
+                    find_group_move_gate_path(
                         &self.script_domains.interactables.doors,
-                        (pc_pos.x, pc_pos.y),
+                        *pc_id,
+                        pc_pos,
                         path_src_sector,
-                        (resolved_dest.x, resolved_dest.y),
-                        u16::from(goal_sector),
+                        resolved_dest,
+                        goal_sector,
+                        pc_goal_sector_index,
+                        pc_effective_layer,
                         pc_auth.as_ref(),
-                        false,
                         &|sector| self.building_sector_is_authorized(sector),
                         &|sector| {
                             level
@@ -5324,7 +5800,9 @@ impl EngineInner {
                     tracing::info!(
                         "Gate A* from sector {} to sector {}: {} gates{}",
                         src_sector,
-                        pc_goal_sector.map(u16::from).unwrap_or(*src_sector),
+                        pc_goal_sector
+                            .map(u16::from)
+                            .unwrap_or_else(|| u16::from(*src_sector)),
                         gate_steps.len(),
                         if door_goal.is_some() {
                             " (door goal)"
@@ -5349,14 +5827,7 @@ impl EngineInner {
                     let _ = self.build_gate_movement_sequence(
                         sim,
                         *pc_id,
-                        Some(
-                            crate::position_interface::SectorHandle::new(path_src_sector)
-                                .unwrap_or_else(|| {
-                                panic!(
-                                    "cross-sector group move for {pc_id:?} has invalid source sector {path_src_sector}"
-                                )
-                            }),
-                        ),
+                        Some(path_src_sector),
                         gate_steps,
                         goal_shape,
                         pc_effective_layer,
@@ -5543,7 +6014,7 @@ impl EngineInner {
             entry_layer: u16,
             exit_layer: u16,
             // Where the actor ends up *after* crossing.
-            new_sector: u16,
+            new_sector: crate::position_interface::SectorHandle,
             // Gate typing.
             is_jump: bool,
             jump_line_src: Option<crate::jump_line::JumpLineIndex>,
@@ -5562,64 +6033,80 @@ impl EngineInner {
             if self.scripts.mission.is_none() {
                 return None;
             }
-            let shots: Vec<GateShot> = gate_path
-                .iter()
-                .filter_map(|step| {
-                    let door = self
-                        .script_domains
-                        .interactables
-                        .doors
-                        .get(usize::from(step.door_index))?;
-                    let (entry, exit, entry_layer, exit_layer, new_sector) = if step.direct {
-                        (
-                            door.point_out,
-                            door.point_in,
-                            door.layer_out,
-                            door.layer_in,
-                            u16::from(door.sector_in),
-                        )
-                    } else {
-                        (
-                            door.point_in,
-                            door.point_out,
-                            door.layer_in,
-                            door.layer_out,
-                            u16::from(door.sector_out),
-                        )
-                    };
-                    let is_jump = door.is_jump();
-                    let (jump_src, jump_dst) = if is_jump {
-                        let (s, d) = if step.direct {
-                            (door.jump_line_out, door.jump_line_in)
+            let shots: Vec<GateShot> =
+                gate_path
+                    .iter()
+                    .filter_map(|step| {
+                        let door = self
+                            .script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(step.door_index))?;
+                        let (
+                            entry,
+                            exit,
+                            entry_layer,
+                            exit_layer,
+                            new_sector_number,
+                            new_sector_index,
+                        ) = if step.direct {
+                            (
+                                door.point_out,
+                                door.point_in,
+                                door.layer_out,
+                                door.layer_in,
+                                u16::from(door.sector_in),
+                                door.sector_in_index,
+                            )
                         } else {
-                            (door.jump_line_in, door.jump_line_out)
+                            (
+                                door.point_in,
+                                door.point_out,
+                                door.layer_in,
+                                door.layer_out,
+                                u16::from(door.sector_out),
+                                door.sector_out_index,
+                            )
                         };
-                        (
-                            s.and_then(crate::jump_line::JumpLineIndex::new),
-                            d.and_then(crate::jump_line::JumpLineIndex::new),
+                        let new_sector = crate::position_interface::SectorHandle::new(
+                            new_sector_number,
                         )
-                    } else {
-                        (None, None)
-                    };
-                    let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
-                    let (entry_action, door_action) = (base_action, base_action);
-                    Some(GateShot {
-                        door_index: step.door_index,
-                        direct: step.direct,
-                        entry,
-                        exit,
-                        entry_layer,
-                        exit_layer,
-                        new_sector,
-                        is_jump,
-                        jump_line_src: jump_src,
-                        jump_line_dst: jump_dst,
-                        is_locked_pc_unlockable,
-                        entry_action,
-                        door_action,
+                        .map(|handle| {
+                            new_sector_index.map_or(handle, |index| handle.with_arena_index(index))
+                        })?;
+                        let is_jump = door.is_jump();
+                        let (jump_src, jump_dst) = if is_jump {
+                            let (s, d) = if step.direct {
+                                (door.jump_line_out, door.jump_line_in)
+                            } else {
+                                (door.jump_line_in, door.jump_line_out)
+                            };
+                            (
+                                s.and_then(crate::jump_line::JumpLineIndex::new),
+                                d.and_then(crate::jump_line::JumpLineIndex::new),
+                            )
+                        } else {
+                            (None, None)
+                        };
+                        let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
+                        let (entry_action, door_action) = (base_action, base_action);
+                        Some(GateShot {
+                            door_index: step.door_index,
+                            direct: step.direct,
+                            entry,
+                            exit,
+                            entry_layer,
+                            exit_layer,
+                            new_sector,
+                            is_jump,
+                            jump_line_src: jump_src,
+                            jump_line_dst: jump_dst,
+                            is_locked_pc_unlockable,
+                            entry_action,
+                            door_action,
+                        })
                     })
-                })
-                .collect();
+                    .collect();
             shots
         }; // host borrow dropped here
 
@@ -5630,20 +6117,23 @@ impl EngineInner {
             .actor_auth_info()
             .has_lockpick;
 
-        // Resolve sector → is_building via the fast grid. Returns false for
-        // unknown sectors (ordinary motion areas are not buildings).
-        let is_building_sector = |this: &Self, sector: u16| -> bool {
-            this.grid_sector_by_number(crate::sector::SectorNumber::new(sector as i16))
-                .map(|gs| gs.sector_type.is_building())
-                .unwrap_or(false)
-        };
+        // Original carries exact sector pointers through pOldSector. Public
+        // numbers are not unique, so consult retained arena identity first;
+        // the number map is only the compatibility fallback for old saves.
+        let is_building_sector =
+            |this: &Self, sector: crate::position_interface::SectorHandle| -> bool {
+                route_sector_by_exact_handle(this, sector)
+                    .map(|gs| gs.sector_type.is_building())
+                    .unwrap_or(false)
+            };
 
-        let is_ladder_lift = |this: &Self, sector: u16| -> bool {
-            this.grid_sector_by_number(crate::sector::SectorNumber::new(sector as i16))
-                .and_then(|gs| gs.lift_type)
-                .map(|lt| lt == crate::sector::LiftType::Ladder)
-                .unwrap_or(false)
-        };
+        let is_ladder_lift =
+            |this: &Self, sector: crate::position_interface::SectorHandle| -> bool {
+                route_sector_by_exact_handle(this, sector)
+                    .and_then(|gs| gs.lift_type)
+                    .map(|lt| lt == crate::sector::LiftType::Ladder)
+                    .unwrap_or(false)
+            };
 
         let mut seq = Sequence::new();
         let mut level: u16 = 1;
@@ -5666,7 +6156,7 @@ impl EngineInner {
             gate_shots.is_empty() || source_sector.is_some(),
             "gate movement route for {entity_id:?} has no source sector"
         );
-        let mut prev_sector: Option<u16> = source_sector.map(u16::from);
+        let mut prev_sector = source_sector;
 
         // Cross-sector source-sector sanity assert.  When the goal
         // sector differs from the source, prepend an `AssertPosition`
@@ -5745,8 +6235,8 @@ impl EngineInner {
                 gate_idx,
                 door = ?shot.door_index,
                 direct = shot.direct,
-                prev_sector,
-                new_sector = shot.new_sector,
+                ?prev_sector,
+                new_sector = ?shot.new_sector,
                 old_is_building,
                 is_jump = shot.is_jump,
                 "gate-traversal sequence emits a gate"
@@ -5806,7 +6296,7 @@ impl EngineInner {
                     // before teleporting.  Building teleport is an
                     // in-sector position change, not a door-pass, so
                     // no gate ref is attached.
-                    sector: prev_sector.and_then(crate::position_interface::SectorHandle::new),
+                    sector: prev_sector,
                     gate_id: None,
                     line_id: None,
                     element: None,
@@ -5954,7 +6444,7 @@ impl EngineInner {
                 wait.data = SequenceElementData::Movement {
                     destination: crate::coordinates::MapPoint::default(),
                     layer: 0,
-                    sector: crate::position_interface::SectorHandle::new(shot.new_sector),
+                    sector: Some(shot.new_sector),
                     gate_id: Some(shot.door_index),
                     line_id: None,
                     element: None,
@@ -6244,8 +6734,7 @@ impl EngineInner {
                         cp.data = SequenceElementData::Movement {
                             destination: far_side_point,
                             layer: far_side_layer,
-                            sector: prev_sector
-                                .and_then(crate::position_interface::SectorHandle::new),
+                            sector: prev_sector,
                             // No gate ref on the building-interior
                             // CHANGE_POSITION (it is an in-sector
                             // teleport).
@@ -6812,28 +7301,18 @@ impl EngineInner {
             // different door state at the later drain.
             let goal_layer = intent.target_layer.unwrap_or(raw_layer);
             let goal_sector = intent.target_sector.or(raw_sector);
-            let target_point = crate::coordinates::MapPoint::new(intent.target_x, intent.target_y);
-            // GoTo compares the two `RHSector*` values directly
-            // (`RHartificialintelligence.cpp:2538`). SectorHandle carries
-            // only the public number, but multiple motion polygons may share
-            // that number. Recover their arena identities from the two
-            // authored points while both call-time positions are available.
-            // This matters even when FindPathGates later returns an empty
-            // gate list: AppendMoveToSequence still emits its leading
-            // AssertPosition.
-            let source_target_sector_identity_differs = raw_sector
-                .filter(|source_sector| Some(*source_sector) == goal_sector)
-                .is_some_and(|shared_sector| {
-                    sector_hits_have_distinct_identity(
-                        self.world
-                            .fast_grid
-                            .get_sector(raw_source, target_point, raw_layer),
-                        self.world
-                            .fast_grid
-                            .get_sector(target_point, raw_source, goal_layer),
-                        shared_sector,
-                    )
-                });
+            let raw_sector_index = raw_sector.and_then(|sector| sector.arena_index());
+            let goal_sector_index = intent
+                .target_sector_index
+                .or_else(|| goal_sector.and_then(|sector| sector.arena_index()));
+            // Original compares the two `RHSector*` values directly. Both
+            // identities now come from authored/copy provenance; coordinates
+            // are never queried to guess an overlapping polygon.
+            let source_target_sector_identity_differs = match (raw_sector_index, goal_sector_index)
+            {
+                (Some(source), Some(goal)) => source != goal,
+                _ => false,
+            };
             intent.source_target_sector_identity_differs |= source_target_sector_identity_differs;
             let crosses_raw_topology = goal_layer != raw_layer
                 || goal_sector != raw_sector
@@ -6849,17 +7328,35 @@ impl EngineInner {
                     })
                 })
                 .flatten();
+            let adapted_sector_index = adapted_source.and_then(|_| {
+                self.script_domains
+                    .interactables
+                    .doors
+                    .get(usize::try_from(door_handle.0).expect("door handle exceeds runtime usize"))
+                    .and_then(|door| {
+                        if door_direction {
+                            door.sector_in_index
+                        } else {
+                            door.sector_out_index
+                        }
+                    })
+            });
             let (source, sector, layer) = adapted_source
                 .map(|(point, sector, layer)| {
                     (
                         point,
-                        crate::position_interface::SectorHandle::new(sector),
+                        crate::position_interface::SectorHandle::new(sector).map(|handle| {
+                            adapted_sector_index
+                                .map_or(handle, |index| handle.with_arena_index(index))
+                        }),
                         layer,
                     )
                 })
                 .unwrap_or((raw_source, raw_sector, raw_layer));
             intent.source_position = Some(source);
             intent.source_sector = sector;
+            intent.source_sector_index = sector.and_then(|sector| sector.arena_index());
+            intent.target_sector_index = goal_sector_index;
             intent.source_layer = Some(layer);
         }
         self.orders.pending_move_requests.push((entity_id, intent));
@@ -7008,15 +7505,24 @@ impl EngineInner {
         };
         let goal_layer = intent.target_layer.unwrap_or(source_layer);
         let goal_sector = intent.target_sector.or(source_sector);
+        let source_sector_index = intent
+            .source_sector_index
+            .or_else(|| source_sector.and_then(|sector| sector.arena_index()));
+        let goal_sector_index = intent
+            .target_sector_index
+            .or_else(|| goal_sector.and_then(|sector| sector.arena_index()));
         let move_flags =
             crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
 
         let action = intent.order_type;
         // A layer transition requires gate routing even when the numeric
         // sector handle happens to remain the same.
-        let crosses_topology = goal_layer != source_layer
-            || goal_sector != source_sector
-            || intent.source_target_sector_identity_differs;
+        let exact_identity_differs = match (source_sector_index, goal_sector_index) {
+            (Some(source), Some(goal)) => source != goal,
+            _ => intent.source_target_sector_identity_differs,
+        };
+        let crosses_topology =
+            goal_layer != source_layer || goal_sector != source_sector || exact_identity_differs;
         if crosses_topology {
             let Some(source_sector) = source_sector else {
                 tracing::warn!(?entity_id, "cross-sector AI GoTo has no source sector");
@@ -7045,10 +7551,11 @@ impl EngineInner {
                 .map(crate::gate::DoorIndex);
             let gate_path = self.scripts.mission.as_ref().and_then(|_| {
                 if let Some(door_index) = door_goal {
-                    crate::gate::find_path_into_door(
+                    crate::gate::find_path_into_door_with_sector_index(
                         &self.script_domains.interactables.doors,
                         (source.x, source.y),
                         u16::from(source_sector),
+                        source_sector_index,
                         door_index,
                         auth.as_ref(),
                         move_flags.contains(crate::sequence::MoveFlags::MAP),
@@ -7062,12 +7569,14 @@ impl EngineInner {
                         },
                     )
                 } else {
-                    crate::gate::find_path_gates(
+                    crate::gate::find_path_gates_with_sector_indices(
                         &self.script_domains.interactables.doors,
                         (source.x, source.y),
                         u16::from(source_sector),
+                        source_sector_index,
                         (dest.x, dest.y),
                         u16::from(goal_sector),
+                        goal_sector_index,
                         auth.as_ref(),
                         move_flags.contains(crate::sequence::MoveFlags::MAP),
                         &|sector| self.building_sector_is_authorized(sector),
@@ -7099,12 +7608,12 @@ impl EngineInner {
             // says they differ, its empty same-number result is failure, not
             // a direct Move. In particular, do not replace the actor's
             // existing sequence in this case.
-            if gate_path.is_empty() && intent.source_target_sector_identity_differs {
+            if gate_path.is_empty() && exact_identity_differs {
                 tracing::warn!(
                     ?entity_id,
                     source_sector = u16::from(source_sector),
                     goal_sector = u16::from(goal_sector),
-                    identity_differs = intent.source_target_sector_identity_differs,
+                    identity_differs = exact_identity_differs,
                     "cross-sector AI GoTo resolved to an empty gate route"
                 );
                 self.set_ai_couldnt_reachpoint(entity_id);
@@ -7307,37 +7816,61 @@ impl EngineInner {
         let raw_source = ed.position_map();
         let raw_layer = ed.layer();
         let raw_sector = ed.sector();
-        let (source, source_layer, source_sector) = if let Some(source) = intent.source_position {
+        let raw_sector_index = raw_sector.and_then(|sector| sector.arena_index());
+        let (source, source_layer, source_sector, source_sector_index) = if let Some(source) =
+            intent.source_position
+        {
             (
                 source,
                 intent.source_layer.unwrap_or_else(|| {
                     panic!("AI GoTo for {entity_id:?} captured a source position without a layer")
                 }),
                 intent.source_sector,
+                intent
+                    .source_sector_index
+                    .or_else(|| intent.source_sector.and_then(|sector| sector.arena_index())),
             )
         } else {
-            self.scripts
-                .mission
-                .as_ref()
-                .and_then(|_| {
-                    adapt_source_to_current_door(
-                        &self.script_domains.interactables.doors,
-                        door_handle,
-                        door_direction,
-                    )
+            // AppendMoveToSequence only adapts a live door source after the
+            // raw RHSector* comparison selected the cross-topology branch.
+            // Keep this preflight on the same source identity as the later
+            // launch; otherwise it can authorize a different gate graph.
+            let raw_goal_layer = intent.target_layer.unwrap_or(raw_layer);
+            let raw_goal_sector = intent.target_sector.or(raw_sector);
+            let raw_goal_sector_index = intent
+                .target_sector_index
+                .or_else(|| raw_goal_sector.and_then(|sector| sector.arena_index()));
+            let raw_identity_differs = match (raw_sector_index, raw_goal_sector_index) {
+                (Some(source), Some(goal)) => source != goal,
+                _ => intent.source_target_sector_identity_differs,
+            };
+            let crosses_raw_topology = raw_goal_layer != raw_layer
+                || raw_goal_sector != raw_sector
+                || raw_identity_differs;
+            crosses_raw_topology
+                .then(|| {
+                    self.scripts.mission.as_ref().and_then(|_| {
+                        adapt_source_to_current_door_with_identity(
+                            &self.script_domains.interactables.doors,
+                            door_handle,
+                            door_direction,
+                        )
+                    })
                 })
-                .map(|(point, sector, layer)| {
-                    (
-                        point,
-                        layer,
-                        crate::position_interface::SectorHandle::new(sector),
-                    )
-                })
-                .unwrap_or((raw_source, raw_layer, raw_sector))
+                .flatten()
+                .map(|(point, sector, layer)| (point, layer, Some(sector), sector.arena_index()))
+                .unwrap_or((raw_source, raw_layer, raw_sector, raw_sector_index))
         };
         let goal_layer = intent.target_layer.unwrap_or(source_layer);
         let goal_sector = intent.target_sector.or(source_sector);
-        if goal_layer == source_layer && goal_sector == source_sector {
+        let goal_sector_index = intent
+            .target_sector_index
+            .or_else(|| goal_sector.and_then(|sector| sector.arena_index()));
+        let exact_identity_differs = match (source_sector_index, goal_sector_index) {
+            (Some(source), Some(goal)) => source != goal,
+            _ => intent.source_target_sector_identity_differs,
+        };
+        if goal_layer == source_layer && goal_sector == source_sector && !exact_identity_differs {
             return true;
         }
         let (Some(source_sector), Some(goal_sector), Some(_)) =
@@ -7349,52 +7882,34 @@ impl EngineInner {
         let level = &self.world.fast_grid.level;
         let move_flags =
             crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
-        let door_goal = self
-            .grid_sector_by_number(crate::sector::SectorNumber::new(
-                u16::from(goal_sector) as i16
-            ))
+        let exact_goal_sector =
+            goal_sector_index.map_or(goal_sector, |index| goal_sector.with_arena_index(index));
+        let door_goal = route_sector_by_exact_handle(self, exact_goal_sector)
             .filter(|sector| sector.sector_type.is_door())
             .and_then(|sector| sector.door_index)
             .map(crate::gate::DoorIndex);
         let goal = (intent.target_x, intent.target_y);
-        if let Some(door_index) = door_goal {
-            crate::gate::find_path_into_door(
-                &self.script_domains.interactables.doors,
-                (source.x, source.y),
-                u16::from(source_sector),
-                door_index,
-                Some(&auth),
-                move_flags.contains(crate::sequence::MoveFlags::MAP),
-                &|sector| self.building_sector_is_authorized(sector),
-                &|sector| {
-                    level
-                        .sectors
-                        .iter()
-                        .find(|candidate| candidate.sector_number == sector)
-                        .and_then(|candidate| candidate.lift_type)
-                },
-            )
-            .is_some()
-        } else {
-            crate::gate::find_path_gates(
-                &self.script_domains.interactables.doors,
-                (source.x, source.y),
-                u16::from(source_sector),
-                goal,
-                u16::from(goal_sector),
-                Some(&auth),
-                move_flags.contains(crate::sequence::MoveFlags::MAP),
-                &|sector| self.building_sector_is_authorized(sector),
-                &|sector| {
-                    level
-                        .sectors
-                        .iter()
-                        .find(|candidate| candidate.sector_number == sector)
-                        .and_then(|candidate| candidate.lift_type)
-                },
-            )
-            .is_some()
-        }
+        find_ai_move_gate_path(
+            &self.script_domains.interactables.doors,
+            source,
+            source_sector,
+            source_sector_index,
+            MapPoint::new(goal.0, goal.1),
+            goal_sector,
+            goal_sector_index,
+            door_goal,
+            Some(&auth),
+            move_flags.contains(crate::sequence::MoveFlags::MAP),
+            &|sector| self.building_sector_is_authorized(sector),
+            &|sector| {
+                level
+                    .sectors
+                    .iter()
+                    .find(|candidate| candidate.sector_number == sector)
+                    .and_then(|candidate| candidate.lift_type)
+            },
+        )
+        .is_some()
     }
 
     /// The raise-sword element `RHArtificialIntelligence::GoTo` inserts into
@@ -8531,8 +9046,7 @@ impl EngineInner {
             let Some(sector) = entity.element_data().sector() else {
                 continue;
             };
-            let Some(gs) =
-                self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector)))
+            let Some(gs) = grid_sector_for_position_handle(&self.world.fast_grid.level, sector)
             else {
                 continue;
             };
@@ -8555,12 +9069,19 @@ impl EngineInner {
                                 )
                             });
                         door_type_uses_lift_climb_direction(door.door_type)
-                            .then_some(door.sector_in)
+                            .then(|| {
+                                crate::position_interface::SectorHandle::new(u16::from(
+                                    door.sector_in,
+                                ))
+                                .map(|handle| {
+                                    door.sector_in_index
+                                        .map_or(handle, |index| handle.with_arena_index(index))
+                                })
+                            })
+                            .flatten()
                     })
                     .map(|sector_in| {
-                        self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(
-                            sector_in,
-                        )))
+                        grid_sector_for_position_handle(&self.world.fast_grid.level, sector_in)
                         .unwrap_or_else(|| {
                             panic!(
                                 "door-pass climb owner {actor_id:?} references missing lift sector {sector_in}"
@@ -8627,7 +9148,7 @@ impl EngineInner {
                         )
                     ) =>
                 {
-                    let (pt_low, pt_high) = self.lift_endpoint_points(gs.sector_number);
+                    let (pt_low, pt_high) = lift_endpoint_points_for_sector(gs);
                     let ladder_dx = pt_low.x - pt_high.x;
                     let ladder_dy = pt_low.y - pt_high.y;
                     lift_translation = Some(LiftAnimContext::OnClimb {
@@ -8661,7 +9182,7 @@ impl EngineInner {
                     )
                 )
             {
-                let (pt_low, pt_high) = self.lift_endpoint_points(gs.sector_number);
+                let (pt_low, pt_high) = lift_endpoint_points_for_sector(gs);
                 lift_translation = Some(LiftAnimContext::OnClimb {
                     lift_type: lt,
                     lift_direction: gs.lift_direction,
@@ -14606,14 +15127,6 @@ impl EngineInner {
                 self.world
                     .fast_grid
                     .is_reachable_thick(source, dest, entity_layer, half_diagonal);
-            self.world.fast_grid.trace_reachable_thick_decision(
-                self.control.frame_counter,
-                source,
-                dest,
-                entity_layer,
-                half_diagonal,
-                reachable,
-            );
             reachable
         };
 

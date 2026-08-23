@@ -44,6 +44,48 @@ fn seek_refresh_wait_elapsed(wait: u32) -> bool {
     (wait as i32) <= 0
 }
 
+/// Original gate routing compares the `RHSector*` stored by each RHposition.
+/// Public sector numbers are only a compatibility identity when neither
+/// position has been resolved to a live arena object.
+#[inline]
+fn seek_sectors_match(
+    source: crate::position_interface::SectorHandle,
+    goal: crate::position_interface::SectorHandle,
+) -> bool {
+    match (source.arena_index(), goal.arena_index()) {
+        (Some(source), Some(goal)) => source == goal,
+        (None, None) => source == goal,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn find_seek_gate_path(
+    doors: &[crate::gate::Door],
+    source: MapPoint,
+    source_sector: crate::position_interface::SectorHandle,
+    goal: MapPoint,
+    goal_sector: crate::position_interface::SectorHandle,
+    auth: Option<&crate::gate::ActorAuthInfo>,
+    allow_leave_map: bool,
+    building_is_authorized: &impl Fn(crate::sector::SectorNumber) -> bool,
+    sector_lift_type: &impl Fn(crate::sector::SectorNumber) -> Option<crate::sector::LiftType>,
+) -> Option<Vec<crate::gate::GatePathStep>> {
+    crate::gate::find_path_gates_with_sector_indices(
+        doors,
+        (source.x, source.y),
+        u16::from(source_sector),
+        source_sector.arena_index(),
+        (goal.x, goal.y),
+        u16::from(goal_sector),
+        goal_sector.arena_index(),
+        auth,
+        allow_leave_map,
+        building_is_authorized,
+        sector_lift_type,
+    )
+}
+
 /// `RHElementActor::PerformSeek`'s entity arm opens with
 ///
 /// ```text
@@ -812,7 +854,7 @@ impl crate::engine::EngineInner {
         let (Some(owner_sector), Some(target_sector)) = (owner_sector, target_sector) else {
             return false;
         };
-        if owner_sector == target_sector {
+        if seek_sectors_match(owner_sector, target_sector) {
             return false;
         }
 
@@ -832,7 +874,7 @@ impl crate::engine::EngineInner {
 
         let (path_src_pos, path_src_sector) = {
             let adapted = self.scripts.mission.as_ref().and_then(|_| {
-                crate::engine::movement::adapt_source_to_current_door(
+                crate::engine::movement::adapt_source_to_current_door_with_identity(
                     &self.script_domains.interactables.doors,
                     door_handle,
                     door_direction,
@@ -840,7 +882,7 @@ impl crate::engine::EngineInner {
             });
             match adapted {
                 Some((adj, sector, _layer)) => (adj, sector),
-                None => (owner_pos, u16::from(owner_sector)),
+                None => (owner_pos, owner_sector),
             }
         };
 
@@ -848,12 +890,12 @@ impl crate::engine::EngineInner {
         let level = self.world.fast_grid.level.clone();
         let gate_path = {
             self.scripts.mission.as_ref().and_then(|_| {
-                crate::gate::find_path_gates(
+                find_seek_gate_path(
                     &self.script_domains.interactables.doors,
-                    (path_src_pos.x, path_src_pos.y),
+                    path_src_pos,
                     path_src_sector,
-                    (resolved.destination.x, resolved.destination.y),
-                    u16::from(target_sector),
+                    resolved.destination,
+                    target_sector,
                     owner_auth.as_ref(),
                     false,
                     &|sector| self.building_sector_is_authorized(sector),
@@ -891,15 +933,7 @@ impl crate::engine::EngineInner {
         let _ = self.build_gate_movement_sequence(
             sim,
             owner,
-            Some(
-                crate::position_interface::SectorHandle::new(path_src_sector).unwrap_or_else(
-                    || {
-                        panic!(
-                            "entity seek refresh for {owner:?} adapted to invalid source sector {path_src_sector}"
-                        )
-                    },
-                ),
-            ),
+            Some(path_src_sector),
             gate_path,
             GoalShape::Seek {
                 point: resolved.destination,
@@ -976,7 +1010,7 @@ impl crate::engine::EngineInner {
         else {
             return false;
         };
-        if owner_sector == goal_sector {
+        if seek_sectors_match(owner_sector, goal_sector) {
             return false;
         }
         // A door-sector goal takes the original's `AppendMoveToDoorToSequence`
@@ -1002,23 +1036,24 @@ impl crate::engine::EngineInner {
             .get_entity(owner)
             .map(crate::engine::movement::current_door_for_route_source)
             .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
-        let (src_pos, src_sector) = match crate::engine::movement::adapt_source_to_current_door(
-            &self.script_domains.interactables.doors,
-            door_handle,
-            door_direction,
-        ) {
-            Some((adjusted, sector, _layer)) => (adjusted, sector),
-            None => (owner_pos, u16::from(owner_sector)),
-        };
+        let (src_pos, src_sector) =
+            match crate::engine::movement::adapt_source_to_current_door_with_identity(
+                &self.script_domains.interactables.doors,
+                door_handle,
+                door_direction,
+            ) {
+                Some((adjusted, sector, _layer)) => (adjusted, sector),
+                None => (owner_pos, owner_sector),
+            };
 
         let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
         let level = self.world.fast_grid.level.clone();
-        let gate_path = crate::gate::find_path_gates(
+        let gate_path = find_seek_gate_path(
             &self.script_domains.interactables.doors,
-            (src_pos.x, src_pos.y),
+            src_pos,
             src_sector,
-            (destination.x, destination.y),
-            u16::from(goal_sector),
+            destination,
+            goal_sector,
             owner_auth.as_ref(),
             flags.contains(MoveFlags::MAP),
             &|sector| self.building_sector_is_authorized(sector),
@@ -1060,13 +1095,7 @@ impl crate::engine::EngineInner {
         let _ = self.build_gate_movement_sequence(
             sim,
             owner,
-            Some(
-                crate::position_interface::SectorHandle::new(src_sector).unwrap_or_else(|| {
-                    panic!(
-                        "point seek refresh for {owner:?} adapted to invalid source sector {src_sector}"
-                    )
-                }),
-            ),
+            Some(src_sector),
             gate_path,
             GoalShape::Point {
                 point: destination,
@@ -1304,6 +1333,94 @@ mod tests {
             }],
         })
         .expect("minimal mission script")
+    }
+
+    #[test]
+    fn entity_seek_gate_search_keeps_pc126_exact_route_identity() {
+        use crate::fast_find_grid::SectorIndex;
+        use crate::gate::{Door, DoorIndex, build_gate_links};
+        use crate::sector::SectorNumber;
+
+        let arena = |index| SectorIndex::new(index).unwrap();
+        let sector = |public, index| {
+            SectorHandle::new(public)
+                .unwrap()
+                .with_arena_index(arena(index))
+        };
+        let mut doors = (0..74)
+            .map(|_| Door {
+                active: false,
+                ..Door::default()
+            })
+            .collect::<Vec<_>>();
+
+        // Cyrdach Pc126's Original route at frame 1427 starts by crossing
+        // gate 73 in reverse (62 -> 24), then gate 18 directly (24 -> 27).
+        doors[73] = Door {
+            active: true,
+            point_in: MapPoint::new(0.0, 0.0),
+            point_out: MapPoint::new(20.0, 0.0),
+            sector_in: SectorNumber::new(62),
+            sector_out: SectorNumber::new(24),
+            sector_in_index: Some(arena(162)),
+            sector_out_index: Some(arena(124)),
+            ..Door::default()
+        };
+        doors[18] = Door {
+            active: true,
+            point_out: MapPoint::new(30.0, 0.0),
+            point_in: MapPoint::new(50.0, 0.0),
+            sector_out: SectorNumber::new(24),
+            sector_in: SectorNumber::new(27),
+            sector_out_index: Some(arena(124)),
+            sector_in_index: Some(arena(127)),
+            ..Door::default()
+        };
+        build_gate_links(&mut doors);
+
+        let path = find_seek_gate_path(
+            &doors,
+            MapPoint::new(0.0, 0.0),
+            sector(62, 162),
+            MapPoint::new(50.0, 0.0),
+            sector(27, 127),
+            None,
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("exact Pc126 Seek topology must find the two-gate route");
+        assert_eq!(
+            path,
+            vec![
+                crate::gate::GatePathStep {
+                    door_index: DoorIndex(73),
+                    direct: false,
+                },
+                crate::gate::GatePathStep {
+                    door_index: DoorIndex(18),
+                    direct: true,
+                },
+            ]
+        );
+
+        assert!(
+            find_seek_gate_path(
+                &doors,
+                MapPoint::new(0.0, 0.0),
+                // Same public sector as gate 73's in-side, but a distinct
+                // Original arena object. Numeric routing would falsely use
+                // gate 73 here; exact routing must reject it.
+                sector(62, 262),
+                MapPoint::new(50.0, 0.0),
+                sector(27, 127),
+                None,
+                false,
+                &|_| true,
+                &|_| None,
+            )
+            .is_none()
+        );
     }
 
     #[test]

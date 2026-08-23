@@ -225,6 +225,27 @@ fn striking_down_sword_direction(owner: &Entity, antagonist: &Entity) -> i16 {
     crate::position_interface::vector_to_sector_0_to_15_iso(to.x - from.x, to.y - from.y)
 }
 
+fn taking_initial_direction(
+    owner_is_pc: bool,
+    order_is_initialising: bool,
+    anim_type: OrderType,
+    from: crate::coordinates::MapPoint,
+    to: crate::coordinates::MapPoint,
+) -> Option<i16> {
+    if !order_is_initialising {
+        return None;
+    }
+    match (owner_is_pc, anim_type) {
+        (true, OrderType::Taking | OrderType::TakingCrouched) => Some(
+            crate::position_interface::vector_to_sector_0_to_15(to.x - from.x, to.y - from.y),
+        ),
+        (false, OrderType::Taking) => Some(
+            crate::position_interface::vector_to_sector_0_to_15_iso(to.x - from.x, to.y - from.y),
+        ),
+        _ => None,
+    }
+}
+
 /// Beggar animation arms whose original PC `Execute` handler calls `Turn()`
 /// before advancing the sprite action.
 fn pc_beggar_execute_calls_turn(anim: OrderType) -> bool {
@@ -852,6 +873,21 @@ mod tests {
 
         assert_eq!(motion, None);
         assert_eq!(entity.human_data().unwrap().tiredness, 0);
+    }
+
+    #[test]
+    fn weak_sword_first_arrival_at_action_done_preserves_done() {
+        let mut entity = weak_soldier_at_action_done(25);
+        let mut motion = MotionState::Done;
+
+        apply_weak_sword_tiredness_after_perform(
+            &mut entity,
+            OrderType::BeingWeakSword,
+            &mut motion,
+        );
+
+        assert_eq!(motion, MotionState::Done);
+        assert_eq!(entity.human_data().unwrap().tiredness, 20);
     }
 
     #[test]
@@ -3951,13 +3987,14 @@ fn apply_combat_injury_side_effect(
     }
 }
 
-/// `BEING_WEAK_SWORD` reduces tiredness every tick and, once the
-/// action-done frame has been reached, keeps returning `InProgress`
-/// until tiredness reaches zero.
+/// `BEING_WEAK_SWORD` reduces tiredness after a sprite tick. When that tick
+/// first reaches the action-done frame, preserve the sprite's `Done` result:
+/// Original tests `IsActionDone` before `PerformAction`, so the hold begins
+/// only on the following actor tick in [`hold_weak_sword_at_action_done`].
 fn apply_weak_sword_tiredness_after_perform(
     entity: &mut Entity,
     anim_type: OrderType,
-    motion: &mut MotionState,
+    _motion: &mut MotionState,
 ) {
     if anim_type != OrderType::BeingWeakSword {
         return;
@@ -3967,9 +4004,6 @@ fn apply_weak_sword_tiredness_after_perform(
     };
 
     human.tiredness = human.tiredness.saturating_sub(WEAKNESS_DISMISH);
-    if human.tiredness != 0 && matches!(*motion, MotionState::Done | MotionState::Terminated) {
-        *motion = MotionState::InProgress;
-    }
 }
 
 fn sprite_is_at_action_done(sprite: &crate::sprite::Sprite) -> bool {
@@ -4712,7 +4746,7 @@ impl EngineInner {
             standing_up_sword_direction_goal,
             extracting_arrow_sword_direction_goal,
             striking_down_sword_direction_goal,
-            pc_taking_direction_goal,
+            taking_direction_goal,
             pc_target_direction_goal,
         ) = {
             let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
@@ -5018,32 +5052,26 @@ impl EngineInner {
                 None
             };
 
-            // RHElementActorPC::Execute initializes TAKING from the live
-            // owner/object map positions immediately before its per-tick
-            // Turn(). Do not rely on a preceding Seek having left a suitable
-            // direction goal: direct interaction sequences take this path too.
-            let taking_direction = if entity.is_pc()
-                && actor.execute_order_initialising
-                && matches!(anim_type, OrderType::Taking | OrderType::TakingCrouched)
-            {
-                validated_antagonist.map(|antagonist_id| {
-                    let antagonist =
-                        self.world.entities.get(antagonist_id).unwrap_or_else(|| {
-                            panic!(
-                                "actor {entity_id:?} {anim_type:?} antagonist {antagonist_id:?} is missing at legacy slot {}",
-                                entity_id.index()
-                            )
-                        });
-                    let from = entity.element_data().position_map();
-                    let to = antagonist.element_data().position_map();
-                    crate::position_interface::vector_to_sector_0_to_15(
-                        to.x - from.x,
-                        to.y - from.y,
+            // Original initializes the live facing on the first Execute tick,
+            // after translation has deliberately preserved the previous goal.
+            // PC Taking/TakingCrouched uses the ordinary 2-D sector, while the
+            // soldier Taking override passes ASPECT_RATIO. DrinkAle merely
+            // calls Turn() and must not synthesize a new direction.
+            let taking_direction = validated_antagonist.and_then(|antagonist_id| {
+                let antagonist = self.world.entities.get(antagonist_id).unwrap_or_else(|| {
+                    panic!(
+                        "actor {entity_id:?} {anim_type:?} antagonist {antagonist_id:?} is missing at legacy slot {}",
+                        entity_id.index()
                     )
-                })
-            } else {
-                None
-            };
+                });
+                taking_initial_direction(
+                    entity.is_pc(),
+                    actor.execute_order_initialising,
+                    anim_type,
+                    entity.element_data().position_map(),
+                    antagonist.element_data().position_map(),
+                )
+            });
             // HIT_TARGET / HANDLE_TARGET use the target sprite row's live
             // action hotspot, not the target's interaction PositionMap. The
             // original intentionally uses GetSector0to15() without the
@@ -5473,7 +5501,7 @@ impl EngineInner {
                     if let Some(direction) = extracting_arrow_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
-                    if let Some(direction) = pc_taking_direction_goal {
+                    if let Some(direction) = taking_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
                     if let Some(direction) = pc_target_direction_goal {
@@ -6535,7 +6563,7 @@ impl EngineInner {
                     GameMaterial::Bush => Some(Material::Bush),
                     GameMaterial::Ice => Some(Material::Ice),
                     GameMaterial::Hole => Some(Material::Hole),
-                    GameMaterial::LightShadow => None,
+                    GameMaterial::NumberOfMaterials | GameMaterial::LightShadow => None,
                 }
             } else {
                 None
@@ -6636,6 +6664,37 @@ mod soldier_take_drink_parity_tests {
         assert_eq!(
             sprite_anim_for_order(&sprite, OrderType::Taking, true),
             OrderType::Taking
+        );
+    }
+
+    #[test]
+    fn taking_initial_facing_uses_the_owner_specific_original_projection() {
+        let from = crate::coordinates::MapPoint::new(863.8749, 702.40265);
+        let to = crate::coordinates::MapPoint::new(846.728, 693.8904);
+
+        assert_eq!(
+            taking_initial_direction(false, true, OrderType::Taking, from, to),
+            Some(14),
+            "soldier Taking uses GetSector0to15(ASPECT_RATIO) on first Execute"
+        );
+        assert_eq!(
+            taking_initial_direction(true, true, OrderType::Taking, from, to),
+            Some(13),
+            "PC Taking retains its non-isometric GetSector0to15 path"
+        );
+        assert_eq!(
+            taking_initial_direction(true, true, OrderType::TakingCrouched, from, to),
+            Some(13)
+        );
+        assert_eq!(
+            taking_initial_direction(false, true, OrderType::DrinkingAle, from, to),
+            None,
+            "soldier DrinkAle only turns toward its existing goal"
+        );
+        assert_eq!(
+            taking_initial_direction(false, false, OrderType::Taking, from, to),
+            None,
+            "Taking refreshes its goal only during order initialization"
         );
     }
 

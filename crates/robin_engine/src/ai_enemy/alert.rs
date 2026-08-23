@@ -1791,6 +1791,7 @@ mod tests {
             ai_substate: Substate::DefaultOnPost,
             is_able_to_fight: true,
             is_dead: false,
+            knocked_out_in_money_fight: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,

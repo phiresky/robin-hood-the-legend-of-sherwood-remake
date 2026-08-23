@@ -308,10 +308,15 @@ fn retain_legacy_grid_topology(
                         append_door_constructor(&mut topology, &mut sectors, door);
                     }
                     if let Some(building_number) = building_number {
-                        sectors.add_position_sector(
+                        // `RHSectorBuilding` is constructed before its doors
+                        // and only added to `marraySectors` afterwards.  Its
+                        // public `GetSectorNumber()` is therefore this sparse
+                        // constructor slot, not Rust's dense arena index.
+                        sectors.add_position_sector_with_public_number(
                             building_number,
                             LegacyGridSectorAsset::Building,
                             next_runtime_building_sector,
+                            building_number,
                         );
                         next_runtime_building_sector += 1;
                     }
@@ -450,6 +455,7 @@ fn retain_legacy_grid_topology(
         .sort_by_key(|patch| (patch.layer, patch.index_in_layer));
     topology.sectors = sectors.slots;
     topology.position_sector_numbers = sectors.position_sector_numbers;
+    topology.position_sector_indices = sectors.position_sector_indices;
     assets.legacy_grid_topology = Some(topology);
     Ok(())
 }
@@ -459,6 +465,7 @@ struct LegacySectorTopologyBuilder {
     next_constructor_number: usize,
     slots: Vec<LegacyGridSectorAsset>,
     position_sector_numbers: Vec<Option<i16>>,
+    position_sector_indices: Vec<Option<crate::fast_find_grid::SectorIndex>>,
 }
 
 impl LegacySectorTopologyBuilder {
@@ -476,6 +483,8 @@ impl LegacySectorTopologyBuilder {
             );
             self.position_sector_numbers
                 .resize(constructor_number + 1, None);
+            self.position_sector_indices
+                .resize(constructor_number + 1, None);
         }
         self.slots[constructor_number] = kind;
     }
@@ -484,19 +493,274 @@ impl LegacySectorTopologyBuilder {
         &mut self,
         constructor_number: usize,
         kind: LegacyGridSectorAsset,
-        runtime_sector_number: usize,
+        runtime_sector_index: usize,
+    ) {
+        self.add_position_sector_with_public_number(
+            constructor_number,
+            kind,
+            runtime_sector_index,
+            runtime_sector_index,
+        );
+    }
+
+    fn add_position_sector_with_public_number(
+        &mut self,
+        constructor_number: usize,
+        kind: LegacyGridSectorAsset,
+        runtime_sector_index: usize,
+        public_sector_number: usize,
     ) {
         self.add(constructor_number, kind);
         self.position_sector_numbers[constructor_number] = Some(
-            i16::try_from(runtime_sector_number)
-                .expect("runtime position-sector number exceeds Original signed-word domain"),
+            i16::try_from(public_sector_number)
+                .expect("position-sector number exceeds Original signed-word domain"),
+        );
+        let runtime_sector_index =
+            u32::try_from(runtime_sector_index).expect("runtime position-sector index exceeds u32");
+        self.position_sector_indices[constructor_number] = Some(
+            crate::fast_find_grid::SectorIndex::new(runtime_sector_index)
+                .expect("runtime position-sector index equals the null sentinel"),
         );
     }
 
     fn insert_last(&mut self, kind: LegacyGridSectorAsset) {
         self.slots.push(kind);
         self.position_sector_numbers.push(None);
+        self.position_sector_indices.push(None);
     }
+}
+
+/// Finish the pointer identity that Original establishes in
+/// `RHSectorBuilding::InitializeFromProtoStream` + `AddSector`.
+///
+/// Runtime motion/building objects occupy a dense Rust arena, while an
+/// Original building's public sector number is its (possibly sparse)
+/// `marraySectors` slot.  Every door owned by the building is then rewired to
+/// that exact object.  Keeping those two identities separate matters when
+/// constructor holes make the sparse number differ from the arena index.
+fn canonicalize_building_position_sectors(
+    assets: &LevelAssets,
+    loaded: &mut crate::level_data::LoadedLevel,
+    level: &mut crate::fast_find_grid::LevelGrid,
+) {
+    let retained = assets
+        .legacy_grid_topology
+        .as_ref()
+        .expect("building identity canonicalization requires retained topology");
+    let bindings = retained
+        .sectors
+        .iter()
+        .zip(&retained.position_sector_numbers)
+        .zip(&retained.position_sector_indices)
+        .filter_map(|((kind, number), index)| {
+            matches!(kind, LegacyGridSectorAsset::Building).then(|| {
+                (
+                    number.expect("building has no public sector number"),
+                    index.expect("building has no arena identity"),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let building_count = loaded
+        .proto
+        .buildings
+        .iter()
+        .filter(|entry| matches!(entry, crate::level_data::RawBuildingEntry::Building { .. }))
+        .count();
+    assert_eq!(
+        bindings.len(),
+        building_count,
+        "retained building identities disagree with authored building entries"
+    );
+
+    let mut bindings = bindings.into_iter();
+    for entry in &mut loaded.proto.buildings {
+        let crate::level_data::RawBuildingEntry::Building { doors } = entry else {
+            continue;
+        };
+        let (public_number, arena_index) = bindings
+            .next()
+            .expect("authored building has no retained identity");
+        let sector = level
+            .sectors
+            .get_mut(usize::from(arena_index))
+            .expect("retained building arena index is absent at runtime");
+        assert!(
+            sector.sector_type.is_building(),
+            "retained building identity points at a non-building arena object"
+        );
+        sector.sector_number = crate::sector::SectorNumber::new(public_number);
+        let public_number =
+            u16::try_from(public_number).expect("Original building sector number is negative");
+        for door in doors {
+            door.sector_in = public_number;
+        }
+    }
+
+    // `add_sector` populated this map before the sparse identities were
+    // retained. Rebuild it in arena insertion order, preserving its normal
+    // last-object-wins behavior while removing the obsolete dense aliases.
+    level.sector_number_map.clear();
+    for (index, sector) in level.sectors.iter().enumerate() {
+        level.sector_number_map.insert(sector.sector_number, index);
+    }
+}
+
+fn validate_legacy_position_sector_bijection(
+    topology: &LegacyGridTopologyAssets,
+    runtime_sectors: &[crate::fast_find_grid::GridSector],
+) -> Result<(), String> {
+    if topology.position_sector_numbers.len() != topology.sectors.len()
+        || topology.position_sector_indices.len() != topology.sectors.len()
+    {
+        return Err(format!(
+            "retained sparse sector arrays disagree: objects={}, public_numbers={}, runtime_indices={}",
+            topology.sectors.len(),
+            topology.position_sector_numbers.len(),
+            topology.position_sector_indices.len(),
+        ));
+    }
+
+    let mut claimed = std::collections::BTreeMap::new();
+    for (sparse_slot, (&public_number, &runtime_index)) in topology
+        .position_sector_numbers
+        .iter()
+        .zip(&topology.position_sector_indices)
+        .enumerate()
+    {
+        match (public_number, runtime_index) {
+            (None, None) => continue,
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(format!(
+                    "Original sparse sector slot {sparse_slot} has only one half of its public/runtime identity"
+                ));
+            }
+            (Some(public_number), Some(runtime_index)) => {
+                if let Some(previous_slot) = claimed.insert(runtime_index, sparse_slot) {
+                    return Err(format!(
+                        "Original sparse sector slots {previous_slot} and {sparse_slot} both map to runtime sector index {runtime_index}"
+                    ));
+                }
+                let runtime = runtime_sectors
+                    .get(usize::from(runtime_index))
+                    .ok_or_else(|| {
+                        format!(
+                            "Original sparse sector slot {sparse_slot} maps to absent runtime sector index {runtime_index} (runtime count {})",
+                            runtime_sectors.len()
+                        )
+                    })?;
+                if i16::from(runtime.sector_number) != public_number {
+                    return Err(format!(
+                        "Original sparse sector slot {sparse_slot} maps to runtime index {runtime_index}, whose public number {} differs from retained {public_number}",
+                        i16::from(runtime.sector_number)
+                    ));
+                }
+                let expected_kind = topology.sectors[sparse_slot];
+                let kind_matches = match expected_kind {
+                    LegacyGridSectorAsset::Building => runtime.sector_type.is_building(),
+                    LegacyGridSectorAsset::Lift => runtime.sector_type.is_lift(),
+                    LegacyGridSectorAsset::NullOrOrdinary => runtime.sector_type.is_motion(),
+                    LegacyGridSectorAsset::Door { .. } => false,
+                };
+                if !kind_matches {
+                    return Err(format!(
+                        "Original sparse sector slot {sparse_slot} ({expected_kind:?}) maps to incompatible runtime sector index {runtime_index} with type {:?}",
+                        runtime.sector_type
+                    ));
+                }
+            }
+        }
+    }
+    // Position sectors are registered as the dense runtime prefix. Later
+    // shadow/jump/patch click sectors also live in `level.sectors`, but have
+    // no `RHposition` pointer role and therefore no sparse position binding.
+    for runtime_index in 0..claimed.len() {
+        let runtime_index = crate::fast_find_grid::SectorIndex::new(
+            u32::try_from(runtime_index).map_err(|_| {
+                "runtime motion/building sector count exceeds u32 during bijection validation"
+                    .to_owned()
+            })?,
+        )
+        .ok_or_else(|| {
+            "runtime motion/building sector index equals the null sentinel".to_owned()
+        })?;
+        if !claimed.contains_key(&runtime_index) {
+            return Err(format!(
+                "runtime motion/building sector index {runtime_index} has no Original sparse sector slot"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve each serialized waypoint `RHSector*` sparse slot to the exact live
+/// sector pointer identity retained by Original's `SerializeSectorPointer`.
+fn resolve_hiking_waypoint_sector_identities(
+    assets: &mut LevelAssets,
+    runtime_sectors: &[crate::fast_find_grid::GridSector],
+) {
+    let topology = assets
+        .legacy_grid_topology
+        .as_ref()
+        .expect("waypoint sector resolution requires retained Original grid topology");
+    let paths = std::sync::Arc::make_mut(&mut assets.hiking_paths);
+    let exact_paths = paths
+        .iter_mut()
+        .enumerate()
+        .map(|(path_index, path)| {
+            path.waypoints
+                .iter_mut()
+                .enumerate()
+                .map(|(waypoint_index, waypoint)| {
+                    let sparse_slot = usize::from(waypoint.sector);
+                    let public_number = topology
+                        .position_sector_numbers
+                        .get(sparse_slot)
+                        .copied()
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "hiking path {path_index} waypoint {waypoint_index} references unmappable Original sector slot {sparse_slot}"
+                            )
+                        });
+                    let runtime_index = topology
+                        .position_sector_indices
+                        .get(sparse_slot)
+                        .copied()
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "hiking path {path_index} waypoint {waypoint_index} sector slot {sparse_slot} has no exact runtime identity"
+                            )
+                        });
+                    let runtime = runtime_sectors.get(usize::from(runtime_index)).unwrap_or_else(|| {
+                        panic!(
+                            "hiking path {path_index} waypoint {waypoint_index} sector slot {sparse_slot} resolves outside runtime sector arena at {runtime_index}"
+                        )
+                    });
+                    assert_eq!(
+                        i16::from(runtime.sector_number),
+                        public_number,
+                        "hiking path {path_index} waypoint {waypoint_index} sector slot {sparse_slot} public/runtime identity conflict"
+                    );
+                    let public = u16::try_from(public_number).unwrap_or_else(|_| {
+                        panic!(
+                            "hiking path {path_index} waypoint {waypoint_index} sector slot {sparse_slot} resolved negative public number {public_number}"
+                        )
+                    });
+                    waypoint.sector = public;
+                    crate::position_interface::SectorHandle::new(public)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "hiking path {path_index} waypoint {waypoint_index} resolved reserved no-sector value {public}"
+                            )
+                        })
+                        .with_arena_index(runtime_index)
+                })
+                .collect()
+        })
+        .collect();
+    assets.hiking_waypoint_sectors = Some(std::sync::Arc::new(exact_paths));
 }
 
 fn append_patch_sector_constructors(
@@ -581,6 +845,30 @@ mod legacy_grid_topology_tests {
         }
     }
 
+    fn runtime_position_sector(
+        number: i16,
+        sector_type: crate::sector::SectorType,
+    ) -> crate::fast_find_grid::GridSector {
+        crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
     #[test]
     fn constructor_holes_only_enter_sparse_array_when_later_add_exposes_them() {
         let mut builder = LegacySectorTopologyBuilder::default();
@@ -597,6 +885,7 @@ mod legacy_grid_topology_tests {
             ]
         );
         assert_eq!(builder.position_sector_numbers, vec![None, None]);
+        assert_eq!(builder.position_sector_indices, vec![None, None]);
     }
 
     #[test]
@@ -666,8 +955,268 @@ mod legacy_grid_topology_tests {
         );
         assert_eq!(
             topology.position_sector_numbers,
-            vec![None, None, None, Some(0), None, None, None],
-            "the sparse Original building slot maps to Rust's compact first building sector"
+            vec![None, None, None, Some(3), None, None, None],
+            "the building keeps its sparse Original sector number independently of its compact Rust arena index"
+        );
+        assert_eq!(
+            topology.position_sector_indices,
+            vec![
+                None,
+                None,
+                None,
+                crate::fast_find_grid::SectorIndex::new(0),
+                None,
+                None,
+                None,
+            ],
+            "the sparse Original building slot retains its exact runtime arena identity"
+        );
+    }
+
+    #[test]
+    fn building_doors_share_sparse_public_and_exact_arena_identity() {
+        let mut assets = LevelAssets::new();
+        let mut sectors = vec![LegacyGridSectorAsset::NullOrOrdinary; 250];
+        sectors[249] = LegacyGridSectorAsset::Building;
+        let mut public_numbers = vec![None; 250];
+        public_numbers[0] = Some(95);
+        public_numbers[249] = Some(249);
+        let mut arena_indices = vec![None; 250];
+        arena_indices[0] = crate::fast_find_grid::SectorIndex::new(0);
+        arena_indices[249] = crate::fast_find_grid::SectorIndex::new(1);
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors,
+            position_sector_numbers: public_numbers,
+            position_sector_indices: arena_indices,
+            ..LegacyGridTopologyAssets::default()
+        });
+
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut first = door(false);
+        first.door_type = 1;
+        first.sector_out = 0;
+        let mut second = first.clone();
+        second.point_out = (20, 0);
+        second.point_in = (10, 0);
+        loaded.proto.buildings = vec![RawBuildingEntry::Building {
+            doors: vec![first, second],
+        }];
+
+        let mut engine = EngineInner::new();
+        let outside = runtime_position_sector(
+            95,
+            crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+        );
+        let mut building = runtime_position_sector(
+            95,
+            crate::sector::SectorType::MOTION
+                | crate::sector::SectorType::AREA
+                | crate::sector::SectorType::BUILDING,
+        );
+        building.layer = 13;
+        engine.world.fast_grid_mut().level_mut().sectors = vec![outside, building];
+        engine
+            .world
+            .fast_grid_mut()
+            .level_mut()
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(95), 1);
+
+        canonicalize_building_position_sectors(
+            &assets,
+            &mut loaded,
+            engine.world.fast_grid_mut().level_mut(),
+        );
+        validate_legacy_position_sector_bijection(
+            assets.legacy_grid_topology.as_ref().unwrap(),
+            &engine.world.fast_grid.level.sectors,
+        )
+        .expect("sparse public numbers and dense arena indices stay a bijection");
+        engine.build_door_stage(&assets, &loaded, &MissionLevelBuildPlan::default());
+
+        for built in &engine.script_domains.interactables.doors {
+            assert_eq!(built.sector_in, crate::sector::SectorNumber::new(249));
+            assert_eq!(
+                built.sector_in_index,
+                crate::fast_find_grid::SectorIndex::new(1),
+                "every adjacent door side must retain the one constructed RHSectorBuilding pointer"
+            );
+        }
+        assert_eq!(
+            engine.world.fast_grid.level.sector_number_map[&crate::sector::SectorNumber::new(95)],
+            0,
+            "removing the obsolete dense building alias must expose the real motion sector"
+        );
+    }
+
+    #[test]
+    fn door_sparse_endpoints_resolve_distinct_arena_objects_with_same_public_number() {
+        let mut assets = LevelAssets::new();
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors: vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(18), Some(18)],
+            position_sector_indices: vec![
+                crate::fast_find_grid::SectorIndex::new(40),
+                crate::fast_find_grid::SectorIndex::new(41),
+            ],
+            ..LegacyGridTopologyAssets::default()
+        });
+
+        let outside = EngineInner::resolve_sparse_position_sector(&assets, 0);
+        let inside = EngineInner::resolve_sparse_position_sector(&assets, 1);
+
+        assert_eq!(outside.0, crate::sector::SectorNumber::new(18));
+        assert_eq!(inside.0, crate::sector::SectorNumber::new(18));
+        assert_eq!(
+            outside.1,
+            crate::fast_find_grid::SectorIndex::new(40).unwrap()
+        );
+        assert_eq!(
+            inside.1,
+            crate::fast_find_grid::SectorIndex::new(41).unwrap()
+        );
+        assert_ne!(outside.1, inside.1);
+    }
+
+    #[test]
+    fn door_ai_cache_retains_exact_endpoint_when_public_numbers_overlap() {
+        let outside = crate::fast_find_grid::SectorIndex::new(40).unwrap();
+        let inside = crate::fast_find_grid::SectorIndex::new(41).unwrap();
+        let mut engine = EngineInner::new();
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                door_type: crate::gate::DoorType::Building,
+                sector_out: crate::sector::SectorNumber::new(18),
+                sector_in: crate::sector::SectorNumber::new(18),
+                sector_out_index: Some(outside),
+                sector_in_index: Some(inside),
+                ..crate::gate::Door::default()
+            });
+        let reinforcement_outside = crate::fast_find_grid::SectorIndex::new(50).unwrap();
+        let reinforcement_inside = crate::fast_find_grid::SectorIndex::new(51).unwrap();
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                door_type: crate::gate::DoorType::Reinforcement,
+                sector_out: crate::sector::SectorNumber::new(19),
+                sector_in: crate::sector::SectorNumber::new(19),
+                sector_out_index: Some(reinforcement_outside),
+                sector_in_index: Some(reinforcement_inside),
+                ..crate::gate::Door::default()
+            });
+
+        engine.cache_door_ai_metadata();
+
+        let cached = engine.ai.global.door_seek_infos[0]
+            .position_in
+            .sector
+            .expect("building door cache must retain its interior sector");
+        assert_eq!(cached.get(), 18);
+        assert_eq!(cached.arena_index(), Some(inside));
+        assert_ne!(cached.arena_index(), Some(outside));
+
+        let reinforcement = &engine.ai.global.reinforcement_doors[0];
+        let reinforcement_in = reinforcement
+            .position_in
+            .sector
+            .expect("reinforcement cache must retain its interior sector");
+        let reinforcement_out = reinforcement
+            .sector_out
+            .expect("reinforcement cache must retain its exterior sector");
+        assert_eq!(reinforcement_in.get(), 19);
+        assert_eq!(reinforcement_out.get(), 19);
+        assert_eq!(reinforcement_in.arena_index(), Some(reinforcement_inside));
+        assert_eq!(reinforcement_out.arena_index(), Some(reinforcement_outside));
+        assert_ne!(
+            reinforcement_in.arena_index(),
+            reinforcement_out.arena_index(),
+            "equal public reinforcement endpoints must not collapse their arena identity"
+        );
+    }
+
+    #[test]
+    fn retained_position_bijection_excludes_appended_out_of_map_sector() {
+        let topology = LegacyGridTopologyAssets {
+            sectors: vec![LegacyGridSectorAsset::NullOrOrdinary],
+            position_sector_numbers: vec![Some(7)],
+            position_sector_indices: vec![crate::fast_find_grid::SectorIndex::new(0)],
+            ..LegacyGridTopologyAssets::default()
+        };
+        let runtime = vec![
+            runtime_position_sector(
+                7,
+                crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            ),
+            // Original appends this real pointer after authored position
+            // sectors. It is required for reinforcement gates, but is not
+            // part of the retained authored-position prefix.
+            runtime_position_sector(
+                -1,
+                crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            ),
+        ];
+
+        validate_legacy_position_sector_bijection(&topology, &runtime)
+            .expect("the appended out-of-map sector must not extend the authored prefix");
+    }
+
+    #[test]
+    fn waypoint_sparse_slot_resolves_exact_overlapping_sector_identity() {
+        use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+        let mut assets = LevelAssets::new();
+        assets.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
+            waypoints: vec![RawWaypoint {
+                x: 1432,
+                y: 930,
+                // Original's serialized sparse marraySectors slot, not the
+                // public sector number shared by both runtime objects.
+                sector: 2,
+                level: 6,
+                command: WaypointCommand::None,
+            }],
+        }]);
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors: vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(82), None, Some(82)],
+            position_sector_indices: vec![
+                crate::fast_find_grid::SectorIndex::new(0),
+                None,
+                crate::fast_find_grid::SectorIndex::new(1),
+            ],
+            ..LegacyGridTopologyAssets::default()
+        });
+        let runtime = vec![
+            runtime_position_sector(
+                82,
+                crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            ),
+            runtime_position_sector(
+                82,
+                crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            ),
+        ];
+
+        resolve_hiking_waypoint_sector_identities(&mut assets, &runtime);
+
+        assert_eq!(assets.hiking_paths[0].waypoints[0].sector, 82);
+        let exact = assets.hiking_waypoint_sectors.as_ref().unwrap()[0][0];
+        assert_eq!(exact.get(), 82);
+        assert_eq!(
+            exact.arena_index(),
+            crate::fast_find_grid::SectorIndex::new(1)
         );
     }
 }
@@ -1035,10 +1584,12 @@ mod mission_level_builder_tests {
         NpcData,
     };
     use crate::engine::{
-        EngineInner, JumpGateAttachment, LevelAssets, LevelLoadStaging, MissionLevelBuildError,
+        EngineInner, JumpGateAttachment, LegacyGridSectorAsset, LegacyGridTopologyAssets,
+        LevelAssets, LevelLoadStaging, MissionLevelBuildError,
     };
     use crate::level_data::{
-        RawBuildingEntry, RawBuildingTenants, RawDoor, RawLift, SectorPolygon,
+        RawBuildingEntry, RawBuildingTenants, RawDoor, RawLift, RawReinforcementPoint,
+        RawTacticData, SectorPolygon,
     };
 
     fn door(door_type: u8) -> RawDoor {
@@ -1238,6 +1789,163 @@ mod mission_level_builder_tests {
     }
 
     #[test]
+    fn reinforcement_door_resolves_exact_out_of_map_endpoint_identity() {
+        let mut engine = EngineInner::new();
+        for sector_number in [7_i16, -1_i16] {
+            engine.world.fast_grid_mut().level_mut().sectors.push(
+                crate::fast_find_grid::GridSector {
+                    points: Vec::new(),
+                    bounding_box: crate::coordinates::MapBBox::new(),
+                    sector_type: crate::sector::SectorType::MOTION
+                        | crate::sector::SectorType::AREA,
+                    layer: 0,
+                    sector_number: crate::sector::SectorNumber::new(sector_number),
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+            );
+        }
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                door_type: crate::gate::DoorType::Reinforcement,
+                sector_in: crate::sector::SectorNumber::new(7),
+                sector_out: crate::sector::SectorNumber::new(-1),
+                ..Default::default()
+            });
+
+        engine.populate_sector_gates_from_doors();
+
+        let door = &engine.script_domains.interactables.doors[0];
+        assert_eq!(
+            door.sector_in_index,
+            crate::fast_find_grid::SectorIndex::new(0)
+        );
+        assert_eq!(
+            door.sector_out_index,
+            crate::fast_find_grid::SectorIndex::new(1)
+        );
+        assert_eq!(
+            engine.world.fast_grid.level.sectors[0].gate_indices,
+            vec![crate::gate::DoorIndex(0)]
+        );
+        assert_eq!(
+            engine.world.fast_grid.level.sectors[1].gate_indices,
+            vec![crate::gate::DoorIndex(0)]
+        );
+    }
+
+    #[test]
+    fn reinforcement_install_resolves_sparse_slot_across_public_sector_collision() {
+        let motion_area = |public| crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(public),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().level_mut().sectors =
+            vec![motion_area(18), motion_area(18), motion_area(-1)];
+        engine
+            .world
+            .fast_grid_mut()
+            .level_mut()
+            .map_bbox
+            .expand_point(MapPoint::new(0.0, 0.0));
+        engine
+            .world
+            .fast_grid_mut()
+            .level_mut()
+            .map_bbox
+            .expand_point(MapPoint::new(100.0, 100.0));
+        let mut assets = LevelAssets::new();
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors: vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(18), Some(18)],
+            position_sector_indices: vec![
+                crate::fast_find_grid::SectorIndex::new(0),
+                crate::fast_find_grid::SectorIndex::new(1),
+            ],
+            ..LegacyGridTopologyAssets::default()
+        });
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.mission.tactic_data = Some(RawTacticData {
+            reinforcement_points: vec![RawReinforcementPoint {
+                x: 10,
+                y: 20,
+                direction: 0,
+                action: 0,
+                obstacle_index: 0,
+                sector: 1,
+                layer: 0,
+            }],
+            ambush_points: Vec::new(),
+            seek_points: Vec::new(),
+            archery_sectors: Vec::new(),
+        });
+
+        engine.install_reinforcement_doors_stage(&assets, &loaded);
+
+        let door = &engine.script_domains.interactables.doors[0];
+        assert_eq!(door.sector_in, crate::sector::SectorNumber::new(18));
+        assert_eq!(
+            door.sector_in_index,
+            crate::fast_find_grid::SectorIndex::new(1),
+            "the authored sparse slot must select the second arena object despite equal public numbers"
+        );
+        assert_eq!(door.sector_out, crate::sector::SectorNumber::new(-1));
+        assert_eq!(
+            door.sector_out_index,
+            crate::fast_find_grid::SectorIndex::new(2)
+        );
+
+        engine.cache_door_ai_metadata();
+        let cached_inside = engine.ai.global.door_seek_infos[0]
+            .position_in
+            .sector
+            .expect("reinforcement initialization must cache its inside RHposition");
+        assert_eq!(cached_inside.get(), 18);
+        assert_eq!(
+            cached_inside.arena_index(),
+            crate::fast_find_grid::SectorIndex::new(1),
+            "the init cache must receive the exact sparse-slot identity"
+        );
+        assert_eq!(
+            engine.ai.global.reinforcement_doors[0]
+                .position_in
+                .sector
+                .and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(1)
+        );
+    }
+
+    #[test]
     fn no_script_mode_still_attaches_jump_gates() {
         let mut engine = EngineInner::new();
         let mut staging = LevelLoadStaging::default();
@@ -1248,6 +1956,8 @@ mod mission_level_builder_tests {
             layer_in: 1,
             sector_out: crate::sector::SectorNumber::new(10),
             sector_in: crate::sector::SectorNumber::new(11),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(10).unwrap(),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(11).unwrap(),
             jump_line_out: 7,
             jump_line_in: 8,
             jump_line_in_helper_needed: false,
@@ -2248,9 +2958,28 @@ impl EngineInner {
         );
 
         retain_legacy_grid_topology(assets, &loaded, config.script_enabled)?;
+        canonicalize_building_position_sectors(
+            assets,
+            &mut loaded,
+            self.world.fast_grid_mut().level_mut(),
+        );
+        // Runtime motion/building objects are registered before proto/mission
+        // entities finish constructing the retained Original sparse arrays.
+        // Validate the exact sparse-slot ↔ live-index bijection at the first
+        // point where both sides exist, before doors or save adoption consume
+        // it.
+        let retained_topology = assets.legacy_grid_topology.as_ref().unwrap_or_else(|| {
+            panic!("retaining Original grid topology completed without a topology value")
+        });
+        validate_legacy_position_sector_bijection(
+            retained_topology,
+            &self.world.fast_grid.level.sectors,
+        )
+        .unwrap_or_else(|detail| panic!("legacy position-sector registration drifted: {detail}"));
+        resolve_hiking_waypoint_sector_identities(assets, &self.world.fast_grid.level.sectors);
         let level_plan = level_builder.preflight(self, assets, &loaded)?;
         self.build_mission_level_stages(assets, &loaded, &level_plan)?;
-        self.install_reinforcement_doors_stage(&loaded);
+        self.install_reinforcement_doors_stage(assets, &loaded);
         self.attach_jump_gates(staging)?;
         self.attach_mission_level_stage(&level_plan)?;
         self.cache_door_ai_metadata();
@@ -3039,6 +3768,39 @@ impl EngineInner {
                 sector_number += 1;
             }
 
+            // Original constructs one real `RHSectorMotionArea` for the
+            // out-of-map side of reinforcement gates. It has no polygon and
+            // exposes sector number -1, but it is still a distinct pointer
+            // used by gate linking and PassDoor. Keep the same live arena
+            // object instead of treating -1 as an absent/guessed endpoint.
+            //
+            // TODO(parity): retain its sparse `marraySectors` slot through
+            // v48 position adoption too. Rust's public `SectorHandle` still
+            // reserves 0xffff for None, so saved actors outside the map need
+            // a dedicated public representation before that can be exposed.
+            let special_layer = self.world.fast_grid.level.special_layer;
+            self.world.fast_grid_mut().add_sector(
+                crate::fast_find_grid::GridSector {
+                    points: Vec::new(),
+                    bounding_box: crate::coordinates::MapBBox::new(),
+                    sector_type: SectorType::MOTION | SectorType::AREA,
+                    layer: special_layer,
+                    sector_number: crate::sector::SectorNumber::new(-1),
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                special_layer,
+            );
+
             // ── Light / shadow sectors ──
             //
             // Each raw light sector becomes a `SectorType::SHADOW` grid
@@ -3471,6 +4233,10 @@ impl EngineInner {
                     layer_in: jl1_layer,
                     sector_out: num_out,
                     sector_in: num_in,
+                    sector_out_index: crate::fast_find_grid::SectorIndex::new(sec2)
+                        .expect("jump gate outside sector index equals null sentinel"),
+                    sector_in_index: crate::fast_find_grid::SectorIndex::new(sec1)
+                        .expect("jump gate inside sector index equals null sentinel"),
                     jump_line_out: idx2,
                     jump_line_in: idx1,
                     // Cache each destination line's `helper_needed`
@@ -3590,6 +4356,8 @@ impl EngineInner {
                     layer_in: spec.layer_in,
                     sector_out: spec.sector_out,
                     sector_in: spec.sector_in,
+                    sector_out_index: Some(spec.sector_out_index),
+                    sector_in_index: Some(spec.sector_in_index),
                     jump_line_out: Some(spec.jump_line_out),
                     jump_line_in: Some(spec.jump_line_in),
                     jump_line_in_helper_needed: spec.jump_line_in_helper_needed,
@@ -3618,6 +4386,44 @@ impl EngineInner {
             return;
         }
 
+        // Runtime-authored gates (notably reinforcement gates) do not pass
+        // through the proto sparse-slot resolver. They may recover an exact
+        // endpoint only when the public number names exactly one live motion
+        // area; ambiguity is an error, never a guessed pointer.
+        let level = self.world.fast_grid.level.clone();
+        let unique_runtime_sector = |number: crate::sector::SectorNumber| {
+            let mut matches = level
+                .sectors
+                .iter()
+                .enumerate()
+                .filter(|(_, sector)| {
+                    sector.sector_number == number
+                        && sector.sector_type.is_motion()
+                        && sector.sector_type.is_area()
+                })
+                .map(|(index, _)| {
+                    crate::fast_find_grid::SectorIndex::new(index as u32)
+                        .expect("runtime sector index equals null sentinel")
+                });
+            let found = matches.next().unwrap_or_else(|| {
+                panic!("door endpoint references unknown runtime sector {number}")
+            });
+            assert!(
+                matches.next().is_none(),
+                "door endpoint sector {number} is ambiguous without retained arena identity"
+            );
+            found
+        };
+        for door in &mut self.script_domains.interactables.doors {
+            if door.sector_out_index.is_none() {
+                door.sector_out_index = Some(unique_runtime_sector(door.sector_out));
+            }
+            if door.sector_in_index.is_none() {
+                door.sector_in_index = Some(unique_runtime_sector(door.sector_in));
+            }
+        }
+        crate::gate::build_gate_links(&mut self.script_domains.interactables.doors);
+
         self.world.fast_grid_mut().level_mut().door_projection_infos = self
             .script_domains
             .interactables
@@ -3632,29 +4438,30 @@ impl EngineInner {
             .collect();
 
         // Snapshot door endpoints so the grid can be borrowed mutably below.
-        let endpoints: Vec<(u32, crate::sector::SectorNumber)> = self
+        let endpoints: Vec<(u32, crate::fast_find_grid::SectorIndex)> = self
             .script_domains
             .interactables
             .doors
             .iter()
             .enumerate()
-            .flat_map(|(idx, door)| [(idx as u32, door.sector_out), (idx as u32, door.sector_in)])
+            .flat_map(|(idx, door)| {
+                [
+                    (
+                        idx as u32,
+                        door.sector_out_index
+                            .expect("resolved door has no outside arena identity"),
+                    ),
+                    (
+                        idx as u32,
+                        door.sector_in_index
+                            .expect("resolved door has no inside arena identity"),
+                    ),
+                ]
+            })
             .collect();
 
-        let mut missing = 0u32;
-        let mut missing_values: std::collections::BTreeSet<i16> = std::collections::BTreeSet::new();
-        for (door_idx, sector_number) in &endpoints {
-            let Some(&grid_idx) = self
-                .world
-                .fast_grid
-                .level
-                .sector_number_map
-                .get(sector_number)
-            else {
-                missing += 1;
-                missing_values.insert(i16::from(*sector_number));
-                continue;
-            };
+        for (door_idx, sector_index) in &endpoints {
+            let grid_idx = usize::from(*sector_index);
             let level = self.world.fast_grid_mut().level_mut();
             if let Some(gs) = level.sectors.get_mut(grid_idx)
                 && gs.sector_type.is_motion()
@@ -3663,13 +4470,6 @@ impl EngineInner {
                 gs.gate_indices
                     .push(crate::gate::DoorIndex::from(*door_idx));
             }
-        }
-        if missing > 0 {
-            tracing::warn!(
-                "populate_sector_gates_from_doors: {missing}/{} door endpoints referenced unknown sector numbers (missing values={:?})",
-                endpoints.len(),
-                missing_values,
-            );
         }
     }
 
@@ -3691,6 +4491,9 @@ impl EngineInner {
                 // when the seek helper consumes this snapshot.
                 let npc_villain_authorized_direct =
                     crate::ai::cache_npc_villain_authorized_direct(door);
+                let sector_in_index = door.sector_in_index.unwrap_or_else(|| {
+                    panic!("canonical door {idx} interior sector has no exact arena identity")
+                });
                 crate::ai::DoorSeekInfo {
                     door_index: crate::gate::DoorIndex(idx as u32),
                     door_type: door.door_type,
@@ -3700,7 +4503,8 @@ impl EngineInner {
                         y: door.point_in.y,
                         sector: crate::position_interface::SectorHandle::new(u16::from(
                             door.sector_in,
-                        )),
+                        ))
+                        .map(|handle| handle.with_arena_index(sector_in_index)),
                         level: door.layer_in,
                     },
                     sector_out: u16::from(door.sector_out),
@@ -3723,21 +4527,33 @@ impl EngineInner {
             .iter()
             .enumerate()
             .filter(|(_, door)| door.door_type == crate::gate::DoorType::Reinforcement)
-            .map(|(idx, door)| crate::ai::ReinforcementDoorInfo {
-                position_in: crate::ai::Position {
-                    x: door.point_in.x,
-                    y: door.point_in.y,
-                    sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in)),
-                    level: door.layer_in,
-                },
-                door_index: crate::gate::DoorIndex(idx as u32),
-                point_out: door.point_out,
-                point_in: door.point_in,
-                point_mid: door.point_mid,
-                layer_out: door.layer_out,
-                sector_out: crate::position_interface::SectorHandle::new(u16::from(
-                    door.sector_out,
-                )),
+            .map(|(idx, door)| {
+                let sector_in_index = door.sector_in_index.unwrap_or_else(|| {
+                    panic!("reinforcement door {idx} interior sector has no exact arena identity")
+                });
+                let sector_out_index = door.sector_out_index.unwrap_or_else(|| {
+                    panic!("reinforcement door {idx} exterior sector has no exact arena identity")
+                });
+                crate::ai::ReinforcementDoorInfo {
+                    position_in: crate::ai::Position {
+                        x: door.point_in.x,
+                        y: door.point_in.y,
+                        sector: crate::position_interface::SectorHandle::new(u16::from(
+                            door.sector_in,
+                        ))
+                        .map(|handle| handle.with_arena_index(sector_in_index)),
+                        level: door.layer_in,
+                    },
+                    door_index: crate::gate::DoorIndex(idx as u32),
+                    point_out: door.point_out,
+                    point_in: door.point_in,
+                    point_mid: door.point_mid,
+                    layer_out: door.layer_out,
+                    sector_out: crate::position_interface::SectorHandle::new(u16::from(
+                        door.sector_out,
+                    ))
+                    .map(|handle| handle.with_arena_index(sector_out_index)),
+                }
             })
             .collect();
         tracing::debug!(
@@ -3748,6 +4564,78 @@ impl EngineInner {
 
     // ─── Loaded level → canonical script domains ────────────────────────
 
+    /// Resolve an Original `marraySectors` slot to the paired public sector
+    /// number and exact live arena object. Door stream endpoints use this
+    /// sparse pointer space (`RHGate.cpp::InitializeFromProtoStream`).
+    fn resolve_sparse_position_sector(
+        assets: &LevelAssets,
+        sparse_slot: u16,
+    ) -> (
+        crate::sector::SectorNumber,
+        crate::fast_find_grid::SectorIndex,
+    ) {
+        let retained = assets
+            .legacy_grid_topology
+            .as_ref()
+            .expect("door endpoint resolution requires retained Original sector topology");
+        let slot = usize::from(sparse_slot);
+        let number = retained
+            .position_sector_numbers
+            .get(slot)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| {
+                panic!("door endpoint references unmappable Original sector slot {sparse_slot}")
+            });
+        let index = retained
+            .position_sector_indices
+            .get(slot)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| {
+                panic!("door endpoint slot {sparse_slot} has no exact runtime sector identity")
+            });
+        (crate::sector::SectorNumber::new(number), index)
+    }
+
+    /// Building loading replaces a door's stream-read inside pointer with
+    /// the newly constructed building sector before the Rust door stage.
+    /// Resolve that compact number only among retained building objects and
+    /// require one exact arena identity.
+    fn resolve_building_position_sector(
+        assets: &LevelAssets,
+        runtime_number: u16,
+    ) -> (
+        crate::sector::SectorNumber,
+        crate::fast_find_grid::SectorIndex,
+    ) {
+        let retained = assets
+            .legacy_grid_topology
+            .as_ref()
+            .expect("building door resolution requires retained Original sector topology");
+        let wanted = i16::try_from(runtime_number)
+            .expect("building runtime sector number exceeds Original signed-word domain");
+        let mut matches = retained
+            .sectors
+            .iter()
+            .zip(&retained.position_sector_numbers)
+            .zip(&retained.position_sector_indices)
+            .filter_map(|((kind, number), index)| {
+                (matches!(kind, crate::engine::LegacyGridSectorAsset::Building)
+                    && *number == Some(wanted))
+                .then_some(*index)
+                .flatten()
+            });
+        let index = matches.next().unwrap_or_else(|| {
+            panic!("building door references unmappable runtime sector {runtime_number}")
+        });
+        assert!(
+            matches.next().is_none(),
+            "building runtime sector {runtime_number} resolves to multiple arena objects"
+        );
+        (crate::sector::SectorNumber::new(wanted), index)
+    }
+
     /// Apply the validated door, lift, patch, and building stage outputs in
     /// original authored order.
     fn build_mission_level_stages(
@@ -3756,8 +4644,8 @@ impl EngineInner {
         loaded: &crate::level_data::LoadedLevel,
         stages: &MissionLevelBuildPlan,
     ) -> Result<(), MissionLevelBuildError> {
-        self.build_door_stage(loaded, stages);
-        self.build_lift_stage(loaded);
+        self.build_door_stage(assets, loaded, stages);
+        self.build_lift_stage(assets, loaded);
         self.build_door_lift_attachment_stage()?;
         self.build_patch_stage(assets, loaded, stages.patch_count);
         self.build_building_stage(stages);
@@ -3766,6 +4654,7 @@ impl EngineInner {
 
     fn build_door_stage(
         &mut self,
+        assets: &LevelAssets,
         loaded: &crate::level_data::LoadedLevel,
         stages: &MissionLevelBuildPlan,
     ) {
@@ -3778,11 +4667,20 @@ impl EngineInner {
         // The building's gates are exactly the doors declared inside its
         // proto entry.
         for entry in &loaded.proto.buildings {
+            let building_entry =
+                matches!(entry, crate::level_data::RawBuildingEntry::Building { .. });
             let raw_doors = match entry {
                 crate::level_data::RawBuildingEntry::Building { doors }
                 | crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => doors,
             };
             for raw in raw_doors {
+                let (sector_out, sector_out_index) =
+                    Self::resolve_sparse_position_sector(assets, raw.sector_out);
+                let (sector_in, sector_in_index) = if building_entry {
+                    Self::resolve_building_position_sector(assets, raw.sector_in)
+                } else {
+                    Self::resolve_sparse_position_sector(assets, raw.sector_in)
+                };
                 let door_type = match raw.door_type {
                     1 => crate::gate::DoorType::Building,
                     2 => crate::gate::DoorType::BuildingTrap,
@@ -3819,8 +4717,10 @@ impl EngineInner {
                         point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
                         layer_out: raw.layer_out,
                         layer_in: raw.layer_in,
-                        sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
-                        sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
+                        sector_out,
+                        sector_in,
+                        sector_out_index: Some(sector_out_index),
+                        sector_in_index: Some(sector_in_index),
                         owning_lift_sector: None,
                         gate_links: Vec::new(),
                         click_polygon: raw
@@ -3859,7 +4759,7 @@ impl EngineInner {
         self.script_domains.buildings.gates = stages.building_gates.clone();
     }
 
-    fn build_lift_stage(&mut self, loaded: &crate::level_data::LoadedLevel) {
+    fn build_lift_stage(&mut self, assets: &LevelAssets, loaded: &crate::level_data::LoadedLevel) {
         // Also collect doors from lifts.
         for lift in &loaded.proto.lifts {
             // `adapt_points` guards its LiftHigh / LiftHighCrenel arms
@@ -3870,6 +4770,10 @@ impl EngineInner {
             let lift_wall =
                 crate::sector::LiftType::from_u8(lift.lift_type) == crate::sector::LiftType::Wall;
             for raw in &lift.doors {
+                let (sector_out, sector_out_index) =
+                    Self::resolve_sparse_position_sector(assets, raw.sector_out);
+                let (sector_in, sector_in_index) =
+                    Self::resolve_sparse_position_sector(assets, raw.sector_in);
                 let door_type = match raw.door_type {
                     1 => crate::gate::DoorType::Building,
                     4 => crate::gate::DoorType::LiftHigh,
@@ -3899,8 +4803,10 @@ impl EngineInner {
                         point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
                         layer_out: raw.layer_out,
                         layer_in: raw.layer_in,
-                        sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
-                        sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
+                        sector_out,
+                        sector_in,
+                        sector_out_index: Some(sector_out_index),
+                        sector_in_index: Some(sector_in_index),
                         // `RHSectorLift` owns every door embedded in this
                         // CHUNK_LIFT record. The owning sector is the chunk's
                         // `uwSector` (`motion_area_index` here), not

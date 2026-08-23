@@ -1686,7 +1686,12 @@ pub fn begin_throw_purse(
         order_id: Some(order_id),
     };
     actor.clear_path();
-    actor.action_state = ActionState::Waiting;
+    // `THROW_PURSE` requires Waiting, but Original's action transition owns
+    // that state change.  In particular, a Bored actor remains Bored while
+    // `WAITING_UPRIGHT_BORED_WAITING_UPRIGHT` is playing and becomes Waiting
+    // only when that prefix completes.
+    // TODO(original-parity): audit the equivalent eager Waiting writes in
+    // the sibling throw/pay begin paths before changing their behavior.
 
     let mut order = Order::new(
         OrderType::ThrowingPurse,

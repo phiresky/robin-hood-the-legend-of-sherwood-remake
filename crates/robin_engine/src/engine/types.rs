@@ -837,6 +837,11 @@ pub struct LevelAssets {
     pub pathfinder_graph: std::sync::Arc<crate::pathfinder::PathGraph>,
     /// Hiking/patrol paths loaded from the mission file (PWAY/RAIL chunks).
     pub hiking_paths: std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
+    /// Exact live sector identity for each `(path index, waypoint index)`.
+    /// `None` is reserved for synthetic/test levels whose waypoints are
+    /// intentionally number-only.
+    pub hiking_waypoint_sectors:
+        Option<std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>>,
     /// Weapon / character profiles loaded from the CPF file.
     /// Shared via `Arc` with `Campaign`.
     pub profile_manager: std::sync::Arc<crate::profiles::ProfileManager>,
@@ -1028,6 +1033,12 @@ pub struct LegacyGridTopologyAssets {
     /// Rust's compact runtime motion/building sector-number domain. Slots for
     /// non-position sectors and constructor holes remain `None`.
     pub position_sector_numbers: Vec<Option<i16>>,
+    /// Maps the same sparse Original `marraySectors` slots to exact entries in
+    /// `FastFindGridLevel::sectors`. Unlike `position_sector_numbers`, this
+    /// retains pointer identity when multiple runtime polygons expose the
+    /// same public sector number.
+    #[serde(default)]
+    pub position_sector_indices: Vec<Option<crate::fast_find_grid::SectorIndex>>,
 }
 
 /// Sample duration in sim frames (40 ms each), keyed by
@@ -1043,6 +1054,32 @@ pub type ExclamationDurations =
     std::sync::Arc<std::collections::BTreeMap<(crate::sound::ExclamationGroup, u32, u16), u32>>;
 
 impl LevelAssets {
+    pub(crate) fn hiking_waypoint_sector(
+        &self,
+        path_index: usize,
+        waypoint_index: usize,
+        public_sector: u16,
+    ) -> Option<crate::position_interface::SectorHandle> {
+        let Some(paths) = &self.hiking_waypoint_sectors else {
+            return crate::position_interface::SectorHandle::new(public_sector);
+        };
+        let exact = paths
+            .get(path_index)
+            .and_then(|path| path.get(waypoint_index))
+            .copied()
+            .unwrap_or_else(|| {
+                panic!(
+                    "required exact hiking waypoint identity is missing for path {path_index} waypoint {waypoint_index}"
+                )
+            });
+        assert_eq!(
+            exact.get(),
+            public_sector,
+            "hiking waypoint path {path_index} waypoint {waypoint_index} public/exact identity conflict"
+        );
+        Some(exact)
+    }
+
     /// Mutable access to sprite_scriptor during initialization.
     pub fn sprite_scriptor_mut(&mut self) -> &mut crate::sprite_script::SpriteScriptor {
         std::sync::Arc::make_mut(&mut self.sprite_scriptor)
@@ -1054,6 +1091,7 @@ impl LevelAssets {
             level_grid: std::sync::Arc::new(crate::fast_find_grid::LevelGrid::default()),
             pathfinder_graph: std::sync::Arc::new(crate::pathfinder::PathGraph::default()),
             hiking_paths: std::sync::Arc::new(Vec::new()),
+            hiking_waypoint_sectors: None,
             profile_manager: std::sync::Arc::new(crate::profiles::ProfileManager::new()),
             bank_signature: 0,
             scripts: LevelScriptAssets::default(),
@@ -1171,6 +1209,8 @@ pub struct JumpGateAttachment {
     pub layer_in: u16,
     pub sector_out: crate::sector::SectorNumber,
     pub sector_in: crate::sector::SectorNumber,
+    pub sector_out_index: crate::fast_find_grid::SectorIndex,
+    pub sector_in_index: crate::fast_find_grid::SectorIndex,
     pub jump_line_out: u32,
     pub jump_line_in: u32,
     pub jump_line_in_helper_needed: bool,

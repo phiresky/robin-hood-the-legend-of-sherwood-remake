@@ -1578,6 +1578,22 @@ impl EnemyAi {
             .push(crate::ai::AiOwnerWork::NearbyCiviliansPanic);
     }
 
+    fn nearby_civilians_panic_180(&mut self) {
+        // SUBSTATE_WONDERING_BRAWL_HITTING contains its own inline sweep in
+        // Original and uses IsDetecting180Degrees. Do not route it through
+        // the shared NearbyCiviliansPanic callback, whose detector is 360°.
+        tracing::trace!(
+            target: "parity_nearby_panic",
+            owner = self.base.me,
+            "queue synchronous brawl NearbyCiviliansPanic180 callback"
+        );
+        self.base
+            .outbox
+            .reentrant
+            .owner_work
+            .push(crate::ai::AiOwnerWork::NearbyCiviliansPanic180);
+    }
+
     /// Soldier-only; walks same-camp soldiers, finds an officer in
     /// Default or MoneyReactiontime within the HEARS/SEES brawl
     /// thresholds, and dispatches EVENT_SEES_BRAWL to the first one
@@ -1755,10 +1771,9 @@ impl EnemyAi {
     /// soldier snapshot — conscious, alive, 360°-detected soldiers
     /// whose substate is take/fight-for-money.
     ///
-    /// Note: `tick.camp_soldiers` is already filtered to conscious +
-    /// same-camp soldiers by `engine/ai.rs` (the SoldierSnapshot loop
-    /// skips `!element.active || human.unconscious`), so only the
-    /// IsDead half of the gate needs re-checking here.
+    /// `tick.camp_soldiers` is built before the creation-order AI pass, so an
+    /// earlier soldier can become unconscious or die before this actor scans
+    /// it.  Original reads those lifecycle flags live at this point.
     ///
     /// The 360° check comes before the substate test: it runs for every
     /// conscious camp soldier, not just the ones already brawling, and
@@ -1766,7 +1781,12 @@ impl EnemyAi {
     fn create_new_list_of_money_fight_enemies(&mut self, tick: &AiPerTickData, ctx: &AiContext) {
         self.money_fight_enemies.clear();
         for cs in tick.camp_soldiers.iter() {
-            if cs.handle == self.base.me || cs.is_dead {
+            if cs.handle == self.base.me {
+                continue;
+            }
+            let view = ctx
+                .expect_entity_view(cs.handle as HumanHandle, "money-fight enemy-list candidate");
+            if view.is_unconscious || view.is_dead {
                 continue;
             }
             if !self.is_detecting_360_degrees(cs.handle as HumanHandle, ctx) {
@@ -1782,15 +1802,13 @@ impl EnemyAi {
     /// Morale check for whether to keep brawling based on
     /// upright-vs-sleeping money-fighter ratio.
     ///
-    /// This is one scan over every alive same-camp soldier, conscious or
-    /// not, in camp-registry order, with a single 360° query per
-    /// candidate.  The engine hands the two halves over separately
-    /// (`camp_soldiers` carries only conscious entries, and
-    /// `camp_unconscious_soldiers` the sleepers), so they are merged back
-    /// by handle here — both are built in entity-slot order, which is the
-    /// registry order.  Query order matters: each one perturbs the shared
-    /// visibility cache, so splitting the scan into two passes would
-    /// reorder the cache traffic.
+    /// This is one scan over every alive same-camp soldier in the Original
+    /// camp-registry order, with a single 360° query per candidate. Query
+    /// order matters because each one perturbs the shared visibility cache.
+    /// Preexisting sleepers can occur only in the parallel unconscious list,
+    /// while a same-frame transition can leave the same handle in both. Merge
+    /// the ordered snapshots and coalesce equal handles so neither shape is
+    /// lost or queried twice.
     fn wants_to_continue_money_fight(&self, tick: &AiPerTickData, ctx: &AiContext) -> bool {
         // Berserker fast path + drunken override.
         if self.soldier_profile_money == 100 || self.base.blood_alcohol > 0 {
@@ -1800,42 +1818,69 @@ impl EnemyAi {
         let mut upright: u32 = 1; // counts self
         let mut sleeping: u32 = 0;
 
-        let mut conscious = tick.camp_soldiers.iter().peekable();
-        let mut unconscious = tick.camp_unconscious_soldiers.iter().peekable();
+        let mut soldiers = tick.camp_soldiers.iter().peekable();
+        let mut sleepers = tick.camp_unconscious_soldiers.iter().peekable();
         loop {
-            // Whichever list holds the lower handle is next in registry
-            // order.
-            let take_conscious = match (conscious.peek(), unconscious.peek()) {
-                (Some(cs), Some(us)) => cs.handle <= us.handle,
-                (Some(_), None) => true,
-                (None, Some(_)) => false,
+            let (handle, knocked_out_in_money_fight) = match (soldiers.peek(), sleepers.peek()) {
+                (Some(soldier), Some(sleeper)) if soldier.handle == sleeper.handle => {
+                    let soldier = soldiers.next().expect("peeked camp soldier");
+                    let sleeper = sleepers.next().expect("peeked unconscious soldier");
+                    (soldier.handle, sleeper.knocked_out_in_money_fight)
+                }
+                (Some(soldier), Some(sleeper)) => {
+                    // Both lists are ordered subsequences of Original's
+                    // camp array. Creation order is the stable identity
+                    // for that authored order; runtime slot numbers are
+                    // not interchangeable after reuse.
+                    let soldier_order = ctx
+                        .expect_entity_view(
+                            soldier.handle as HumanHandle,
+                            "money-fight morale camp-order candidate",
+                        )
+                        .original_creation_order;
+                    let sleeper_order = ctx
+                        .expect_entity_view(
+                            sleeper.handle as HumanHandle,
+                            "money-fight morale sleeper-order candidate",
+                        )
+                        .original_creation_order;
+                    if soldier_order < sleeper_order {
+                        let soldier = soldiers.next().expect("peeked camp soldier");
+                        (soldier.handle, soldier.knocked_out_in_money_fight)
+                    } else {
+                        let sleeper = sleepers.next().expect("peeked unconscious soldier");
+                        (sleeper.handle, sleeper.knocked_out_in_money_fight)
+                    }
+                }
+                (None, Some(_)) => {
+                    let sleeper = sleepers.next().expect("peeked unconscious soldier");
+                    (sleeper.handle, sleeper.knocked_out_in_money_fight)
+                }
+                (Some(_), None) => {
+                    let soldier = soldiers.next().expect("peeked camp soldier");
+                    (soldier.handle, soldier.knocked_out_in_money_fight)
+                }
                 (None, None) => break,
             };
-
-            let (handle, is_money_fighter, is_sleeping_money_victim) = if take_conscious {
-                let cs = conscious.next().expect("peeked conscious entry");
-                if cs.is_dead {
-                    continue;
-                }
-                (
-                    cs.handle,
-                    cs.ai_substate.is_take_money() || cs.ai_substate.is_fight_for_money(),
-                    false,
-                )
-            } else {
-                let us = unconscious.next().expect("peeked unconscious entry");
-                (us.handle, false, us.knocked_out_in_money_fight)
-            };
-
             if handle == self.base.me {
+                continue;
+            }
+            let live_view =
+                ctx.expect_entity_view(handle as HumanHandle, "money-fight morale candidate");
+            if live_view.is_dead {
                 continue;
             }
             if !self.is_detecting_360_degrees(handle as HumanHandle, ctx) {
                 continue;
             }
-            if is_money_fighter {
+            let live_substate = live_view.ai_substate;
+            if live_substate.is_take_money() || live_substate.is_fight_for_money() {
                 upright += 1;
-            } else if is_sleeping_money_victim {
+            } else if live_substate == Substate::SleepingUnconscious && knocked_out_in_money_fight {
+                // TODO(parity): `AiEntityView` does not yet expose the live
+                // WasKnockedOutInMoneyFight flag. The ordered camp snapshots
+                // carry the boundary value; add it to the view if a proven
+                // cross-actor transition can flip this flag before our scan.
                 sleeping += 1;
             }
         }
@@ -2458,24 +2503,7 @@ impl EnemyAi {
             in_building = ctx.in_building,
             "is_detecting_180_degrees: entry"
         );
-        let viewer = Viewer180 {
-            entity: view_radius_memo_viewer(self.base.me, ctx),
-            // `self_eye_position` is built directly from the element's raw
-            // position by `ComputeEyesPoint`. `ctx.position` may instead be
-            // an AI-facing substituted position (a door endpoint/carrier).
-            eye_ground: crate::coordinates::GroundPoint::from_map_and_z(
-                ctx.self_eye_position,
-                ctx.elevation,
-            ),
-            eye_z: ctx.self_eye_z,
-            direction: ctx.direction,
-            in_building: ctx.in_building,
-            view_radius: ctx.self_view_radius,
-            sq_view_radius: ctx.sq_self_view_radius,
-            view_direction: ctx.self_view_direction,
-            real_half_aperture: ctx.self_real_half_aperture,
-        };
-        detects_180_degrees(&viewer, target, ctx)
+        context_detects_180_degrees(self.base.me, target, ctx)
     }
 
     /// `IsDetecting180Degrees` evaluated on another soldier's behalf.
@@ -2536,6 +2564,33 @@ impl EnemyAi {
         };
         detects_180_degrees(&viewer, target, ctx)
     }
+}
+
+/// Standalone actor-side `IsDetecting180Degrees`, shared with engine-owned
+/// sweeps whose viewer can be a civilian and therefore has no `EnemyAi`.
+pub(crate) fn context_detects_180_degrees(
+    viewer_handle: HumanHandle,
+    target: HumanHandle,
+    ctx: &AiContext,
+) -> bool {
+    let viewer = Viewer180 {
+        entity: view_radius_memo_viewer(viewer_handle, ctx),
+        // `self_eye_position` is built directly from the element's raw
+        // position by `ComputeEyesPoint`. `ctx.position` may instead be an
+        // AI-facing substituted position (a door endpoint/carrier).
+        eye_ground: crate::coordinates::GroundPoint::from_map_and_z(
+            ctx.self_eye_position,
+            ctx.elevation,
+        ),
+        eye_z: ctx.self_eye_z,
+        direction: ctx.direction,
+        in_building: ctx.in_building,
+        view_radius: ctx.self_view_radius,
+        sq_view_radius: ctx.sq_self_view_radius,
+        view_direction: ctx.self_view_direction,
+        real_half_aperture: ctx.self_real_half_aperture,
+    };
+    detects_180_degrees(&viewer, target, ctx)
 }
 
 /// Resolve the identity a `ComputeViewRadius` result is stored under.
@@ -5083,6 +5138,49 @@ mod tests {
         }
     }
 
+    fn camp_soldier(handle: u32, position: Position) -> CampSoldierInfo {
+        CampSoldierInfo {
+            handle,
+            active: true,
+            position,
+            position_world: crate::coordinates::WorldPoint3D::new(position.x, position.y, 0.0),
+            direction: 0,
+            rank: ProfileRank::Soldier,
+            ai_state: AiState::Default,
+            ai_substate: Substate::None,
+            is_able_to_fight: true,
+            is_dead: false,
+            knocked_out_in_money_fight: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            detected_body: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 400,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        }
+    }
+
     fn charly_to_officer_context(
         officer_position: Position,
         obstacles: Vec<SightObstacle>,
@@ -5421,6 +5519,253 @@ mod tests {
         assert_eq!(
             queries[0].destination[2].to_bits(),
             (raw.z + crate::stealth::detection_z_for_posture(Posture::Upright, false)).to_bits()
+        );
+    }
+
+    fn standalone_180_context(target: AiEntityView, radius: u16) -> AiContext {
+        let mut viewer = soldier_view(test_position(0.0, 0.0));
+        viewer.direction = 4;
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, viewer);
+        views.insert(2, target);
+        AiContext {
+            direction: 4,
+            self_eye_position: MapPoint::ZERO,
+            self_eye_z: 45.0,
+            self_view_radius: radius,
+            sq_self_view_radius: (radius as f32) * (radius as f32),
+            self_view_direction: [1.0, 0.0],
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        }
+    }
+
+    #[test]
+    fn standalone_180_allows_active_target_inside_building() {
+        let mut target = soldier_view(test_position(100.0, 0.0));
+        target.in_building = true;
+        target.building_sector = SectorHandle::new(7);
+        let ctx = standalone_180_context(target, 400);
+
+        assert!(context_detects_180_degrees(1, 2, &ctx));
+    }
+
+    #[test]
+    fn standalone_180_has_no_generic_standard_view_aabb() {
+        // 500 is outside the generic NearbyCiviliansPanic standard-radius
+        // AABB (400), but inside this civilian's live 600-unit radius.
+        let target = soldier_view(test_position(500.0, 0.0));
+        let ctx = standalone_180_context(target, 600);
+
+        assert!(context_detects_180_degrees(1, 2, &ctx));
+    }
+
+    #[test]
+    fn standalone_180_close_sideways_shortcut_precedes_opaque_los() {
+        let target = soldier_view(test_position(0.0, 20.0));
+        let mut ctx = standalone_180_context(target, 400);
+        let mut wall = opaque_wall_across_x_axis();
+        for point in &mut wall.obstacle_points {
+            let (x, y) = (point.x, point.y);
+            point.x = y;
+            point.y = x - 85.0;
+        }
+        for point in wall
+            .top_plane_points
+            .iter_mut()
+            .chain(wall.bottom_plane_points.iter_mut())
+        {
+            let (x, y) = (point[0], point[1]);
+            point[0] = y;
+            point[1] = x - 85.0;
+        }
+        wall.rebuild_geometry();
+        ctx.sight_obstacles = SharedSightObstacles {
+            static_obstacles: Arc::new(vec![wall]),
+            dynamic_obstacles: Arc::new(Vec::new()),
+            static_active: Arc::new(vec![true]),
+        };
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(context_detects_180_degrees(1, 2, &ctx));
+        assert!(crate::sight_obstacle::take_parity_visibility_capture().is_empty());
+    }
+
+    #[test]
+    fn standalone_180_applies_dynamic_ground_radius_before_los() {
+        // Raw real radius accepts 399, while ComputeViewRadius projects the
+        // 400-unit sphere at eye Z=45 to about 397.46 on the ground.
+        let target = soldier_view(test_position(399.0, 0.0));
+        let ctx = standalone_180_context(target, 400);
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(!context_detects_180_degrees(1, 2, &ctx));
+        assert!(crate::sight_obstacle::take_parity_visibility_capture().is_empty());
+    }
+
+    #[test]
+    fn money_fight_enemy_rebuild_rechecks_current_unconscious_before_detection() {
+        let mut ai = EnemyAi::new(1);
+        let owner_position = test_position(0.0, 0.0);
+        let candidate_position = test_position(100.0, 0.0);
+
+        let owner = soldier_view(owner_position);
+        let mut candidate = soldier_view(candidate_position);
+        candidate.is_able_to_fight = false;
+        candidate.is_unconscious = true;
+        candidate.ai_state = AiState::Wondering;
+        candidate.ai_substate = Substate::WonderingBrawlHitting;
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, owner);
+        views.insert(2, candidate);
+        let ctx = AiContext {
+            position: owner_position,
+            self_eye_position: MapPoint::new(0.0, 0.0),
+            self_eye_z: 45.0,
+            self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        // This top-of-tick entry is intentionally stale: the candidate was
+        // conscious when the snapshot was built, then knocked out earlier in
+        // the same creation-order AI pass.
+        tick.camp_soldiers.push(CampSoldierInfo {
+            handle: 2,
+            active: true,
+            position: candidate_position,
+            position_world: crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0),
+            direction: 0,
+            rank: ProfileRank::Soldier,
+            ai_state: AiState::Wondering,
+            ai_substate: Substate::WonderingBrawlHitting,
+            is_able_to_fight: true,
+            is_dead: false,
+            knocked_out_in_money_fight: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: false,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            detected_body: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 400,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        });
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        ai.create_new_list_of_money_fight_enemies(&tick, &ctx);
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+        assert!(queries.is_empty(), "lifecycle gate must precede detection");
+        assert!(ai.money_fight_enemies.is_empty());
+    }
+
+    #[test]
+    fn money_fight_morale_coalesces_ordered_camp_and_sleeper_snapshots() {
+        let mut ai = EnemyAi::new(1);
+        ai.soldier_profile_money = 40;
+
+        let owner_position = test_position(0.0, 0.0);
+        let sleeping_position = test_position(300.0, 0.0);
+        let fighter_position = test_position(100.0, 0.0);
+        let dead_position = test_position(200.0, 0.0);
+        let disjoint_sleeping_position = test_position(250.0, 0.0);
+
+        let mut sleeping_view = soldier_view(sleeping_position);
+        sleeping_view.original_creation_order = 3;
+        sleeping_view.ai_substate = Substate::SleepingUnconscious;
+        sleeping_view.is_unconscious = true;
+        let mut fighter_view = soldier_view(fighter_position);
+        fighter_view.original_creation_order = 2;
+        fighter_view.ai_substate = Substate::WonderingBrawlHitting;
+        let mut dead_view = soldier_view(dead_position);
+        dead_view.original_creation_order = 4;
+        dead_view.is_dead = true;
+        let mut disjoint_sleeping_view = soldier_view(disjoint_sleeping_position);
+        disjoint_sleeping_view.original_creation_order = 5;
+        disjoint_sleeping_view.ai_substate = Substate::SleepingUnconscious;
+        disjoint_sleeping_view.is_unconscious = true;
+
+        let mut views = AiEntityViewMap::new();
+        let mut owner_view = soldier_view(owner_position);
+        owner_view.original_creation_order = 1;
+        views.insert(1, owner_view);
+        views.insert(2, fighter_view);
+        views.insert(3, sleeping_view);
+        views.insert(4, dead_view);
+        views.insert(5, disjoint_sleeping_view);
+        let ctx = AiContext {
+            position: owner_position,
+            self_eye_position: MapPoint::ZERO,
+            self_eye_z: 45.0,
+            self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut sleeping = camp_soldier(3, sleeping_position);
+        // Deliberately stale: Original classifies the current AI substate
+        // after the visibility query, not this earlier camp snapshot.
+        sleeping.ai_substate = Substate::WonderingBrawlHitting;
+        sleeping.knocked_out_in_money_fight = true;
+        let mut fighter = camp_soldier(2, fighter_position);
+        fighter.ai_substate = Substate::None;
+        // Deliberately stale alive snapshot: an earlier actor killed this
+        // soldier before our turn, so the current view must suppress LOS.
+        let dead = camp_soldier(4, dead_position);
+        let mut tick = AiPerTickData::stub();
+        // Both source snapshots retain camp/handle order. Self and dead
+        // entries do not query; handle 3 overlaps and must coalesce.
+        tick.camp_soldiers = vec![camp_soldier(1, owner_position), fighter, sleeping, dead];
+        tick.camp_unconscious_soldiers = vec![
+            CampUnconsciousSoldierInfo {
+                handle: 3,
+                knocked_out_in_money_fight: true,
+            },
+            // Preexisting sleepers are absent from `camp_soldiers` in the
+            // main detection builder and must still participate once.
+            CampUnconsciousSoldierInfo {
+                handle: 5,
+                knocked_out_in_money_fight: true,
+            },
+        ];
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(!ai.wants_to_continue_money_fight(&tick, &ctx));
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+        assert_eq!(queries.len(), 3);
+        assert_eq!(
+            queries
+                .iter()
+                .map(|query| query.destination[0])
+                .collect::<Vec<_>>(),
+            vec![100.0, 300.0, 250.0],
+            "one query per live candidate in authored camp-registry order"
         );
     }
 
@@ -6789,6 +7134,7 @@ mod tests {
             ai_substate: Substate::None,
             is_able_to_fight: true,
             is_dead: false,
+            knocked_out_in_money_fight: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,

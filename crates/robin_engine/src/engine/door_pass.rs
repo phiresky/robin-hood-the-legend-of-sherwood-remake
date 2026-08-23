@@ -1176,7 +1176,14 @@ impl EngineInner {
         // ── First trigger: perform the layer/sector change ──
 
         // Snapshot door data before mutable borrows.
-        let (target_layer, target_sector_num, _door_type, is_lift_high, door_point_out) = {
+        let (
+            target_layer,
+            target_sector_num,
+            target_sector_index,
+            _door_type,
+            is_lift_high,
+            door_point_out,
+        ) = {
             let door = self
                 .script_domains
                 .interactables
@@ -1187,17 +1194,22 @@ impl EngineInner {
                         "PassDoor callback for {entity_id:?} references missing door {door_index}"
                     )
                 });
-            let (tl, ts) = if direct {
-                (door.layer_in, door.sector_in)
+            let (tl, ts, ti) = if direct {
+                (door.layer_in, door.sector_in, door.sector_in_index)
             } else {
-                (door.layer_out, door.sector_out)
+                (door.layer_out, door.sector_out, door.sector_out_index)
             };
+            let ti = ti.unwrap_or_else(|| {
+                panic!(
+                    "PassDoor callback for {entity_id:?} references door {door_index} with no exact target-sector identity"
+                )
+            });
             let is_high = matches!(
                 door.door_type,
                 DoorType::LiftHigh | DoorType::LiftHighCrenel
             );
             let pout = door.point_out;
-            (tl, ts, door.door_type, is_high, pout)
+            (tl, ts, ti, door.door_type, is_high, pout)
         };
 
         // Read entity's current sector and type before the change.
@@ -1436,7 +1448,9 @@ impl EngineInner {
                 .expect("PassDoor owner disappeared after canonical callback lookup");
             let elem = entity.element_data_mut();
             elem.set_layer(target_layer);
-            elem.set_sector(target_sector);
+            elem.sprite
+                .position_iface
+                .set_sector_topology(target_sector, Some(target_sector_index));
             // RHElementActor::PassDoor consumes the sprite door pointer on the
             // first PassingDoor callback. A later callback only restores
             // anti-collision and must continue to observe a null door.
@@ -1453,7 +1467,9 @@ impl EngineInner {
             });
             let elem = carried.element_data_mut();
             elem.set_layer(target_layer);
-            elem.set_sector(target_sector);
+            elem.sprite
+                .position_iface
+                .set_sector_topology(target_sector, Some(target_sector_index));
         }
         tracing::debug!(
             entity_id = ?entity_id,
@@ -2165,6 +2181,8 @@ mod tests {
         crate::gate::Door {
             sector_out: crate::sector::SectorNumber::new(7),
             sector_in: crate::sector::SectorNumber::new(8),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(0),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(1),
             point_mid: MapPoint::new(20.0, 30.0),
             point_out: MapPoint::new(10.0, 30.0),
             point_in: MapPoint::new(30.0, 30.0),
@@ -2181,8 +2199,12 @@ mod tests {
                 layer_in: 5,
                 ..default_door()
             };
-            let (source_sector, source_layer, target_sector, target_layer) =
-                if direct { (7, 2, 8, 5) } else { (8, 5, 7, 2) };
+            let (source_sector, source_layer, target_sector, target_layer, target_index) = if direct
+            {
+                (7, 2, 8, 5, crate::fast_find_grid::SectorIndex::new(1))
+            } else {
+                (8, 5, 7, 2, crate::fast_find_grid::SectorIndex::new(0))
+            };
             let owner = engine.add_entity(make_pc(source_sector));
             let carried = engine.add_entity(make_soldier(Some(99)));
             {
@@ -2212,6 +2234,7 @@ mod tests {
                 let element = engine.world.entities.get(actor).unwrap().element_data();
                 assert_eq!(element.layer(), target_layer);
                 assert_eq!(element.sector().unwrap().get(), target_sector);
+                assert_eq!(element.sector().unwrap().arena_index(), target_index);
             }
         }
     }

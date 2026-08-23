@@ -230,14 +230,14 @@ impl PositionAssertionContext<'_> {
                 _ => None,
             });
 
+        let entity = self.entities.get(owner);
+        let live_position = entity.map(|entity| entity.element_data().position_map());
+        let live_sector = entity.and_then(|entity| entity.element_data().sector());
         let mismatches = movement.is_some_and(|(destination, expected_sector, tolerance)| {
-            let entity = self.entities.get(owner);
             if let Some(expected_sector) = expected_sector {
-                entity.and_then(|entity| entity.element_data().sector()) != Some(expected_sector)
+                live_sector != Some(expected_sector)
             } else {
-                let position = entity
-                    .map(|entity| entity.element_data().position_map())
-                    .unwrap_or_default();
+                let position = live_position.unwrap_or_default();
                 let delta_x = position.x - destination.x;
                 let delta_y = position.y - destination.y;
                 // Preserve Original's literal mismatch predicate from
@@ -2195,9 +2195,6 @@ impl RecoveryCommandContext<'_> {
                         });
                     self.push_order(seq_id, elem_idx, standing_up, None);
                 }
-                if let Some(entity) = self.entities.get_mut(owner) {
-                    entity.set_posture(crate::element::Posture::Upright);
-                }
                 if self
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
@@ -2354,32 +2351,6 @@ impl ObjectInteractionCommandContext<'_> {
                 ),
                 _ => unreachable!(),
             }
-        }
-
-        if command == Command::DrinkAle || command == Command::Take && !owner_is_pc {
-            let antagonist =
-                antagonist.unwrap_or_else(|| panic!("{command:?}: missing interaction antagonist"));
-            let owner_position = self
-                .entities
-                .get(owner)
-                .unwrap_or_else(|| panic!("{command:?}: owner {owner:?} is missing"))
-                .element_data()
-                .position_map();
-            let antagonist_position = self
-                .entities
-                .get(antagonist)
-                .unwrap_or_else(|| panic!("{command:?}: antagonist {antagonist:?} is missing"))
-                .element_data()
-                .position_map();
-            let direction_goal = crate::position_interface::vector_to_sector_0_to_15_iso(
-                antagonist_position.x - owner_position.x,
-                antagonist_position.y - owner_position.y,
-            );
-            self.entities
-                .get_mut(owner)
-                .expect("object interaction owner disappeared")
-                .element_data_mut()
-                .set_direction_goal(direction_goal);
         }
 
         let antagonist_is_net = antagonist
@@ -2779,6 +2750,139 @@ mod sequence_phase_context_tests {
                 ..Default::default()
             },
         })
+    }
+
+    fn object_interaction_soldier(direction_goal: i16) -> Entity {
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorSoldier,
+            active: true,
+            posture: crate::element::Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position_map(crate::coordinates::MapPoint::new(863.875, 702.403));
+        element.set_direction_goal(direction_goal);
+        Entity::Soldier(crate::element::ActorSoldier {
+            element,
+            actor: crate::element::ActorData::default(),
+            human: crate::element::HumanData::default(),
+            npc: crate::element::NpcData::default(),
+            soldier: crate::element::SoldierData::default(),
+        })
+    }
+
+    fn interaction_object(object_type: crate::element::ObjectType) -> Entity {
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        };
+        element.set_position_map(crate::coordinates::MapPoint::new(846.728, 693.890));
+        let object = crate::element::ObjectData {
+            object_type,
+            ..Default::default()
+        };
+        if object_type == crate::element::ObjectType::Ale {
+            element.kind = crate::element::ElementKind::ObjectOther;
+            Entity::Bonus(crate::element::ElementBonus { element, object })
+        } else {
+            Entity::Projectile(crate::element::ElementProjectile {
+                element,
+                object,
+                projectile: crate::element::ProjectileData::default(),
+            })
+        }
+    }
+
+    #[test]
+    fn npc_take_and_drink_orders_preserve_authored_direction_goal() {
+        for (command, object_type, expected_order) in [
+            (
+                Command::Take,
+                crate::element::ObjectType::Coin,
+                crate::order::OrderType::Taking,
+            ),
+            (
+                Command::DrinkAle,
+                crate::element::ObjectType::Ale,
+                crate::order::OrderType::DrinkingAle,
+            ),
+        ] {
+            let mut engine = EngineInner::new();
+            let owner = engine.add_entity(object_interaction_soldier(13));
+            let antagonist = engine.add_entity(interaction_object(object_type));
+            let seq_id = engine.orders.sequence_manager.launch_element(
+                crate::sequence::SequenceElement::new_interaction(
+                    1,
+                    command,
+                    Some(owner),
+                    Some(antagonist),
+                ),
+            );
+
+            ObjectInteractionCommandContext {
+                entities: &mut engine.world.entities,
+                sequence_manager: &mut engine.orders.sequence_manager,
+                next_order_id: &mut engine.orders.next_order_id,
+            }
+            .dispatch(owner, command, seq_id, 0);
+
+            assert_eq!(
+                engine
+                    .get_entity(owner)
+                    .expect("interaction owner exists")
+                    .position_iface()
+                    .get_direction_goal()
+                    .as_u8(),
+                13,
+                "{command:?} must honor Original bComputeDirection=false"
+            );
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, 0)
+                    .expect("interaction remains live")
+                    .orders
+                    .back()
+                    .expect("interaction translated to one order")
+                    .order_type,
+                expected_order
+            );
+        }
+
+        // PC Take already preserved its direction; keep that control while
+        // removing the NPC-only synthetic pre-set.
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(shield_pc(crate::element::ActionState::Waiting));
+        engine
+            .get_entity_mut(owner)
+            .expect("PC owner exists")
+            .element_data_mut()
+            .set_direction_goal(7);
+        let antagonist = engine.add_entity(interaction_object(crate::element::ObjectType::Coin));
+        let seq_id = engine.orders.sequence_manager.launch_element(
+            crate::sequence::SequenceElement::new_interaction(
+                1,
+                Command::Take,
+                Some(owner),
+                Some(antagonist),
+            ),
+        );
+        ObjectInteractionCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+        }
+        .dispatch(owner, Command::Take, seq_id, 0);
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .expect("PC owner exists")
+                .position_iface()
+                .get_direction_goal()
+                .as_u8(),
+            7
+        );
     }
 
     #[test]
@@ -3266,6 +3370,53 @@ mod sequence_phase_context_tests {
             ActionState::Waiting,
             "translation must not invent a shield action state"
         );
+    }
+
+    #[test]
+    fn stand_up_and_recover_install_without_changing_lying_posture() {
+        use crate::element::{ActionState, Posture};
+        use crate::order::OrderType;
+        use crate::sequence::{SequenceElement, SequenceState};
+
+        for command in [Command::StandUp, Command::Recover] {
+            let mut engine = EngineInner::new();
+            let owner = engine.add_entity(shield_pc(ActionState::Waiting));
+            engine
+                .get_entity_mut(owner)
+                .expect("recovery owner exists")
+                .set_posture(Posture::Lying);
+            let seq_id = engine
+                .orders
+                .sequence_manager
+                .launch_element(SequenceElement::new(1, command, Some(owner)));
+
+            RecoveryCommandContext {
+                entities: &mut engine.world.entities,
+                sequence_manager: &mut engine.orders.sequence_manager,
+                next_order_id: &mut engine.orders.next_order_id,
+            }
+            .dispatch(owner, command, seq_id, 0);
+
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .expect("recovery element remains live");
+            assert_eq!(element.state, SequenceState::InProgress);
+            assert_eq!(
+                element.orders.front().map(|order| order.order_type),
+                Some(OrderType::StandingUp)
+            );
+            assert_eq!(
+                engine
+                    .get_entity(owner)
+                    .expect("recovery owner exists")
+                    .element_data()
+                    .posture,
+                Posture::Lying,
+                "{command:?} translation must wait for StandingUp MotionState::Start"
+            );
+        }
     }
 
     #[test]

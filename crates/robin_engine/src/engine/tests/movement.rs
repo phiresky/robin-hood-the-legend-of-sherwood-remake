@@ -67,6 +67,142 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
+fn exact_building_source_identity_consumes_original_gate_wait_draws() {
+    use crate::engine::movement::GoalShape;
+    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::gate::{Door, DoorIndex, GatePathStep};
+    use crate::order::OrderType;
+    use crate::sector::{SectorNumber, SectorType};
+    use crate::sequence::{Field, FieldValue, MoveFlags};
+    use crate::sim_rng::RngSite;
+
+    let make_sector = |number, sector_type| GridSector {
+        points: Vec::new(),
+        bounding_box: crate::coordinates::MapBBox::new(),
+        sector_type,
+        layer: 0,
+        sector_number: SectorNumber::new(number),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    };
+
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(minimal_movement_test_mission());
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    {
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+        level.sectors.push(make_sector(
+            64,
+            SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+        ));
+        level
+            .sectors
+            .push(make_sector(64, SectorType::MOTION | SectorType::AREA));
+        level.sector_number_map.insert(SectorNumber::new(64), 1);
+    }
+    engine.script_domains.interactables.doors.push(Door {
+        point_out: MapPoint::new(100.0, 100.0),
+        point_in: MapPoint::new(120.0, 100.0),
+        sector_out: SectorNumber::new(64),
+        sector_in: SectorNumber::new(48),
+        sector_out_index: SectorIndex::new(0),
+        ..Door::default()
+    });
+    let source_sector = crate::position_interface::SectorHandle::new(64)
+        .unwrap()
+        .with_arena_index(SectorIndex::new(0).unwrap());
+    let sim = crate::sim_rng::test_context();
+
+    let (sequence_id, draws) = crate::sim_rng::with_draw_trace(|| {
+        engine
+            .build_gate_movement_sequence(
+                &sim,
+                owner,
+                Some(source_sector),
+                vec![GatePathStep {
+                    door_index: DoorIndex(0),
+                    direct: true,
+                }],
+                GoalShape::Point {
+                    point: MapPoint::new(140.0, 100.0),
+                    tolerance: 0.0,
+                },
+                0,
+                OrderType::WalkingUpright,
+                true,
+                1.0,
+                MoveFlags::empty(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                false,
+            )
+            .expect("building-exit route")
+    });
+
+    assert_eq!(
+        draws,
+        [
+            RngSite::RuntimeBuildingExitWait,
+            RngSite::RuntimeBuildingExitWait,
+        ],
+        "Original RHsequence.cpp consumes both rand() & 15 terms while constructing the exit wait"
+    );
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(sequence_id)
+        .expect("registered route");
+    let random_wait = sequence
+        .elements
+        .iter()
+        .find(|element| element.command == Command::WaitTimer)
+        .expect("building source emits its random WaitTimer");
+    assert!(matches!(
+        random_wait.get_property(Field::Timer),
+        Some(FieldValue::Integer(0..=30))
+    ));
+
+    let (_, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
+        engine.build_gate_movement_sequence(
+            &sim,
+            owner,
+            crate::position_interface::SectorHandle::new(64),
+            vec![GatePathStep {
+                door_index: DoorIndex(0),
+                direct: true,
+            }],
+            GoalShape::Point {
+                point: MapPoint::new(140.0, 100.0),
+                tolerance: 0.0,
+            },
+            0,
+            OrderType::WalkingUpright,
+            true,
+            1.0,
+            MoveFlags::empty(),
+            Vec::new(),
+            Vec::new(),
+            false,
+            false,
+        )
+    });
+    assert!(
+        number_only_draws.is_empty(),
+        "the false control must still follow the public-number map's non-building sector"
+    );
+}
+
+#[test]
 fn completed_step_back_publishes_history_at_motion_terminal() {
     use crate::element::{ActionState, Camp};
     use crate::movement::ActiveMovement;

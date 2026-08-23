@@ -224,6 +224,13 @@ pub struct GateLink {
     pub other_door: DoorIndex,
     /// Sector through which the link passes (the shared sector).
     pub via_sector: crate::sector::SectorNumber,
+    /// Exact identity of the shared sector in the runtime sector arena.
+    ///
+    /// `None` is retained for old/runtime-created door tables which only
+    /// carry public sector numbers. Exact and number-only identities are
+    /// deliberately never compared with each other.
+    #[serde(default)]
+    pub via_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     /// In-sector distance between the two gates' nearest entry points.
     pub distance: f32,
 }
@@ -285,6 +292,18 @@ pub struct Door {
     /// motion sector each side of the door belongs to.
     pub sector_out: crate::sector::SectorNumber,
     pub sector_in: crate::sector::SectorNumber,
+
+    /// Exact runtime-arena identities for the two endpoint sectors.
+    ///
+    /// Original compares `RHSector*` pointers when linking and traversing
+    /// gates. Public sector numbers alone are insufficient because distinct
+    /// arena objects can expose the same number. `None` is the compatibility
+    /// representation for door tables which have not yet been resolved to
+    /// the runtime arena.
+    #[serde(default)]
+    pub sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
+    #[serde(default)]
+    pub sector_in_index: Option<crate::fast_find_grid::SectorIndex>,
 
     /// Lift sector which authored this door in its embedded door array.
     ///
@@ -390,6 +409,8 @@ impl Default for Door {
             layer_in: 0,
             sector_out: crate::sector::SectorNumber::new(0),
             sector_in: crate::sector::SectorNumber::new(0),
+            sector_out_index: None,
+            sector_in_index: None,
             owning_lift_sector: None,
             gate_links: Vec::new(),
             click_polygon: Vec::new(),
@@ -1045,24 +1066,48 @@ fn building_has_capacity(
 struct DoorEndpoints {
     sector_out: crate::sector::SectorNumber,
     sector_in: crate::sector::SectorNumber,
+    sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
+    sector_in_index: Option<crate::fast_find_grid::SectorIndex>,
     point_out: MapPoint,
     point_in: MapPoint,
+}
+
+/// Sector identity used by the gate graph.
+///
+/// Exact arena identities compare only with exact arena identities. Numeric
+/// identities compare only with numeric identities. This prevents a partly
+/// migrated graph from silently joining an exact endpoint to an unrelated
+/// number-only endpoint which happens to expose the same public number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum GateSectorKey {
+    Exact(crate::fast_find_grid::SectorIndex),
+    Numeric(crate::sector::SectorNumber),
+}
+
+impl GateSectorKey {
+    #[inline]
+    fn new(
+        number: crate::sector::SectorNumber,
+        index: Option<crate::fast_find_grid::SectorIndex>,
+    ) -> Self {
+        index.map_or(Self::Numeric(number), Self::Exact)
+    }
 }
 
 pub fn build_gate_links(doors: &mut [Door]) {
     /// `(door_index, endpoint_xy)` — what lives on each shared sector.
     type SectorEntry = (u32, MapPoint);
 
-    let mut by_sector: std::collections::HashMap<crate::sector::SectorNumber, Vec<SectorEntry>> =
+    let mut by_sector: std::collections::HashMap<GateSectorKey, Vec<SectorEntry>> =
         std::collections::HashMap::new();
     for (idx, door) in doors.iter().enumerate() {
         let idx_u32 = idx as u32;
         by_sector
-            .entry(door.sector_out)
+            .entry(GateSectorKey::new(door.sector_out, door.sector_out_index))
             .or_default()
             .push((idx_u32, door.point_out));
         by_sector
-            .entry(door.sector_in)
+            .entry(GateSectorKey::new(door.sector_in, door.sector_in_index))
             .or_default()
             .push((idx_u32, door.point_in));
     }
@@ -1078,14 +1123,20 @@ pub fn build_gate_links(doors: &mut [Door]) {
         .map(|d| DoorEndpoints {
             sector_out: d.sector_out,
             sector_in: d.sector_in,
+            sector_out_index: d.sector_out_index,
+            sector_in_index: d.sector_in_index,
             point_out: d.point_out,
             point_in: d.point_in,
         })
         .collect();
 
     for (door_idx, ep) in endpoints.into_iter().enumerate() {
-        for (my_sector, my_point) in [(ep.sector_out, ep.point_out), (ep.sector_in, ep.point_in)] {
-            if let Some(neighbors) = by_sector.get(&my_sector) {
+        for (my_sector, my_sector_index, my_point) in [
+            (ep.sector_out, ep.sector_out_index, ep.point_out),
+            (ep.sector_in, ep.sector_in_index, ep.point_in),
+        ] {
+            let my_key = GateSectorKey::new(my_sector, my_sector_index);
+            if let Some(neighbors) = by_sector.get(&my_key) {
                 for &(other_idx, other_point) in neighbors {
                     if other_idx as usize == door_idx {
                         continue;
@@ -1096,6 +1147,7 @@ pub fn build_gate_links(doors: &mut [Door]) {
                     doors[door_idx].gate_links.push(GateLink {
                         other_door: DoorIndex(other_idx),
                         via_sector: my_sector,
+                        via_sector_index: my_sector_index,
                         distance: dist,
                     });
                 }
@@ -1199,9 +1251,47 @@ pub fn find_path_gates(
     building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<Vec<GatePathStep>> {
+    find_path_gates_with_sector_indices(
+        doors,
+        source,
+        source_sector,
+        None,
+        goal,
+        goal_sector,
+        None,
+        auth,
+        allow_leave_map,
+        building_is_authorized,
+        sector_lift_type,
+    )
+}
+
+/// Identity-aware gate A*.
+///
+/// Supplying an arena identity requires matching exact identities on door
+/// endpoints. Omitting it requires number-only endpoints. The two modes are
+/// intentionally not mixed; callers must resolve both sides before entering
+/// the exact graph.
+#[allow(clippy::too_many_arguments)]
+pub fn find_path_gates_with_sector_indices(
+    doors: &[Door],
+    source: (f32, f32),
+    source_sector: u16,
+    source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    goal: (f32, f32),
+    goal_sector: u16,
+    goal_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    auth: Option<&ActorAuthInfo>,
+    allow_leave_map: bool,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
+    sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
+) -> Option<Vec<GatePathStep>> {
     let source = MapPoint::new(source.0, source.1);
     let goal = MapPoint::new(goal.0, goal.1);
-    if source_sector == goal_sector {
+    let source_key =
+        GateSectorKey::new(SectorNumber::new(source_sector as i16), source_sector_index);
+    let goal_key = GateSectorKey::new(SectorNumber::new(goal_sector as i16), goal_sector_index);
+    if source_key == goal_key {
         return Some(Vec::new());
     }
     if doors.is_empty() {
@@ -1224,7 +1314,8 @@ pub fn find_path_gates(
         // tests building capacity during path construction, before an actor
         // can be dispatched toward the door.
         if let Some(a) = auth {
-            let direct_candidate = door.sector_out == source_sector;
+            let direct_candidate =
+                GateSectorKey::new(door.sector_out, door.sector_out_index) == source_key;
             if !is_actor_authorized_for_gate(
                 door,
                 direct_candidate,
@@ -1237,15 +1328,16 @@ pub fn find_path_gates(
             }
         }
 
-        let (direct, from_pt, to_pt) = if door.sector_out == source_sector {
-            // Direct: enter from outside, exit through point_in (into sector_in)
-            (true, door.point_out, door.point_in)
-        } else if door.sector_in == source_sector {
-            // Indirect: enter from inside, exit through point_out (into sector_out)
-            (false, door.point_in, door.point_out)
-        } else {
-            continue;
-        };
+        let (direct, from_pt, to_pt) =
+            if GateSectorKey::new(door.sector_out, door.sector_out_index) == source_key {
+                // Direct: enter from outside, exit through point_in (into sector_in)
+                (true, door.point_out, door.point_in)
+            } else if GateSectorKey::new(door.sector_in, door.sector_in_index) == source_key {
+                // Indirect: enter from inside, exit through point_out (into sector_out)
+                (false, door.point_in, door.point_out)
+            } else {
+                continue;
+            };
 
         let d_from_src = dist(source, from_pt);
         let d_to_goal = dist(to_pt, goal);
@@ -1272,17 +1364,19 @@ pub fn find_path_gates(
         let cur_state = state[usize::from(current_idx)];
 
         // Goal test: does this gate exit into the goal sector?
-        let exit_sector = if cur_state.direct {
-            current.sector_in
+        let (exit_sector, exit_sector_index) = if cur_state.direct {
+            (current.sector_in, current.sector_in_index)
         } else {
-            current.sector_out
+            (current.sector_out, current.sector_out_index)
         };
-        let entry_sector = if cur_state.direct {
-            current.sector_out
+        let (entry_sector, entry_sector_index) = if cur_state.direct {
+            (current.sector_out, current.sector_out_index)
         } else {
-            current.sector_in
+            (current.sector_in, current.sector_in_index)
         };
-        if exit_sector == goal_sector {
+        let exit_key = GateSectorKey::new(exit_sector, exit_sector_index);
+        let entry_key = GateSectorKey::new(entry_sector, entry_sector_index);
+        if exit_key == goal_key {
             // `RHFastFindGrid::FindPathGatesNodes` returns the first goal gate
             // removed from the score-ordered open list.  This is also
             // significant when a restored actor's source point is qNaN: the
@@ -1306,7 +1400,8 @@ pub fn find_path_gates(
             // RHFastFindGrid selects GetLinkedGates(mbDirect): after
             // traversing the current gate, only links in the sector on the
             // exit side are reachable.
-            if link.via_sector != exit_sector {
+            let link_key = GateSectorKey::new(link.via_sector, link.via_sector_index);
+            if link_key != exit_key {
                 continue;
             }
             let next_idx = link.other_door;
@@ -1319,7 +1414,8 @@ pub fn find_path_gates(
             };
             // Authorization check for neighbor gate.
             if let Some(a) = auth {
-                let next_direct = next.sector_out == link.via_sector;
+                let next_direct =
+                    GateSectorKey::new(next.sector_out, next.sector_out_index) == link_key;
                 if !is_actor_authorized_for_gate(
                     next,
                     next_direct,
@@ -1335,24 +1431,25 @@ pub fn find_path_gates(
             // Determine direction of next gate based on which side we're entering.
             // We're exiting current via `via_sector` (link.via_sector). The next
             // gate enters from `via_sector` and exits the other side.
-            let (next_direct, next_exit_pt, next_entry_pt) = if next.sector_out == link.via_sector {
-                // We enter next.point_out, exit next.point_in (direct)
-                (true, next.point_in, next.point_out)
-            } else if next.sector_in == link.via_sector {
-                // We enter next.point_in, exit next.point_out (indirect)
-                (false, next.point_out, next.point_in)
-            } else {
-                // Inconsistent link; skip
-                continue;
-            };
+            let (next_direct, next_exit_pt, next_entry_pt) =
+                if GateSectorKey::new(next.sector_out, next.sector_out_index) == link_key {
+                    // We enter next.point_out, exit next.point_in (direct)
+                    (true, next.point_in, next.point_out)
+                } else if GateSectorKey::new(next.sector_in, next.sector_in_index) == link_key {
+                    // We enter next.point_in, exit next.point_out (indirect)
+                    (false, next.point_out, next.point_in)
+                } else {
+                    // Inconsistent link; skip
+                    continue;
+                };
             // Original: do not use a link that immediately returns to the
             // sector from which the current gate was entered.
-            let next_exit_sector = if next_direct {
-                next.sector_in
+            let next_exit_key = if next_direct {
+                GateSectorKey::new(next.sector_in, next.sector_in_index)
             } else {
-                next.sector_out
+                GateSectorKey::new(next.sector_out, next.sector_out_index)
             };
-            if next_exit_sector == entry_sector {
+            if next_exit_key == entry_key {
                 continue;
             }
 
@@ -1420,7 +1517,37 @@ pub fn find_path_into_door(
     building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<Vec<GatePathStep>> {
+    find_path_into_door_with_sector_index(
+        doors,
+        source,
+        source_sector,
+        None,
+        goal_door_index,
+        auth,
+        allow_leave_map,
+        building_is_authorized,
+        sector_lift_type,
+    )
+}
+
+/// Identity-aware door-targeted gate A*. See
+/// [`find_path_gates_with_sector_indices`] for the exact/number-only
+/// compatibility rule.
+#[allow(clippy::too_many_arguments)]
+pub fn find_path_into_door_with_sector_index(
+    doors: &[Door],
+    source: (f32, f32),
+    source_sector: u16,
+    source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    goal_door_index: DoorIndex,
+    auth: Option<&ActorAuthInfo>,
+    allow_leave_map: bool,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
+    sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
+) -> Option<Vec<GatePathStep>> {
     let source = MapPoint::new(source.0, source.1);
+    let source_key =
+        GateSectorKey::new(SectorNumber::new(source_sector as i16), source_sector_index);
     let goal_door = doors.get(usize::from(goal_door_index))?;
     // `RHDoor::GetPointMid()` (`original-code/RHGate.h:198`) returns the
     // level-authored `mptMid`, which `RHDoor::InitializeFromProtoStream`
@@ -1463,7 +1590,8 @@ pub fn find_path_into_door(
             continue;
         }
         if let Some(a) = auth {
-            let direct_candidate = door.sector_out == source_sector;
+            let direct_candidate =
+                GateSectorKey::new(door.sector_out, door.sector_out_index) == source_key;
             // Seed pass tests building capacity.
             if !is_actor_authorized_for_gate(
                 door,
@@ -1477,13 +1605,14 @@ pub fn find_path_into_door(
             }
         }
 
-        let (direct, from_pt, heuristic_pt) = if door.sector_out == source_sector {
-            (true, door.point_out, door.point_in)
-        } else if door.sector_in == source_sector {
-            (false, door.point_in, door.point_out)
-        } else {
-            continue;
-        };
+        let (direct, from_pt, heuristic_pt) =
+            if GateSectorKey::new(door.sector_out, door.sector_out_index) == source_key {
+                (true, door.point_out, door.point_in)
+            } else if GateSectorKey::new(door.sector_in, door.sector_in_index) == source_key {
+                (false, door.point_in, door.point_out)
+            } else {
+                continue;
+            };
 
         let d_from_src = dist(source, from_pt);
         let d_to_goal = dist(heuristic_pt, goal_mid);
@@ -1516,21 +1645,24 @@ pub fn find_path_into_door(
 
         let current = &doors[usize::from(current_idx)];
         let cur_state = state[usize::from(current_idx)];
-        let exit_sector = if cur_state.direct {
-            current.sector_in
+        let (exit_sector, exit_sector_index) = if cur_state.direct {
+            (current.sector_in, current.sector_in_index)
         } else {
-            current.sector_out
+            (current.sector_out, current.sector_out_index)
         };
-        let entry_sector = if cur_state.direct {
-            current.sector_out
+        let (entry_sector, entry_sector_index) = if cur_state.direct {
+            (current.sector_out, current.sector_out_index)
         } else {
-            current.sector_in
+            (current.sector_in, current.sector_in_index)
         };
+        let exit_key = GateSectorKey::new(exit_sector, exit_sector_index);
+        let entry_key = GateSectorKey::new(entry_sector, entry_sector_index);
         for link in &current.gate_links {
             // RHFastFindGrid selects GetLinkedGates(mbDirect): after
             // traversing the current gate, only links in the sector on the
             // exit side are reachable.
-            if link.via_sector != exit_sector {
+            let link_key = GateSectorKey::new(link.via_sector, link.via_sector_index);
+            if link_key != exit_key {
                 continue;
             }
             let next_idx = link.other_door;
@@ -1542,7 +1674,8 @@ pub fn find_path_into_door(
                 _ => continue,
             };
             if let Some(a) = auth {
-                let next_direct = next.sector_out == link.via_sector;
+                let next_direct =
+                    GateSectorKey::new(next.sector_out, next.sector_out_index) == link_key;
                 if !is_actor_authorized_for_gate(
                     next,
                     next_direct,
@@ -1555,22 +1688,22 @@ pub fn find_path_into_door(
                 }
             }
 
-            let (next_direct, next_exit_pt, _next_entry_pt) = if next.sector_out == link.via_sector
-            {
-                (true, next.point_in, next.point_out)
-            } else if next.sector_in == link.via_sector {
-                (false, next.point_out, next.point_in)
-            } else {
-                continue;
-            };
+            let (next_direct, next_exit_pt, _next_entry_pt) =
+                if GateSectorKey::new(next.sector_out, next.sector_out_index) == link_key {
+                    (true, next.point_in, next.point_out)
+                } else if GateSectorKey::new(next.sector_in, next.sector_in_index) == link_key {
+                    (false, next.point_out, next.point_in)
+                } else {
+                    continue;
+                };
             // Original: do not use a link that immediately returns to the
             // sector from which the current gate was entered.
-            let next_exit_sector = if next_direct {
-                next.sector_in
+            let next_exit_key = if next_direct {
+                GateSectorKey::new(next.sector_in, next.sector_in_index)
             } else {
-                next.sector_out
+                GateSectorKey::new(next.sector_out, next.sector_out_index)
             };
-            if next_exit_sector == entry_sector {
+            if next_exit_key == entry_key {
                 continue;
             }
 
@@ -1880,6 +2013,128 @@ mod tests {
         .expect("Original accepts the first goal gate even when its score is NaN");
 
         assert_eq!(path.last().map(|step| step.door_index), Some(DoorIndex(3)));
+    }
+
+    #[test]
+    fn exact_gate_graph_does_not_link_distinct_arena_sectors_with_same_number() {
+        let sector = |index| crate::fast_find_grid::SectorIndex::new(index).unwrap();
+        let mut doors = vec![
+            Door {
+                sector_out: SectorNumber::new(1),
+                sector_in: SectorNumber::new(2),
+                sector_out_index: Some(sector(10)),
+                sector_in_index: Some(sector(20)),
+                point_out: MapPoint::new(0.0, 0.0),
+                point_in: MapPoint::new(10.0, 0.0),
+                ..Door::default()
+            },
+            Door {
+                // Same public sector 2, but a different runtime object.
+                sector_out: SectorNumber::new(2),
+                sector_in: SectorNumber::new(3),
+                sector_out_index: Some(sector(21)),
+                sector_in_index: Some(sector(30)),
+                point_out: MapPoint::new(20.0, 0.0),
+                point_in: MapPoint::new(30.0, 0.0),
+                ..Door::default()
+            },
+        ];
+        build_gate_links(&mut doors);
+
+        assert!(doors.iter().all(|door| door.gate_links.is_empty()));
+        assert!(
+            find_path_gates_with_sector_indices(
+                &doors,
+                (0.0, 0.0),
+                1,
+                Some(sector(10)),
+                (30.0, 0.0),
+                3,
+                Some(sector(30)),
+                None,
+                false,
+                &|_| true,
+                &no_lift,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn exact_gate_graph_links_alias_number_only_when_arena_identity_matches() {
+        let sector = |index| crate::fast_find_grid::SectorIndex::new(index).unwrap();
+        let mut doors = vec![
+            Door {
+                sector_out: SectorNumber::new(1),
+                sector_in: SectorNumber::new(2),
+                sector_out_index: Some(sector(10)),
+                sector_in_index: Some(sector(20)),
+                ..Door::default()
+            },
+            Door {
+                // The public number is intentionally different. Exact arena
+                // identity is the Original pointer-equivalent authority.
+                sector_out: SectorNumber::new(99),
+                sector_in: SectorNumber::new(3),
+                sector_out_index: Some(sector(20)),
+                sector_in_index: Some(sector(30)),
+                ..Door::default()
+            },
+        ];
+        build_gate_links(&mut doors);
+
+        assert_eq!(doors[0].gate_links.len(), 1);
+        let path = find_path_gates_with_sector_indices(
+            &doors,
+            (0.0, 0.0),
+            1,
+            Some(sector(10)),
+            (0.0, 0.0),
+            3,
+            Some(sector(30)),
+            None,
+            false,
+            &|_| true,
+            &no_lift,
+        )
+        .expect("matching exact identities form a two-gate route");
+        assert_eq!(path.len(), 2);
+    }
+
+    #[test]
+    fn exact_and_number_only_gate_endpoints_never_silently_mix() {
+        let sector = |index| crate::fast_find_grid::SectorIndex::new(index).unwrap();
+        let mut doors = vec![
+            Door {
+                sector_out: SectorNumber::new(1),
+                sector_in: SectorNumber::new(2),
+                sector_out_index: Some(sector(10)),
+                sector_in_index: Some(sector(20)),
+                ..Door::default()
+            },
+            Door {
+                sector_out: SectorNumber::new(2),
+                sector_in: SectorNumber::new(3),
+                ..Door::default()
+            },
+        ];
+        build_gate_links(&mut doors);
+
+        assert!(doors.iter().all(|door| door.gate_links.is_empty()));
+        assert!(
+            find_path_into_door_with_sector_index(
+                &doors,
+                (0.0, 0.0),
+                1,
+                Some(sector(10)),
+                DoorIndex(1),
+                None,
+                false,
+                &|_| true,
+                &no_lift,
+            )
+            .is_none()
+        );
     }
 
     #[test]

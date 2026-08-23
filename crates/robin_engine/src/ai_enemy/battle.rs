@@ -1083,13 +1083,14 @@ impl EnemyAi {
             {
                 // Lost enemy — re-forecast and seek with direction hint.
                 self.base.say(Remark::HuntsEnemy);
-                // Re-predict missed PC's destination before seeking.
-                if let Some(prepared) = &tick.missed_pc_forecast {
-                    let forecast = prepared
-                        .resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
-                    self.base.seek_position = forecast.position;
-                    self.pc_gone_away_in_this_direction = forecast.direction;
-                }
+                // Re-predict missed PC's destination before seeking. A
+                // synchronous queued Think can assign `missed_pc` after its
+                // per-tick snapshot was built, so use the handle-keyed
+                // detectable/primary forecast already prepared for that
+                // target before the snapshot's dedicated convenience slot.
+                // Original calls ForecastDestinationForIA unconditionally;
+                // retaining an old seek position is not a valid fallback.
+                self.refresh_missed_pc_forecast(sim, tick);
                 self.seek_area(
                     sim,
                     self.base.seek_position,
@@ -1402,6 +1403,33 @@ impl EnemyAi {
             self.base
                 .register_log_line(LogLineType::BattleDecision, decision as u16);
         }
+    }
+
+    fn refresh_missed_pc_forecast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        tick: &AiPerTickData,
+    ) {
+        let detectable = tick
+            .enemy_detectable_forecasts
+            .iter()
+            .find_map(|(handle, forecast)| (*handle == self.missed_pc).then_some(forecast));
+        let primary = (tick.primary_target_snapshot_handle == self.missed_pc)
+            .then_some(tick.primary_target_forecast.as_ref())
+            .flatten();
+        let dedicated = (tick.missed_pc_forecast_handle == self.missed_pc)
+            .then_some(tick.missed_pc_forecast.as_ref())
+            .flatten();
+        let prepared = detectable.or(primary).or(dedicated).unwrap_or_else(|| {
+            panic!(
+                "NPC {} lost-PC overview target {} has no prepared destination forecast",
+                self.base.me, self.missed_pc
+            )
+        });
+        let forecast =
+            prepared.resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
+        self.base.seek_position = forecast.position;
+        self.pc_gone_away_in_this_direction = forecast.direction;
     }
 
     /// Execute a battle decision, with fallback to alternative decisions if needed.
@@ -4146,6 +4174,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lost_pc_overview_uses_handle_keyed_forecast_instead_of_stale_seek_position() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(66);
+        ai.missed_pc = 126;
+        ai.pc_gone_away_in_this_direction = 7;
+        ai.base.seek_position = Position {
+            x: 1810.0,
+            y: 1155.0,
+            sector: crate::position_interface::SectorHandle::new(78),
+            level: 2,
+        };
+        let forecast = Position {
+            x: 1759.0,
+            y: 1033.0,
+            sector: crate::position_interface::SectorHandle::new(75),
+            level: 4,
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_detectable_forecasts.push((
+            126,
+            crate::ai::PreparedForecastDestination::fixed(forecast, 8),
+        ));
+
+        ai.refresh_missed_pc_forecast(&sim, &tick);
+
+        assert_eq!(ai.base.seek_position, forecast);
+        assert_eq!(ai.pc_gone_away_in_this_direction, 8);
+    }
+
+    #[test]
+    #[should_panic(expected = "lost-PC overview target 126 has no prepared destination forecast")]
+    fn lost_pc_overview_never_falls_back_to_stale_seek_position() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(66);
+        ai.missed_pc = 126;
+        ai.base.seek_position = Position {
+            x: 1810.0,
+            y: 1155.0,
+            sector: crate::position_interface::SectorHandle::new(78),
+            level: 2,
+        };
+
+        ai.refresh_missed_pc_forecast(&sim, &AiPerTickData::stub());
+    }
+
+    #[test]
     fn begin_swordfight_publishes_reciprocal_combat_neighbour_clears() {
         // RHArtificialMalignity::BeginSwordfight clears the formation with
         // UpdateLeft/RightCombatNeighbour(NULL). Dropping only the local
@@ -4173,6 +4247,22 @@ mod tests {
                 },
             ]
         ));
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::NearbyCiviliansPanic))
+        );
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::NearbyCiviliansPanic180))
+        );
     }
 
     #[test]

@@ -265,6 +265,7 @@ impl EngineInner {
 
     pub(super) fn install_reinforcement_doors_stage(
         &mut self,
+        assets: &LevelAssets,
         loaded: &crate::level_data::LoadedLevel,
     ) {
         // Install mission-defined reinforcement doors: construct one
@@ -282,33 +283,66 @@ impl EngineInner {
         {
             let map_bbox = self.world.fast_grid.level.map_bbox;
             let special_layer = self.world.fast_grid.level.special_layer;
-            // The out-of-map sector is sentinel #-1.
             let sector_out_of_map = crate::sector::SectorNumber::new(-1);
+            // Original retains one real RHSectorMotionArea pointer for the
+            // outside endpoint of every reinforcement gate. Resolve that
+            // exact arena object, excluding unrelated -1 click/shadow
+            // sectors, and reject an absent or duplicate candidate.
+            let mut out_of_map_matches = self
+                .world
+                .fast_grid
+                .level
+                .sectors
+                .iter()
+                .enumerate()
+                .filter(|(_, sector)| {
+                    sector.sector_number == sector_out_of_map
+                        && sector.sector_type.is_motion()
+                        && sector.sector_type.is_area()
+                })
+                .map(|(index, _)| {
+                    crate::fast_find_grid::SectorIndex::new(
+                        u32::try_from(index).expect("out-of-map runtime sector index exceeds u32"),
+                    )
+                    .expect("out-of-map runtime sector index equals null sentinel")
+                });
+            let sector_out_index = out_of_map_matches
+                .next()
+                .expect("reinforcement doors require the explicit out-of-map motion area");
+            assert!(
+                out_of_map_matches.next().is_none(),
+                "multiple out-of-map motion areas make reinforcement endpoint identity ambiguous"
+            );
             let mut installed = 0usize;
             for raw in &tactic.reinforcement_points {
-                // The referenced sector must be motion+area.  We use
-                // a soft error so the load path doesn't bail on a
-                // corrupt mission file, while still flagging the
-                // issue loudly.
-                let sector_ok = self
+                // `uwSector` in the REIN chunk is an Original sparse
+                // marraySectors slot, not the displayed sector number.
+                // RHFastFindGrid resolves it with GetSector(uwSector) and
+                // stores that exact RHSector pointer on the door.
+                let (sector_in, sector_in_index) =
+                    Self::resolve_sparse_position_sector(assets, raw.sector);
+                let runtime_sector = self
                     .world
                     .fast_grid
                     .level
-                    .sector_number_map
-                    .get(&crate::sector::SectorNumber::new(raw.sector as i16))
-                    .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
-                    .map(|gs| gs.sector_type.is_motion() && gs.sector_type.is_area())
-                    .unwrap_or(false);
-                if !sector_ok {
-                    tracing::error!(
-                        "Reinforcement point ({}, {}) references non-motion-area sector {} \
-                             — skipping",
-                        raw.x,
-                        raw.y,
-                        raw.sector,
-                    );
-                    continue;
-                }
+                    .sectors
+                    .get(usize::from(sector_in_index))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "reinforcement sparse sector slot {} resolves outside the runtime arena",
+                            raw.sector
+                        )
+                    });
+                assert_eq!(
+                    runtime_sector.sector_number, sector_in,
+                    "reinforcement sparse sector slot {} has conflicting public/runtime identity",
+                    raw.sector
+                );
+                assert!(
+                    runtime_sector.sector_type.is_motion() && runtime_sector.sector_type.is_area(),
+                    "reinforcement sparse sector slot {} does not resolve to a motion-area sector",
+                    raw.sector
+                );
 
                 let inside = MapPoint::new(raw.x as f32, raw.y as f32);
                 let (border, outside) = crate::natives::compute_border_point_bbox(
@@ -336,8 +370,10 @@ impl EngineInner {
                         point_out: outside,
                         layer_in: raw.layer,
                         layer_out: special_layer,
-                        sector_in: crate::sector::SectorNumber::new(raw.sector as i16),
+                        sector_in,
                         sector_out: sector_out_of_map,
+                        sector_in_index: Some(sector_in_index),
+                        sector_out_index: Some(sector_out_index),
                         action_direct_1: act_d1,
                         action_direct_2: act_d2,
                         action_indirect_1: act_i1,

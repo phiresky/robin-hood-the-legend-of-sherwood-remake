@@ -30,6 +30,68 @@ use crate::engine::SimScratch;
 use crate::entities::{Entities, EntitySlots};
 use serde::{Deserialize, Serialize};
 
+fn beam_door_waypoints_into_houses(
+    paths: &mut [crate::level_data::RawHikingPath],
+    mut waypoint_sectors: Option<&mut Vec<Vec<crate::position_interface::SectorHandle>>>,
+    doors: &[crate::ai::DoorSeekInfo],
+) {
+    if let Some(sectors) = waypoint_sectors.as_deref() {
+        assert_eq!(
+            sectors.len(),
+            paths.len(),
+            "exact hiking-waypoint sector rows do not match the authored path count"
+        );
+        for (path_index, (sector_row, path)) in sectors.iter().zip(paths.iter()).enumerate() {
+            assert_eq!(
+                sector_row.len(),
+                path.waypoints.len(),
+                "exact hiking-waypoint sector row {path_index} does not match the authored waypoint count"
+            );
+        }
+    }
+
+    for (path_index, path) in paths.iter_mut().enumerate() {
+        for (waypoint_index, waypoint) in path.waypoints.iter_mut().enumerate() {
+            for door in doors {
+                if door.door_type != crate::gate::DoorType::Building {
+                    continue;
+                }
+                let dx = (waypoint.x as f32 - door.point_out.x).abs();
+                let dy = (waypoint.y as f32 - door.point_out.y).abs();
+                if dx.max(dy) > 5.0 {
+                    continue;
+                }
+
+                // Original assigns the complete RHposition returned by
+                // RHDoor::GetPositionIn, including its RHSector pointer.
+                // Rewriting only the public number leaves an impossible
+                // outside-arena/interior-number pair on overlapping sectors.
+                let inside_sector = door.position_in.sector.unwrap_or_else(|| {
+                    panic!(
+                        "building door {} has no required interior sector",
+                        door.door_index.0
+                    )
+                });
+                if waypoint_sectors.is_some() {
+                    assert!(
+                        inside_sector.arena_index().is_some(),
+                        "building door {} interior sector has no exact arena identity",
+                        door.door_index.0
+                    );
+                }
+                waypoint.x = door.position_in.x as i16;
+                waypoint.y = door.position_in.y as i16;
+                waypoint.sector = u16::from(inside_sector);
+                waypoint.level = door.position_in.level;
+                if let Some(sectors) = waypoint_sectors.as_deref_mut() {
+                    sectors[path_index][waypoint_index] = inside_sector;
+                }
+                break;
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct RefreshViewLifecycleDebugConfig {
     enabled: bool,
@@ -40,8 +102,13 @@ struct RefreshViewLifecycleDebugConfig {
 
 #[cfg(test)]
 mod building_door_membership_tests {
-    use super::door_belongs_to_ai_house;
-    use crate::gate::DoorType;
+    use super::{beam_door_waypoints_into_houses, door_belongs_to_ai_house};
+    use crate::ai::{DoorSeekInfo, Position};
+    use crate::coordinates::MapPoint;
+    use crate::fast_find_grid::SectorIndex;
+    use crate::gate::{DoorIndex, DoorType};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+    use crate::position_interface::SectorHandle;
 
     #[test]
     fn building_trap_remains_in_complete_ai_house_gate_list() {
@@ -62,6 +129,51 @@ mod building_door_membership_tests {
                 "{unrelated:?} must not create an AI house association"
             );
         }
+    }
+
+    #[test]
+    fn building_waypoint_beam_replaces_public_and_exact_sector_together() {
+        let outside = SectorHandle::new(0)
+            .unwrap()
+            .with_arena_index(SectorIndex::new(0).unwrap());
+        let inside = SectorHandle::new(146)
+            .unwrap()
+            .with_arena_index(SectorIndex::new(146).unwrap());
+        let mut paths = vec![RawHikingPath {
+            waypoints: vec![RawWaypoint {
+                x: 1955,
+                y: 1992,
+                sector: 0,
+                level: 0,
+                command: WaypointCommand::None,
+            }],
+        }];
+        let mut sectors = vec![vec![outside]];
+        let doors = vec![DoorSeekInfo {
+            door_index: DoorIndex(5),
+            door_type: DoorType::Building,
+            point_out: MapPoint::new(1955.0, 1992.0),
+            position_in: Position {
+                x: 1938.0,
+                y: 1964.0,
+                sector: Some(inside),
+                level: 8,
+            },
+            sector_out: 0,
+            sector_in: 146,
+            layer_out: 0,
+            npc_villain_authorized_direct: true,
+        }];
+
+        beam_door_waypoints_into_houses(&mut paths, Some(&mut sectors), &doors);
+
+        let waypoint = &paths[0].waypoints[0];
+        assert_eq!(
+            (waypoint.x, waypoint.y, waypoint.sector, waypoint.level),
+            (1938, 1964, 146, 8)
+        );
+        assert_eq!(sectors[0][0].get(), 146);
+        assert_eq!(sectors[0][0].arena_index(), SectorIndex::new(146));
     }
 }
 
@@ -1029,6 +1141,45 @@ fn nearby_panic_civilian_reaches_visibility(active: bool, in_building: bool) -> 
     active && !in_building
 }
 
+/// Original's money-brawl inline panic sweep uses the civilian's 180-degree
+/// detector. Keep LOS lazy so actors outside the forward cone do not emit an
+/// obstacle query. The shared `NearbyCiviliansPanic()` callback must not use
+/// this helper: its source implementation explicitly uses 360 degrees.
+#[cfg(test)]
+fn brawl_panic_civilian_detects_source(
+    viewer: crate::ai::Position,
+    viewer_direction: u16,
+    source: crate::ai::Position,
+    sq_view_radius: f32,
+    los_clear: impl FnOnce() -> bool,
+) -> bool {
+    crate::ai_enemy::detects_position_180_raw(viewer, viewer_direction, source, sq_view_radius)
+        && los_clear()
+}
+
+#[cfg(test)]
+fn nearby_panic_civilian_detects_source(
+    use_180_degree_detection: bool,
+    viewer: crate::ai::Position,
+    viewer_direction: u16,
+    source: crate::ai::Position,
+    sq_view_radius: f32,
+    los_clear: impl FnOnce() -> bool,
+) -> bool {
+    if use_180_degree_detection {
+        brawl_panic_civilian_detects_source(
+            viewer,
+            viewer_direction,
+            source,
+            sq_view_radius,
+            los_clear,
+        )
+    } else {
+        // Shared NearbyCiviliansPanic is explicitly 360 degrees in Original.
+        los_clear()
+    }
+}
+
 /// Whether the installed actor order owns the sprite's exact completion
 /// boundary. A newly installed order can temporarily coexist with the prior
 /// sprite action and must not inherit that action's terminal frame/counter.
@@ -1767,6 +1918,90 @@ mod parity_tests {
     }
 
     #[test]
+    fn nearby_panic_uses_civilian_forward_half_plane_and_los() {
+        use std::cell::Cell;
+
+        let viewer = crate::ai::Position::default();
+        let position = |x, y| crate::ai::Position {
+            x,
+            y,
+            ..Default::default()
+        };
+        let los_calls = Cell::new(0);
+        let clear_los = || {
+            los_calls.set(los_calls.get() + 1);
+            true
+        };
+
+        // Direction 0 faces north (-Y). Ahead and either 180-degree boundary
+        // are accepted; directly behind is rejected without consulting LOS.
+        assert!(brawl_panic_civilian_detects_source(
+            viewer,
+            0,
+            position(0.0, -100.0),
+            40_000.0,
+            clear_los,
+        ));
+        assert!(brawl_panic_civilian_detects_source(
+            viewer,
+            0,
+            position(100.0, 0.0),
+            40_000.0,
+            clear_los,
+        ));
+        assert!(brawl_panic_civilian_detects_source(
+            viewer,
+            0,
+            position(-100.0, 0.0),
+            40_000.0,
+            clear_los,
+        ));
+        assert!(!brawl_panic_civilian_detects_source(
+            viewer,
+            0,
+            position(0.0, 100.0),
+            40_000.0,
+            clear_los,
+        ));
+        assert_eq!(los_calls.get(), 3);
+
+        // An actor in front still fails when opaque sight obstacles block it.
+        assert!(!brawl_panic_civilian_detects_source(
+            viewer,
+            0,
+            position(0.0, -100.0),
+            40_000.0,
+            || false,
+        ));
+    }
+
+    #[test]
+    fn generic_nearby_panic_keeps_360_degree_detection() {
+        let viewer = crate::ai::Position::default();
+        let behind = crate::ai::Position {
+            y: 100.0,
+            ..Default::default()
+        };
+
+        assert!(nearby_panic_civilian_detects_source(
+            false,
+            viewer,
+            0,
+            behind,
+            40_000.0,
+            || true,
+        ));
+        assert!(!nearby_panic_civilian_detects_source(
+            true,
+            viewer,
+            0,
+            behind,
+            40_000.0,
+            || true,
+        ));
+    }
+
+    #[test]
     fn action_done_projection_requires_sprite_to_match_installed_animation() {
         use crate::element::ActionState;
         use crate::order::OrderType as OT;
@@ -2415,6 +2650,9 @@ pub(super) fn build_ai_context_from_entity(
     sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
     fast_grid: &std::sync::Arc<crate::fast_find_grid::FastFindGrid>,
     hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
+    hiking_waypoint_sectors: &Option<
+        std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>,
+    >,
     all_soldier_handles: &std::sync::Arc<Vec<u32>>,
     difficulty: crate::player_profile::DifficultyLevel,
 ) -> AiContext {
@@ -2715,6 +2953,7 @@ pub(super) fn build_ai_context_from_entity(
         view_radius_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         fast_grid: fast_grid.clone(),
         hiking_paths: hiking_paths.clone(),
+        hiking_waypoint_sectors: hiking_waypoint_sectors.clone(),
         all_soldier_handles: all_soldier_handles.clone(),
     }
 }
@@ -2795,14 +3034,30 @@ fn resolve_ai_position_with_selected(
             crate::ai::Position {
                 x: door.point_in.x,
                 y: door.point_in.y,
-                sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in)),
+                sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in))
+                    .map(|handle| {
+                        handle.with_arena_index(door.sector_in_index.unwrap_or_else(|| {
+                            panic!(
+                                "selected pass-door {} interior sector has no exact arena identity",
+                                gate_id.0
+                            )
+                        }))
+                    }),
                 level: door.layer_in,
             }
         } else {
             crate::ai::Position {
                 x: door.point_out.x,
                 y: door.point_out.y,
-                sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_out)),
+                sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_out))
+                    .map(|handle| {
+                        handle.with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                            panic!(
+                                "selected pass-door {} exterior sector has no exact arena identity",
+                                gate_id.0
+                            )
+                        }))
+                    }),
                 level: door.layer_out,
             }
         };
@@ -3071,10 +3326,10 @@ pub(super) fn build_my_exit_door_info(
 ///
 /// Called by [`EngineInner::build_sim_scratch`] at the start of each
 /// AI dispatch pass so the map reflects current entity
-/// positions / states.  Includes every PC, soldier, civilian, and
-/// pickup-style bonus entity. Human views include inactive actors because
-/// normal `IsDetecting(human)` ignores activity in its same-building arm;
-/// inactive bonuses and projectile entities remain excluded.
+/// positions / states. Includes every PC, soldier, civilian, and active
+/// object-hierarchy entity. Human views include inactive actors because normal
+/// `IsDetecting(human)` ignores activity in its same-building arm; inactive
+/// objects remain excluded.
 pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     build_entity_views_and_stamps(engine).0
 }
@@ -3270,11 +3525,8 @@ fn build_entity_views_and_stamps(
     let mut map = AiEntityViewMap::with_capacity(engine.world.entities.len());
     let mut stamps = std::collections::HashMap::with_capacity(engine.world.entities.len());
     for (entity_id, entity) in engine.world.entities.occupied() {
-        let elem = entity.element_data();
-        match entity {
-            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => {}
-            Entity::Bonus(_) if elem.active => {}
-            _ => continue,
+        if !entity_has_ai_view(entity) {
+            continue;
         }
         let stamp = entity_view_stamp(engine, entity_id, entity, nets_generation);
         let view = build_one_entity_view(
@@ -3298,8 +3550,7 @@ fn build_entity_views_and_stamps(
 fn entity_has_ai_view(entity: &Entity) -> bool {
     match entity {
         Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => true,
-        Entity::Bonus(bonus) => bonus.element.active,
-        _ => false,
+        _ => entity.object_data().is_some() && entity.element_data().active,
     }
 }
 
@@ -3371,7 +3622,10 @@ fn refresh_prepared_entity_views(
 mod prepared_entity_view_cache_tests {
     use super::*;
     use crate::coordinates::MapPoint;
-    use crate::element::{ElementBonus, ElementData, ObjectData};
+    use crate::element::{
+        ElementBonus, ElementData, ElementProjectile, ObjectData, ProjectileData,
+    };
+    use crate::element_kinds::ObjectType;
 
     fn active_bonus(x: f32) -> Entity {
         let mut element = ElementData {
@@ -3382,6 +3636,22 @@ mod prepared_entity_view_cache_tests {
         Entity::Bonus(ElementBonus {
             element,
             object: ObjectData::default(),
+        })
+    }
+
+    fn active_coin_projectile(x: f32) -> Entity {
+        let mut element = ElementData {
+            active: true,
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(x, 0.0));
+        Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type: ObjectType::Coin,
+                ..Default::default()
+            },
+            projectile: ProjectileData::default(),
         })
     }
 
@@ -3406,6 +3676,39 @@ mod prepared_entity_view_cache_tests {
         let views = cache.views.as_ref().expect("cached views");
         assert_eq!(views[&first.index()].position.x, 30.0);
         assert_eq!(views[&second.index()].position.x, 20.0);
+    }
+
+    #[test]
+    fn active_projectile_coin_is_available_to_ai_object_handle_lookups() {
+        let mut engine = EngineInner::new();
+        let coin = engine.add_entity(active_coin_projectile(42.0));
+        let mut cache = PreparedAiEntityViewCache::default();
+
+        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 1);
+        let views = cache.views.as_ref().expect("cached views");
+        assert_eq!(views[&coin.index()].position.x, 42.0);
+        assert_eq!(views[&coin.index()].object_type, ObjectType::Coin);
+        assert_eq!(
+            views[&coin.index()].entity_id(coin.index()),
+            Some(coin),
+            "AI object handles must preserve the projectile-derived entity identity"
+        );
+
+        engine
+            .world
+            .entities
+            .get_mut(coin)
+            .expect("coin projectile")
+            .element_data_mut()
+            .active = false;
+        assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
+        assert!(
+            !cache
+                .views
+                .as_ref()
+                .expect("cached views")
+                .contains_key(&coin.index())
+        );
     }
 }
 
@@ -3948,12 +4251,23 @@ impl EngineInner {
         let me_handle = ai.me;
         let me_pos = soldier.element.position_map();
         let me_layer = soldier.element.layer();
-        let couldnt_reachpoint = soldier
-            .npc
-            .ai_brain
-            .enemy()
-            .map(|e| e.base.couldnt_reachpoint)
+        let enemy_ai = soldier.npc.ai_brain.enemy();
+        let couldnt_reachpoint = enemy_ai
+            .map(|enemy| enemy.base.couldnt_reachpoint)
             .unwrap_or(false);
+        // A failed lift-entry GoNear is surfaced only after the tick snapshot
+        // for its EventCouldntReachPoint has started construction. Original
+        // computes GetAvengerOnTheRoofWaitPosition synchronously inside that
+        // decision. Preserve the same lookup window from the exact authored
+        // 30-frame RunningToLadder timer even though the staged failure latch
+        // is not live yet.
+        let pending_lift_completion = enemy_ai.is_some_and(|enemy| {
+            enemy.base.current_substate == crate::ai::Substate::AttackingRunningToLadder
+                && enemy.base.timer_is_running
+                && enemy.base.substate_at_last_timer_launch
+                    == crate::ai::Substate::AttackingRunningToLadder
+                && enemy.base.when_does_timer_ring == self.frame_counter().saturating_add(30)
+        });
 
         let mut tick = AiPerTickData::stub();
         tick.owner_live_position = Some(crate::ai::Position {
@@ -4150,6 +4464,49 @@ impl EngineInner {
         }
         tick.camp_soldiers =
             self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch, build_forecasts);
+        // Sequence/timer callbacks run outside RefreshDetection, but Original
+        // still walks the live camp registry from those Think boundaries.
+        // Keep the parallel KO list live as well: money-fight victim scans
+        // must not inherit an empty `AiPerTickData::stub()` field merely
+        // because their EVENT_DONE came from sequence completion.
+        tick.camp_unconscious_soldiers = self
+            .ai
+            .global
+            .all_soldier_handles
+            .iter()
+            .filter_map(|&handle| {
+                if handle == npc_id.index() {
+                    return None;
+                }
+                // The authored handle list is the Original camp-array order.
+                // Resolve its current typed occupant so a removed soldier's
+                // recycled slot cannot turn a civilian/object into a soldier.
+                let current_id =
+                    crate::element::EntityId::Soldier(crate::entity_id::SoldierId(handle));
+                let Some(crate::element::Entity::Soldier(soldier)) =
+                    self.world.entities.get(current_id)
+                else {
+                    return None;
+                };
+                if soldier.soldier.cached_camp != my_camp
+                    || !soldier.element.active
+                    || soldier.npc.life_points <= 0
+                    || !soldier.human.unconscious
+                {
+                    return None;
+                }
+                let knocked_out_in_money_fight = soldier
+                    .npc
+                    .ai_brain
+                    .base()
+                    .map(|ai| ai.knocked_out_in_money_fight)
+                    .unwrap_or(false);
+                Some(crate::ai_enemy::CampUnconsciousSoldierInfo {
+                    handle,
+                    knocked_out_in_money_fight,
+                })
+            })
+            .collect();
         tick.alert_soldier_candidates = self.build_alert_soldier_candidates(npc_id);
         if build_forecasts
             && let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
@@ -4168,6 +4525,7 @@ impl EngineInner {
                 &self.world.fast_grid.level.sectors,
                 &self.world.fast_grid.level.sector_number_map,
             ));
+            tick.missed_pc_forecast_handle = enemy_ai.missed_pc;
             tick.missed_pc_is_pc = matches!(missed_entity, Entity::Pc(_));
         }
         // `fill_list_with_all_near_fighters` walks the global fighter
@@ -4339,13 +4697,13 @@ impl EngineInner {
             tick.patrol_chief_state = chief_ai.current_state;
         }
 
-        // Avenger-on-roof wait positions — only computed when the AI
-        // set the `couldnt_reachpoint` flag.  Decision arms re-pick
-        // their target from the personal enemy list (even from a null
-        // pre-think target), so compute one wait position per
-        // candidate handle plus the current target; consumers resolve
-        // their own live handle at use time.
-        if couldnt_reachpoint {
+        // Avenger-on-roof wait positions — computed for a live failure latch
+        // or the exact pending lift completion described above. Decision arms
+        // re-pick their target from the personal enemy list (even from a null
+        // pre-think target), so compute one wait position per candidate handle
+        // plus the current target; consumers resolve their own live handle at
+        // use time.
+        if couldnt_reachpoint || pending_lift_completion {
             assert!(
                 self.scripts.mission.is_some(),
                 "AI roof recovery requires an installed mission script"
@@ -4661,10 +5019,18 @@ impl EngineInner {
     ) -> Vec<crate::ai_enemy::CampSoldierInfo> {
         let mut camp_soldiers =
             Vec::with_capacity(self.world.entities.soldiers().count().saturating_sub(1));
-        for (other_id, s) in self.world.entities.soldiers() {
-            if other_id == npc_id {
+        for &handle in self.ai.global.all_soldier_handles.iter() {
+            let other_id = crate::entity_id::SoldierId(handle);
+            if EntityId::Soldier(other_id) == npc_id {
                 continue;
             }
+            let Some(Entity::Soldier(s)) = self.world.entities.get(EntityId::Soldier(other_id))
+            else {
+                // Validate the current typed occupant: Original's camp array
+                // order survives removals, while recycled non-soldier slots
+                // must not enter the ordered union.
+                continue;
+            };
             // GetNumberOfSoldiers(camp) includes unconscious and inactive
             // soldiers. Individual Original consumers apply their own gates:
             // CreateListOfSoldiersYouCanAlert retains everyone of the allowed
@@ -4756,6 +5122,7 @@ impl EngineInner {
                 ai_substate: s.npc.ai_substate(),
                 is_able_to_fight: able_to_fight,
                 is_dead: s.npc.life_points <= 0,
+                knocked_out_in_money_fight: enemy_ai.base.knocked_out_in_money_fight,
                 primary_target: enemy_ai.base.primary_target,
                 pride: enemy_ai.soldier_profile_pride,
                 is_able_to_help: crate::ai_enemy::soldier_is_able_to_help_state(
@@ -5447,25 +5814,15 @@ impl EngineInner {
         // subsequent NPC clones see the beamed paths.
         {
             let paths = std::sync::Arc::make_mut(&mut assets.hiking_paths);
-            for path in paths.iter_mut() {
-                for wp in path.waypoints.iter_mut() {
-                    for door in &self.ai.global.door_seek_infos {
-                        if door.door_type != crate::gate::DoorType::Building {
-                            continue;
-                        }
-                        // Chebyshev distance <= 5.
-                        let dx = (wp.x as f32 - door.point_out.x).abs();
-                        let dy = (wp.y as f32 - door.point_out.y).abs();
-                        if dx.max(dy) <= 5.0 {
-                            wp.x = door.position_in.x as i16;
-                            wp.y = door.position_in.y as i16;
-                            wp.sector = door.position_in.sector.map(u16::from).unwrap_or(0);
-                            wp.level = door.position_in.level;
-                            break;
-                        }
-                    }
-                }
-            }
+            let waypoint_sectors = assets
+                .hiking_waypoint_sectors
+                .as_mut()
+                .map(std::sync::Arc::make_mut);
+            beam_door_waypoints_into_houses(
+                paths,
+                waypoint_sectors,
+                &self.ai.global.door_seek_infos,
+            );
         }
 
         // Teleport standalone seek points (those used by AI
@@ -5513,6 +5870,7 @@ impl EngineInner {
                 sim,
                 npc_id,
                 &hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &potential_detectables,
                 ambush_points_count,
                 &entity_views,
@@ -5625,6 +5983,9 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
+        hiking_waypoint_sectors: &Option<
+            std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>,
+        >,
         potential_detectables: &[PotentialDetectable],
         ambush_points_count: usize,
         entity_views: &SharedAiEntityViews,
@@ -5876,6 +6237,7 @@ impl EngineInner {
                 sight_obstacles,
                 fast_grid,
                 hiking_paths,
+                hiking_waypoint_sectors,
                 all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -6526,6 +6888,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 );
@@ -6588,6 +6951,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -6956,6 +7320,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &engine.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &engine.ai.global.all_soldier_handles,
                     engine.control.sim_config.difficulty,
                 );
@@ -9298,6 +9663,14 @@ impl EngineInner {
             // authored FIFO order instead of eagerly instructing the Turn
             // past the still-Todo attentive barrier.
             self.launch_pending_orders_for_npc_mode_after_halt(sim, assets, npc_id, true, true);
+            // `SetState(Default, ...)` calls SetAttentiveMode and then the
+            // caller immediately executes GoTo in Original. The attentive
+            // element must be registered first, but GoTo still constructs
+            // its route synchronously at this owner boundary (including any
+            // building-exit rand draws). Merely promoting the held intent
+            // here leaves construction to the later global drain and shifts
+            // those draws by a frame.
+            let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
         }
 
         // Process pending `SetGuardedPC` — `set_guarded_pc`.  The AI
@@ -9534,6 +9907,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         )
@@ -10241,6 +10615,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -10275,6 +10650,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -10319,6 +10695,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -10351,6 +10728,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -10578,6 +10956,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -10616,6 +10995,102 @@ impl EngineInner {
         assets: &LevelAssets,
         source: EntityId,
     ) {
+        self.nearby_civilians_panic_generic(sim, assets, source);
+    }
+
+    pub(crate) fn nearby_civilians_panic_180(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        source: EntityId,
+    ) {
+        self.brawl_nearby_civilians_panic_exact(sim, assets, source);
+    }
+
+    /// Exact inline sweep from `WonderingBrawlHitting::EVENT_DONE`.
+    /// Unlike the shared callback, Original has no standard-view AABB and
+    /// does not require the brawler to be outdoors; every civilian delegates
+    /// directly to its own `IsDetecting180Degrees` implementation.
+    fn brawl_nearby_civilians_panic_exact(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        source: EntityId,
+    ) {
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let Some(source_entity) = self.world.entities.get(source) else {
+            tracing::trace!(target: "parity_nearby_panic", "brawl source missing");
+            return;
+        };
+        let source_map = source_entity.element_data().position_map();
+        let panic_center = crate::ai::Position {
+            x: source_map.x,
+            y: source_map.y,
+            sector: None,
+            level: 0,
+        };
+
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        for npc_id in npc_ids {
+            let ctx = {
+                let Some(Entity::Civilian(civilian)) = self.world.entities.get(npc_id) else {
+                    continue;
+                };
+                // `IsDetecting180Degrees` checks both actors' raw active
+                // flags. The target/source check remains inside the shared
+                // detector so its gate ordering stays source-exact.
+                if !civilian.element.active {
+                    continue;
+                }
+                let building_sector = self.entity_building_sector(civilian.element.sector());
+                build_ai_context_from_entity(
+                    self.world
+                        .entities
+                        .get(npc_id)
+                        .expect("civilian disappeared"),
+                    self.control.frame_counter,
+                    building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
+            let detected =
+                crate::ai_enemy::context_detects_180_degrees(npc_id.index(), source.index(), &ctx);
+            ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+            if !detected {
+                continue;
+            }
+
+            let stimulus = crate::ai::Stimulus::with_position(
+                crate::ai::StimulusType::EventPanic,
+                panic_center,
+            );
+            self.dispatch_think_with_drain_without_forecast(
+                sim,
+                npc_id,
+                &stimulus,
+                &ctx,
+                &AiPerTickData::stub(),
+                assets,
+            );
+        }
+    }
+
+    fn nearby_civilians_panic_generic(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        source: EntityId,
+    ) {
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let view_radius = if self.ai.standard_view_polygon_radius > 0 {
             self.ai.standard_view_polygon_radius as f32
@@ -10625,10 +11100,10 @@ impl EngineInner {
         // `nearby_civilians_panic` builds an aspect-ratio-stretched
         // axis-aligned box (radius, radius * ASPECT_RATIO) around
         // self, then walks every NPC asking:
-        //   is_civilian() && box.is_inside(p) && p->is_detecting_360_degrees(self)
-        // The second-stage detection uses the civilian's upright eye
-        // point, the source actor's detection point, the civilian's
-        // live view radius, and opaque 3D LOS.
+        // The shared callback calls IsDetecting360Degrees. The separate
+        // money-brawl completion sweep calls IsDetecting180Degrees. Both use
+        // the civilian's upright eye point, the source actor's detection
+        // point, the civilian's live view radius, and opaque 3D LOS.
         let radius_y = view_radius * crate::position_interface::ASPECT_RATIO;
 
         let (source_map, source_ground, source_detection_point) = {
@@ -10637,7 +11112,7 @@ impl EngineInner {
                 return;
             };
             // Source must be IsActiveAndOutsideBuilding for
-            // IsDetecting360Degrees to ever return true.
+            // Either actor detector requires an active, outdoor source.
             if !entity.element_data().active {
                 tracing::trace!(target: "parity_nearby_panic", "source inactive");
                 return;
@@ -10682,7 +11157,7 @@ impl EngineInner {
                 let Entity::Civilian(c) = entity else {
                     continue;
                 };
-                // IsDetecting360Degrees tests only active/outside-building
+                // Both actor detectors test only active/outside-building
                 // lifecycle here. In particular, it does not reject dead or
                 // unconscious civilians before its distance and LOS work.
                 let civilian_in_building =
@@ -10752,6 +11227,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -10837,7 +11313,11 @@ impl EngineInner {
             crate::ai::Position {
                 x: wp.x as f32,
                 y: wp.y as f32,
-                sector: crate::position_interface::SectorHandle::new(wp.sector),
+                sector: assets.hiking_waypoint_sector(
+                    usize::from(path.hiking_path_index),
+                    usize::from(path.current_waypoint_index),
+                    wp.sector,
+                ),
                 level: wp.level,
             }
         };
@@ -10861,6 +11341,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -11577,6 +12058,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -11779,6 +12261,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -12303,6 +12786,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 );
@@ -12361,6 +12845,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -12458,6 +12943,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -12781,6 +13267,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -13045,6 +13532,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -13111,6 +13599,7 @@ impl EngineInner {
                                         &scratch.ai_sight_obstacles,
                                         &self.world.fast_grid,
                                         &assets.hiking_paths,
+                                        &assets.hiking_waypoint_sectors,
                                         &self.ai.global.all_soldier_handles,
                                         self.control.sim_config.difficulty,
                                     );
@@ -13139,6 +13628,7 @@ impl EngineInner {
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
                             &assets.hiking_paths,
+                            &assets.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         )
@@ -13171,6 +13661,7 @@ impl EngineInner {
                                 &scratch.ai_sight_obstacles,
                                 &self.world.fast_grid,
                                 &assets.hiking_paths,
+                                &assets.hiking_waypoint_sectors,
                                 &self.ai.global.all_soldier_handles,
                                 self.control.sim_config.difficulty,
                             )
@@ -13689,7 +14180,8 @@ impl EngineInner {
             || ai
                 .outbox
                 .reentrant
-                .civilian_report_alert_officer_completion_pending;
+                .civilian_report_alert_officer_completion_pending
+            || ai.outbox.reentrant.brawl_hitting_completion_pending;
         let retain_couldnt_reachpoint = ai.completion_latch_inside_think
             && ai.couldnt_reachpoint
             && (typed_tail_pending || pending_couldnt_condolation);
@@ -14227,6 +14719,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -14309,6 +14802,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -14401,6 +14895,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -14555,6 +15050,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -14660,6 +15156,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -14740,6 +15237,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -14794,6 +15292,7 @@ impl EngineInner {
                         &scratch.ai_sight_obstacles,
                         &self.world.fast_grid,
                         &assets.hiking_paths,
+                        &assets.hiking_waypoint_sectors,
                         &self.ai.global.all_soldier_handles,
                         self.control.sim_config.difficulty,
                     )
@@ -14885,6 +15384,7 @@ impl EngineInner {
                         &scratch.ai_sight_obstacles,
                         &self.world.fast_grid,
                         &assets.hiking_paths,
+                        &assets.hiking_waypoint_sectors,
                         &self.ai.global.all_soldier_handles,
                         self.control.sim_config.difficulty,
                     );
@@ -14930,6 +15430,7 @@ impl EngineInner {
                         &scratch.ai_sight_obstacles,
                         &self.world.fast_grid,
                         &assets.hiking_paths,
+                        &assets.hiking_waypoint_sectors,
                         &self.ai.global.all_soldier_handles,
                         self.control.sim_config.difficulty,
                     )
@@ -15022,6 +15523,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15090,6 +15592,7 @@ impl EngineInner {
                     &caller_scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15192,6 +15695,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15232,6 +15736,7 @@ impl EngineInner {
                     &source_scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15354,6 +15859,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15392,6 +15898,7 @@ impl EngineInner {
                     &source_scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15474,6 +15981,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15515,6 +16023,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -15655,6 +16164,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
                     &assets.hiking_paths,
+                    &assets.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 );
@@ -15931,6 +16441,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -16019,6 +16530,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -16101,6 +16613,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -16204,6 +16717,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -16267,6 +16781,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -16796,6 +17311,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -16928,6 +17444,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -17089,6 +17606,7 @@ impl EngineInner {
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
                 &assets.hiking_paths,
+                &assets.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -17185,6 +17703,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -17406,6 +17925,7 @@ impl EngineInner {
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
             &assets.hiking_paths,
+            &assets.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );

@@ -696,6 +696,12 @@ pub struct AiOrderIntent {
     /// Authored GoTo topology. `None` means this is a local positional
     /// order rather than a full AI `RHposition` destination.
     pub target_sector: Option<crate::position_interface::SectorHandle>,
+    /// Exact live `RHSector*` analogue for the destination.  The public
+    /// handle above is intentionally retained because scripts and authored
+    /// data address sectors by number, while route construction compares
+    /// arena object identity.
+    #[serde(default)]
+    pub target_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     pub target_layer: Option<u16>,
     /// Actor topology captured when the AI's synchronous `GoTo` call reaches
     /// the engine boundary. Sequence construction may be deferred until a
@@ -705,6 +711,9 @@ pub struct AiOrderIntent {
     pub source_position: Option<crate::coordinates::MapPoint>,
     #[serde(default)]
     pub source_sector: Option<crate::position_interface::SectorHandle>,
+    /// Exact live arena sector captured with `source_sector`.
+    #[serde(default)]
+    pub source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     #[serde(default)]
     pub source_layer: Option<u16>,
     /// Original compares `RHSector*` identity, not the public sector number,
@@ -815,9 +824,11 @@ impl AiOrderIntent {
             target_x: x,
             target_y: y,
             target_sector: None,
+            target_sector_index: None,
             target_layer: None,
             source_position: None,
             source_sector: None,
+            source_sector_index: None,
             source_layer: None,
             source_target_sector_identity_differs: false,
             target_actor: None,

@@ -2293,6 +2293,15 @@ pub struct ProjectileData {
     /// generated trajectory until its collision metadata is materialized.
     #[serde(default)]
     pub trajectory_runtime: Vec<TrajectoryPointRuntime>,
+    /// Constructor-only latch: generated trajectory runtime still needs its
+    /// exact collision waypoint materialized before the first Hourglass.
+    /// Cleared before publication by the purse/coin constructor boundary.
+    #[serde(default)]
+    pub terminal_material_pending: bool,
+    /// Exact raw collision waypoint retained by ComputeTrajectory until the
+    /// pre-publication virtual Hourglass can determine its material.
+    #[serde(default)]
+    pub terminal_material_impact_index: Option<u16>,
     #[serde(default)]
     pub trajectory_origin_sector: Option<u16>,
     #[serde(default)]
@@ -2365,6 +2374,8 @@ impl Default for ProjectileData {
             disappear: false,
             trajectory: Vec::new(),
             trajectory_runtime: Vec::new(),
+            terminal_material_pending: false,
+            terminal_material_impact_index: None,
             trajectory_origin_sector: None,
             trajectory_origin_layer: 0,
             velocity_increment: WorldVec3D::default(),
@@ -4444,6 +4455,15 @@ impl ObjectTypeExt for ObjectType {
 }
 
 impl ElementProjectile {
+    /// Run the movement portion of `RHElementProjectile::Hourglass`.
+    /// Every virtual call snapshots `old_position` first; keeping that edge
+    /// here prevents purse/coin callers from advancing with a stale creation
+    /// default while arrow callers use a different implementation.
+    pub fn advance_projectile_hourglass(&mut self) -> bool {
+        self.element.sprite.position_iface.new_move();
+        self.advance_trajectory_one_frame()
+    }
+
     /// Advance the projectile by one trajectory frame: pop the next
     /// waypoint when the current segment timer expires, then apply the
     /// per-frame velocity increment to the position / map / direction.
@@ -4472,7 +4492,18 @@ pub fn advance_trajectory_one_frame(
     if projectile.trajectory_frame_count == 0 {
         if projectile.trajectory.is_empty() {
             projectile.flying = false;
+            projectile.trajectory_frame_count = u16::MAX;
+            projectile.velocity_increment = WorldVec3D::ZERO;
             return true;
+        }
+        if !projectile.trajectory_runtime.is_empty() {
+            assert_eq!(
+                projectile.trajectory_runtime.len(),
+                projectile.trajectory.len(),
+                "projectile trajectory/runtime arrays lost their serialized lockstep"
+            );
+            let runtime = projectile.trajectory_runtime.remove(0);
+            element.set_material(crate::element::GameMaterial::from_u32(runtime.material));
         }
         let point = projectile.trajectory.remove(0);
         let time = point.time.max(1);

@@ -341,6 +341,13 @@ pub enum EntityKind {
     /// scroll items.  These are the targets of `WonderingTakingMoney`
     /// and related "go pick up an interesting object" states.
     Bonus,
+    /// Script/runtime scroll object ([`Entity::Scroll`]).
+    Scroll,
+    /// Projectile-derived object ([`Entity::Projectile`]); thrown coins use
+    /// this Original hierarchy branch while remaining valid money objects.
+    Projectile,
+    /// Net projectile object ([`Entity::Net`]).
+    Net,
 }
 
 impl AiEntityView {
@@ -353,13 +360,20 @@ impl AiEntityView {
     /// than inventing a typed ID at an effect boundary.
     pub fn entity_id(&self, handle: u32) -> Option<crate::element::EntityId> {
         use crate::ai_entity_view::EntityKind;
-        use crate::entity_id::{BonusId, CivilianId, PcId, SoldierId};
+        use crate::entity_id::{
+            BonusId, CivilianId, NetId, PcId, ProjectileId, ScrollId, SoldierId,
+        };
 
         match self.kind {
             EntityKind::Pc => Some(crate::element::EntityId::Pc(PcId(handle))),
             EntityKind::Soldier => Some(crate::element::EntityId::Soldier(SoldierId(handle))),
             EntityKind::Civilian => Some(crate::element::EntityId::Civilian(CivilianId(handle))),
             EntityKind::Bonus => Some(crate::element::EntityId::Bonus(BonusId(handle))),
+            EntityKind::Scroll => Some(crate::element::EntityId::Scroll(ScrollId(handle))),
+            EntityKind::Projectile => {
+                Some(crate::element::EntityId::Projectile(ProjectileId(handle)))
+            }
+            EntityKind::Net => Some(crate::element::EntityId::Net(NetId(handle))),
             EntityKind::Other => None,
         }
     }
@@ -534,6 +548,33 @@ pub fn entity_view_from_entity(
         }
         Entity::Bonus(_) => (
             EntityKind::Bonus,
+            Camp::default(),
+            false,
+            false,
+            false,
+            false,
+            false,
+        ),
+        Entity::Scroll(_) => (
+            EntityKind::Scroll,
+            Camp::default(),
+            false,
+            false,
+            false,
+            false,
+            false,
+        ),
+        Entity::Projectile(_) => (
+            EntityKind::Projectile,
+            Camp::default(),
+            false,
+            false,
+            false,
+            false,
+            false,
+        ),
+        Entity::Net(_) => (
+            EntityKind::Net,
             Camp::default(),
             false,
             false,

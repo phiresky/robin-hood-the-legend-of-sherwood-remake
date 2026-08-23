@@ -210,6 +210,9 @@ pub struct CampSoldierInfo {
     /// money-fight scans reject only the dead, not everyone temporarily
     /// unable to fight.
     pub is_dead: bool,
+    /// Live `WasKnockedOutInMoneyFight()` flag. Money-fight morale scans
+    /// classify the soldier only after their single ordered visibility query.
+    pub knocked_out_in_money_fight: bool,
     /// Live primary target used when BattleDecisions merges an attacking
     /// friend's target into its persistent Them list.
     pub primary_target: HumanHandle,

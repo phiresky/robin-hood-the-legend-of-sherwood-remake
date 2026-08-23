@@ -433,7 +433,7 @@ impl EnemyAi {
             }
 
             Substate::WonderingApproachingMoney => {
-                self.wondering_approaching_money(stimulus_type, ctx)
+                self.wondering_approaching_money(stimulus_type, ctx, tick)
             }
 
             Substate::WonderingTakingMoney => self.wondering_taking_money(stimulus_type, ctx),
@@ -493,7 +493,7 @@ impl EnemyAi {
             }
 
             Substate::WonderingBrawlApproaching => {
-                self.wondering_brawl_approaching(stimulus_type, ctx)
+                self.wondering_brawl_approaching(sim, stimulus_type, ctx, tick)
             }
 
             Substate::WonderingBrawlHitting => {
@@ -722,45 +722,25 @@ impl EnemyAi {
         &mut self,
         stimulus_type: StimulusType,
         ctx: &AiContext,
+        tick: &AiPerTickData,
     ) -> bool {
-        if stimulus_type == StimulusType::EventReachPoint
-            || stimulus_type == StimulusType::EventTimer
-        {
-            self.set_state(AiState::Wondering, Substate::WonderingTakingMoney);
-            // Launch a single-element interaction sequence
-            // (Take, me, interesting_object) to trigger the
-            // pick-up animation on the coin.  The engine
-            // launches it at post-think time.
-            let obj = self.base.interesting_object;
-            if obj != 0 {
-                use crate::element::Command;
-                use crate::sequence::{Sequence, SequenceElement};
-                let owner = self.base.owner_entity_id;
-                let antagonist = Some(crate::element::EntityId::Bonus(crate::entity_id::BonusId(
-                    obj,
-                )));
-                let mut seq = Sequence::new();
-                seq.append_element(SequenceElement::new_interaction(
-                    1,
-                    Command::Take,
-                    owner,
-                    antagonist,
-                ));
-                self.base.outbox.actor.launch_sequences.push(seq);
-            }
-            self.base.launch_timer(30, ctx.frame);
-        }
-        false
+        // Original shares one switch body between ApproachingMoney and
+        // RunningForMoney. EVENT_TIMER refreshes the race; only
+        // EVENT_REACHPOINT starts the Take interaction.
+        self.wondering_running_for_money(stimulus_type, ctx, tick)
     }
 
-    fn wondering_taking_money(&mut self, stimulus_type: StimulusType, ctx: &AiContext) -> bool {
-        if stimulus_type == StimulusType::EventTimer {
-            // Check for more money
+    fn wondering_taking_money(&mut self, _stimulus_type: StimulusType, ctx: &AiContext) -> bool {
+        // Original intentionally ignores the expected-event type here.  The
+        // Take sequence normally finishes with EVENT_DONE, but any expected
+        // event advances the same completion boundary.
+        if let Some(coin) = self.get_nearest_seen_money_and_remove_it_from_list(ctx) {
+            self.base.interesting_object = coin;
+            self.set_state(AiState::Wondering, Substate::WonderingMoneyReactiontime);
+            self.base.launch_timer(1, ctx.frame);
+        } else {
             self.set_state(AiState::Wondering, Substate::WonderingWatchingForMoreMoney);
-            self.base.launch_timer(
-                parameters_ai::AI_ARE_THERE_MORE_DOLLARS_LOOKS as u32 * 10,
-                ctx.frame,
-            );
+            self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
         }
         false
     }
@@ -897,9 +877,11 @@ impl EnemyAi {
                         use crate::element::Command;
                         use crate::sequence::{Sequence, SequenceElement};
                         let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Bonus(
-                            crate::entity_id::BonusId(obj),
-                        ));
+                        let antagonist = Some(ctx.entity_id(obj).unwrap_or_else(|| {
+                            panic!(
+                                "ale interaction object handle {obj} has no live typed entity view"
+                            )
+                        }));
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new_interaction(
                             1,
@@ -1158,21 +1140,15 @@ impl EnemyAi {
                 if another_guy_approaching {
                     // GoNear(money, AI_STOP_BEFORE_MONEY_DISTANCE,
                     //         RUN | FIND_ACCESSIBLE)
-                    //
-                    // Shape 1 contract forbids same-substate
-                    // re-issue; route through MoneyReactiontime,
-                    // whose timer already advances back to
-                    // RunningForMoney.
                     if let Some(obj_pos) = ctx.entity_position(self.base.interesting_object) {
                         self.go_near(
                             AiState::Wondering,
-                            Substate::WonderingMoneyReactiontime,
+                            Substate::WonderingRunningForMoney,
                             obj_pos,
                             parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
                             crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::FIND_ACCESSIBLE,
                             ctx,
                         );
-                        self.base.launch_timer(1, ctx.frame);
                     }
                     // If my patrol chief is an officer whose 180°
                     // detects me, fire EVENT_SEES_BRAWL at them.
@@ -1215,9 +1191,11 @@ impl EnemyAi {
                     use crate::element::Command;
                     use crate::sequence::{Sequence, SequenceElement};
                     let owner = self.base.owner_entity_id;
-                    let antagonist = Some(crate::element::EntityId::Bonus(
-                        crate::entity_id::BonusId(obj),
-                    ));
+                    let antagonist = Some(ctx.entity_id(obj).unwrap_or_else(|| {
+                        panic!(
+                            "money interaction object handle {obj} has no live typed entity view"
+                        )
+                    }));
                     let mut seq = Sequence::new();
                     seq.append_element(SequenceElement::new_interaction(
                         1,
@@ -1299,8 +1277,10 @@ impl EnemyAi {
 
     fn wondering_brawl_approaching(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         ctx: &AiContext,
+        tick: &AiPerTickData,
     ) -> bool {
         match stimulus_type {
             StimulusType::EventTimer => {
@@ -1325,33 +1305,53 @@ impl EnemyAi {
                 self.base.launch_timer(1, ctx.frame);
             }
             StimulusType::EventReachPoint => {
-                // Check friend_in_trouble substate:
-                // - if asleep (Sleeping) → skip hit, go to hitting;
-                // - if distance > AI_HIT_DISTANCE+3 → re-issue GoNear;
-                // - else actually transition to hitting.
-                // An already-cleared brawl partner (handle 0)
-                // deliberately skips the sleeping shortcut — the
-                // original treats a missing partner as an error
-                // arm, not as "asleep".
-                let friend_sleeping = self.base.friend_in_trouble != 0
-                    && ctx
-                        .expect_entity_view(
-                            self.base.friend_in_trouble,
-                            "brawl-approach friend in trouble",
-                        )
-                        .ai_state
-                        == AiState::Sleeping;
-                if friend_sleeping {
-                    // Drop the sleeping friend from
-                    // `money_fight_enemies` so subsequent brawl
-                    // arms don't keep re-targeting a KO'd soldier
-                    // (and so `wants_to_continue_money_fight`'s
-                    // size-based threshold isn't skewed).
-                    let fit = self.base.friend_in_trouble as NpcHandle;
+                let friend = self.base.friend_in_trouble;
+                if friend == 0 {
+                    tracing::error!(
+                        soldier = self.base.me,
+                        "brawl approach reached its point without a friend in trouble"
+                    );
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    return false;
+                }
+                let friend_view =
+                    ctx.expect_entity_view(friend, "brawl-approach friend in trouble");
+                if friend_view.ai_state == AiState::Sleeping {
+                    let fit = friend as NpcHandle;
                     self.money_fight_enemies.retain(|h| *h != fit);
                     self.base.friend_in_trouble = 0;
+                    self.set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
+                    self.base
+                        .outbox
+                        .reentrant
+                        .self_stimuli
+                        .push(StimulusType::EventDone.into());
+                } else {
+                    let dx = friend_view.position.x - ctx.position.x;
+                    let dy = friend_view.position.y - ctx.position.y;
+                    if dx.hypot(dy) > parameters_ai::AI_HIT_DISTANCE as f32 + 3.0 {
+                        self.base.go_near(
+                            friend_view.position,
+                            parameters_ai::AI_HIT_DISTANCE,
+                            crate::ai::GotoFlags::RUN,
+                            ctx,
+                        );
+                    } else {
+                        self.base.stop_all();
+                        let antagonist = ctx.entity_id(friend).unwrap_or_else(|| {
+                            panic!("brawl hit friend handle {friend} has no live typed entity view")
+                        });
+                        let mut sequence = crate::sequence::Sequence::new();
+                        sequence.append_element(crate::sequence::SequenceElement::new_interaction(
+                            1,
+                            crate::element::Command::HitCmd,
+                            self.base.owner_entity_id,
+                            Some(antagonist),
+                        ));
+                        self.base.outbox.actor.launch_sequences.push(sequence);
+                        self.set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
+                    }
                 }
-                self.set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
             }
             _ => {}
         }
@@ -1363,64 +1363,75 @@ impl EnemyAi {
     fn wondering_brawl_hitting(
         &mut self,
         stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
+        _ctx: &AiContext,
+        _tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            // Scan camp for an officer who might hear/see me
-            // and alert them with EventSeesBrawl.
-            self.maybe_officer_sees_me_fighting(ctx, tick);
-            // Broadcast civilian panic for anyone in view
-            // radius. Queued in the owner-work FIFO so surrounding
-            // synchronous AI calls retain their statement order.
-            self.nearby_civilians_panic();
-
-            // Remove KO'd target from the enemy list.
-            if self.base.friend_in_trouble != 0 {
-                let fit = self.base.friend_in_trouble as NpcHandle;
-                let is_unconscious = ctx
-                    .expect_entity_view(fit as HumanHandle, "brawl-hitting friend")
-                    .is_unconscious;
-                if is_unconscious {
-                    self.money_fight_enemies.retain(|h| *h != fit);
-                }
-            }
-
-            // Refresh the enemy list if we've run out —
-            // picks up any same-camp soldier that joined the
-            // brawl after our initial snapshot.
-            if self.money_fight_enemies.is_empty() {
-                self.create_new_list_of_money_fight_enemies(tick, ctx);
-            }
-
-            // Morale-gated continue-or-stop.
-            if !self.wants_to_continue_money_fight(tick, ctx) {
-                self.money_fight_enemies.clear();
-                // stop_brawling_and_collect_money().
-                self.stop_brawling_and_collect_money(ctx, tick);
-            } else {
-                // Handle 0 ("no brawl partner") deliberately
-                // fails this gate and falls through to picking
-                // the nearest remaining enemy.
-                let fit_ok = self.base.friend_in_trouble != 0
-                    && !ctx
-                        .expect_entity_view(self.base.friend_in_trouble, "brawl-hitting friend")
-                        .is_unconscious;
-                if fit_ok {
-                    self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
-                    self.base.face_entity(self.base.friend_in_trouble, ctx);
-                    self.base.launch_timer(30, ctx.frame);
-                } else if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
-                    self.base.friend_in_trouble = next as HumanHandle;
-                    self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
-                    self.base.launch_timer(10, ctx.frame);
-                } else {
-                    // stop_brawling_and_collect_money().
-                    self.stop_brawling_and_collect_money(ctx, tick);
-                }
-            }
+            // The owner-work continuation performs the civilian sweep,
+            // synchronously settles the later officer notification, then
+            // invokes the remaining brawler tail. Keeping the tail out of
+            // this initial outbox is essential because owner work otherwise
+            // drains ahead of cross-NPC calls.
+            self.base.completion_latch_inside_think = true;
+            self.base.outbox.reentrant.brawl_hitting_completion_pending = true;
+            self.nearby_civilians_panic_180();
         }
         false
+    }
+
+    pub(crate) fn brawl_hitting_notify_officer(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
+        self.maybe_officer_sees_me_fighting(ctx, tick);
+    }
+
+    pub(crate) fn resume_brawl_hitting_after_officer(
+        &mut self,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        // Remove KO'd target from the enemy list.
+        if self.base.friend_in_trouble != 0 {
+            let fit = self.base.friend_in_trouble as NpcHandle;
+            let is_unconscious = ctx
+                .expect_entity_view(fit as HumanHandle, "brawl-hitting friend")
+                .is_unconscious;
+            if is_unconscious {
+                self.money_fight_enemies.retain(|h| *h != fit);
+            }
+        }
+
+        // Refresh the enemy list if we've run out —
+        // picks up any same-camp soldier that joined the
+        // brawl after our initial snapshot.
+        if self.money_fight_enemies.is_empty() {
+            self.create_new_list_of_money_fight_enemies(tick, ctx);
+        }
+
+        // Morale-gated continue-or-stop.
+        if !self.wants_to_continue_money_fight(tick, ctx) {
+            self.money_fight_enemies.clear();
+            // stop_brawling_and_collect_money().
+            self.stop_brawling_and_collect_money(ctx, tick);
+        } else {
+            // Handle 0 ("no brawl partner") deliberately
+            // fails this gate and falls through to picking
+            // the nearest remaining enemy.
+            let fit_ok = self.base.friend_in_trouble != 0
+                && !ctx
+                    .expect_entity_view(self.base.friend_in_trouble, "brawl-hitting friend")
+                    .is_unconscious;
+            if fit_ok {
+                self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
+                self.base.face_entity(self.base.friend_in_trouble, ctx);
+                self.base.launch_timer(30, ctx.frame);
+            } else if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
+                self.base.friend_in_trouble = next as HumanHandle;
+                self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
+                self.base.launch_timer(10, ctx.frame);
+            } else {
+                // stop_brawling_and_collect_money().
+                self.stop_brawling_and_collect_money(ctx, tick);
+            }
+        }
     }
 
     // Brawl-got-hit: pivot to BrawlRecovering, register
@@ -8688,6 +8699,449 @@ mod tests {
     }
 
     #[test]
+    fn taking_money_event_done_selects_nearest_coin_and_starts_reaction_timer() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(90);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingTakingMoney;
+        ai.base.interesting_object = 130;
+        ai.other_seen_money = vec![131, 132];
+
+        let mut farther = pc_view(crate::element::Posture::Upright);
+        farther.position = Position {
+            x: 40.0,
+            y: 10.0,
+            ..Position::default()
+        };
+        let mut nearer = pc_view(crate::element::Posture::Upright);
+        nearer.position = Position {
+            x: 8.0,
+            y: 12.0,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(131, farther);
+        views.insert(132, nearer);
+        let ctx = AiContext {
+            frame: 9_247,
+            position: Position::default(),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::WonderingMoneyReactiontime
+        );
+        assert_eq!(ai.base.interesting_object, 132);
+        assert_eq!(ai.other_seen_money, vec![131]);
+        assert_eq!(ai.base.when_does_timer_ring, 9_248);
+    }
+
+    #[test]
+    fn taking_projectile_derived_coin_preserves_typed_interaction_target() {
+        let mut ai = EnemyAi::new(90);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingApproachingMoney;
+        ai.base.interesting_object = 134;
+
+        let mut coin = pc_view(crate::element::Posture::Upright);
+        coin.kind = crate::ai_entity_view::EntityKind::Projectile;
+        coin.object_type = crate::element_kinds::ObjectType::Coin;
+        coin.position = Position::default();
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(134, coin);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.wondering_approaching_money(StimulusType::EventReachPoint, &ctx, &AiPerTickData::stub());
+
+        let mut sequences = ai
+            .base
+            .outbox
+            .actor
+            .launch_sequences
+            .iter()
+            .collect::<Vec<_>>();
+        for work in &ai.base.outbox.reentrant.owner_work {
+            match work {
+                AiOwnerWork::ActorEffects(effects) => {
+                    sequences.extend(effects.launch_sequences.iter());
+                }
+                AiOwnerWork::StateChange(change) => {
+                    if let Some(effects) = &change.actor_effects_before_callback {
+                        sequences.extend(effects.launch_sequences.iter());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let [sequence] = sequences.as_slice() else {
+            panic!("money arrival must launch exactly one Take sequence")
+        };
+        let Some(element) = sequence.get(0) else {
+            panic!("Take sequence must contain its interaction element")
+        };
+        assert!(matches!(
+            element.data,
+            crate::sequence::SequenceElementData::Interaction {
+                antagonist: Some(crate::element::EntityId::Projectile(
+                    crate::entity_id::ProjectileId(134)
+                ))
+            }
+        ));
+    }
+
+    fn money_race_context() -> AiContext {
+        let mut coin = pc_view(crate::element::Posture::Upright);
+        coin.kind = crate::ai_entity_view::EntityKind::Projectile;
+        coin.object_type = crate::element_kinds::ObjectType::Coin;
+        coin.position = Position {
+            x: 100.0,
+            y: 0.0,
+            ..Position::default()
+        };
+        let mut rival = soldier_view_with_substate(91, Substate::WonderingApproachingMoney);
+        rival.position = Position {
+            x: 10.0,
+            y: 0.0,
+            ..Position::default()
+        };
+        rival.detection_position = crate::coordinates::MapPoint::new(10.0, 0.0);
+        rival.detection_position_world = crate::coordinates::WorldPoint3D::new(10.0, 0.0, 0.0);
+        let mut viewer = soldier_view_with_substate(90, Substate::WonderingApproachingMoney);
+        viewer.direction = 4;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(90, viewer);
+        views.insert(91, rival);
+        views.insert(134, coin);
+        AiContext {
+            frame: 9_253,
+            direction: 4,
+            self_eye_position: crate::coordinates::MapPoint::ZERO,
+            self_eye_z: 45.0,
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            self_view_direction: [1.0, 0.0],
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        }
+    }
+
+    #[test]
+    fn approaching_money_timer_with_visible_rival_runs_instead_of_taking() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(90);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingApproachingMoney;
+        ai.base.interesting_object = 134;
+        let ctx = money_race_context();
+        let mut tick = AiPerTickData::stub();
+        let mut rival = alert_candidate(
+            91,
+            Position {
+                x: 10.0,
+                y: 0.0,
+                ..Position::default()
+            },
+        );
+        rival.ai_state = AiState::Wondering;
+        rival.ai_substate = Substate::WonderingApproachingMoney;
+        tick.camp_soldiers.push(rival);
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::WonderingRunningForMoney);
+        assert_eq!(ai.base.when_does_timer_ring, 0);
+        let deferred_order_count = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .map(|work| match work {
+                AiOwnerWork::ActorEffects(effects) => effects.orders.len(),
+                AiOwnerWork::StateChange(change) => change
+                    .actor_effects_before_callback
+                    .as_ref()
+                    .map_or(0, |effects| effects.orders.len()),
+                _ => 0,
+            })
+            .sum::<usize>();
+        assert_eq!(ai.base.outbox.actor.orders.len() + deferred_order_count, 1);
+        assert!(ai.base.outbox.actor.launch_sequences.is_empty());
+    }
+
+    #[test]
+    fn approaching_money_timer_without_visible_rival_only_rearms_poll() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(90);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingApproachingMoney;
+        ai.base.interesting_object = 134;
+        let ctx = money_race_context();
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::WonderingApproachingMoney
+        );
+        assert_eq!(ai.base.when_does_timer_ring, 9_273);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(ai.base.outbox.actor.launch_sequences.is_empty());
+    }
+
+    fn brawl_approach_fixture(friend_state: AiState, friend_x: f32) -> (EnemyAi, AiContext) {
+        let mut ai = EnemyAi::new(88);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingBrawlApproaching;
+        ai.base.friend_in_trouble = 90;
+        ai.money_fight_enemies = vec![90, 91];
+
+        let mut owner = soldier_view_with_substate(88, Substate::WonderingBrawlApproaching);
+        owner.position = Position::default();
+        let mut friend = soldier_view_with_substate(90, Substate::WonderingApproachingMoney);
+        friend.ai_state = friend_state;
+        friend.position = Position {
+            x: friend_x,
+            y: 0.0,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(88, owner);
+        views.insert(90, friend);
+        let ctx = AiContext {
+            position: Position::default(),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        (ai, ctx)
+    }
+
+    fn launched_hit_targets(ai: &EnemyAi) -> Vec<crate::element::EntityId> {
+        let mut targets = Vec::new();
+        let mut inspect_effects = |effects: &crate::ai::AiActorOutbox| {
+            for sequence in &effects.launch_sequences {
+                for element in &sequence.elements {
+                    if element.command == crate::element::Command::HitCmd
+                        && let crate::sequence::SequenceElementData::Interaction {
+                            antagonist: Some(target),
+                        } = element.data
+                    {
+                        targets.push(target);
+                    }
+                }
+            }
+        };
+        inspect_effects(&ai.base.outbox.actor);
+        for work in &ai.base.outbox.reentrant.owner_work {
+            match work {
+                AiOwnerWork::ActorEffects(effects) => inspect_effects(effects),
+                AiOwnerWork::StateChange(change) => {
+                    if let Some(effects) = &change.actor_effects_before_callback {
+                        inspect_effects(effects);
+                    }
+                }
+                _ => {}
+            }
+        }
+        targets
+    }
+
+    #[test]
+    fn brawl_reach_near_awake_friend_stops_and_launches_hit() {
+        let (mut ai, ctx) = brawl_approach_fixture(AiState::Wondering, 20.0);
+        ai.wondering_brawl_approaching(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::WonderingBrawlHitting);
+        assert_eq!(
+            launched_hit_targets(&ai),
+            vec![crate::element::EntityId::Soldier(
+                crate::entity_id::SoldierId(90)
+            )]
+        );
+    }
+
+    #[test]
+    fn brawl_reach_far_awake_friend_retries_approach_without_hit() {
+        let (mut ai, ctx) = brawl_approach_fixture(AiState::Wondering, 40.0);
+        ai.wondering_brawl_approaching(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::WonderingBrawlApproaching
+        );
+        assert!(launched_hit_targets(&ai).is_empty());
+        assert_eq!(ai.base.last_goto_destination.x, 40.0);
+    }
+
+    #[test]
+    fn brawl_reach_sleeping_friend_removes_target_and_queues_done() {
+        let (mut ai, ctx) = brawl_approach_fixture(AiState::Sleeping, 20.0);
+        ai.wondering_brawl_approaching(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::WonderingBrawlHitting);
+        assert_eq!(ai.base.friend_in_trouble, 0);
+        assert_eq!(ai.money_fight_enemies, vec![91]);
+        assert_eq!(ai.base.outbox.reentrant.self_stimuli.len(), 1);
+        assert_eq!(
+            ai.base.outbox.reentrant.self_stimuli[0].stimulus_type,
+            StimulusType::EventDone
+        );
+        assert!(launched_hit_targets(&ai).is_empty());
+    }
+
+    #[test]
+    fn brawl_reach_missing_friend_returns_to_duty_without_hit() {
+        let (mut ai, ctx) = brawl_approach_fixture(AiState::Wondering, 20.0);
+        ai.base.friend_in_trouble = 0;
+        ai.wondering_brawl_approaching(
+            &crate::sim_rng::test_context(),
+            StimulusType::EventReachPoint,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_ne!(ai.base.current_substate, Substate::WonderingBrawlHitting);
+        assert!(launched_hit_targets(&ai).is_empty());
+    }
+
+    #[test]
+    fn brawl_hitting_done_enqueues_only_180_degree_panic_sweep() {
+        let mut ai = EnemyAi::new(88);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingBrawlHitting;
+        ai.wondering_brawl_hitting(
+            StimulusType::EventDone,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::NearbyCiviliansPanic180))
+        );
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::NearbyCiviliansPanic))
+        );
+    }
+
+    #[test]
+    fn brawl_hitting_stages_panic_then_officer_then_tail() {
+        let mut ai = EnemyAi::new(88);
+        ai.base.current_state = AiState::Wondering;
+        ai.base.current_substate = Substate::WonderingBrawlHitting;
+        ai.base.think_recursion_depth = 1;
+        ai.wondering_brawl_hitting(
+            StimulusType::EventDone,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::NearbyCiviliansPanic180]
+        ));
+        ai.end_think(
+            &crate::sim_rng::test_context(),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+        assert_eq!(ai.base.think_recursion_depth, 1);
+        assert_eq!(ai.base.engine_deferred_end_think_frames, 1);
+        assert!(ai.base.outbox.reentrant.brawl_hitting_completion_pending);
+
+        // Simulate the engine consuming the civilian-sweep owner work. The
+        // next stage may publish the officer call, but no brawler StateChange
+        // tail is allowed to exist until that cross-NPC call has settled.
+        ai.base.outbox.reentrant.owner_work.clear();
+        let mut officer = alert_candidate(89, Position::default());
+        officer.rank = ProfileRank::Officer;
+        officer.ai_state = AiState::Default;
+        officer.ai_substate = Substate::DefaultOnPost;
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(officer);
+        ai.brawl_hitting_notify_officer(&AiContext::default(), &tick);
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [CrossNpcAction::SendStimulus {
+                target: 89,
+                stimulus_type: StimulusType::EventSeesBrawl,
+                ..
+            }]
+        ));
+
+        ai.base.outbox.reentrant.cross_npc_actions.clear();
+        ai.resume_brawl_hitting_after_officer(&AiContext::default(), &AiPerTickData::stub());
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::StateChange(_)))
+        );
+        ai.base.outbox.reentrant.brawl_hitting_completion_pending = false;
+        ai.base.resolve_engine_completion_verdict();
+        ai.base.close_engine_deferred_end_think_frames();
+        assert_eq!(ai.base.think_recursion_depth, 0);
+        assert_eq!(ai.base.engine_deferred_end_think_frames, 0);
+    }
+
+    #[test]
     fn returning_soldier_with_far_civilian_antagonist_keeps_route_and_rearms_timer() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(195);
@@ -9764,6 +10218,7 @@ mod tests {
             ai_substate: Substate::SeekingSeekpoint,
             is_able_to_fight: true,
             is_dead: false,
+            knocked_out_in_money_fight: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,
@@ -10130,6 +10585,7 @@ mod tests {
             ai_substate: Substate::DefaultOnPost,
             is_able_to_fight: true,
             is_dead: false,
+            knocked_out_in_money_fight: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,
@@ -10308,6 +10764,7 @@ mod tests {
             ai_substate: Substate::DefaultOnPost,
             is_able_to_fight: true,
             is_dead: false,
+            knocked_out_in_money_fight: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,
@@ -10723,6 +11180,7 @@ mod tests {
             ai_substate: Substate::SeekingOfficerWaitForInstructedSoldier,
             is_able_to_fight: true,
             is_dead: false,
+            knocked_out_in_money_fight: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,

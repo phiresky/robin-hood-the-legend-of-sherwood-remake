@@ -593,7 +593,7 @@ impl EngineInner {
         elem: &SequenceElement,
     ) -> Option<OrderType> {
         let sector =
-            self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector)))?;
+            super::movement::grid_sector_for_position_handle(&self.world.fast_grid.level, sector)?;
         let lift_type = sector.lift_type?;
         if !matches!(
             (posture, lift_type),
@@ -604,7 +604,7 @@ impl EngineInner {
         }
 
         let destination = elem.orders.back()?;
-        let (pt_low, pt_high) = self.lift_endpoint_points(sector.sector_number);
+        let (pt_low, pt_high) = super::movement::lift_endpoint_points_for_sector(sector);
         let ladder_dx = pt_low.x - pt_high.x;
         let ladder_dy = pt_low.y - pt_high.y;
         let move_dx = destination.target_x - position.x;

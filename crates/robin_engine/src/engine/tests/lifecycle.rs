@@ -750,7 +750,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
 }
 
 #[test]
-fn all_six_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
+fn constructor_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
     use crate::coordinates::WorldPoint3D;
     use crate::element::{Entity, Posture};
 
@@ -783,19 +783,8 @@ fn all_six_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
             for entity in [
                 crate::bow_shot::spawn_net(actor, start, end, 0, None),
                 crate::bow_shot::spawn_wasp_nest(actor, start, end, 0, None),
-                crate::bow_shot::spawn_purse(actor, start, end, 0, None),
                 crate::bow_shot::spawn_apple(actor, start, end, None, None, 0, None),
                 crate::bow_shot::spawn_stone(actor, start, end, None, None, 0, None),
-                crate::bow_shot::spawn_coin(
-                    None,
-                    start,
-                    end,
-                    0,
-                    0,
-                    None,
-                    crate::bow_shot::APEX_BEGGAR_COIN,
-                    None,
-                ),
             ] {
                 let id = engine.add_entity(entity);
                 let frame_count = match engine.get_entity(id).unwrap() {
@@ -814,7 +803,7 @@ fn all_six_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
         |_, _, _| {},
     );
 
-    assert_eq!(spawned.len(), 6);
+    assert_eq!(spawned.len(), 4);
     for id in spawned {
         let frame_count = match engine.get_entity(id).unwrap() {
             Entity::Projectile(projectile) => projectile.projectile.frame_count,
@@ -4881,6 +4870,27 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
     engine.set_actors_frozen(true);
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    {
+        use crate::sprite::Sprite;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use std::sync::Arc;
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[crate::element::Animation::ObjectFlying as usize] = 16;
+        let script = SpriteScript {
+            action_id: crate::element::Animation::ObjectFlying as u16,
+            action_done: 4,
+            frame_ids: vec![1, 2, 3, 4, 5],
+            delays: vec![0; 5],
+            distances: vec![0; 5],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 5],
+            sound_ids: vec![0; 5],
+            ..Default::default()
+        };
+        assets.accessory_sprite_prototypes.insert(
+            crate::element::ObjectType::Coin,
+            Sprite::new(Arc::new(vec![script; 17]), Arc::new(conversion)),
+        );
+    }
     let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
 
     for (name, execution_frozen, fried) in

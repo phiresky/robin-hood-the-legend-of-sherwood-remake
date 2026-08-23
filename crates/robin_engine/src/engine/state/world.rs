@@ -124,10 +124,29 @@ impl WorldState {
     }
 
     pub(crate) fn assign_next_original_creation_order(&mut self, entity_id: EntityId) {
+        let creation_order = self.reserve_next_original_creation_order();
+        self.assign_reserved_original_creation_order(entity_id, creation_order);
+    }
+
+    /// Consume a constructor-time Original creation identity before the
+    /// element is published. `RHElementPurse` is constructed before its
+    /// first virtual Hourglass, but that Hourglass can add child coins before
+    /// `RHEngine::AddElement(pPurse)` inserts the purse into `marrayElements`.
+    pub(crate) fn reserve_next_original_creation_order(&mut self) -> u32 {
         let creation_order = self.next_original_creation_order;
         self.next_original_creation_order = creation_order
             .checked_add(1)
             .expect("Original element creation counter overflow");
+        creation_order
+    }
+
+    /// Attach a previously consumed constructor identity to the eventual
+    /// entity-array occupant.
+    pub(crate) fn assign_reserved_original_creation_order(
+        &mut self,
+        entity_id: EntityId,
+        creation_order: u32,
+    ) {
         tracing::trace!(
             target: "robin_engine::creation_order",
             "assign creation order {creation_order} to {entity_id}"

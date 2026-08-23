@@ -2240,7 +2240,10 @@ impl AiController {
     /// Keep the current Think frame alive until a queued movement/turn
     /// intent has received its engine-owned synchronous completion verdict.
     pub(crate) fn defer_end_think_for_engine_completion(&mut self) -> bool {
-        if !self.completion_latch_inside_think || self.outbox.actor.orders.is_empty() {
+        let typed_continuation = self.outbox.reentrant.brawl_hitting_completion_pending;
+        if !self.completion_latch_inside_think
+            || (self.outbox.actor.orders.is_empty() && !typed_continuation)
+        {
             return false;
         }
         self.open_end_think_frames = self.open_end_think_frames.saturating_add(1);
@@ -2962,11 +2965,18 @@ impl AiController {
                     if let Some(next_wp) = self
                         .patrol_path
                         .as_ref()
-                        .and_then(|p| p.current_waypoint(hiking_paths))
-                        .map(|wp| Position {
+                        .and_then(|p| {
+                            p.current_waypoint(hiking_paths)
+                                .map(|wp| (p.hiking_path_index, p.current_waypoint_index, wp))
+                        })
+                        .map(|(path_index, waypoint_index, wp)| Position {
                             x: wp.x as f32,
                             y: wp.y as f32,
-                            sector: SectorHandle::new(wp.sector),
+                            sector: ctx.hiking_waypoint_sector(
+                                usize::from(path_index),
+                                usize::from(waypoint_index),
+                                wp.sector,
+                            ),
                             level: wp.level,
                         })
                     {
@@ -3282,11 +3292,15 @@ impl AiController {
             if let Some(path_id) = target_view.patrol_hiking_path_index
                 && let Some(raw_path) = hiking_paths.get(path_id.get() as usize)
             {
-                for wp in raw_path.waypoints.iter() {
+                for (waypoint_index, wp) in raw_path.waypoints.iter().enumerate() {
                     let mut pt = ctx.position_to_point_3d(Position {
                         x: wp.x as f32,
                         y: wp.y as f32,
-                        sector: SectorHandle::new(wp.sector),
+                        sector: ctx.hiking_waypoint_sector(
+                            usize::from(path_id.get()),
+                            waypoint_index,
+                            wp.sector,
+                        ),
                         level: wp.level,
                     });
                     pt.z += 15.0;
@@ -3422,6 +3436,7 @@ impl AiController {
 
         let mut order = AiOrderIntent::new(order_type, destination.x, destination.y);
         order.target_sector = destination.sector;
+        order.target_sector_index = destination.sector.and_then(|sector| sector.arena_index());
         order.target_layer = Some(destination.level);
         order.reverse = flags.contains(GotoFlags::BACK);
         order.compute_direction = !flags.contains(GotoFlags::STRAIGHT);
@@ -3831,8 +3846,14 @@ impl AiController {
         // layer **and** the caller didn't pair it with
         // `GOTO_ASKOBSTACLE` — straight doesn't make sense across
         // sectors without an obstacle check.
-        let crosses_boundary =
-            destination.sector != ctx.position.sector || destination.level != ctx.position.level;
+        let crosses_sector = match (
+            destination.sector.and_then(|sector| sector.arena_index()),
+            ctx.position.sector.and_then(|sector| sector.arena_index()),
+        ) {
+            (Some(destination), Some(current)) => destination != current,
+            _ => destination.sector != ctx.position.sector,
+        };
+        let crosses_boundary = crosses_sector || destination.level != ctx.position.level;
         if flags.contains(GotoFlags::STRAIGHT)
             && !flags.contains(GotoFlags::ASK_OBSTACLE)
             && crosses_boundary
@@ -4266,6 +4287,23 @@ impl AiController {
         self.face_position_impl(pos, ctx, elevation - ctx.elevation, false);
     }
 
+    /// Face an `RHnoise::posOrigin`, retaining Original's sector projection
+    /// when that pointer identity survived and using `RHnoise::fElevation`
+    /// only for a replay-normalized sector-less position.
+    ///
+    /// Original calls `Face(noise.posOrigin)`, whose `PositionToPoint3D`
+    /// recovers height through `posOrigin.pSector`. A schema trace cannot
+    /// reconstruct that pointer for every transient noise, but it records the
+    /// same noise elevation separately. Treating the missing sector as ground
+    /// level can rotate a high-ground listener into the opposite quadrant.
+    pub fn face_noise_origin_with_ctx(&mut self, noise: &Noise, ctx: &AiContext) {
+        if noise.origin.sector.is_some() {
+            self.face_position_3d_with_ctx(noise.origin, ctx);
+        } else {
+            self.face_position_at_elevation_with_ctx(noise.origin, f32::from(noise.elevation), ctx);
+        }
+    }
+
     /// Turn to face another entity. Feeds the target's elevation into
     /// the 2D projection so the face accounts for height differences.
     ///
@@ -4675,7 +4713,7 @@ impl AiController {
                     // the actual GoTo. Recomputing against the advanced
                     // waypoint can incorrectly suppress history seeding.
                     if initial_nearest_waypoint_distance < 50.0 {
-                        path.initialize_history_entries_on_path(hiking_paths);
+                        path.initialize_history_entries_on_path(hiking_paths, ctx);
                     }
                 }
 
@@ -4684,7 +4722,11 @@ impl AiController {
                     path.current_waypoint(hiking_paths).map(|wp| Position {
                         x: wp.x as f32,
                         y: wp.y as f32,
-                        sector: SectorHandle::new(wp.sector),
+                        sector: ctx.hiking_waypoint_sector(
+                            usize::from(path.hiking_path_index),
+                            usize::from(path.current_waypoint_index),
+                            wp.sector,
+                        ),
                         level: wp.level,
                     })
                 });
@@ -5283,6 +5325,9 @@ impl AiController {
                                             );
                                         }
                                     } else {
+                                        let next_wp = next_wp.clone();
+                                        let path_index = path.hiking_path_index;
+                                        let waypoint_index = path.current_waypoint_index;
                                         let mut walk_flags = self.default_path_walking_flags;
                                         if !self.will_stop_at_next_waypoint_debug(
                                             sim,
@@ -5300,7 +5345,11 @@ impl AiController {
                                         let dest = Position {
                                             x: next_wp.x as f32,
                                             y: next_wp.y as f32,
-                                            sector: SectorHandle::new(next_wp.sector),
+                                            sector: ctx.hiking_waypoint_sector(
+                                                usize::from(path_index),
+                                                usize::from(waypoint_index),
+                                                next_wp.sector,
+                                            ),
                                             level: next_wp.level,
                                         };
                                         self.go_to(dest, walk_flags, ctx);
@@ -5713,6 +5762,9 @@ impl AiController {
             }
             path.advance();
             if let Some(wp) = path.current_waypoint(hiking_paths) {
+                let wp = wp.clone();
+                let path_index = path.hiking_path_index;
+                let waypoint_index = path.current_waypoint_index;
                 // Always pass `GOTO_STRAIGHT` here because macro-to-
                 // macro waypoint transitions are straight-line (no
                 // path-finder). Without this, the engine's movement
@@ -5729,7 +5781,11 @@ impl AiController {
                 let dest = Position {
                     x: wp.x as f32,
                     y: wp.y as f32,
-                    sector: SectorHandle::new(wp.sector),
+                    sector: ctx.hiking_waypoint_sector(
+                        usize::from(path_index),
+                        usize::from(waypoint_index),
+                        wp.sector,
+                    ),
                     level: wp.level,
                 };
                 self.go_to(dest, walk_flags, ctx);

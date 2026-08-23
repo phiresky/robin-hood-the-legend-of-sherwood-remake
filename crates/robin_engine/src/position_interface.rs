@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::coordinates::{
     MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal, WorldPoint3D, WorldVec3D,
 };
-use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
+use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE, SectorIndex};
 use crate::geo2d;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
 
@@ -396,27 +396,101 @@ impl std::fmt::Display for Direction {
 /// binary-format "none" sentinel — see `crate::level_data`).  "No sector"
 /// is represented by `Option<SectorHandle>::None`; the niche optimization
 /// keeps `Option<SectorHandle>` the same size as `u16`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct SectorHandle(pub nonmax::NonMaxU16);
+#[derive(Debug, Clone, Copy, robin_state_hash_derive::StateHash)]
+pub struct SectorHandle {
+    public: nonmax::NonMaxU16,
+    /// Optional exact live arena object. Equality and hashing deliberately
+    /// remain public-number based; Original pointer comparisons must opt in
+    /// through [`Self::arena_index`]. Keeping the companion in this copyable
+    /// value lets `RHposition +/- RHvector`-style copies retain provenance
+    /// without changing every `Position` literal.
+    arena: Option<crate::fast_find_grid::SectorIndex>,
+}
 
 impl SectorHandle {
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(v).map(Self)
+        nonmax::NonMaxU16::new(v).map(|public| Self {
+            public,
+            arena: None,
+        })
     }
     #[inline]
     pub fn get(self) -> u16 {
-        self.0.get()
+        self.public.get()
+    }
+
+    #[inline]
+    pub fn with_arena_index(self, arena: crate::fast_find_grid::SectorIndex) -> Self {
+        Self {
+            public: self.public,
+            arena: Some(arena),
+        }
+    }
+
+    #[inline]
+    pub fn arena_index(self) -> Option<crate::fast_find_grid::SectorIndex> {
+        self.arena
+    }
+}
+
+impl PartialEq for SectorHandle {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.public == other.public
+    }
+}
+
+impl Eq for SectorHandle {}
+
+impl std::hash::Hash for SectorHandle {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.public.hash(state);
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum SectorHandleSerde {
+    Legacy(nonmax::NonMaxU16),
+    Exact {
+        public: nonmax::NonMaxU16,
+        arena: crate::fast_find_grid::SectorIndex,
+    },
+}
+
+impl Serialize for SectorHandle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self.arena {
+            Some(arena) => SectorHandleSerde::Exact {
+                public: self.public,
+                arena,
+            }
+            .serialize(serializer),
+            None => SectorHandleSerde::Legacy(self.public).serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SectorHandle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match SectorHandleSerde::deserialize(deserializer)? {
+            SectorHandleSerde::Legacy(public) => Self {
+                public,
+                arena: None,
+            },
+            SectorHandleSerde::Exact { public, arena } => Self {
+                public,
+                arena: Some(arena),
+            },
+        })
     }
 }
 
@@ -668,8 +742,16 @@ pub struct PositionInterface {
     // -- Layer & sector --
     layer: Layer,
     sector: Option<SectorHandle>,
+    /// Exact `FastFindGrid::level.sectors` arena identity paired with
+    /// `sector`.  `SectorHandle` retains the compact/public sector number,
+    /// which is not sufficient to distinguish overlapping sector objects.
+    #[serde(default)]
+    sector_index: Option<SectorIndex>,
     layer_goal: Layer,
     sector_goal: Option<SectorHandle>,
+    /// Arena identity paired with `sector_goal`.
+    #[serde(default)]
+    sector_goal_index: Option<SectorIndex>,
 
     // -- Obstacle / plane --
     obstacle: Option<ObstacleHandle>,
@@ -738,7 +820,9 @@ pub(crate) struct PositionInterfaceV48State {
     pub radius: f32,
     pub use_emergency_lying_box: bool,
     pub sector: Option<SectorHandle>,
+    pub sector_index: Option<SectorIndex>,
     pub sector_goal: Option<SectorHandle>,
+    pub sector_goal_index: Option<SectorIndex>,
     pub door: DoorHandle,
     pub obstacle: Option<ObstacleHandle>,
     pub plane: Option<PlaneZCoeffs>,
@@ -810,8 +894,10 @@ impl PositionInterface {
 
             layer: Layer::ZERO,
             sector: None,
+            sector_index: None,
             layer_goal: Layer::ZERO,
             sector_goal: None,
+            sector_goal_index: None,
 
             obstacle: None,
             plane: None,
@@ -864,8 +950,8 @@ impl PositionInterface {
         self.blocked_count = state.blocked_count;
         self.radius = state.radius;
         self.use_emergency_lying_box = state.use_emergency_lying_box;
-        self.sector = state.sector;
-        self.sector_goal = state.sector_goal;
+        self.set_sector_topology(state.sector, state.sector_index);
+        self.set_goal_sector_topology(state.sector_goal, state.sector_goal_index);
         self.door = state.door;
         self.obstacle = state.obstacle;
         self.plane = state.plane;
@@ -913,7 +999,9 @@ impl PositionInterface {
             radius: self.radius,
             use_emergency_lying_box: self.use_emergency_lying_box,
             sector: self.sector,
+            sector_index: self.sector_index,
             sector_goal: self.sector_goal,
+            sector_goal_index: self.sector_goal_index,
             door: self.door,
             obstacle: self.obstacle,
             plane: self.plane,
@@ -1060,6 +1148,10 @@ impl PositionInterface {
         self.old_position_map
     }
     #[inline]
+    pub fn old_position(&self) -> WorldPoint3D {
+        self.old_position
+    }
+    #[inline]
     pub fn old_elevation(&self) -> f32 {
         self.old_position.z
     }
@@ -1124,9 +1216,63 @@ impl PositionInterface {
     pub fn get_sector(&self) -> Option<SectorHandle> {
         self.sector
     }
+    /// Return the public sector number and its exact arena identity as one
+    /// topology snapshot.
+    #[inline]
+    #[must_use]
+    pub fn get_sector_topology(&self) -> (Option<SectorHandle>, Option<SectorIndex>) {
+        (self.sector, self.sector_index)
+    }
+    /// Atomically replace the current sector number and arena identity.
+    #[inline]
+    pub fn set_sector_topology(
+        &mut self,
+        sector: Option<SectorHandle>,
+        sector_index: Option<SectorIndex>,
+    ) {
+        assert!(
+            sector.is_some() || sector_index.is_none(),
+            "a sector arena identity requires a public sector handle"
+        );
+        self.sector = sector.map(|handle| match sector_index {
+            Some(index) => handle.with_arena_index(index),
+            None => SectorHandle::new(handle.get()).expect("live sector handle became null"),
+        });
+        self.sector_index = sector_index;
+    }
     #[inline]
     pub fn set_sector(&mut self, s: Option<SectorHandle>) {
-        self.sector = s;
+        // A number-only write has no proof that the prior arena object still
+        // applies. Clear it rather than retaining stale pointer provenance.
+        self.set_sector_topology(s, None);
+    }
+    /// Return the goal sector number and exact arena identity together.
+    #[inline]
+    #[must_use]
+    pub fn get_goal_sector_topology(&self) -> (Option<SectorHandle>, Option<SectorIndex>) {
+        (self.sector_goal, self.sector_goal_index)
+    }
+    /// Atomically replace the goal sector number and arena identity.
+    #[inline]
+    pub fn set_goal_sector_topology(
+        &mut self,
+        sector: Option<SectorHandle>,
+        sector_index: Option<SectorIndex>,
+    ) {
+        assert!(
+            sector.is_some() || sector_index.is_none(),
+            "a goal-sector arena identity requires a public sector handle"
+        );
+        self.sector_goal = sector.map(|handle| match sector_index {
+            Some(index) => handle.with_arena_index(index),
+            None => SectorHandle::new(handle.get()).expect("goal sector handle became null"),
+        });
+        self.sector_goal_index = sector_index;
+    }
+    /// Number-only goal-sector writes deliberately discard arena provenance.
+    #[inline]
+    pub fn set_goal_sector(&mut self, sector: Option<SectorHandle>) {
+        self.set_goal_sector_topology(sector, None);
     }
     // ====================================================================
     // Movement / increment
@@ -2681,6 +2827,54 @@ mod tests {
         let pi2: PositionInterface = serde_json::from_str(&json).unwrap();
         assert_eq!(pi2.get_direction(), d(7));
         assert_eq!(pi2.position, p3(10.0, 20.0, 5.0));
+    }
+
+    #[test]
+    fn sector_topology_is_atomic_and_number_only_writes_clear_identity() {
+        let mut pi = PositionInterface::new();
+        let sector = SectorHandle::new(18);
+        let sector_index = SectorIndex::new(41);
+        let goal = SectorHandle::new(19);
+        let goal_index = SectorIndex::new(57);
+
+        pi.set_sector_topology(sector, sector_index);
+        pi.set_goal_sector_topology(goal, goal_index);
+        assert_eq!(pi.get_sector_topology(), (sector, sector_index));
+        assert_eq!(pi.get_goal_sector_topology(), (goal, goal_index));
+
+        pi.set_sector(sector);
+        pi.set_goal_sector(goal);
+        assert_eq!(pi.get_sector_topology(), (sector, None));
+        assert_eq!(pi.get_goal_sector_topology(), (goal, None));
+    }
+
+    #[test]
+    fn sector_indices_roundtrip_and_default_from_legacy_serde() {
+        let mut pi = PositionInterface::new();
+        pi.set_sector_topology(SectorHandle::new(18), SectorIndex::new(41));
+        pi.set_goal_sector_topology(SectorHandle::new(19), SectorIndex::new(57));
+
+        let encoded = serde_json::to_value(&pi).unwrap();
+        let restored: PositionInterface = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(restored.get_sector_topology(), pi.get_sector_topology());
+        assert_eq!(
+            restored.get_goal_sector_topology(),
+            pi.get_goal_sector_topology()
+        );
+
+        let mut legacy = encoded;
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("sector_index");
+        object.remove("sector_goal_index");
+        let restored_legacy: PositionInterface = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            restored_legacy.get_sector_topology(),
+            (SectorHandle::new(18), None)
+        );
+        assert_eq!(
+            restored_legacy.get_goal_sector_topology(),
+            (SectorHandle::new(19), None)
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
+use crate::fast_find_grid::{GridSector, SectorIndex};
 use crate::{
     coordinates::{MapBBox, MapPoint, MapVec, WorldPoint3D, WorldVec3D},
     element::EntityId,
@@ -123,11 +124,24 @@ pub struct LegacyPositionTopology {
     /// Original sparse `marraySectors` slot to Rust's compact runtime sector.
     /// Constructor holes and non-position sector objects remain `None`.
     pub sectors: Vec<Option<SectorHandle>>,
+    /// Exact runtime arena identity paired slot-for-slot with `sectors`.
+    pub sector_indices: Vec<Option<SectorIndex>>,
     /// Original sparse sector slots whose object is an `RHSectorDoor`.
     pub sector_doors: Vec<Option<DoorHandle>>,
     pub doors: Vec<DoorHandle>,
     pub projection_areas: Vec<LegacyPositionObstacleBinding>,
     pub sight_obstacles: Vec<LegacyPositionObstacleBinding>,
+}
+
+/// Complete Rust counterpart of one non-null Original `RHSector*`.
+///
+/// `public` is the compact sector number consumed by the existing gate graph;
+/// `runtime_index` is the exact polygon/object identity corresponding to the
+/// Original sparse `marraySectors` slot. They are intentionally independent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LegacyPositionSectorIdentity {
+    pub public: SectorHandle,
+    pub runtime_index: SectorIndex,
 }
 
 /// Exact Original jump-line pointer space.
@@ -387,6 +401,70 @@ pub fn preflight_initialized_v48_adoption(
 /// - `SerializeGatePointer` indexes the complete `marrayGates`; Rust retains
 ///   that same array in `interactables.doors`.
 /// - sector pointers store their sparse `marraySectors` slot directly.
+fn build_position_sector_identities(
+    retained: &crate::engine::LegacyGridTopologyAssets,
+    runtime_sectors: &[GridSector],
+) -> Result<Vec<Option<LegacyPositionSectorIdentity>>, LegacySaveAdoptError> {
+    if retained.position_sector_numbers.len() != retained.sectors.len()
+        || retained.position_sector_indices.len() != retained.sectors.len()
+    {
+        return Err(position_topology_detail(format!(
+            "retained position-sector arrays disagree: objects={}, public_numbers={}, runtime_indices={}",
+            retained.sectors.len(),
+            retained.position_sector_numbers.len(),
+            retained.position_sector_indices.len(),
+        )));
+    }
+
+    let mut claimed = std::collections::BTreeMap::new();
+    retained
+        .position_sector_numbers
+        .iter()
+        .copied()
+        .zip(retained.position_sector_indices.iter().copied())
+        .enumerate()
+        .map(|(sparse_slot, (number, runtime_index))| match (number, runtime_index) {
+            (None, None) => Ok(None),
+            (Some(_), None) | (None, Some(_)) => Err(position_topology_detail(format!(
+                "Original sparse sector slot {sparse_slot} has only one half of its public/runtime identity"
+            ))),
+            (Some(number), Some(runtime_index)) => {
+                if let Some(previous_slot) = claimed.insert(runtime_index, sparse_slot) {
+                    return Err(position_topology_detail(format!(
+                        "Original sparse sector slots {previous_slot} and {sparse_slot} both map to runtime sector index {runtime_index}"
+                    )));
+                }
+                let runtime = runtime_sectors.get(usize::from(runtime_index)).ok_or_else(|| {
+                    position_topology_detail(format!(
+                        "Original sparse sector slot {sparse_slot} maps to absent runtime sector index {runtime_index} (runtime count {})",
+                        runtime_sectors.len()
+                    ))
+                })?;
+                if i16::from(runtime.sector_number) != number {
+                    return Err(position_topology_detail(format!(
+                        "Original sparse sector slot {sparse_slot} maps to runtime sector index {runtime_index}, whose public number {} differs from retained {number}",
+                        i16::from(runtime.sector_number)
+                    )));
+                }
+                let raw = u16::try_from(number).map_err(|_| {
+                    position_topology_detail(format!(
+                        "runtime position-sector number {number} is negative"
+                    ))
+                })?;
+                let public = SectorHandle::new(raw).ok_or_else(|| {
+                    position_topology_detail(
+                        "runtime position-sector number equals null sentinel 0xffff",
+                    )
+                })?;
+                Ok(Some(LegacyPositionSectorIdentity {
+                    public,
+                    runtime_index,
+                }))
+            }
+        })
+        .collect()
+}
+
 pub fn derive_position_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
@@ -401,34 +479,20 @@ pub fn derive_position_topology(
     let gate_order =
         derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
             .map_err(|error| position_topology_detail(error.to_string()))?;
-    if retained.position_sector_numbers.len() != retained.sectors.len() {
-        return Err(position_topology_detail(format!(
-            "retained position-sector map has {} entries for {} sparse Original sector slots",
-            retained.position_sector_numbers.len(),
-            retained.sectors.len()
-        )));
-    }
-    let sectors = retained
-        .position_sector_numbers
+    let sector_identities =
+        build_position_sector_identities(retained, &engine.world.fast_grid.level.sectors)?;
+    // Compatibility surface until every RHposition consumer accepts the
+    // paired identity. Do not reconstruct `runtime_index` from this vector;
+    // the retained `sector_identities` above is the authoritative mapping.
+    let sectors = sector_identities
         .iter()
         .copied()
-        .map(|number| {
-            number
-                .map(|number| {
-                    let raw = u16::try_from(number).map_err(|_| {
-                        position_topology_detail(format!(
-                            "runtime position-sector number {number} is negative"
-                        ))
-                    })?;
-                    SectorHandle::new(raw).ok_or_else(|| {
-                        position_topology_detail(
-                            "runtime position-sector number equals null sentinel 0xffff",
-                        )
-                    })
-                })
-                .transpose()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|identity| identity.map(|identity| identity.public))
+        .collect::<Vec<_>>();
+    let sector_indices = sector_identities
+        .into_iter()
+        .map(|identity| identity.map(|identity| identity.runtime_index))
+        .collect();
     let sector_doors = retained
         .sectors
         .iter()
@@ -454,6 +518,7 @@ pub fn derive_position_topology(
         .collect::<Result<Vec<_>, _>>()?;
     build_position_topology(
         sectors,
+        sector_indices,
         sector_doors,
         &gate_order,
         assets.static_sight_obstacles.as_slice(),
@@ -462,10 +527,18 @@ pub fn derive_position_topology(
 
 fn build_position_topology(
     sectors: Vec<Option<SectorHandle>>,
+    sector_indices: Vec<Option<SectorIndex>>,
     sector_doors: Vec<Option<DoorHandle>>,
     gate_order: &[crate::gate::DoorIndex],
     obstacles: &[crate::sight_obstacle::SightObstacle],
 ) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
+    if sector_indices.len() != sectors.len() {
+        return Err(position_topology_detail(format!(
+            "position topology has {} public sector slots but {} runtime-index slots",
+            sectors.len(),
+            sector_indices.len()
+        )));
+    }
     let doors = gate_order
         .iter()
         .map(|index| DoorHandle(index.0))
@@ -539,6 +612,7 @@ fn build_position_topology(
 
     Ok(LegacyPositionTopology {
         sectors,
+        sector_indices,
         sector_doors,
         doors,
         projection_areas,
@@ -615,7 +689,13 @@ pub(crate) fn preflight_v48_position(
     let direction = checked_direction("direction", payload.direction)?;
     let direction_goal = checked_direction("direction_goal", payload.direction_goal)?;
     let sector = checked_sector("sector", payload.sector.0, &topology.sectors)?;
+    let sector_index = checked_sector_index("sector", payload.sector.0, &topology.sector_indices)?;
     let sector_goal = checked_sector("sector_goal", payload.sector_goal.0, &topology.sectors)?;
+    let sector_goal_index = checked_sector_index(
+        "sector_goal",
+        payload.sector_goal.0,
+        &topology.sector_indices,
+    )?;
     let door = checked_index("door", payload.door.0, &topology.doors)?
         .copied()
         .unwrap_or(DoorHandle::NULL);
@@ -650,7 +730,9 @@ pub(crate) fn preflight_v48_position(
         radius: payload.radius,
         use_emergency_lying_box: payload.use_emergency_lying_box,
         sector,
+        sector_index,
         sector_goal,
+        sector_goal_index,
         door,
         obstacle: obstacle_binding.and_then(|binding| binding.obstacle),
         plane: obstacle_binding.map(|binding| binding.plane),
@@ -697,6 +779,29 @@ fn checked_sector(
     raw: Option<u16>,
     sectors: &[Option<SectorHandle>],
 ) -> Result<Option<SectorHandle>, LegacySaveAdoptError> {
+    let Some(index) = raw else {
+        return Ok(None);
+    };
+    let Some(sector) = sectors.get(usize::from(index)) else {
+        return Err(LegacySaveAdoptError::MissingPositionTopologyEntry {
+            field,
+            index: usize::from(index),
+            count: sectors.len(),
+        });
+    };
+    (*sector)
+        .map(Some)
+        .ok_or(LegacySaveAdoptError::UnmappedPositionSector {
+            field,
+            index: usize::from(index),
+        })
+}
+
+fn checked_sector_index(
+    field: &'static str,
+    raw: Option<u16>,
+    sectors: &[Option<SectorIndex>],
+) -> Result<Option<SectorIndex>, LegacySaveAdoptError> {
     let Some(index) = raw else {
         return Ok(None);
     };
@@ -784,6 +889,57 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    fn identity_sector_indices(count: usize) -> Vec<Option<SectorIndex>> {
+        (0..count)
+            .map(|index| {
+                SectorIndex::new(u32::try_from(index).expect("test sector index exceeds u32"))
+            })
+            .collect()
+    }
+
+    fn test_grid_sector(public_number: i16) -> GridSector {
+        GridSector {
+            points: Vec::new(),
+            bounding_box: MapBBox::new(),
+            sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(public_number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
+    #[test]
+    fn position_sector_identity_survives_overlapping_public_numbers() {
+        let mut retained = crate::engine::LegacyGridTopologyAssets::default();
+        retained.sectors = vec![
+            crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
+            crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
+            crate::engine::LegacyGridSectorAsset::NullOrOrdinary,
+        ];
+        retained.position_sector_numbers = vec![Some(18), None, Some(18)];
+        retained.position_sector_indices = vec![SectorIndex::new(0), None, SectorIndex::new(1)];
+        let runtime = vec![test_grid_sector(18), test_grid_sector(18)];
+
+        let identities = build_position_sector_identities(&retained, &runtime).unwrap();
+        let first = identities[0].unwrap();
+        let second = identities[2].unwrap();
+
+        assert_eq!(first.public, second.public);
+        assert_ne!(first.runtime_index, second.runtime_index);
+        assert_eq!(first.runtime_index, SectorIndex::new(0).unwrap());
+        assert_eq!(second.runtime_index, SectorIndex::new(1).unwrap());
     }
 
     fn fixture() -> (LegacyElementEnvelope, LegacyStaticElementTopology, EntityId) {
@@ -952,6 +1108,7 @@ mod tests {
         let obstacles = vec![obstacle(1, false, 9.0), obstacle(0, true, 4.0)];
         let topology = build_position_topology(
             identity_sectors(17),
+            identity_sector_indices(17),
             vec![None; 17],
             &[
                 crate::gate::DoorIndex(2),
@@ -963,6 +1120,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(topology.sectors, identity_sectors(17));
+        assert_eq!(topology.sector_indices, identity_sector_indices(17));
         assert_eq!(
             topology.doors,
             vec![DoorHandle(2), DoorHandle(0), DoorHandle(1)]
@@ -1011,6 +1169,7 @@ mod tests {
         let entities = LegacyEntityFixups::build(&envelope, &element_topology).unwrap();
         let topology = build_position_topology(
             identity_sectors(3),
+            identity_sector_indices(3),
             vec![None; 3],
             &[crate::gate::DoorIndex(0)],
             &[],
@@ -1037,7 +1196,8 @@ mod tests {
     fn position_topology_rejects_non_isomorphic_obstacle_arrays() {
         let duplicate_ids = vec![obstacle(0, false, 1.0), obstacle(0, true, 2.0)];
         let obstacle_error =
-            build_position_topology(Vec::new(), Vec::new(), &[], &duplicate_ids).unwrap_err();
+            build_position_topology(Vec::new(), Vec::new(), Vec::new(), &[], &duplicate_ids)
+                .unwrap_err();
         assert!(matches!(
             obstacle_error,
             LegacySaveAdoptError::InvalidPositionTopology { .. }
@@ -1073,6 +1233,7 @@ mod tests {
                     SectorHandle::new(42),
                     SectorHandle::new(7),
                 ],
+                sector_indices: identity_sector_indices(3),
                 sector_doors: vec![None; 3],
                 doors: vec![DoorHandle(9)],
                 projection_areas: vec![projection],
@@ -1083,7 +1244,9 @@ mod tests {
 
         assert_eq!(saved.layer.get(), u16::MAX);
         assert_eq!(saved.sector.map(u16::from), Some(42));
+        assert_eq!(saved.sector_index, SectorIndex::new(1));
         assert_eq!(saved.sector_goal.map(u16::from), Some(7));
+        assert_eq!(saved.sector_goal_index, SectorIndex::new(2));
         assert_eq!(saved.obstacle, sight.obstacle);
         assert_eq!(saved.plane, Some(sight.plane));
         assert_eq!(saved.target_element, Some(target));
@@ -1116,6 +1279,7 @@ mod tests {
             &entities,
             &LegacyPositionTopology {
                 sectors: identity_sectors(3),
+                sector_indices: identity_sector_indices(3),
                 sector_doors: vec![None; 3],
                 doors: vec![DoorHandle(9)],
                 projection_areas: Vec::new(),
@@ -1157,6 +1321,7 @@ mod tests {
             &entities,
             &LegacyPositionTopology {
                 sectors: identity_sectors(3),
+                sector_indices: identity_sector_indices(3),
                 sector_doors: vec![None; 3],
                 doors: vec![DoorHandle(9)],
                 projection_areas: vec![],
@@ -1201,6 +1366,7 @@ mod tests {
         };
         let arrays = LegacyPositionTopology {
             sectors: identity_sectors(3),
+            sector_indices: identity_sector_indices(3),
             sector_doors: vec![None; 3],
             doors: vec![DoorHandle(9)],
             projection_areas: vec![projection],

@@ -1423,13 +1423,18 @@ impl FriendlyAi {
                             .base
                             .patrol_path
                             .as_ref()
-                            .and_then(|p| p.current_waypoint(hiking_paths))
-                            .map(|wp| {
+                            .and_then(|p| {
+                                p.current_waypoint(hiking_paths)
+                                    .map(|wp| (p.hiking_path_index, p.current_waypoint_index, wp))
+                            })
+                            .map(|(path_index, waypoint_index, wp)| {
                                 (
                                     Position {
                                         x: wp.x as f32,
                                         y: wp.y as f32,
-                                        sector: crate::position_interface::SectorHandle::new(
+                                        sector: ctx.hiking_waypoint_sector(
+                                            usize::from(path_index),
+                                            usize::from(waypoint_index),
                                             wp.sector,
                                         ),
                                         level: wp.level,

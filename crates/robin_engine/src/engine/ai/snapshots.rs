@@ -178,6 +178,7 @@ pub(super) struct SoldierSnapshot {
     /// separate from `able_to_fight`, which folds in several further
     /// conditions; the money-fight scans gate on death alone.
     pub(super) is_dead: bool,
+    pub(super) knocked_out_in_money_fight: bool,
     pub(super) able_to_help: bool,
     /// Current music alert level.  Used by seek-area friend
     /// coordination to count friends in alert > Green.
@@ -956,6 +957,7 @@ impl EngineInner {
                 opponent_handles: s.human.opponents.iter().map(|id| id.index()).collect(),
                 able_to_fight,
                 is_dead,
+                knocked_out_in_money_fight: enemy_ai.base.knocked_out_in_money_fight,
                 able_to_help,
                 alert_status,
                 seek_flag_look_for_help,

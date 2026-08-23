@@ -664,6 +664,20 @@ impl LegacyFastFindGridAdoptionPlan {
                 });
             door_info.npc_villain_authorized_direct =
                 crate::ai::cache_npc_villain_authorized_direct(door);
+            let public_in = u16::from(door.sector_in);
+            assert_eq!(
+                door_info.sector_in, public_in,
+                "AI door-seek cache/canonical door {} interior sector conflict",
+                door_info.door_index
+            );
+            let arena_in = door.sector_in_index.unwrap_or_else(|| {
+                panic!(
+                    "canonical door {} interior sector has no exact arena identity during legacy adoption",
+                    door_info.door_index
+                )
+            });
+            door_info.position_in.sector = crate::position_interface::SectorHandle::new(public_in)
+                .map(|handle| handle.with_arena_index(arena_in));
         }
         for planned in self.script_zones {
             engine.script_domains.zones.scripts[planned.index].occupant_indices = planned.occupants;
@@ -1139,6 +1153,7 @@ mod tests {
     fn empty_position_topology() -> LegacyPositionTopology {
         LegacyPositionTopology {
             sectors: Vec::new(),
+            sector_indices: Vec::new(),
             sector_doors: Vec::new(),
             doors: Vec::new(),
             projection_areas: Vec::new(),
@@ -1298,6 +1313,8 @@ mod tests {
             gate_type: GateType::Door,
             active: true,
             door_type: crate::gate::DoorType::Building,
+            sector_in: crate::sector::SectorNumber::new(18),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(41),
             locked_pc: false,
             locked_pc_after_patch: true,
             ..crate::gate::Door::default()
@@ -1312,9 +1329,12 @@ mod tests {
                 door_index: crate::gate::DoorIndex(0),
                 door_type: crate::gate::DoorType::Building,
                 point_out: crate::coordinates::MapPoint::ZERO,
-                position_in: Position::default(),
+                position_in: Position {
+                    sector: crate::position_interface::SectorHandle::new(18),
+                    ..Position::default()
+                },
                 sector_out: 0,
-                sector_in: 0,
+                sector_in: 18,
                 layer_out: 0,
                 // Proto-time state was unlocked. The serialized state below
                 // locks this door for NPC villains.
@@ -1411,6 +1431,16 @@ mod tests {
         assert!(
             !engine.ai.global.door_seek_infos[0].npc_villain_authorized_direct,
             "save adoption must refresh proto-time door authorization caches"
+        );
+        let adopted_sector = engine.ai.global.door_seek_infos[0]
+            .position_in
+            .sector
+            .expect("legacy door cache must retain its canonical interior sector");
+        assert_eq!(adopted_sector.get(), 18);
+        assert_eq!(
+            adopted_sector.arena_index(),
+            crate::fast_find_grid::SectorIndex::new(41),
+            "legacy schema adoption must restore canonical arena identity, not only the public number"
         );
         // Patch application swapped the retained future half before the
         // independently serialized current half was restored.

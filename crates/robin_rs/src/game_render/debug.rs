@@ -592,6 +592,7 @@ pub(crate) fn render_noise_display(
                 GameMaterial::Bush => "bush",
                 GameMaterial::Ice => "ice",
                 GameMaterial::Hole => "hole",
+                GameMaterial::NumberOfMaterials => "material-sentinel",
                 GameMaterial::LightShadow => "shadow",
             };
             // Offset (+10, -40) from the centre, in screen space.

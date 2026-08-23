@@ -238,7 +238,14 @@ impl QuitMissionContext<'_> {
         tied_score: i32,
         difficulty: crate::player_profile::DifficultyLevel,
     ) {
-        sync_mission_stats_to_campaign(self.mission_stat, self.campaign);
+        // Original QuitMission adds the counts from this exit-time NPC scan
+        // directly to the campaign. `mStat.ulTotalSoldierCount` is the
+        // load-time mission total and is not a source for either delta.
+        self.add_campaign_value(
+            crate::campaign::CampaignValue::LivingSoldiers,
+            living as i32,
+        );
+        self.add_campaign_value(crate::campaign::CampaignValue::DeadSoldiers, dead as i32);
 
         self.add_campaign_value(crate::campaign::CampaignValue::Score, tied_score);
 
@@ -274,22 +281,6 @@ impl QuitMissionContext<'_> {
             amount,
         );
     }
-}
-
-fn sync_mission_stats_to_campaign(
-    mission_stat: &MissionStat,
-    campaign: &mut crate::campaign::Campaign,
-) {
-    campaign.add_value(
-        crate::campaign::CampaignValue::LivingSoldiers,
-        mission_stat.living_soldier_count as i32,
-    );
-    campaign.add_value(
-        crate::campaign::CampaignValue::DeadSoldiers,
-        mission_stat
-            .total_soldier_count
-            .saturating_sub(mission_stat.living_soldier_count) as i32,
-    );
 }
 
 /// Sample duration in sim frames (40 ms each), keyed by sound-source
@@ -901,9 +892,8 @@ impl EngineInner {
     /// Count living and dead Lacklandist soldiers by iterating entities.
     ///
     /// Counts at quit time rather than reading pre-accumulated stats,
-    /// ensuring accuracy.  Also populates
-    /// `mission_stat.living_soldier_count` and
-    /// `mission_stat.total_soldier_count`.
+    /// ensuring accuracy. Original increments the living stat for every live
+    /// soldier it sees but leaves the load-time total-soldier stat unchanged.
     pub(crate) fn count_soldiers_at_quit(&mut self) -> (u32, u32) {
         use crate::element::{Camp, Human as _};
 
@@ -918,21 +908,15 @@ impl EngineInner {
                 }
             }
         }
-        // The living-soldier increment runs inside the per-soldier
-        // loop, accumulating onto whatever was previously in the stat
-        // rather than overwriting.  Match the additive semantics so any
-        // earlier writer's contribution survives.  `total_soldier_count`
-        // is kept in lockstep.
+        // The living-soldier increment runs inside the per-soldier loop,
+        // accumulating onto whatever was previously in the stat rather than
+        // overwriting. `ulTotalSoldierCount` was established at load time and
+        // QuitMission does not mutate it.
         self.mission_domain.mission_stat.living_soldier_count = self
             .mission_domain
             .mission_stat
             .living_soldier_count
             .saturating_add(living);
-        self.mission_domain.mission_stat.total_soldier_count = self
-            .mission_domain
-            .mission_stat
-            .total_soldier_count
-            .saturating_add(living + dead);
         (living, dead)
     }
 
@@ -1143,7 +1127,32 @@ impl EngineInner {
     /// Add an entity to the world. Returns its EntityId.
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
         let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
+        self.initialize_entity_for_publication(id, &mut entity);
+        self.world.entities.push(Some(entity));
+        self.world.assign_next_original_creation_order(id);
+        #[cfg(any(test, feature = "test-helpers"))]
+        self.backfill_test_entity_identity(id);
+        id
+    }
 
+    /// Add an entity whose Original constructor identity was consumed before
+    /// synchronous child publication.
+    pub(crate) fn add_entity_with_reserved_creation_order(
+        &mut self,
+        mut entity: Entity,
+        creation_order: u32,
+    ) -> EntityId {
+        let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
+        self.initialize_entity_for_publication(id, &mut entity);
+        self.world.entities.push(Some(entity));
+        self.world
+            .assign_reserved_original_creation_order(id, creation_order);
+        #[cfg(any(test, feature = "test-helpers"))]
+        self.backfill_test_entity_identity(id);
+        id
+    }
+
+    fn initialize_entity_for_publication(&mut self, id: EntityId, entity: &mut Entity) {
         // Original RHScript::AddElement assigns the element's script-list
         // index as soon as it enters the entity list. AI door passing uses
         // this required identity to resolve the actor's committed gate-side
@@ -1156,7 +1165,7 @@ impl EngineInner {
                 )
             });
 
-        if let Entity::Pc(pc) = &mut entity {
+        if let Entity::Pc(pc) = entity {
             let position = pc.element.position_map();
             pc.actor.produced_noise = Some(crate::ai::Noise {
                 origin: crate::ai::Position {
@@ -1182,7 +1191,7 @@ impl EngineInner {
         // the soldier profile at level load) so VIP soldiers get the
         // purple `OC_NPC_VIP_*` outline scheme rather than the standard
         // red enemy scheme.
-        let is_vip = match &entity {
+        let is_vip = match &*entity {
             Entity::Soldier(s) => s.npc.ai_brain.enemy().map(|ai| ai.is_vip).unwrap_or(false),
             _ => false,
         };
@@ -1191,7 +1200,7 @@ impl EngineInner {
         // Override the Hidden/Default/Target outline-colour slots with
         // the VIP palette when the civilian is a VIP, applied here after
         // the base civilian colours are written.
-        if let Entity::Civilian(c) = &entity
+        if let Entity::Civilian(c) = &*entity
             && c.civilian.cached_civilian_type == crate::profiles::CivilianType::Vip
         {
             use crate::element::OutlineColorName as N;
@@ -1204,7 +1213,7 @@ impl EngineInner {
 
         // Track kind lists that carry ordering semantics. Other views
         // are derived from the entity store.
-        match &entity {
+        match &*entity {
             Entity::Pc(_) => {
                 self.world.pc_ids.push(id);
                 self.world.original_pc_registry_ids.push(id);
@@ -1215,12 +1224,6 @@ impl EngineInner {
             Entity::Target(_) | Entity::Net(_) | Entity::Scroll(_) | Entity::Projectile(_) => {}
             Entity::Bonus(_) => {}
         }
-
-        self.world.entities.push(Some(entity));
-        self.world.assign_next_original_creation_order(id);
-        #[cfg(any(test, feature = "test-helpers"))]
-        self.backfill_test_entity_identity(id);
-        id
     }
 
     /// Give a directly-constructed test actor the identity fields that level
@@ -4016,6 +4019,53 @@ impl EngineInner {
         ai.max_visibility = u32::from(value);
     }
 
+    /// Restore a dormant Original waypoint-macro pointer which survived an
+    /// in-process v48 load even though that save omitted it because
+    /// `mbHasPatrolPath` was false.
+    pub fn restore_parity_npc_dormant_macro_cursor(
+        &mut self,
+        id: EntityId,
+        path_id: crate::ai::PathId,
+        waypoint_index: u8,
+        offset: usize,
+        assets: &LevelAssets,
+    ) -> bool {
+        let waypoint = assets
+            .hiking_paths
+            .get(usize::from(path_id))
+            .and_then(|path| path.waypoints.get(usize::from(waypoint_index)))
+            .unwrap_or_else(|| {
+                panic!(
+                    "parity dormant cursor references absent waypoint {path_id:?}/{waypoint_index}"
+                )
+            });
+        let crate::level_data::WaypointCommand::Macro(command) = &waypoint.command else {
+            panic!(
+                "parity dormant cursor references non-macro waypoint {path_id:?}/{waypoint_index}"
+            );
+        };
+        assert!(
+            offset <= command.len(),
+            "parity dormant cursor offset {offset} exceeds command length {}",
+            command.len()
+        );
+        let entity =
+            self.world.entities.get_mut(id).unwrap_or_else(|| {
+                panic!("parity dormant cursor references missing entity {id:?}")
+            });
+        let ai = entity
+            .npc_data_mut()
+            .and_then(|npc| npc.ai_brain.base_mut())
+            .unwrap_or_else(|| panic!("parity dormant cursor references AI-less NPC {id:?}"));
+        if ai.has_patrol_path {
+            return false;
+        }
+        ai.macro_command = command.clone();
+        ai.macro_command_offset = offset;
+        ai.macro_command_waypoint = Some((path_id, waypoint_index));
+        true
+    }
+
     /// Currently selected PC ids for the [`PlayerId::HOST`] seat.
     ///
     /// Single-player host code (HUD, renderer, input translation)
@@ -5655,6 +5705,22 @@ mod campaign_lifecycle_tests {
         (campaign, assets)
     }
 
+    fn lacklandist_soldier(life_points: i16) -> crate::element::Entity {
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.life_points = life_points;
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        crate::element::Entity::Soldier(soldier)
+    }
+
     #[test]
     fn quit_updates_preserve_the_campaign_allocation() {
         let sim_context = crate::sim_rng::test_context();
@@ -5704,11 +5770,45 @@ mod campaign_lifecycle_tests {
 
         let campaign = engine.campaign();
         assert_eq!(campaign.missions[0].status, MissionStatus::Won);
-        assert_eq!(campaign.values[CampaignValue::LivingSoldiers], 9);
-        assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 14);
+        assert_eq!(campaign.values[CampaignValue::LivingSoldiers], 7);
+        assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 11);
         assert_eq!(campaign.values[CampaignValue::Score], 1013);
         assert_eq!(engine.mission_domain.mission_stat.added_score, 1000);
         assert_eq!(engine.mission_domain.mission_stat.new_peasant_count, 0);
+        assert_eq!(engine.mission_domain.mission_stat.living_soldier_count, 2);
+        assert_eq!(engine.mission_domain.mission_stat.total_soldier_count, 5);
+    }
+
+    #[test]
+    fn successful_quit_uses_local_exit_counts_without_double_counting_load_total() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let (mut campaign, assets) = active_historical_mission();
+        campaign.values[CampaignValue::LivingSoldiers] = 7;
+        campaign.values[CampaignValue::DeadSoldiers] = 11;
+        campaign.values[CampaignValue::Score] = 13;
+
+        let mut engine = EngineInner::new_with_campaign(campaign);
+        engine.mission_domain.mission_stat.living_soldier_count = 2;
+        engine.mission_domain.mission_stat.total_soldier_count = 9;
+        engine.add_entity(lacklandist_soldier(100));
+        engine.add_entity(lacklandist_soldier(50));
+        engine.add_entity(lacklandist_soldier(0));
+
+        engine.apply_quit_mission_updates(
+            sim,
+            &assets,
+            GameCode::LevelSucceeded,
+            DifficultyLevel::Medium,
+        );
+
+        let campaign = engine.campaign();
+        assert_eq!(campaign.missions[0].status, MissionStatus::Won);
+        assert_eq!(campaign.values[CampaignValue::LivingSoldiers], 9);
+        assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 12);
+        assert_eq!(campaign.values[CampaignValue::Score], 1013);
+        assert_eq!(engine.mission_domain.mission_stat.living_soldier_count, 4);
+        assert_eq!(engine.mission_domain.mission_stat.total_soldier_count, 9);
     }
 
     #[test]

@@ -202,6 +202,7 @@ impl PatrolPath {
     pub fn initialize_history_entries_on_path(
         &mut self,
         hiking_paths: &[crate::level_data::RawHikingPath],
+        ctx: &crate::ai::AiContext,
     ) {
         debug_assert!(self.history.is_empty());
 
@@ -224,7 +225,11 @@ impl PatrolPath {
                 position: Position {
                     x: wp.x as f32,
                     y: wp.y as f32,
-                    sector: SectorHandle::new(wp.sector),
+                    sector: ctx.hiking_waypoint_sector(
+                        usize::from(self.hiking_path_index),
+                        i,
+                        wp.sector,
+                    ),
                     level: wp.level,
                 },
                 direction,

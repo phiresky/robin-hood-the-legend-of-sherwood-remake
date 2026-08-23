@@ -216,6 +216,24 @@ impl Engine {
         self.inner.restore_parity_npc_maximal_visibility(id, value);
     }
 
+    #[doc(hidden)]
+    pub fn restore_parity_npc_dormant_macro_cursor(
+        &mut self,
+        id: EntityId,
+        path_id: crate::ai::PathId,
+        waypoint_index: u8,
+        offset: usize,
+        assets: &LevelAssets,
+    ) -> bool {
+        self.inner.restore_parity_npc_dormant_macro_cursor(
+            id,
+            path_id,
+            waypoint_index,
+            offset,
+            assets,
+        )
+    }
+
     /// Complete serialized position and sprite frontier for one entity.
     #[doc(hidden)]
     pub fn parity_entity_runtime_state(

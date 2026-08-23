@@ -736,7 +736,7 @@ pub fn compute_trajectory_ballistic_with_terminal_obstacle(
     // Small-throwable owners currently retain only obstacle identity. Their
     // distinct landing lifecycles resolve presentation later; do not smuggle
     // arrow disappearance semantics through this compatibility API.
-    let (trajectory, terminal_obstacle, _, _, _) = compute_trajectory_ballistic_impl(
+    let (trajectory, terminal_obstacle, _, _, _, _) = compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
         mass,
@@ -762,6 +762,31 @@ pub fn compute_trajectory_ballistic_with_terminal_impact(
     bool,
     bool,
     bool,
+) {
+    let (trajectory, obstacle, impact, hole, water, _) = compute_trajectory_ballistic_impl(
+        start,
+        initial_velocity,
+        mass,
+        flat_shot,
+        obstacle_check,
+        None,
+    );
+    (trajectory, obstacle, impact, hole, water)
+}
+
+fn compute_trajectory_ballistic_with_terminal_metadata(
+    start: WorldPoint3D,
+    initial_velocity: WorldVec3D,
+    mass: f32,
+    flat_shot: bool,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+) -> (
+    Vec<TrajectoryPoint>,
+    Option<crate::position_interface::ObstacleHandle>,
+    bool,
+    bool,
+    bool,
+    Option<usize>,
 ) {
     compute_trajectory_ballistic_impl(
         start,
@@ -814,8 +839,9 @@ fn compute_trajectory_ballistic_bounce_with_terminal(
     Option<crate::position_interface::ObstacleHandle>,
     bool,
     bool,
+    bool,
 ) {
-    let (trajectory, obstacle, impact, hole, _) = compute_trajectory_ballistic_impl(
+    let (trajectory, obstacle, impact, hole, water, _) = compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
         mass,
@@ -823,7 +849,7 @@ fn compute_trajectory_ballistic_bounce_with_terminal(
         obstacle_check,
         Some(bounce_factors),
     );
-    (trajectory, obstacle, impact, hole)
+    (trajectory, obstacle, impact, hole, water)
 }
 
 /// Impact classifications used by trajectory bounce dispatch.
@@ -1064,6 +1090,7 @@ fn compute_trajectory_ballistic_impl(
     bool,
     bool,
     bool,
+    Option<usize>,
 ) {
     /// Top-impact termination speed threshold (`||v|| < 5`).
     /// Only applies when the previous iteration hit an obstacle's top
@@ -1078,6 +1105,7 @@ fn compute_trajectory_ballistic_impl(
     let mut terminal_impact = false;
     let mut terminal_lands_in_hole = false;
     let mut terminal_lands_in_water = false;
+    let mut terminal_impact_index = None;
     let mut velocity = initial_velocity;
     let mut position = start;
 
@@ -1249,6 +1277,7 @@ fn compute_trajectory_ballistic_impl(
                 position: impact,
                 time: impact_time,
             });
+            terminal_impact_index = Some(trajectory.len() - 1);
 
             let water_hole = check.water_zones.and_then(|water_zones| {
                 crate::water_zones::determine_water_hole_scoped(
@@ -1365,6 +1394,7 @@ fn compute_trajectory_ballistic_impl(
         terminal_impact,
         terminal_lands_in_hole,
         terminal_lands_in_water,
+        terminal_impact_index,
     )
 }
 
@@ -3060,7 +3090,7 @@ pub fn spawn_purse(
     thrower: EntityId,
     throw_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
-    layer: u16,
+    _layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     let dx = target_pos.x - throw_pos.x;
@@ -3073,7 +3103,14 @@ pub fn spawn_purse(
     };
 
     let velocity = compute_initial_throw_velocity(direction_vec, APEX_PURSE, MASS_PURSE, 0, None);
-    let (trajectory, terminal_obstacle) = compute_trajectory_ballistic_with_terminal_obstacle(
+    let (
+        trajectory,
+        terminal_obstacle,
+        terminal_impact,
+        terminal_lands_in_hole,
+        terminal_lands_in_water,
+        terminal_impact_index,
+    ) = compute_trajectory_ballistic_with_terminal_metadata(
         throw_pos,
         velocity,
         MASS_PURSE,
@@ -3094,13 +3131,39 @@ pub fn spawn_purse(
     };
     element.set_position_map(map_pos);
     element.set_position(throw_pos);
-    element.set_layer(layer);
-    element.set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
-        dx, dy,
-    ));
+    // ComputeTrajectory clears live membership before rebuilding the arc.
+    element.clear_layer();
+    element.set_sector(None);
+    // Purse sprite direction stays at the newly-created master's default;
+    // the flight direction is separate Projectile state.
     if let Some(check) = obstacle_check {
-        let plane = terminal_obstacle_plane(terminal_obstacle, check.sight_obstacles);
-        bind_trajectory_obstacle(&mut element, terminal_obstacle, plane);
+        let terminal_membership =
+            terminal_impact && !terminal_lands_in_hole && !terminal_lands_in_water;
+        let bound = terminal_membership.then_some(terminal_obstacle).flatten();
+        bind_trajectory_obstacle(
+            &mut element,
+            bound,
+            terminal_obstacle_plane(bound, check.sight_obstacles),
+        );
+        if terminal_membership && let Some(end) = trajectory.last().map(|point| point.position) {
+            let resolution = if let Some(obstacle) = terminal_obstacle {
+                check
+                    .fast_find_grid
+                    .resolve_projectile_landing_with_obstacle(
+                        end.to_map(),
+                        Some(obstacle),
+                        check.sight_obstacles,
+                    )
+            } else {
+                check
+                    .fast_find_grid
+                    .resolve_projectile_ground_landing(end.to_map())
+            };
+            element.set_sector(resolution.sector);
+            if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
+                element.set_layer(resolution.layer);
+            }
+        }
     }
     let object = ObjectData {
         associated_action: Action::Purse,
@@ -3112,6 +3175,14 @@ pub fn spawn_purse(
         ..ObjectData::default()
     };
 
+    let trajectory_runtime = vec![
+        crate::element::TrajectoryPointRuntime {
+            bounce: false,
+            material: crate::element::GameMaterial::NumberOfMaterials.as_u32(),
+        };
+        trajectory.len()
+    ];
+
     let mut projectile = ProjectileData {
         start: throw_pos,
         end: end_pos,
@@ -3120,7 +3191,14 @@ pub fn spawn_purse(
         shooter: Some(thrower),
         frame_count: 0,
         flying: true,
+        dive: terminal_lands_in_water,
+        disappear: terminal_lands_in_hole,
         trajectory,
+        trajectory_runtime,
+        terminal_material_pending: terminal_impact,
+        terminal_material_impact_index: terminal_impact_index.map(|index| {
+            u16::try_from(index).expect("purse collision waypoint index does not fit u16")
+        }),
         damage: 0,
         ..ProjectileData::default()
     };
@@ -3129,14 +3207,11 @@ pub fn spawn_purse(
     // `>= NUMBER_OF_COINS_IN_PURSE` and decrements.
     projectile.purse.number_of_coins = NUMBER_OF_COINS_IN_PURSE;
 
-    let mut purse = ElementProjectile {
+    let purse = ElementProjectile {
         element,
         object,
         projectile,
     };
-    // Advance one trajectory step before handing the purse to the
-    // engine so it's already one step in when the engine picks it up.
-    purse.advance_trajectory_one_frame();
     Entity::Projectile(purse)
 }
 
@@ -3149,8 +3224,8 @@ pub fn spawn_purse(
 /// * Civilian-tossed coins (give-money-to-beggar) — `source_purse` is
 ///   `None` and `apex` is [`APEX_BEGGAR_COIN`].
 ///
-/// `target_pos` is the landing point; the trajectory uses the
-/// damped-bounce parameters from `BOUNCE_COIN`.  The goal layer/sector
+/// `target_pos` is the landing point; Original explicitly disables bounce
+/// for coins. The goal layer/sector
 /// are stored on the projectile so the coin can snap to them on
 /// landing — see [`PurseData::layer_goal`] and
 /// [`PurseData::sector_goal`].
@@ -3159,7 +3234,7 @@ pub fn spawn_coin(
     source_purse: Option<EntityId>,
     source_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
-    layer: u16,
+    _layer: u16,
     layer_goal: u16,
     sector_goal: Option<crate::position_interface::SectorHandle>,
     apex: f32,
@@ -3175,13 +3250,19 @@ pub fn spawn_coin(
     };
 
     let velocity = compute_initial_throw_velocity(direction_vec, apex, MASS_COIN, 0, None);
-    let trajectory = compute_trajectory_ballistic_bounce(
+    let (
+        trajectory,
+        terminal_obstacle,
+        terminal_impact,
+        terminal_hole,
+        terminal_water,
+        terminal_impact_index,
+    ) = compute_trajectory_ballistic_with_terminal_metadata(
         source_pos,
         velocity,
         MASS_COIN,
         false,
         obstacle_check,
-        BOUNCE_COIN,
     );
     let end_pos = trajectory_end_or_start(&trajectory, source_pos, "coin");
 
@@ -3197,18 +3278,59 @@ pub fn spawn_coin(
     };
     element.set_position_map(map_pos);
     element.set_position(source_pos);
-    element.set_layer(layer);
-    element.set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
-        dx, dy,
-    ));
+    // ComputeTrajectory clears live membership. Saved goal membership lives
+    // separately in PurseData and Coin::HitObstacle installs it only on an
+    // ordinary dry terminal impact.
+    element.clear_layer();
+    element.set_sector(None);
+    if let Some(check) = obstacle_check {
+        let bound = (terminal_impact && !terminal_hole && !terminal_water)
+            .then_some(terminal_obstacle)
+            .flatten();
+        bind_trajectory_obstacle(
+            &mut element,
+            bound,
+            terminal_obstacle_plane(bound, check.sight_obstacles),
+        );
+        if terminal_impact
+            && !terminal_hole
+            && !terminal_water
+            && let Some(end) = trajectory.last().map(|point| point.position)
+        {
+            let resolution = if let Some(obstacle) = terminal_obstacle {
+                check
+                    .fast_find_grid
+                    .resolve_projectile_landing_with_obstacle(
+                        end.to_map(),
+                        Some(obstacle),
+                        check.sight_obstacles,
+                    )
+            } else {
+                check
+                    .fast_find_grid
+                    .resolve_projectile_ground_landing(end.to_map())
+            };
+            element.set_sector(resolution.sector);
+            if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
+                element.set_layer(resolution.layer);
+            }
+        }
+    }
     let object = ObjectData {
-        associated_action: Action::NoAction,
+        associated_action: Action::Purse,
         object_type: ObjectType::Coin,
         animation: Animation::ObjectFlying,
         quantity: 1,
         ..ObjectData::default()
     };
 
+    let trajectory_runtime = vec![
+        crate::element::TrajectoryPointRuntime {
+            bounce: false,
+            material: crate::element::GameMaterial::NumberOfMaterials.as_u32(),
+        };
+        trajectory.len()
+    ];
     let mut projectile = ProjectileData {
         start: source_pos,
         end: end_pos,
@@ -3220,7 +3342,14 @@ pub fn spawn_coin(
         shooter: None,
         frame_count: 0,
         flying: true,
+        dive: terminal_water,
+        disappear: terminal_hole,
         trajectory,
+        trajectory_runtime,
+        terminal_material_pending: terminal_impact,
+        terminal_material_impact_index: terminal_impact_index.map(|index| {
+            u16::try_from(index).expect("coin collision waypoint index does not fit u16")
+        }),
         damage: 0,
         ..ProjectileData::default()
     };
@@ -3228,15 +3357,11 @@ pub fn spawn_coin(
     projectile.purse.layer_goal = layer_goal;
     projectile.purse.sector_goal = sector_goal;
 
-    let mut coin = ElementProjectile {
+    let coin = ElementProjectile {
         element,
         object,
         projectile,
     };
-    // Advance one trajectory step before handing the coin to the
-    // engine so it's already one step in when it joins the active
-    // element list.  Without this, fresh coins visually pop on frame 0.
-    coin.advance_trajectory_one_frame();
     Entity::Projectile(coin)
 }
 
@@ -3427,6 +3552,7 @@ pub(crate) fn make_arrow_falling_down(
         terminal_impact,
         terminal_lands_in_hole,
         terminal_lands_in_water,
+        _,
     ) = compute_trajectory_ballistic_impl(
         proj.element.position(),
         velocity,
@@ -3501,6 +3627,42 @@ fn preserve_falling_hole_disappearance(proj: &mut ElementProjectile, terminal_la
     // ricochet can therefore have only one terminal waypoint and must still
     // disappear silently when that point lies in a hole.
     proj.projectile.disappear |= terminal_lands_in_hole;
+}
+
+/// Resolve Original's `GetHitShieldHolder` query for one already-advanced
+/// projectile segment. This is also used by the explicit pre-publication
+/// purse Hourglass, before that purse has an entity-array slot of its own.
+pub(crate) fn projectile_shield_holder(
+    entities: &Entities,
+    shooter: Option<EntityId>,
+    old: WorldPoint3D,
+    new: WorldPoint3D,
+    increment: WorldVec3D,
+) -> Option<EntityId> {
+    let flight_dir = (increment.x, increment.y * INVERSE_ASPECT_RATIO);
+    for (actor_id, actor) in entities.actors() {
+        let holder: EntityId = actor_id.into();
+        if Some(holder) == shooter || !actor.is_active() || actor.is_dead() {
+            continue;
+        }
+        let Some(actor_data) = actor.actor_data() else {
+            continue;
+        };
+        if !actor_data.action_state.is_shield() {
+            continue;
+        }
+        let Some(obstacle) = actor_data.shield_obstacle.as_ref() else {
+            continue;
+        };
+        let (look_x, look_y) =
+            crate::element::direction_vector_16(actor.element_data().direction());
+        if look_x * flight_dir.0 + look_y * flight_dir.1 < 0.0
+            && obstacle.is_blocking_ray_3d([new.x, new.y, new.z], [old.x, old.y, old.z])
+        {
+            return Some(holder);
+        }
+    }
+    None
 }
 
 /// Advance every arrow projectile by one frame along its precomputed
@@ -8133,7 +8295,7 @@ mod tests {
         assert!(terminal_lands_in_hole);
         assert!(!terminal_lands_in_water);
 
-        let (_, bounce_obstacle, bounce_impact, bounce_lands_in_hole) =
+        let (_, bounce_obstacle, bounce_impact, bounce_lands_in_hole, _) =
             compute_trajectory_ballistic_bounce_with_terminal(
                 WorldPoint3D::new(0.0, 0.0, 25.0),
                 WorldVec3D::new(10.0, 0.0, 0.0),
@@ -8180,7 +8342,7 @@ mod tests {
             water_zones: Some(&water_zones),
         };
 
-        let (_, terminal_obstacle, terminal_impact, terminal_hole, terminal_water) =
+        let (_, terminal_obstacle, terminal_impact, terminal_hole, terminal_water, _) =
             compute_trajectory_ballistic_impl(
                 WorldPoint3D::new(0.0, 0.0, 25.0),
                 WorldVec3D::new(10.0, 0.0, 0.0),
@@ -9046,17 +9208,15 @@ mod tests {
     }
 
     #[test]
-    fn every_thrown_object_path_is_primed_exactly_once_by_spawn() {
+    fn self_priming_thrown_object_paths_are_advanced_exactly_once_by_spawn() {
         let thrower = EntityId::Pc(crate::entity_id::PcId(0));
         let start = WorldPoint3D::new(0.0, 0.0, 20.0);
         let end = WorldPoint3D::new(200.0, 0.0, 0.0);
         let thrown = [
             spawn_net(thrower, start, end, 0, None),
             spawn_wasp_nest(thrower, start, end, 0, None),
-            spawn_purse(thrower, start, end, 0, None),
             spawn_apple(thrower, start, end, Some(thrower), None, 0, None),
             spawn_stone(thrower, start, end, Some(thrower), None, 0, None),
-            spawn_coin(None, start, end, 0, 0, None, APEX_BEGGAR_COIN, None),
         ];
         for (index, entity) in thrown.into_iter().enumerate() {
             let (position, frame_count) = match entity {
@@ -9075,6 +9235,23 @@ mod tests {
                 frame_count, 1,
                 "throw path {index} advanced more than once before insertion"
             );
+        }
+    }
+
+    #[test]
+    fn purse_and_coin_constructors_defer_their_virtual_primer_to_engine_owner() {
+        let thrower = EntityId::Pc(crate::entity_id::PcId(0));
+        let start = WorldPoint3D::new(0.0, 0.0, 20.0);
+        let end = WorldPoint3D::new(200.0, 0.0, 0.0);
+        for entity in [
+            spawn_purse(thrower, start, end, 0, None),
+            spawn_coin(None, start, end, 0, 0, None, APEX_BEGGAR_COIN, None),
+        ] {
+            let Entity::Projectile(projectile) = entity else {
+                unreachable!()
+            };
+            assert_eq!(projectile.element.position(), start);
+            assert_eq!(projectile.projectile.frame_count, 0);
         }
     }
 

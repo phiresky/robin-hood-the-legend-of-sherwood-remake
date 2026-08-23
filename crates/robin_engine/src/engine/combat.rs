@@ -2258,6 +2258,279 @@ mod tests {
         })
     }
 
+    fn purse_publication_assets() -> LevelAssets {
+        use crate::element::{Animation, ObjectType};
+        use crate::sprite::Sprite;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[Animation::ObjectFlying as usize] = 16;
+        let script = SpriteScript {
+            action_id: Animation::ObjectFlying as u16,
+            action_done: 4,
+            frame_ids: vec![1, 2, 3, 4, 5],
+            delays: vec![0; 5],
+            distances: vec![0; 5],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 5],
+            sound_ids: vec![0; 5],
+            ..Default::default()
+        };
+        let mut assets = LevelAssets::new();
+        let prototype = Sprite::new(Arc::new(vec![script; 17]), Arc::new(conversion));
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Purse, prototype.clone());
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Coin, prototype);
+        assets
+    }
+
+    #[test]
+    fn purse_prepublication_hourglass_preserves_origin_material_and_next_tick_edge() {
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{Entity, GameMaterial, TrajectoryPointRuntime};
+        use crate::position_interface::SectorHandle;
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let mut thrower = make_pc(Posture::Upright);
+        thrower
+            .element_data_mut()
+            .set_position_map(MapPoint::new(400.0, 500.0));
+        thrower.element_data_mut().set_layer(2);
+        thrower.element_data_mut().set_sector(SectorHandle::new(7));
+        let thrower = engine.add_entity(thrower);
+        let start = WorldPoint3D::new(64.0, 64.0, 20.0);
+        let target = WorldPoint3D::new(200.0, 64.0, 0.0);
+        let mut entity = crate::bow_shot::spawn_purse(thrower, start, target, 2, None);
+        let Entity::Projectile(purse) = &mut entity else {
+            unreachable!()
+        };
+        purse.projectile.trajectory_runtime = vec![
+            TrajectoryPointRuntime {
+                bounce: false,
+                material: GameMaterial::Stone.as_u32(),
+            };
+            purse.projectile.trajectory.len()
+        ];
+
+        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, entity);
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("published purse disappeared")
+        };
+        assert_eq!(purse.element.direction(), 0);
+        assert_eq!(purse.element.sprite.position_iface.old_position(), start);
+        assert_eq!(purse.element.material(), GameMaterial::Stone);
+        assert_eq!(purse.element.sprite.current_row, 16);
+        assert_eq!(purse.element.sprite.current_frame, 2);
+        assert_eq!(purse.projectile.frame_count, 1);
+        assert_eq!(purse.projectile.start_of_trajectory_x, 400.0);
+        assert_eq!(purse.projectile.start_of_trajectory_y, 500.0);
+        assert_eq!(purse.projectile.trajectory_origin_sector, Some(7));
+        assert_eq!(purse.projectile.trajectory_origin_layer, 2);
+        let after_prime = purse.element.position();
+        engine.tick_projectile_or_net_hourglass(&sim, &assets, purse_id);
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("published purse disappeared")
+        };
+        assert_eq!(purse.projectile.frame_count, 2);
+        assert_eq!(
+            purse.element.sprite.position_iface.old_position(),
+            after_prime
+        );
+    }
+
+    #[test]
+    fn purse_prepublication_empty_and_one_step_trajectories_are_not_double_primed() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{Entity, TrajectoryPoint};
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let mut unplaced_thrower = make_pc(Posture::Upright);
+        unplaced_thrower.element_data_mut().clear_layer();
+        unplaced_thrower.element_data_mut().set_sector(None);
+        let thrower = engine.add_entity(unplaced_thrower);
+        let start = WorldPoint3D::new(20.0, 30.0, 10.0);
+
+        let mut empty = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
+        let Entity::Projectile(empty_purse) = &mut empty else {
+            unreachable!()
+        };
+        empty_purse.projectile.trajectory.clear();
+        empty_purse.projectile.trajectory_runtime.clear();
+        let empty_id = engine.publish_new_purse(&sim, &assets, thrower, empty);
+        let Some(Entity::Projectile(empty_purse)) = engine.get_entity(empty_id) else {
+            panic!("published empty purse disappeared")
+        };
+        assert!(!empty_purse.element.active);
+        assert_eq!(
+            empty_purse.projectile.purse.child_coins.len(),
+            usize::from(crate::bow_shot::NUMBER_OF_COINS_IN_PURSE)
+        );
+        assert!(
+            empty_purse
+                .projectile
+                .purse
+                .child_coins
+                .iter()
+                .all(|child| child.index() < empty_id.index()),
+            "Original adds every burst coin before the inactive purse"
+        );
+        let purse_creation = engine.original_creation_order(empty_id);
+        for &child in &empty_purse.projectile.purse.child_coins {
+            let Some(Entity::Projectile(coin)) = engine.get_entity(child) else {
+                panic!("purse child {child} is not a coin projectile")
+            };
+            assert_eq!(coin.projectile.purse.source_purse, Some(empty_id));
+            assert_eq!(
+                coin.object.animation,
+                crate::element::Animation::ObjectFlying
+            );
+            assert_eq!(coin.element.sprite.current_row, 16);
+            assert_eq!(coin.element.sprite.current_frame, 2);
+            assert_eq!(coin.element.sprite.position_iface.old_position(), start);
+            assert_eq!(coin.projectile.start_of_trajectory_x, start.x);
+            assert_eq!(coin.projectile.start_of_trajectory_y, start.y - start.z);
+            assert_eq!(coin.projectile.trajectory_origin_sector, None);
+            assert_eq!(coin.projectile.trajectory_origin_layer, u16::MAX);
+            assert_eq!(coin.element.sector(), None);
+            assert_eq!(coin.element.layer(), u16::MAX);
+            assert!(
+                purse_creation < engine.original_creation_order(child),
+                "purse constructor identity must precede child coin constructors"
+            );
+        }
+        assert_eq!(empty_purse.element.layer(), u16::MAX);
+        assert_eq!(empty_purse.element.sector(), None);
+        assert_eq!(empty_purse.projectile.trajectory_origin_layer, u16::MAX);
+        assert_eq!(empty_purse.projectile.trajectory_origin_sector, None);
+
+        let endpoint = WorldPoint3D::new(24.0, 36.0, 8.0);
+        let mut one = crate::bow_shot::spawn_purse(thrower, start, endpoint, 0, None);
+        let Entity::Projectile(one_purse) = &mut one else {
+            unreachable!()
+        };
+        one_purse.projectile.trajectory = vec![TrajectoryPoint {
+            position: endpoint,
+            time: 1,
+        }];
+        one_purse.projectile.trajectory_runtime.clear();
+        let one_id = engine.publish_new_purse(&sim, &assets, thrower, one);
+        let Some(Entity::Projectile(one_purse)) = engine.get_entity(one_id) else {
+            panic!("published one-step purse disappeared")
+        };
+        assert_eq!(one_purse.element.position(), endpoint);
+        assert_eq!(one_purse.projectile.frame_count, 1);
+        assert!(one_purse.projectile.trajectory.is_empty());
+    }
+
+    #[test]
+    fn purse_prepublication_water_and_hole_exhaustion_do_not_burst() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{Entity, GameMaterial};
+
+        for (material, dive, disappear) in [
+            (GameMaterial::Water, true, false),
+            (GameMaterial::Hole, false, true),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let assets = purse_publication_assets();
+            let mut engine = EngineInner::new();
+            let thrower = engine.add_entity(make_pc(Posture::Upright));
+            let start = WorldPoint3D::new(20.0, 30.0, 10.0);
+            let mut purse = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
+            let Entity::Projectile(projectile) = &mut purse else {
+                unreachable!()
+            };
+            projectile.projectile.trajectory.clear();
+            projectile.projectile.trajectory_runtime.clear();
+            projectile.projectile.dive = dive;
+            projectile.projectile.disappear = disappear;
+            projectile.element.set_material(material);
+
+            let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+            let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
+                panic!("published water/hole purse disappeared")
+            };
+            assert!(projectile.element.active);
+            assert!(!projectile.projectile.purse.burst);
+            assert!(projectile.projectile.purse.child_coins.is_empty());
+            assert_eq!(
+                projectile.projectile.trajectory_frame_count,
+                if dive { 0 } else { u16::MAX }
+            );
+            assert_eq!(
+                projectile.projectile.velocity_increment,
+                crate::coordinates::WorldVec3D::ZERO
+            );
+        }
+    }
+
+    #[test]
+    fn purse_prepublication_first_segment_obeys_base_shield_early_return() {
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{ActionState, Entity, TrajectoryPoint};
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let thrower = engine.add_entity(make_pc(Posture::Upright));
+        let mut holder = make_arrow_warning_soldier();
+        holder
+            .element_data_mut()
+            .set_position_map(MapPoint::new(50.0, 0.0));
+        holder.element_data_mut().set_direction_instantly(4);
+        {
+            let actor = holder.actor_data_mut().unwrap();
+            actor.action_state = ActionState::HoldingShield;
+            actor.shield_obstacle = Some(crate::bow_shot::compute_shield_obstacle(
+                MapPoint::new(50.0, 0.0),
+                0.0,
+                4,
+                &crate::bow_shot::ShieldParams {
+                    pre_offset: 20.0,
+                    width: 20.0,
+                    depth: 5.0,
+                    height: 40.0,
+                    z_offset: 10.0,
+                },
+            ));
+        }
+        let holder = engine.add_entity(holder);
+
+        let start = WorldPoint3D::new(100.0, 0.0, 40.0);
+        let end = WorldPoint3D::new(50.0, 0.0, 40.0);
+        let mut purse = crate::bow_shot::spawn_purse(thrower, start, end, 0, None);
+        let Entity::Projectile(projectile) = &mut purse else {
+            unreachable!()
+        };
+        projectile.projectile.trajectory = vec![TrajectoryPoint {
+            position: end,
+            time: 1,
+        }];
+        projectile.projectile.trajectory_runtime.clear();
+        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+        let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
+            panic!("published shielded purse disappeared")
+        };
+        assert!(projectile.projectile.flying);
+        assert!(projectile.projectile.trajectory.is_empty());
+        assert_eq!(projectile.element.sprite.current_frame, 2);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| &sequence.elements)
+                .any(|element| element.owner == Some(holder)
+                    && element.command == crate::element::Command::ParryShield)
+        );
+    }
+
     fn make_arrow_warning_soldier() -> Entity {
         let mut soldier = crate::element::ActorSoldier {
             element: ElementData {
@@ -3139,7 +3412,7 @@ impl EngineInner {
         self.process_projectile_tick_results(sim, assets, results);
     }
 
-    fn process_projectile_tick_results(
+    pub(super) fn process_projectile_tick_results(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -5192,8 +5465,7 @@ impl EngineInner {
                         layer,
                         Some(&obstacle_check),
                     );
-                    let purse_id = self.add_entity(purse_entity);
-                    self.attach_accessory_sprite(assets, purse_id);
+                    let purse_id = self.publish_new_purse(sim, assets, actor_id, purse_entity);
                     tracing::debug!(
                         actor = ?actor_id,
                         x = target_pos.x,

@@ -2722,7 +2722,8 @@ fn sector(
 ) -> Result<Option<SectorHandle>, LegacyElementAdoptError> {
     value
         .map(|index| {
-            let Some(sector) = topology.sectors.get(usize::from(index)) else {
+            let slot = usize::from(index);
+            let Some(sector) = topology.sectors.get(slot) else {
                 return Err(LegacyElementAdoptError::MissingSector {
                     creation_order,
                     field,
@@ -2730,14 +2731,46 @@ fn sector(
                     count: topology.sectors.len(),
                 });
             };
-            sector.ok_or(LegacyElementAdoptError::MissingSector {
+            let public = sector.ok_or(LegacyElementAdoptError::MissingSector {
                 creation_order,
                 field,
                 index,
                 count: topology.sectors.len(),
-            })
+            })?;
+            // Original serialized an RHSector* as its sparse array slot. The
+            // retained topology resolves that pointer to both its public
+            // number and exact runtime object. Keeping only the public half
+            // makes a later gate search mix an exact actor sector with a
+            // number-only target, which the identity-aware graph correctly
+            // rejects. Synthetic/older test topologies without the paired
+            // identity retain their legacy number-only representation.
+            Ok(topology
+                .sector_indices
+                .get(slot)
+                .copied()
+                .flatten()
+                .map_or(public, |arena| public.with_arena_index(arena)))
         })
         .transpose()
+}
+
+#[cfg(test)]
+pub(crate) fn adopt_position_sector_for_test(
+    sectors: Vec<Option<SectorHandle>>,
+    sector_indices: Vec<Option<crate::fast_find_grid::SectorIndex>>,
+    saved_slot: u16,
+) -> Option<SectorHandle> {
+    let slot_count = sectors.len();
+    let topology = LegacyPositionTopology {
+        sectors,
+        sector_indices,
+        sector_doors: vec![None; slot_count],
+        doors: Vec::new(),
+        projection_areas: Vec::new(),
+        sight_obstacles: Vec::new(),
+    };
+    sector(Some(saved_slot), &topology, 0, "initial_position.sector")
+        .expect("test saved sector slot resolves")
 }
 
 fn seek_sector(
@@ -3194,6 +3227,10 @@ fn convert_macro_command(
         // dormant while the NPC stands on a post, but the NPC can return to its
         // route and stand on the very waypoint the stale cursor points into,
         // and the cursor becomes observable again at that moment.
+        // TODO(parity): loaded-save trace segments must retain that dormant
+        // cursor's command/waypoint identity from the live Original process.
+        // The v48 stream contains no cursor or offset in this branch, so a
+        // standalone mission reconstruction cannot recover it from the save.
         return Ok(None);
     }
     let raw_path_id = saved
@@ -3841,6 +3878,7 @@ mod tests {
         let door = crate::position_interface::DoorHandle(9);
         let topology = LegacyPositionTopology {
             sectors: vec![SectorHandle::new(3), None],
+            sector_indices: vec![None; 2],
             sector_doors: vec![None, Some(door)],
             doors: vec![door],
             projection_areas: Vec::new(),
@@ -3854,6 +3892,33 @@ mod tests {
         assert_eq!(
             seek_sector(Some(0), &topology, 326, "seek_sector").unwrap(),
             Some(ActorSeekSector::Position(SectorHandle::new(3).unwrap()))
+        );
+    }
+
+    #[test]
+    fn saved_position_sector_uses_retained_exact_runtime_identity() {
+        let arena = crate::fast_find_grid::SectorIndex::new(95).unwrap();
+        let exact = LegacyPositionTopology {
+            sectors: vec![SectorHandle::new(249)],
+            sector_indices: vec![Some(arena)],
+            sector_doors: vec![None],
+            doors: Vec::new(),
+            projection_areas: Vec::new(),
+            sight_obstacles: Vec::new(),
+        };
+        let number_only = LegacyPositionTopology {
+            sector_indices: vec![None],
+            ..exact.clone()
+        };
+
+        assert_eq!(
+            sector(Some(0), &exact, 109, "initial_position.sector").unwrap(),
+            SectorHandle::new(249).map(|sector| sector.with_arena_index(arena))
+        );
+        assert_eq!(
+            sector(Some(0), &number_only, 109, "initial_position.sector").unwrap(),
+            SectorHandle::new(249),
+            "a topology that genuinely lacks retained identity stays number-only"
         );
     }
 
@@ -4077,6 +4142,7 @@ mod tests {
         }];
         let topology = LegacyPositionTopology {
             sectors: vec![SectorHandle::new(0), SectorHandle::new(1)],
+            sector_indices: vec![None; 2],
             sector_doors: vec![None; 2],
             doors: Vec::new(),
             projection_areas: Vec::new(),
@@ -4114,6 +4180,7 @@ mod tests {
         }];
         let topology = LegacyPositionTopology {
             sectors: vec![SectorHandle::new(0)],
+            sector_indices: vec![None],
             sector_doors: vec![None],
             doors: Vec::new(),
             projection_areas: Vec::new(),

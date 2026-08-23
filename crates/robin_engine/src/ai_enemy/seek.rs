@@ -59,18 +59,26 @@ fn accumulate_seek_point_interest(current: f32, interest: u8) -> f32 {
 /// Rust copy would make the personal seek point fail `GoTo` before route
 /// construction and recursively consume unrelated global seek points.
 fn resolve_seek_area_center_sector(mut center: Position, ctx: &AiContext) -> Position {
-    if center.sector.is_some() {
+    if center
+        .sector
+        .is_some_and(|sector| sector.arena_index().is_some())
+    {
         return center;
     }
 
     let point = crate::coordinates::MapPoint::new(center.x, center.y);
     let reference = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
-    if let crate::fast_find_grid::SectorHit::Found { sector_number, .. } =
-        ctx.fast_grid.get_sector(point, reference, center.level)
+    let hit = ctx.fast_grid.get_sector(point, reference, center.level);
+    if let Some(exact_sector) = hit.sector_handle()
+        && center
+            .sector
+            .is_none_or(|authored| authored == exact_sector)
     {
-        center.sector = u16::try_from(sector_number.get())
-            .ok()
-            .and_then(crate::position_interface::SectorHandle::new);
+        // Tactic seek points and compact stimuli retain the public sector
+        // number but not Original's `RHSector*`. Recover the exact arena
+        // identity only when the spatial result agrees with that authored
+        // number; a conflicting authored sector remains authoritative.
+        center.sector = Some(exact_sector);
     }
     center
 }
@@ -980,6 +988,7 @@ impl EnemyAi {
         )
         .map(|sp| sp.position)
         .expect("seek point resolved successfully above");
+        let seek_pos = resolve_seek_area_center_sector(seek_pos, ctx);
 
         self.base.set_emoticon(EmoticonType::QuestionMark);
 
@@ -1693,6 +1702,25 @@ mod tests {
             resolve_seek_area_center_sector(sectorless, &ctx).sector,
             crate::position_interface::SectorHandle::new(42)
         );
+        assert_eq!(
+            resolve_seek_area_center_sector(sectorless, &ctx)
+                .sector
+                .and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(0),
+            "a reconstructed RHposition must retain the exact sector object"
+        );
+
+        let matching_number_only = Position {
+            sector: crate::position_interface::SectorHandle::new(42),
+            ..sectorless
+        };
+        assert_eq!(
+            resolve_seek_area_center_sector(matching_number_only, &ctx)
+                .sector
+                .and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(0),
+            "a static seek point's authored number must be enriched with its Original pointer-equivalent identity"
+        );
 
         let authoritative = Position {
             sector: crate::position_interface::SectorHandle::new(7),
@@ -1702,6 +1730,12 @@ mod tests {
             resolve_seek_area_center_sector(authoritative, &ctx).sector,
             crate::position_interface::SectorHandle::new(7),
             "an already-authored RHposition sector must not be spatially replaced"
+        );
+        assert!(
+            resolve_seek_area_center_sector(authoritative, &ctx)
+                .sector
+                .is_some_and(|sector| sector.arena_index().is_none()),
+            "a conflicting authored sector must not inherit an unrelated arena identity"
         );
     }
 
@@ -1789,6 +1823,7 @@ mod tests {
             ai_substate: substate,
             is_able_to_fight: true,
             is_dead: false,
+            knocked_out_in_money_fight: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,

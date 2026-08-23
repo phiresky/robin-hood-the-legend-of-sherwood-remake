@@ -477,22 +477,29 @@ impl EnemyAi {
                     Substate::AttackingRunningToLadder
                         if stimulus.self_origin
                             == crate::ai::SelfStimulusOrigin::EngineCompletion
-                            && self.base.ai_log.iter().rev().any(|line| {
-                            line.frame == ctx.frame
-                                && line.line_type == LogLineType::BattleDecision
-                                && line.info == Decision::Fight as u16
-                        }) =>
+                            && self.base.timer_is_running
+                            && self.base.substate_at_last_timer_launch
+                                == Substate::AttackingRunningToLadder
+                            && self.base.when_does_timer_ring == ctx.frame.saturating_add(30) =>
                     {
+                        // This is specifically the engine-completion bridge,
+                        // not an Original movement condolation. The latter
+                        // enters this handler with Condolation provenance and
+                        // must take the generic default arm below.
+                        //
                         // The lift-entry GoNear in ReconsiderEnemyApproach is
-                        // synchronous in Original. The shipped Linux binary
-                        // keeps its failed-route result inside that decision
-                        // and takes the avenger-on-roof recovery before an
-                        // overview changes the view mode. Rust learns the
-                        // route result at the owner boundary, after the
-                        // RunningToLadder state is visible, so resume that
-                        // source-local failure tail only for its same-frame
-                        // DECISION_FIGHT marker. An older ladder movement must
-                        // still use the generic emergency routine.
+                        // followed immediately by LaunchTimer and return
+                        // (`RHartificialmalignity.cpp:6874-6898`). Control then
+                        // returns through AttackEnemy to DECISION_FIGHT, whose
+                        // couldn't-reachpoint arm switches to DECISION_OBSERVE
+                        // (`RHartificialmalignity.cpp:7830-7841`). The failed
+                        // observe route takes the inline avenger-on-roof
+                        // fallback at lines 7973-7990. DECISION_FIGHT has not
+                        // registered its log line at this source point; the
+                        // lift branch's 30-frame timer is its exact surviving
+                        // provenance. Rust learns the first route result only
+                        // at this owner boundary, so resume that source-ordered
+                        // failure tail here.
                         let target_position = ctx
                             .entity_view(self.base.primary_target)
                             .unwrap_or_else(|| {
@@ -502,12 +509,42 @@ impl EnemyAi {
                                 )
                             })
                             .position;
+                        let target = self.base.primary_target;
+                        let avenger_wait_position =
+                            tick.avenger_wait_position_for(self.base.primary_target);
                         self.base.couldnt_reachpoint = true;
-                        self.resume_reconsider_enemy_approach_after_go_near(
-                            target_position,
-                            tick.avenger_wait_position_for(self.base.primary_target),
-                            ctx,
-                        );
+                        if avenger_wait_position.is_some() {
+                            self.resume_reconsider_enemy_approach_after_go_near(
+                                target_position,
+                                avenger_wait_position,
+                                ctx,
+                            );
+                            // Original constructs and settles this roof GoNear
+                            // before DECISION_OBSERVE returns. Route the typed
+                            // actor effects through the existing synchronous
+                            // owner boundary so its actual verdict is visible
+                            // to this frame's EndThink.
+                            if self.base.outbox.actor.has_boundary_work() {
+                                self.base.outbox.reentrant.owner_work.push(
+                                    crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                        &mut self.base.outbox.actor,
+                                    )),
+                                );
+                            }
+                        } else {
+                            // DECISION_FIGHT clears the failed lift approach
+                            // and changes to DECISION_OBSERVE. Its observe
+                            // GoNear fails synchronously too in this no-roof
+                            // case, so the following source tail installs
+                            // ApproachToObserve/timer 50 while retaining the
+                            // failure latch for EndThink's generic overview.
+                            self.resume_battle_observe_after_go_near(
+                                target,
+                                target_position,
+                                None,
+                                ctx,
+                            );
+                        }
                     }
                     Substate::AttackingApproachToObserve
                         if self.base.ai_log.iter().rev().any(|line| {
@@ -1189,7 +1226,11 @@ impl EnemyAi {
                         path.current_waypoint(hiking_paths).map(|wp| Position {
                             x: wp.x as f32,
                             y: wp.y as f32,
-                            sector: SectorHandle::new(wp.sector),
+                            sector: ctx.hiking_waypoint_sector(
+                                usize::from(path.hiking_path_index),
+                                usize::from(path.current_waypoint_index),
+                                wp.sector,
+                            ),
                             level: wp.level,
                         })
                     } else {
@@ -2294,12 +2335,9 @@ impl EnemyAi {
         }
 
         // EventHearStandardProcedure passes `noise.posOrigin` to the
-        // RHposition overload of Face. That overload ignores RHnoise's
-        // separately stored elevation and projects the position's sector
-        // through PositionToPoint3D before subtracting the owner's live 3D
-        // point. This matters even for an ordinary sector with no projection
-        // plane: substituting the producer's actor elevation changes the
-        // facing sector at angular boundaries.
+        // RHposition overload of Face. Preserve its sector projection when
+        // available; replay-normalized sector-less origins fall back to the
+        // separately recorded RHnoise elevation instead of fake ground zero.
         match noise.noise_type {
             NoiseType::Pfiiit => {
                 // Whistling.
@@ -2317,7 +2355,7 @@ impl EnemyAi {
                     self.base.seek_position = noise.origin;
                     self.base.stop_all();
                     if self.base.current_state != AiState::Sleeping {
-                        self.base.face_position_3d_with_ctx(noise.origin, ctx);
+                        self.base.face_noise_origin_with_ctx(noise, ctx);
                     }
                     self.base.say(Remark::HearsNoise);
                     self.base
@@ -2340,7 +2378,7 @@ impl EnemyAi {
                     // the middle of a seek).
                     self.set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
                     self.base.say(Remark::HearsNoise);
-                    self.base.face_position_3d_with_ctx(noise.origin, ctx);
+                    self.base.face_noise_origin_with_ctx(noise, ctx);
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     // Idle / officer → curious-react into the wondering
@@ -2391,7 +2429,7 @@ impl EnemyAi {
                     if noise.noise_type != NoiseType::Aaargh {
                         self.base.say(Remark::HearsNoise);
                     }
-                    self.base.face_position_3d_with_ctx(noise.origin, ctx);
+                    self.base.face_noise_origin_with_ctx(noise, ctx);
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     if noise.noise_type != NoiseType::Aaargh {
@@ -2417,7 +2455,7 @@ impl EnemyAi {
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position_3d_with_ctx(noise.origin, ctx);
+                self.base.face_noise_origin_with_ctx(noise, ctx);
                 self.base.launch_timer(50, ctx.frame);
             }
 
@@ -2427,7 +2465,7 @@ impl EnemyAi {
                 self.base.stop_all();
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position_3d_with_ctx(noise.origin, ctx);
+                self.base.face_noise_origin_with_ctx(noise, ctx);
                 self.base.launch_timer(
                     70 + crate::sim_rng::u32(
                         sim,
@@ -2989,7 +3027,7 @@ impl EnemyAi {
                 .outbox
                 .reentrant
                 .self_stimuli
-                .push(StimulusType::EventCouldntReachPoint);
+                .push(StimulusType::EventCouldntReachPoint.into());
             return;
         }
 
@@ -4431,9 +4469,11 @@ mod tests {
         tick.avenger_on_roof_wait_positions
             .push((183, wait_position));
 
+        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
+        stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
         ai.think_unexpected_event(
             &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &stimulus,
             &mut AiGlobalState::default(),
             &ctx,
             &tick,
@@ -4450,17 +4490,16 @@ mod tests {
     }
 
     #[test]
-    fn same_frame_fight_lift_failure_resumes_inline_roof_fallback() {
+    fn same_frame_fight_lift_failure_preserves_inline_roof_fallback() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(64);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToLadder;
         ai.base.primary_target = 183;
-        ai.base.ai_log.push(LogLine {
-            line_type: LogLineType::BattleDecision,
-            info: Decision::Fight as u16,
-            frame: 8_103,
-        });
+        ai.base.last_synced_focus_target = Some(183);
+        ai.base.timer_is_running = true;
+        ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
+        ai.base.when_does_timer_ring = 8_133;
 
         let target_position = Position {
             x: 2_788.0,
@@ -4489,9 +4528,11 @@ mod tests {
         tick.avenger_on_roof_wait_positions
             .push((183, wait_position));
 
+        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
+        stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
         ai.think_unexpected_event(
             &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &stimulus,
             &mut AiGlobalState::default(),
             &ctx,
             &tick,
@@ -4504,16 +4545,224 @@ mod tests {
         );
         assert_eq!(ai.base.seek_position, target_position);
         assert_eq!(ai.base.last_goto_destination, wait_position);
+        assert_eq!(ai.base.last_synced_focus_target, Some(183));
         assert!(!ai.base.couldnt_reachpoint);
-        assert!(ai.base.outbox.actor.look_sidewards.is_none());
-        assert!(
-            ai.base
-                .outbox
-                .actor
-                .orders
-                .last()
-                .is_some_and(|order| !order.defer_instruction),
-            "the inline roof fallback must remain eligible for this frame's manager Hourglass"
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        let Some(crate::ai::AiOwnerWork::ActorEffects(roof_effects)) =
+            ai.base.outbox.reentrant.owner_work.last()
+        else {
+            panic!("roof fallback must settle at a synchronous owner boundary")
+        };
+        assert_eq!(roof_effects.orders.len(), 1);
+        assert_eq!(roof_effects.orders[0].target_x, wait_position.x);
+        assert_eq!(roof_effects.orders[0].target_y, wait_position.y);
+        assert!(roof_effects.look_sidewards.is_none());
+        assert!(!roof_effects.unfocus);
+    }
+
+    #[test]
+    fn same_frame_roof_fallback_failure_uses_generic_overview() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(64);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
+        ai.base.primary_target = 183;
+        ai.base.list_us = vec![64, 79];
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext {
+                frame: 7_938,
+                ..AiContext::default()
+            },
+            &AiPerTickData::stub(),
+            None,
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(LookDirection::Left)
+        );
+    }
+
+    #[test]
+    fn same_frame_ladder_condolation_uses_generic_overview() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(64);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToLadder;
+        ai.base.primary_target = 183;
+        ai.base.list_us = vec![64, 79];
+        ai.base.timer_is_running = true;
+        ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
+        ai.base.when_does_timer_ring = 7_968;
+
+        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
+        stimulus.self_origin = crate::ai::SelfStimulusOrigin::Condolation;
+        ai.think_unexpected_event(
+            &sim,
+            &stimulus,
+            &mut AiGlobalState::default(),
+            &AiContext {
+                frame: 7_938,
+                ..AiContext::default()
+            },
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(LookDirection::Left)
+        );
+    }
+
+    #[test]
+    fn later_ladder_failure_still_uses_generic_emergency_routine() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(64);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToLadder;
+        ai.base.primary_target = 183;
+        ai.base.list_us = vec![64, 79];
+        ai.base.ai_log.push(LogLine {
+            line_type: LogLineType::BattleDecision,
+            info: Decision::Fight as u16,
+            frame: 8_102,
+        });
+
+        let ctx = AiContext {
+            frame: 8_103,
+            ..AiContext::default()
+        };
+        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
+        stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
+        ai.think_unexpected_event(
+            &sim,
+            &stimulus,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(LookDirection::Left)
+        );
+    }
+
+    #[test]
+    fn same_frame_fight_lift_failure_without_roof_wait_resumes_observe_then_overview() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(64);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToLadder;
+        ai.base.primary_target = 183;
+        ai.base.last_synced_focus_target = Some(183);
+        ai.base.timer_is_running = true;
+        ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
+        ai.base.when_does_timer_ring = 7_968;
+
+        let target_position = Position {
+            x: 2_762.2429,
+            y: 882.6701,
+            sector: crate::position_interface::SectorHandle::new(53),
+            level: 2,
+        };
+        let mut target = object_view(ObjectType::None);
+        target.kind = EntityKind::Pc;
+        target.is_pc = true;
+        target.position = target_position;
+        let mut views = AiEntityViewMap::new();
+        views.insert(183, target);
+        let ctx = AiContext {
+            frame: 7_938,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let tick = AiPerTickData::stub();
+
+        let mut engine_completion = Stimulus::new(StimulusType::EventCouldntReachPoint);
+        engine_completion.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
+        ai.think_unexpected_event(
+            &sim,
+            &engine_completion,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingApproachToObserve
+        );
+        assert_eq!(ai.base.when_does_timer_ring, 7_988);
+        assert!(ai.base.timer_is_running);
+        assert!(ai.base.couldnt_reachpoint);
+        assert_eq!(ai.base.last_synced_focus_target, Some(183));
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(LookDirection::Left)
+        );
+    }
+
+    #[test]
+    fn later_roof_failure_still_uses_generic_emergency_routine() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(64);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
+        ai.base.primary_target = 183;
+        ai.base.list_us = vec![64, 79];
+        let ctx = AiContext {
+            frame: 8_104,
+            ..AiContext::default()
+        };
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(LookDirection::Left)
         );
     }
 

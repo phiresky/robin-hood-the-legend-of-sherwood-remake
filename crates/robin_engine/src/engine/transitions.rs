@@ -3078,6 +3078,102 @@ mod tests {
         );
     }
 
+    #[test]
+    fn throw_purse_keeps_bored_until_exit_transition_completes() {
+        use crate::coordinates::MapPoint;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::LevelAssets::new();
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::Upright, AS::Bored));
+        let (seq, idx) = launch(&mut engine, owner, Command::ThrowPurse);
+
+        assert!(generate_transition(&mut engine, owner, seq, idx));
+        assert_eq!(
+            orders_for(&engine, seq, idx),
+            vec![OrderType::TransitionWaitingUprightBoredWaitingUpright]
+        );
+
+        let result = crate::abilities::begin_throw_purse(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            owner,
+            MapPoint::new(100.0, 100.0),
+            seq,
+            idx,
+            &mut engine.orders.next_order_id,
+        );
+        assert_eq!(result, crate::abilities::BeginResult::Started);
+        engine.orders.sequence_manager.element_in_progress(seq, idx);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .expect("purse thrower remains live")
+                .actor_data()
+                .expect("purse thrower remains an actor")
+                .action_state,
+            AS::Bored,
+            "installing the purse body must not pre-commit the transition's Waiting state"
+        );
+        assert_eq!(
+            orders_for(&engine, seq, idx),
+            vec![
+                OrderType::TransitionWaitingUprightBoredWaitingUpright,
+                OrderType::ThrowingPurse,
+            ]
+        );
+
+        let transition = OrderType::TransitionWaitingUprightBoredWaitingUpright;
+        let script = SpriteScript {
+            action_id: transition as u16,
+            action_done: 2,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![2; 3],
+            distances: vec![0; 3],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[transition as usize] = 0;
+        engine
+            .get_entity_mut(owner)
+            .expect("purse thrower remains live")
+            .element_data_mut()
+            .sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+
+        for _ in 0..16 {
+            engine.tick_actor_animation_for(&sim, &assets, owner);
+            if engine
+                .get_entity(owner)
+                .expect("purse thrower remains live")
+                .actor_data()
+                .expect("purse thrower remains an actor")
+                .action_state
+                == AS::Waiting
+            {
+                break;
+            }
+        }
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .expect("purse thrower remains live")
+                .actor_data()
+                .expect("purse thrower remains an actor")
+                .action_state,
+            AS::Waiting,
+            "the bored-exit transition completion owns the live Waiting write"
+        );
+    }
+
     /// Upright Moving soldier receiving CrouchDown must queue the
     /// walking→waiting exit transition (CAN_BE_MOVING is cleared),
     /// then the crouch-down itself is the command.  Verify the exit

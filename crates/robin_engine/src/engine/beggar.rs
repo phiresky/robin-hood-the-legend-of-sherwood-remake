@@ -34,6 +34,34 @@ const NEAR_COINS_RADIUS: f32 = 100.0;
 /// Original `CHECK_BEGGAR_MIN_IQ`.
 const CHECK_BEGGAR_MIN_IQ: u16 = 30;
 
+fn beggar_coin_source(
+    belt: crate::coordinates::WorldPoint3D,
+    direction: i16,
+) -> crate::coordinates::WorldPoint3D {
+    let (dx, dy) = crate::element::direction_vector_16(direction);
+    crate::coordinates::WorldPoint3D {
+        x: belt.x + dx * 5.0,
+        y: belt.y + dy * crate::position_interface::ASPECT_RATIO * 5.0,
+        z: belt.z,
+    }
+}
+
+fn beggar_coin_target(
+    source: crate::coordinates::WorldPoint3D,
+    beggar_position: crate::coordinates::WorldPoint3D,
+    line_of_sight_clear: bool,
+) -> crate::coordinates::WorldPoint3D {
+    if line_of_sight_clear {
+        crate::coordinates::WorldPoint3D {
+            x: source.x + 0.5 * (beggar_position.x - source.x),
+            y: source.y + 0.5 * (beggar_position.y - source.y),
+            z: source.z + 0.5 * (beggar_position.z - source.z),
+        }
+    } else {
+        source
+    }
+}
+
 /// Toggle nearby ground coins for the stealth-command transition without
 /// borrowing the rest of [`EngineInner`].
 pub(super) fn set_flags_of_near_coins_on_ground(
@@ -222,12 +250,11 @@ fn give_money_to_beggar(
     beggar_id: EntityId,
 ) {
     // ── Gather source / target geometry under immutable borrows. ──
-    let (source_pos, layer, move_box, npc_pos_2d) = {
+    let (source_pos, layer, source_sector, move_box, npc_pos_2d) = {
         let Some(npc) = engine.get_entity(npc_id) else {
             return;
         };
         let elem = npc.element_data();
-        let (dx_dir, dy_dir) = crate::element::direction_vector_16(elem.direction());
         // Toss from 5 units in front of the belt so the coin leaves
         // the civilian's silhouette.
         let belt = npc
@@ -237,30 +264,22 @@ fn give_money_to_beggar(
                 y: elem.position_map().y,
                 z: 0.0,
             });
-        let source = crate::coordinates::WorldPoint3D {
-            x: belt.x + dx_dir * 5.0,
-            y: belt.y + dy_dir * 5.0,
-            z: belt.z,
-        };
+        let source = beggar_coin_source(belt, elem.direction());
         let move_box = *npc.position_iface().get_move_box();
-        (source, elem.layer(), move_box, elem.position_map())
+        (
+            source,
+            elem.layer(),
+            elem.sector(),
+            move_box,
+            elem.position_map(),
+        )
     };
 
     let beggar_pos = match engine.get_entity(beggar_id) {
-        Some(e) => {
-            let elem = e.element_data();
-            crate::coordinates::WorldPoint3D {
-                x: elem.position_map().x,
-                y: elem.position_map().y,
-                z: e.compute_belt_point().map(|p| p.z).unwrap_or(0.0),
-            }
-        }
+        Some(e) => e.element_data().position(),
         None => return,
     };
-    let beggar_pos_2d = crate::coordinates::MapPoint {
-        x: beggar_pos.x,
-        y: beggar_pos.y,
-    };
+    let beggar_pos_2d = beggar_pos.to_map();
 
     // When the space between civilian and beggar is clear, toss to the
     // midpoint so the coin lands in the PC's lap; otherwise drop it at
@@ -271,34 +290,35 @@ fn give_money_to_beggar(
         layer,
         &move_box,
     );
-    let target_pos = if los_clear {
-        crate::coordinates::WorldPoint3D {
-            x: source_pos.x + 0.5 * (beggar_pos.x - source_pos.x),
-            y: source_pos.y + 0.5 * (beggar_pos.y - source_pos.y),
-            z: source_pos.z + 0.5 * (beggar_pos.z - source_pos.z),
-        }
-    } else {
-        source_pos
-    };
+    let target_pos = beggar_coin_target(source_pos, beggar_pos, los_clear);
 
     // ── Spawn the coin with `belongs_to_beggar = true`. ──
-    let mut coin = bow_shot::spawn_coin(
-        None,
-        source_pos,
-        target_pos,
-        layer,
-        layer,
-        None,
-        bow_shot::APEX_BEGGAR_COIN,
-        None,
-    );
-    // Set `belongs_to_beggar` before `add_entity` so the initial render
-    // already reflects the flag.
-    if let Entity::Projectile(p) = &mut coin {
-        p.object.belongs_to_beggar = true;
-    }
-    let coin_id = engine.add_entity(coin);
-    engine.attach_accessory_sprite(assets, coin_id);
+    let coin = {
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &engine.world.fast_grid,
+            layer,
+            sight_obstacles: engine.sight_obstacles(assets),
+            water_zones: Some(&assets.water_zones),
+        };
+        bow_shot::spawn_coin(
+            None,
+            source_pos,
+            target_pos,
+            layer,
+            0,
+            None,
+            bow_shot::APEX_BEGGAR_COIN,
+            Some(&obstacle_check),
+        )
+    };
+    let coin_id = engine.with_simulation_context(|engine, sim| {
+        engine.publish_primed_coin(sim, assets, coin, npc_pos_2d, source_sector, layer)
+    });
+    // Original SetBelongsToBeggar follows AddElement.
+    let Some(Entity::Projectile(coin)) = engine.world.entities.get_mut(coin_id) else {
+        unreachable!("published beggar coin changed entity kind")
+    };
+    coin.object.belongs_to_beggar = true;
 
     // ── Debit the civilian and retire them from the donor pool. ──
     if let Some(npc) = engine.get_entity_mut(npc_id)
@@ -382,5 +402,33 @@ impl EngineInner {
             pc.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
         }
         self.bid_for_money(assets, pc_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coin_geometry_uses_iso_forward_and_stored_world_target() {
+        let belt = crate::coordinates::WorldPoint3D::new(10.0, 20.0, 30.0);
+        let direction = 2;
+        let (dx, dy) = crate::element::direction_vector_16(direction);
+        let source = beggar_coin_source(belt, direction);
+        assert_eq!(source.x, belt.x + dx * 5.0);
+        assert_eq!(
+            source.y,
+            belt.y + dy * crate::position_interface::ASPECT_RATIO * 5.0
+        );
+        assert_eq!(source.z, belt.z);
+
+        // World-y deliberately differs from map-y (`y - z`): target the
+        // stored Position exactly, not a reconstructed map/belt point.
+        let beggar = crate::coordinates::WorldPoint3D::new(50.0, 80.0, 17.0);
+        let target = beggar_coin_target(source, beggar, true);
+        assert!((target.x - (source.x + beggar.x) * 0.5).abs() < 1.0e-5);
+        assert!((target.y - (source.y + beggar.y) * 0.5).abs() < 1.0e-5);
+        assert!((target.z - (source.z + beggar.z) * 0.5).abs() < 1.0e-5);
+        assert_eq!(beggar_coin_target(source, beggar, false), source);
     }
 }
