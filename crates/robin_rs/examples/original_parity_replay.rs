@@ -6499,6 +6499,22 @@ fn convert_recording_to_native(trace_path: &Path) {
             }
         }
     }
+    // The generation lock only serialises rebuilding a native trace from its
+    // recording. The recording is gone, so no rebuild can ever contend again
+    // and leaving the lock behind would litter every corpus directory (and
+    // every capture attempt directory) with an empty file.
+    let mut lock_name = native_path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    let lock_path = PathBuf::from(lock_name);
+    match std::fs::remove_file(&lock_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!(
+            "delete native parity trace generation lock {}: {error}",
+            lock_path.display()
+        ),
+    }
+
     let native_bytes = std::fs::metadata(&native_path)
         .expect("stat native parity trace after conversion")
         .len();
