@@ -1,0 +1,59 @@
+name: Rust quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The checked-in wrapper and linker are local development tools that are not
+  # available on GitHub-hosted runners.
+  RUSTC_WRAPPER: ""
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
+  RUSTFLAGS: -C target-cpu=x86-64-v2
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install pinned Rust toolchain and rustfmt
+        run: rustup component add rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  test:
+    name: Test
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libasound2-dev libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: tests
+
+      - name: Run tests
+        run: cargo test --locked
