@@ -4174,17 +4174,24 @@ impl EngineInner {
     /// Check whether the entity's cached sector (set during door-pass
     /// transitions) is a building sector.
     ///
-    /// Takes the entity's `element.sector` sector number and returns
-    /// the same handle when the sector has the BUILDING flag, so
-    /// callers can also compare "same building".
+    /// Takes the entity's exact `element.sector` identity and returns the same
+    /// handle when that sector has the BUILDING flag, so callers can also
+    /// compare "same building". Original's `RHElementActorHuman::GetBuilding`
+    /// checks the actor's `RHSector*` directly; the public-number lookup is
+    /// retained only for identity-less compatibility positions.
     pub(crate) fn entity_building_sector(
         &self,
         sector: Option<crate::position_interface::SectorHandle>,
     ) -> Option<crate::position_interface::SectorHandle> {
-        let sector_num = sector?;
-        let raw = u16::from(sector_num);
-        let gs = self.grid_sector_by_number(crate::sector::SectorNumber::new(raw as i16))?;
-        gs.sector_type.is_building().then_some(sector_num)
+        let sector = sector?;
+        let grid_sector =
+            movement::grid_sector_for_position_handle(&self.world.fast_grid.level, sector)?;
+        let public_number = crate::sector::SectorNumber::new(i16::from(sector));
+        assert_eq!(
+            grid_sector.sector_number, public_number,
+            "exact sector arena identity disagrees with its public number"
+        );
+        grid_sector.sector_type.is_building().then_some(sector)
     }
 
     /// `true` when the rotating ground selection circle should be drawn

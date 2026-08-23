@@ -2855,6 +2855,64 @@ pub(super) fn install_test_building_sector(engine: &mut EngineInner, raw_sector:
 }
 
 #[test]
+fn entity_building_sector_uses_exact_identity_before_public_number_fallback() {
+    let mut engine = EngineInner::new();
+    let public = crate::sector::SectorNumber::new(88);
+    let make_sector = |sector_type| crate::fast_find_grid::GridSector {
+        points: Vec::new(),
+        bounding_box: MapBBox::new(),
+        sector_type,
+        layer: 0,
+        sector_number: public,
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    };
+
+    let mut level = crate::fast_find_grid::LevelGrid::default();
+    level
+        .sectors
+        .push(make_sector(crate::sector::SectorType::BUILDING));
+    level
+        .sectors
+        .push(make_sector(crate::sector::SectorType::empty()));
+    level.sector_number_map.insert(public, 0);
+    engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
+
+    let number_only = crate::position_interface::SectorHandle::new(88).unwrap();
+    let exact_building = number_only.with_arena_index(
+        crate::fast_find_grid::SectorIndex::new(0).expect("building arena index"),
+    );
+    let exact_ordinary = number_only.with_arena_index(
+        crate::fast_find_grid::SectorIndex::new(1).expect("ordinary arena index"),
+    );
+
+    assert_eq!(
+        engine.entity_building_sector(exact_building.into()),
+        Some(exact_building),
+        "Original GetBuilding checks the actor's exact RHSector pointer"
+    );
+    assert_eq!(
+        engine.entity_building_sector(exact_ordinary.into()),
+        None,
+        "an outside duplicate-public sector must stay visible to outside observers"
+    );
+    assert_eq!(
+        engine.entity_building_sector(number_only.into()),
+        Some(number_only),
+        "identity-less compatibility positions retain the public-number lookup"
+    );
+}
+
+#[test]
 fn selection_mark_skips_hidden_and_building_pcs() {
     let mut engine = EngineInner::new();
     let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
