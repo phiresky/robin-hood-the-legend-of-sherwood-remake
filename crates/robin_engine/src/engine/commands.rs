@@ -4062,32 +4062,56 @@ impl EngineInner {
                 .world
                 .fast_grid
                 .get_sector_screen(target_pos, reference);
-            let resolved = hit.sector_idx.and_then(|idx| {
-                let sector = self.world.fast_grid.level.sectors.get(usize::from(idx))?;
+            let resolved = hit.sector_idx.map(|idx| {
+                let sector = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(usize::from(idx))
+                    .unwrap_or_else(|| panic!("DropAle sector hit references missing arena {idx}"));
                 if sector.sector_type.is_patch() || sector.sector_type.is_jump() {
-                    let under_idx = sector.underlying_sector?;
+                    // Original immediately dereferences RHSectorJump::GetSector
+                    // here (`RHEngine::ManageInputActionAle`); an overlay
+                    // without its authored underlying sector is corrupt
+                    // topology, not a number-only compatibility case.
+                    let under_idx = sector.underlying_sector.unwrap_or_else(|| {
+                        panic!("DropAle overlay sector arena {idx} has no underlying sector")
+                    });
                     let under = self
                         .world
                         .fast_grid
                         .level
                         .sectors
-                        .get(usize::from(under_idx))?;
-                    Some((under.sector_number, sector.layer))
+                        .get(usize::from(under_idx))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "DropAle overlay sector arena {idx} references missing underlying arena {under_idx}"
+                            )
+                        });
+                    let handle = crate::position_interface::SectorHandle::new(u16::from(
+                        under.sector_number,
+                    ))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "DropAle overlay sector arena {idx} resolved invalid underlying public sector {}",
+                            under.sector_number
+                        )
+                    })
+                    .with_arena_index(under_idx);
+                    (handle, sector.layer)
                 } else {
-                    Some((sector.sector_number, hit.layer))
+                    (
+                        hit.sector_handle().unwrap_or_else(|| {
+                            panic!("DropAle valid sector hit arena {idx} has no public handle")
+                        }),
+                        hit.layer,
+                    )
                 }
             });
             match resolved {
-                Some((number, layer)) => (
-                    crate::position_interface::SectorHandle::new(u16::from(number)),
-                    layer,
-                ),
-                None => (
-                    hit.sector
-                        .map(u16::from)
-                        .and_then(crate::position_interface::SectorHandle::new),
-                    hit.layer,
-                ),
+                Some((sector, layer)) => (Some(sector), layer),
+                None => (hit.sector_handle(), hit.layer),
             }
         };
 
@@ -5457,6 +5481,190 @@ mod tests {
             panic!("DropAle route must begin with movement");
         };
         (*destination, *sector, *layer)
+    }
+
+    fn setup_drop_ale_sector_identity_scene() -> (
+        EngineInner,
+        LevelAssets,
+        EntityId,
+        crate::fast_find_grid::SectorIndex,
+        crate::fast_find_grid::SectorIndex,
+    ) {
+        use crate::fast_find_grid::{GridSector, SectorIndex};
+        use crate::sector::{SectorNumber, SectorType};
+
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::DroppingAle,
+            crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+
+        let sector = |min_x, max_x| GridSector {
+            points: vec![
+                crate::coordinates::MapPoint::new(min_x, 0.0),
+                crate::coordinates::MapPoint::new(max_x, 0.0),
+                crate::coordinates::MapPoint::new(max_x, 128.0),
+                crate::coordinates::MapPoint::new(min_x, 128.0),
+            ],
+            bounding_box: crate::coordinates::MapBBox::from_coords(min_x, 0.0, max_x, 128.0),
+            sector_type: SectorType::MOTION | SectorType::AREA | SectorType::MOUSE,
+            layer: 0,
+            // Pc130's failure used two live arena objects whose public
+            // sector number was the same. Original compares the pointers.
+            sector_number: SectorNumber::new(0),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+
+        engine.world.fast_grid_mut().size_map(4, 2);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let source = SectorIndex::new(
+            engine
+                .world
+                .fast_grid_mut()
+                .add_sector(sector(0.0, 127.0), 0),
+        )
+        .expect("source sector index");
+        let alias = SectorIndex::new(
+            engine
+                .world
+                .fast_grid_mut()
+                .add_sector(sector(128.0, 255.0), 0),
+        )
+        .expect("alias sector index");
+
+        let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+        pc.element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(20.0, 30.0));
+        pc.position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -6.0, -4.0, 6.0, 4.0,
+            ));
+        pc.element_data_mut().set_sector(Some(
+            crate::position_interface::SectorHandle::new(0)
+                .unwrap()
+                .with_arena_index(source),
+        ));
+
+        (engine, assets, pc_id, source, alias)
+    }
+
+    #[test]
+    fn drop_ale_same_sector_retains_exact_identity_and_installs_move_ok() {
+        let (mut engine, assets, pc_id, source, _) = setup_drop_ale_sector_identity_scene();
+        let destination = crate::coordinates::MapPoint::new(80.0, 90.0);
+
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+        let (_, goal, layer) = drop_ale_seek_goal(&engine);
+        assert_eq!(goal.and_then(|sector| sector.arena_index()), Some(source));
+        assert_eq!(layer, 0);
+
+        engine.hourglass_phase_sequences(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &assets,
+        );
+
+        let actor = engine
+            .get_entity(pc_id)
+            .and_then(|entity| entity.actor_data())
+            .expect("DropAle owner remains an actor");
+        assert_eq!(
+            actor.installed_order.map(|order| order.order_type),
+            Some(crate::order::OrderType::TransitionWaitingUprightWalkingUpright)
+        );
+        let (sequence_id, element_index) = engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(pc_id)
+            .expect("same-sector DropAle installs its direct movement");
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .expect("selected DropAle movement exists");
+        assert_eq!(movement.command, Command::MoveOk);
+        assert_eq!(
+            movement.current_order().map(|order| order.order_type),
+            Some(crate::order::OrderType::TransitionWaitingUprightWalkingUpright)
+        );
+        assert!(
+            movement
+                .orders
+                .iter()
+                .any(|order| order.order_type == crate::order::OrderType::WalkingUpright),
+            "direct same-sector movement must retain its eventual walking order"
+        );
+    }
+
+    #[test]
+    fn drop_ale_duplicate_public_sector_keeps_cross_sector_identity() {
+        let (mut engine, _, pc_id, source, alias) = setup_drop_ale_sector_identity_scene();
+        let destination = crate::coordinates::MapPoint::new(180.0, 90.0);
+
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+
+        let (_, goal, layer) = drop_ale_seek_goal(&engine);
+        let goal = goal.expect("DropAle target must resolve to a sector");
+        assert_eq!(u16::from(goal), 0);
+        assert_eq!(goal.arena_index(), Some(alias));
+        assert_ne!(goal.arena_index(), Some(source));
+        assert_eq!(layer, 0);
+    }
+
+    #[test]
+    fn drop_ale_patch_goal_retains_exact_underlying_sector_identity() {
+        use crate::fast_find_grid::GridSector;
+        use crate::sector::{SectorNumber, SectorType};
+
+        let (mut engine, _, pc_id, source, _) = setup_drop_ale_sector_identity_scene();
+        let destination = crate::coordinates::MapPoint::new(80.0, 90.0);
+        engine.world.fast_grid_mut().add_sector(
+            GridSector {
+                points: vec![
+                    crate::coordinates::MapPoint::new(64.0, 64.0),
+                    crate::coordinates::MapPoint::new(96.0, 64.0),
+                    crate::coordinates::MapPoint::new(96.0, 112.0),
+                    crate::coordinates::MapPoint::new(64.0, 112.0),
+                ],
+                bounding_box: crate::coordinates::MapBBox::from_coords(64.0, 64.0, 96.0, 112.0),
+                sector_type: SectorType::PATCH | SectorType::AREA | SectorType::MOUSE,
+                layer: 0,
+                sector_number: SectorNumber::new(77),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: Some(source),
+            },
+            0,
+        );
+
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+
+        let (_, goal, layer) = drop_ale_seek_goal(&engine);
+        let goal = goal.expect("DropAle patch target resolves through its underlying sector");
+        assert_eq!(u16::from(goal), 0);
+        assert_eq!(goal.arena_index(), Some(source));
+        assert_eq!(layer, 0);
     }
 
     #[test]
