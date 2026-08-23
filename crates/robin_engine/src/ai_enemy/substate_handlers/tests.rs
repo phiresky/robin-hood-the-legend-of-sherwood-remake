@@ -3398,3 +3398,166 @@ fn shield_bearer_requires_the_owner_fighter_snapshot() {
         &AiPerTickData::stub(),
     );
 }
+
+#[test]
+fn advancing_shield_uses_live_target_sector_for_indexed_route() {
+    use crate::fast_find_grid::SectorIndex;
+    use crate::gate::{Door, DoorIndex, build_gate_links, find_path_gates_with_sector_indices};
+    use crate::sector::SectorNumber;
+
+    let sim = crate::sim_rng::test_context();
+    let arena = |index| SectorIndex::new(index).unwrap();
+    let sector = |public, index| {
+        SectorHandle::new(public)
+            .unwrap()
+            .with_arena_index(arena(index))
+    };
+    let source = Position {
+        x: 100.0,
+        y: 100.0,
+        sector: Some(sector(0, 10)),
+        level: 0,
+    };
+    let target = Position {
+        x: 735.0,
+        y: 1_659.0,
+        sector: Some(sector(88, 12)),
+        level: 2,
+    };
+
+    let mut ai = EnemyAi::new(150);
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingAdvancingWithShield;
+    ai.base.primary_target = 282;
+
+    let mut target_view = pc_view(crate::element::Posture::Upright);
+    target_view.position = target;
+    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+    views.insert(282, target_view);
+    let ctx = AiContext {
+        frame: 7_654,
+        position: source,
+        self_layer: source.level,
+        entity_views: crate::ai_entity_view::shared_entity_views(views),
+        ..AiContext::default()
+    };
+
+    // Deliberately omit the target from the fighter registry. Original reads
+    // the live element position for this GoNear destination.
+    ai.think_expected_event(
+        &sim,
+        &Stimulus::new(StimulusType::EventDone),
+        &mut AiGlobalState::default(),
+        &ctx,
+        &AiPerTickData::stub(),
+        None,
+    );
+
+    let [order] = ai.base.outbox.actor.orders.as_slice() else {
+        panic!("advancing shield must author exactly one GoNear movement");
+    };
+    assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
+    assert_eq!(order.target_sector, target.sector);
+    assert_eq!(order.target_sector_index, Some(arena(12)));
+    assert_eq!(order.target_layer, Some(2));
+
+    let mut doors = (0..114)
+        .map(|_| Door {
+            active: false,
+            ..Door::default()
+        })
+        .collect::<Vec<_>>();
+    doors[111] = Door {
+        active: true,
+        point_out: crate::coordinates::MapPoint::new(100.0, 100.0),
+        point_in: crate::coordinates::MapPoint::new(400.0, 800.0),
+        sector_out: SectorNumber::new(0),
+        sector_in: SectorNumber::new(70),
+        sector_out_index: Some(arena(10)),
+        sector_in_index: Some(arena(11)),
+        ..Door::default()
+    };
+    doors[113] = Door {
+        active: true,
+        point_out: crate::coordinates::MapPoint::new(735.0, 1_659.0),
+        point_in: crate::coordinates::MapPoint::new(500.0, 1_000.0),
+        sector_out: SectorNumber::new(88),
+        sector_in: SectorNumber::new(70),
+        sector_out_index: Some(arena(12)),
+        sector_in_index: Some(arena(11)),
+        ..Door::default()
+    };
+    build_gate_links(&mut doors);
+
+    let route = find_path_gates_with_sector_indices(
+        &doors,
+        (source.x, source.y),
+        source.sector.unwrap().get(),
+        source.sector.unwrap().arena_index(),
+        (order.target_x, order.target_y),
+        order.target_sector.unwrap().get(),
+        order.target_sector_index,
+        None,
+        false,
+        &|_| true,
+        &|_| None,
+    )
+    .expect("exact live target identity must launch the indexed route");
+    assert_eq!(
+        route
+            .iter()
+            .map(|step| (step.door_index, step.direct))
+            .collect::<Vec<_>>(),
+        vec![(DoorIndex(111), true), (DoorIndex(113), false)]
+    );
+
+    // Public sector 88 has a distinct duplicate in the arena. Losing the
+    // live target's identity would make this route unresolvable.
+    assert!(
+        find_path_gates_with_sector_indices(
+            &doors,
+            (source.x, source.y),
+            source.sector.unwrap().get(),
+            source.sector.unwrap().arena_index(),
+            (order.target_x, order.target_y),
+            88,
+            Some(arena(13)),
+            None,
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+#[should_panic(
+    expected = "required entity view for handle 282 missing (advancing shield primary target)"
+)]
+fn advancing_shield_requires_live_primary_target_view() {
+    let sim = crate::sim_rng::test_context();
+    let mut ai = EnemyAi::new(150);
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingAdvancingWithShield;
+    ai.base.primary_target = 282;
+
+    // A combat-registry snapshot cannot substitute for the live RHElement
+    // position used by Original's Position(mpPrimaryTarget).
+    let mut tick = AiPerTickData::stub();
+    tick.fighter_registry
+        .push(crate::ai_enemy::FighterSnapshot {
+            handle: 282,
+            position: Position::default(),
+            ..crate::ai_enemy::FighterSnapshot::default()
+        });
+
+    ai.think_expected_event(
+        &sim,
+        &Stimulus::new(StimulusType::EventDone),
+        &mut AiGlobalState::default(),
+        &AiContext::default(),
+        &tick,
+        None,
+    );
+}

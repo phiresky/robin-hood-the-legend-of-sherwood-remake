@@ -1453,15 +1453,13 @@ impl EnemyAi {
         match stimulus_type {
             StimulusType::EventDone => {
                 // Shield lowered, run some steps forward
-                let target_pos = self
-                    .find_fighter(self.base.primary_target, tick)
-                    .map(|f| f.position)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "advancing shield bearer {} requires primary target {} in the fighter registry",
-                            self.base.me, self.base.primary_target
-                        )
-                    });
+                // Original passes `Position(mpPrimaryTarget)` here. That
+                // copies the target's live RHposition, including RHSector*
+                // identity; the combat registry is not the source of this
+                // movement destination.
+                let target_pos = ctx
+                    .expect_entity_view(self.base.primary_target, "advancing shield primary target")
+                    .position;
                 self.go_near(
                     self.base.current_state,
                     self.base.current_substate,
