@@ -5869,6 +5869,21 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     let mut profiles = (*assets.profile_manager).clone();
     let mut needs_hth_weapon = false;
 
+    // Level loading records soldiers in load order before `init_ai` copies
+    // that roster into the global AI state.  Tests which construct entities
+    // directly must install both halves of that invariant: several Original
+    // routines deliberately scan inactive or unconscious soldiers through
+    // GetNumberOfSoldiers rather than the active-NPC registry.
+    assets.entities.soldier_entity_ids = engine.world.entities.soldier_ids().collect();
+    engine.ai.global.all_soldier_handles = std::sync::Arc::new(
+        assets
+            .entities
+            .soldier_entity_ids
+            .iter()
+            .map(|id| id.index())
+            .collect(),
+    );
+
     // Profiles are static level data: production actors carry them whatever
     // their live state, and a fixture actor that starts dead, inactive or
     // unconscious still needs one the moment it revives or is scanned.
