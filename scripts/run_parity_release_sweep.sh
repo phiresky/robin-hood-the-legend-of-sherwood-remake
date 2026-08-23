@@ -23,7 +23,6 @@ fi
 
 workspace=$(pwd)
 snapshot="$audit_dir/traces.snapshot"
-mkdir -p "$audit_dir/logs" "$audit_dir/status" "$audit_dir/.trace-locks"
 
 # Runner processes from distinct audit directories must share the same slot
 # pool.  Original's asynchronous pathfinder is sensitive to several parity
@@ -31,14 +30,38 @@ mkdir -p "$audit_dir/logs" "$audit_dir/status" "$audit_dir/.trace-locks"
 # that a serial replay cannot reproduce.  Keep the safe default globally
 # serial.  PARITY_SWEEP_CONCURRENCY remains a compatibility alias, but callers
 # that deliberately want parallelism should set the global spelling to the
-# same value for every participating sweep.
+# same value for every participating sweep. PARITY_SWEEP_FAIL_FAST=1 is for a
+# single globally serial manifest: it stops at the first recorded non-exact
+# result and also refuses to resume past an existing non-exact result.
 global_concurrency=${PARITY_SWEEP_GLOBAL_CONCURRENCY:-${PARITY_SWEEP_CONCURRENCY:-1}}
 if [[ ! "$global_concurrency" =~ ^[1-9][0-9]*$ ]]; then
     printf 'error: PARITY_SWEEP_GLOBAL_CONCURRENCY must be a positive integer\n' >&2
     exit 2
 fi
+fail_fast=${PARITY_SWEEP_FAIL_FAST:-0}
+if [[ "$fail_fast" != 0 && "$fail_fast" != 1 ]]; then
+    printf 'error: PARITY_SWEEP_FAIL_FAST must be 0 or 1\n' >&2
+    exit 2
+fi
+if [[ "$fail_fast" == 1 \
+    && ( "$shard" != 0 || "$shards" != 1 || "$global_concurrency" != 1 ) ]]
+then
+    printf '%s\n' \
+        'error: PARITY_SWEEP_FAIL_FAST=1 requires SHARD=0, SHARDS=1, and global concurrency 1' \
+        >&2
+    exit 2
+fi
+if ! mkdir -p "$audit_dir/logs" "$audit_dir/status" "$audit_dir/.trace-locks"; then
+    if [[ "$fail_fast" == 1 ]]; then
+        exit 1
+    fi
+fi
 runner_slot_dir=${PARITY_SWEEP_SLOT_DIR:-$workspace/.git/parity-runner-slots}
-mkdir -p "$runner_slot_dir"
+if ! mkdir -p "$runner_slot_dir"; then
+    if [[ "$fail_fast" == 1 ]]; then
+        exit 1
+    fi
+fi
 
 exact_eof_marker='parity trace matched every recorded frame'
 integrity_status='integrity-eof-marker'
@@ -71,6 +94,18 @@ acquire_runner_slot() {
         done
         sleep 1
     done
+}
+
+status_is_exact_eof() {
+    local status=$1
+    local log=$2
+    local value marker_count
+
+    [[ -f "$status" && -f "$log" ]] || return 1
+    value=$(<"$status") || return 1
+    [[ "$value" == 0 ]] || return 1
+    marker_count=$(grep -Fxc -- "$exact_eof_marker" "$log" || true)
+    [[ "$marker_count" == 1 ]]
 }
 
 if [[ ! -f "$snapshot" ]]; then
@@ -114,12 +149,6 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     log="$audit_dir/logs/$key.log"
     status="$audit_dir/status/$key.status"
 
-    if [[ -n "$permanent_eof_snapshot" \
-        && -n "${permanent_eof_keys[$canonical_key]+present}" ]]
-    then
-        continue
-    fi
-
     # Two watcher instances can briefly overlap during a restart.  Sharding
     # prevents duplicate work within one invocation, but it cannot stop both
     # invocations from observing the same absent status and writing the same
@@ -128,13 +157,45 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     exec {trace_lock_fd}>"$audit_dir/.trace-locks/$full_key.lock"
     flock "$trace_lock_fd"
 
-    if [[ -f "$status" || -f "$audit_dir/status/$full_key.status" ]]; then
+    existing_status=
+    existing_log=
+    if [[ -f "$status" ]]; then
+        existing_status=$status
+        existing_log=$log
+    elif [[ -f "$audit_dir/status/$full_key.status" ]]; then
+        existing_status="$audit_dir/status/$full_key.status"
+        existing_log="$audit_dir/logs/$full_key.log"
+    fi
+    if [[ -n "$existing_status" ]]; then
+        exec {trace_lock_fd}>&-
+        if [[ "$fail_fast" == 1 ]] \
+            && ! status_is_exact_eof "$existing_status" "$existing_log"
+        then
+            exit 1
+        fi
+        continue
+    fi
+    # Permanent evidence may skip a runner invocation, but it must never hide
+    # corrupt local evidence in this audit. The local status/log check above is
+    # therefore intentionally performed first while holding the trace claim.
+    if [[ -n "$permanent_eof_snapshot" \
+        && -n "${permanent_eof_keys[$canonical_key]+present}" ]]
+    then
         exec {trace_lock_fd}>&-
         continue
     fi
     if [[ ! -f "$trace" ]]; then
-        write_status "$status" missing
+        if ! write_status "$status" missing; then
+            exec {trace_lock_fd}>&-
+            if [[ "$fail_fast" == 1 ]]; then
+                exit 1
+            fi
+            continue
+        fi
         exec {trace_lock_fd}>&-
+        if [[ "$fail_fast" == 1 ]]; then
+            exit 1
+        fi
         continue
     fi
 
@@ -147,6 +208,9 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     if ! run_log=$(mktemp "${log}.tmp.XXXXXX"); then
         printf 'error: unable to create private parity log for: %s\n' "$log" >&2
         exec {trace_lock_fd}>&-
+        if [[ "$fail_fast" == 1 ]]; then
+            exit 1
+        fi
         continue
     fi
 
@@ -164,12 +228,20 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     else
         runner_status=$?
     fi
-    if mv -f -- "$run_log" "$log"; then
-        write_status "$status" "$runner_status"
+    result_published=0
+    if mv -f -- "$run_log" "$log" \
+        && write_status "$status" "$runner_status"
+    then
+        result_published=1
     else
-        printf 'error: unable to publish parity log: %s\n' "$log" >&2
+        printf 'error: unable to publish parity result: %s\n' "$log" >&2
         rm -f -- "$run_log"
     fi
     exec {runner_slot_fd}>&-
     exec {trace_lock_fd}>&-
+    if [[ "$fail_fast" == 1 \
+        && ( "$result_published" != 1 || "$runner_status" != 0 ) ]]
+    then
+        exit 1
+    fi
 done
