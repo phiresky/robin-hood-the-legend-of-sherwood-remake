@@ -24,7 +24,9 @@ use fs2::FileExt as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
-use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, LevelAssets};
+use robin_engine::engine::{
+    DevState, Engine, HostDisplayState, InputState, LegacyGridSectorAsset, LevelAssets,
+};
 use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::game_operation::GameCode;
 use robin_engine::graphic_config::TextureScaleMode;
@@ -2069,12 +2071,13 @@ struct ReplayGroupMoveResolution {
     recorded_gate_routes: Vec<(TraceEntityId, Vec<(u32, bool)>)>,
 }
 
-/// Recover whether Original used ordinary `AppendMoveToSequence` or the
-/// distinct `AppendMoveToDoorSequence` constructor for a schema-16 group
-/// move. The command records the patch-aware route sector but not the
-/// coincident `mpSelectedSector` kind that selected the constructor. Rust's
-/// spatial lookup can choose a door overlay where Original chose the
-/// underlying motion sector, so the same-frame route event is authoritative.
+/// Recover whether `AppendMoveToSequence` selected its internal
+/// `FindPathGates` or `FindPathIntoDoor` branch for a schema-16 group move.
+/// Both branches record route kind `move`; `move_to_door` belongs to the
+/// separate `AppendMoveToDoorToSequence` API and is not this discriminator.
+/// The retained Original sparse sector topology preserves that distinction:
+/// a door goal names its exact gate, while an ordinary patch remains ordinary
+/// even when its route happens to end across that same overlay door.
 // TODO(parity-schema): record the selected group-move route constructor on
 // TraceCommand::GroupMove so future traces do not need this event join.
 fn resolve_schema_sixteen_group_move_route(
@@ -2082,6 +2085,8 @@ fn resolve_schema_sixteen_group_move_route(
     command: &TraceCommand,
     route_events: Option<&[TraceRouteConstructionEvent]>,
     consumed_route_ordinals: &mut BTreeSet<u64>,
+    entity_map: &EntityMap,
+    retained_sector_kinds: &[LegacyGridSectorAsset],
 ) -> Option<ReplayGroupMoveResolution> {
     if schema != 16 {
         return None;
@@ -2108,7 +2113,7 @@ fn resolve_schema_sixteen_group_move_route(
             if consumed_route_ordinals.contains(&ordinal)
                 || !actors.contains(&event.actor)
                 || event.goal_sector != goal_sector
-                || !matches!(event.kind.as_str(), "move" | "move_to_door")
+                || event.kind != "move"
             {
                 return None;
             }
@@ -2119,13 +2124,34 @@ fn resolve_schema_sixteen_group_move_route(
         return None;
     }
     matching.sort_unstable_by_key(|(ordinal, _)| *ordinal);
-    let door_route = matching[0].1.kind == "move_to_door";
-    assert!(
-        matching
-            .iter()
-            .all(|(_, event)| (event.kind == "move_to_door") == door_route),
-        "one group move produced mixed ordinary and door route constructors: {matching:?}"
-    );
+    let goal_kind = retained_sector_kinds
+        .get(usize::from(goal_sector))
+        .unwrap_or_else(|| {
+            panic!(
+                "schema-16 group-move goal sector {goal_sector} is absent from retained Original topology"
+            )
+        });
+    let goal_door = match goal_kind {
+        LegacyGridSectorAsset::Door { gate_index } => Some(entity_map.translate_gate(*gate_index)),
+        LegacyGridSectorAsset::NullOrOrdinary
+        | LegacyGridSectorAsset::Building
+        | LegacyGridSectorAsset::Lift => None,
+    };
+    if let Some(goal_door) = goal_door {
+        assert!(
+            matching.iter().all(|(_, event)| {
+                !matches!(
+                    event.draft_diagnostics.get("result"),
+                    Some(TraceJsonValue::String(result)) if result == "success"
+                ) || event
+                    .gates
+                    .last()
+                    .is_some_and(|gate| entity_map.translate_gate(gate.gate_id) == goal_door)
+            }),
+            "successful door-target group move did not terminate at retained goal door {goal_door}: {matching:?}"
+        );
+    }
+    let door_route = goal_door.is_some();
     let mut terminal_exit_sectors = matching
         .iter()
         .filter_map(|(_, event)| {
@@ -4011,6 +4037,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &command,
                 frame.route_construction_events.as_deref(),
                 &mut consumed_group_move_route_ordinals,
+                map,
+                &assets
+                    .legacy_grid_topology
+                    .as_ref()
+                    .expect("parity replay requires retained Original fast-grid topology")
+                    .sectors,
             );
             if let Some(command) = command.into_player_command(
                 map,
@@ -4061,6 +4093,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     &command,
                     frame.route_construction_events.as_deref(),
                     &mut consumed_group_move_route_ordinals,
+                    map,
+                    &assets
+                        .legacy_grid_topology
+                        .as_ref()
+                        .expect("parity replay requires retained Original fast-grid topology")
+                        .sectors,
                 );
                 command.into_player_command(
                     map,
@@ -11936,6 +11974,27 @@ mod tests {
         }
     }
 
+    fn group_move_route_map(max_gate: u32) -> EntityMap {
+        EntityMap {
+            entities: BTreeMap::new(),
+            entities_by_creation_order: BTreeMap::new(),
+            sectors: BTreeMap::new(),
+            gates: (0..=max_gate).map(robin_engine::gate::DoorIndex).collect(),
+            runtime_creation_order_boundary: 0,
+        }
+    }
+
+    fn group_move_sector_kinds(
+        max_sector: u16,
+        door: Option<(u16, u32)>,
+    ) -> Vec<LegacyGridSectorAsset> {
+        let mut sectors = vec![LegacyGridSectorAsset::NullOrOrdinary; usize::from(max_sector) + 1];
+        if let Some((sector, gate_index)) = door {
+            sectors[usize::from(sector)] = LegacyGridSectorAsset::Door { gate_index };
+        }
+        sectors
+    }
+
     #[test]
     fn schema_sixteen_group_move_recovers_ordinary_route_over_door_overlay() {
         let actor = TraceEntityId {
@@ -11957,22 +12016,41 @@ mod tests {
             goal_sector: 117,
             goal_layer: 8,
         };
-        let routes = [group_move_route_fixture(actor, "move", 0)];
+        let mut route = group_move_route_fixture(actor, "move", 0);
+        route.gates.push(TraceRouteGate {
+            gate_id: 53,
+            direct: false,
+            sector_out: 64,
+            level_out: 4,
+            sector_in: 290,
+            level_in: 13,
+            draft_diagnostics: BTreeMap::new(),
+        });
+        let routes = [route];
         let mut consumed = BTreeSet::new();
+        let map = group_move_route_map(53);
+        let sectors = group_move_sector_kinds(292, Some((292, 53)));
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_route(16, &command, Some(&routes), &mut consumed,),
+            resolve_schema_sixteen_group_move_route(
+                16,
+                &command,
+                Some(&routes),
+                &mut consumed,
+                &map,
+                &sectors,
+            ),
             Some(ReplayGroupMoveResolution {
                 door_route: false,
-                unmapped_goal_search_sector: None,
-                recorded_gate_routes: Vec::new(),
+                unmapped_goal_search_sector: Some(64),
+                recorded_gate_routes: vec![(actor, vec![(53, false)])],
             })
         );
         assert_eq!(consumed, BTreeSet::from([0]));
     }
 
     #[test]
-    fn group_move_route_recovery_preserves_door_kind_and_ignores_legacy_schema() {
+    fn schema_sixteen_group_move_recovers_internal_door_branch_from_retained_goal_kind() {
         let actor = TraceEntityId {
             kind: TraceEntityKind::Pc,
             index: 344,
@@ -11985,17 +12063,37 @@ mod tests {
             },
             running: false,
             show_marker: true,
-            goal_sector: 117,
-            goal_layer: 8,
+            goal_sector: 292,
+            goal_layer: 4,
         };
-        let routes = [group_move_route_fixture(actor, "move_to_door", 4)];
+        let mut route = group_move_route_fixture(actor, "move", 4);
+        route.goal_sector = 292;
+        route.gates.push(TraceRouteGate {
+            gate_id: 53,
+            direct: false,
+            sector_out: 64,
+            level_out: 4,
+            sector_in: 290,
+            level_in: 13,
+            draft_diagnostics: BTreeMap::new(),
+        });
+        let routes = [route];
         let mut consumed = BTreeSet::new();
+        let map = group_move_route_map(53);
+        let sectors = group_move_sector_kinds(292, Some((292, 53)));
 
         assert_eq!(
-            resolve_schema_sixteen_group_move_route(16, &command, Some(&routes), &mut consumed,),
+            resolve_schema_sixteen_group_move_route(
+                16,
+                &command,
+                Some(&routes),
+                &mut consumed,
+                &map,
+                &sectors,
+            ),
             Some(ReplayGroupMoveResolution {
                 door_route: true,
-                unmapped_goal_search_sector: None,
+                unmapped_goal_search_sector: Some(64),
                 recorded_gate_routes: Vec::new(),
             })
         );
@@ -12006,10 +12104,58 @@ mod tests {
                 &command,
                 Some(&routes),
                 &mut legacy_consumed,
+                &map,
+                &sectors,
             ),
             None
         );
         assert!(legacy_consumed.is_empty());
+    }
+
+    #[test]
+    fn schema_sixteen_group_move_retains_door_branch_for_failed_empty_route() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 344,
+        };
+        let command = TraceCommand::GroupMove {
+            actors: vec![actor],
+            destination: TracePoint {
+                x: TraceFloat { bits: 0 },
+                y: TraceFloat { bits: 0 },
+            },
+            running: false,
+            show_marker: true,
+            goal_sector: 292,
+            goal_layer: 4,
+        };
+        let mut route = group_move_route_fixture(actor, "move", 5);
+        route.goal_sector = 292;
+        route.draft_diagnostics.insert(
+            "result".to_owned(),
+            TraceJsonValue::String("failure".to_owned()),
+        );
+        let routes = [route];
+        let map = group_move_route_map(53);
+        let sectors = group_move_sector_kinds(292, Some((292, 53)));
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_group_move_route(
+                16,
+                &command,
+                Some(&routes),
+                &mut consumed,
+                &map,
+                &sectors,
+            ),
+            Some(ReplayGroupMoveResolution {
+                door_route: true,
+                unmapped_goal_search_sector: None,
+                recorded_gate_routes: Vec::new(),
+            })
+        );
+        assert_eq!(consumed, BTreeSet::from([5]));
     }
 
     #[test]
@@ -12041,8 +12187,16 @@ mod tests {
             draft_diagnostics: BTreeMap::new(),
         });
         let mut consumed = BTreeSet::new();
-        let resolution =
-            resolve_schema_sixteen_group_move_route(16, &command, Some(&[route]), &mut consumed);
+        let map = group_move_route_map(78);
+        let sectors = group_move_sector_kinds(492, None);
+        let resolution = resolve_schema_sixteen_group_move_route(
+            16,
+            &command,
+            Some(&[route]),
+            &mut consumed,
+            &map,
+            &sectors,
+        );
 
         assert_eq!(
             resolution,
