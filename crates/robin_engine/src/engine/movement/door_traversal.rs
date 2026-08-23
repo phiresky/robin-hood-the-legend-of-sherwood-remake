@@ -343,17 +343,17 @@ impl EngineInner {
             // point (or CHANGE_POSITION out of a building), matching
             // original AppendMoveToSequence.  The door-vs-jump split
             // happens after this approach.
-            // `FindPath*` retains exact sector pointers on every gate.  Old
-            // saves and a few compatibility paths can still hand this
-            // builder a number-only source handle; resolving that number via
-            // `sector_number_map` is ambiguous when the level has duplicate
-            // public sector numbers.  On the first gate, its authored source
-            // side is the exact identity of `pOldSector` used by Original's
-            // building-exit branch.  Recover it only when the public numbers
-            // agree; an already-enriched source remains authoritative.
+            // `FindPath*` retains exact sector pointers on every gate. The
+            // first retained gate's agreeing source side is therefore the
+            // exact identity of Original's initial `pOldSector`. This remains
+            // authoritative even when a restored/spatial source handle has
+            // an arena index: overlapping sectors can give that position the
+            // opposite alias (building vs ordinary) while the selected route
+            // still proves which sector pointer FindPath used. Never recover
+            // through a disagreeing public number, and after the first gate
+            // keep using the previous gate's exact `pNewSector` equivalent.
             let old_sector_for_classification = prev_sector.map(|sector| {
-                if sector.arena_index().is_none() && u16::from(sector) == u16::from(shot.old_sector)
-                {
+                if gate_idx == 0 && u16::from(sector) == u16::from(shot.old_sector) {
                     shot.old_sector
                 } else {
                     sector

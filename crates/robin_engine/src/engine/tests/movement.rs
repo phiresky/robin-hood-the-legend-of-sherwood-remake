@@ -117,9 +117,26 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         level
             .sectors
             .push(make_sector(49, SectorType::MOTION | SectorType::AREA));
+        level.sectors.push(make_sector(
+            66,
+            SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+        ));
+        level
+            .sectors
+            .push(make_sector(66, SectorType::MOTION | SectorType::AREA));
+        level.sectors.push(make_sector(
+            270,
+            SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+        ));
+        level
+            .sectors
+            .push(make_sector(47, SectorType::MOTION | SectorType::AREA));
         level.sector_number_map.insert(SectorNumber::new(64), 1);
         level.sector_number_map.insert(SectorNumber::new(274), 3);
         level.sector_number_map.insert(SectorNumber::new(49), 4);
+        level.sector_number_map.insert(SectorNumber::new(66), 5);
+        level.sector_number_map.insert(SectorNumber::new(270), 7);
+        level.sector_number_map.insert(SectorNumber::new(47), 8);
     }
     engine.script_domains.interactables.doors.push(Door {
         point_out: MapPoint::new(100.0, 100.0),
@@ -127,6 +144,24 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         sector_out: SectorNumber::new(64),
         sector_in: SectorNumber::new(48),
         sector_out_index: SectorIndex::new(0),
+        ..Door::default()
+    });
+    engine.script_domains.interactables.doors.push(Door {
+        point_out: MapPoint::new(300.0, 100.0),
+        point_in: MapPoint::new(320.0, 100.0),
+        sector_out: SectorNumber::new(66),
+        sector_in: SectorNumber::new(270),
+        sector_out_index: SectorIndex::new(6),
+        sector_in_index: SectorIndex::new(7),
+        ..Door::default()
+    });
+    engine.script_domains.interactables.doors.push(Door {
+        point_in: MapPoint::new(340.0, 100.0),
+        point_out: MapPoint::new(360.0, 100.0),
+        sector_in: SectorNumber::new(270),
+        sector_out: SectorNumber::new(47),
+        sector_in_index: SectorIndex::new(7),
+        sector_out_index: SectorIndex::new(8),
         ..Door::default()
     });
     engine.script_domains.interactables.doors.push(Door {
@@ -243,7 +278,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             owner,
             crate::position_interface::SectorHandle::new(274),
             vec![GatePathStep {
-                door_index: DoorIndex(1),
+                door_index: DoorIndex(3),
                 direct: false,
             }],
             GoalShape::Point {
@@ -279,6 +314,84 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             .elements
             .iter()
             .any(|element| element.command == Command::ChangePosition)
+    );
+
+    let exact_ordinary_alias = crate::position_interface::SectorHandle::new(274)
+        .unwrap()
+        .with_arena_index(SectorIndex::new(3).unwrap());
+    let (_, exact_alias_draws) = crate::sim_rng::with_draw_trace(|| {
+        engine.build_gate_movement_sequence(
+            &sim,
+            owner,
+            Some(exact_ordinary_alias),
+            vec![GatePathStep {
+                door_index: DoorIndex(3),
+                direct: false,
+            }],
+            GoalShape::Point {
+                point: MapPoint::new(240.0, 100.0),
+                tolerance: 0.0,
+            },
+            0,
+            OrderType::WalkingUpright,
+            true,
+            1.0,
+            MoveFlags::empty(),
+            Vec::new(),
+            Vec::new(),
+            false,
+            false,
+        )
+    });
+    assert_eq!(
+        exact_alias_draws,
+        [
+            RngSite::RuntimeBuildingExitWait,
+            RngSite::RuntimeBuildingExitWait,
+        ],
+        "replay-011's retained gate42 building side overrides an overlapping ordinary spatial alias"
+    );
+
+    let exact_building_alias = crate::position_interface::SectorHandle::new(66)
+        .unwrap()
+        .with_arena_index(SectorIndex::new(5).unwrap());
+    let (_, multi_gate_draws) = crate::sim_rng::with_draw_trace(|| {
+        engine.build_gate_movement_sequence(
+            &sim,
+            owner,
+            Some(exact_building_alias),
+            vec![
+                GatePathStep {
+                    door_index: DoorIndex(1),
+                    direct: true,
+                },
+                GatePathStep {
+                    door_index: DoorIndex(2),
+                    direct: false,
+                },
+            ],
+            GoalShape::Point {
+                point: MapPoint::new(380.0, 100.0),
+                tolerance: 0.0,
+            },
+            0,
+            OrderType::WalkingUpright,
+            true,
+            1.0,
+            MoveFlags::empty(),
+            Vec::new(),
+            Vec::new(),
+            false,
+            false,
+        )
+    });
+    assert_eq!(
+        multi_gate_draws,
+        [
+            RngSite::RuntimeBuildingExitWait,
+            RngSite::RuntimeBuildingExitWait,
+        ],
+        "replay-005's first ordinary gate side suppresses the false source-alias wait while the following real building exit still draws once"
     );
 }
 
