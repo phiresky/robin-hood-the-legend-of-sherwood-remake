@@ -595,6 +595,7 @@ mod tests {
                 running: false,
                 show_marker: true,
                 goal_override: None,
+                goal_sector_index_override: None,
                 door_route_override: None,
                 recorded_gate_routes: Vec::new(),
             });
@@ -947,6 +948,7 @@ mod tests {
             running: true,
             show_marker: false,
             goal_override: Some((crate::sector::SectorNumber::new(42), 3)),
+            goal_sector_index_override: crate::fast_find_grid::SectorIndex::new(17),
             door_route_override: None,
             recorded_gate_routes: Vec::new(),
         };
@@ -955,13 +957,43 @@ mod tests {
         match round {
             PlayerCommand::GroupMove {
                 goal_override: Some((sector, layer)),
+                goal_sector_index_override: Some(index),
                 ..
             } => {
                 assert_eq!(sector, crate::sector::SectorNumber::new(42));
                 assert_eq!(layer, 3);
+                assert_eq!(index.get(), 17);
             }
             _ => panic!("round-tripped GroupMove lost its goal_override"),
         }
+    }
+
+    #[test]
+    fn legacy_group_move_defaults_exact_goal_index_to_spatial_resolution() {
+        let current = PlayerCommand::GroupMove {
+            actors: vec![crate::element::EntityId::Pc(crate::entity_id::PcId(1))],
+            destination: crate::coordinates::MapPoint::new(50.0, 75.0),
+            running: false,
+            show_marker: true,
+            goal_override: Some((crate::sector::SectorNumber::new(42), 3)),
+            goal_sector_index_override: crate::fast_find_grid::SectorIndex::new(17),
+            door_route_override: None,
+            recorded_gate_routes: Vec::new(),
+        };
+        let mut json = serde_json::to_value(current).unwrap();
+        json.get_mut("GroupMove")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged GroupMove fields")
+            .remove("goal_sector_index_override");
+
+        let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
+        assert!(matches!(
+            decoded,
+            PlayerCommand::GroupMove {
+                goal_sector_index_override: None,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -229,6 +229,86 @@ fn climb_lift_translation_input(action: OrderType, is_fast: bool) -> OrderType {
 #[cfg(test)]
 mod group_move_authorization_tests {
     use super::*;
+
+    fn replay_goal_sector(number: i16, layer: u16) -> crate::fast_find_grid::GridSector {
+        crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: MapBBox::new(),
+            sector_type: SectorType::MOTION | SectorType::AREA,
+            layer,
+            sector_number: crate::sector::SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
+    #[test]
+    fn replay_exact_group_move_goal_survives_spatial_miss_and_duplicate_public_sectors() {
+        let mut level = crate::fast_find_grid::LevelGrid::default();
+        level.sectors.push(replay_goal_sector(421, 6));
+        level.sectors.push(replay_goal_sector(421, 6));
+        level.sectors.push(replay_goal_sector(422, 2));
+        let exact_421 = crate::fast_find_grid::SectorIndex::new(1).unwrap();
+        let exact_422 = crate::fast_find_grid::SectorIndex::new(2).unwrap();
+
+        for (recorded, exact) in [
+            ((crate::sector::SectorNumber::new(421), 6), exact_421),
+            ((crate::sector::SectorNumber::new(422), 2), exact_422),
+        ] {
+            assert_eq!(
+                resolve_group_move_route_goal_index(
+                    Some(recorded),
+                    Some(exact),
+                    Some(crate::sector::SectorNumber::new(116)),
+                    None,
+                    8,
+                    None,
+                    &level,
+                ),
+                Some(exact),
+                "the retained sparse slot is authoritative when the click misses the recorded sector"
+            );
+        }
+
+        assert_eq!(
+            resolve_group_move_route_goal_index(
+                Some((crate::sector::SectorNumber::new(421), 6)),
+                None,
+                Some(crate::sector::SectorNumber::new(116)),
+                None,
+                8,
+                None,
+                &level,
+            ),
+            None,
+            "live and legacy commands retain spatial resolution instead of guessing among duplicate public sectors"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "disagrees with its recorded public sector")]
+    fn replay_exact_group_move_goal_rejects_inconsistent_public_identity() {
+        let mut level = crate::fast_find_grid::LevelGrid::default();
+        level.sectors.push(replay_goal_sector(421, 6));
+        resolve_group_move_route_goal_index(
+            Some((crate::sector::SectorNumber::new(422), 2)),
+            crate::fast_find_grid::SectorIndex::new(0),
+            None,
+            None,
+            0,
+            None,
+            &level,
+        );
+    }
     use crate::coordinates::MoveBox;
     use crate::sector::SectorType;
 
@@ -358,8 +438,11 @@ mod group_move_authorization_tests {
     #[test]
     fn same_topology_door_overlay_still_uses_simple_move() {
         let sector = Some(crate::sector::SectorNumber::new(50));
+        let exact = crate::fast_find_grid::SectorIndex::new(12);
 
-        assert!(group_move_uses_simple_route(true, true, sector, 0, 50, 0,));
+        assert!(group_move_uses_simple_route(
+            true, true, sector, exact, 0, 50, exact, 0,
+        ));
         assert_eq!(
             group_move_door_selection(Some(86), true, None),
             (Some(86), true, true),
@@ -373,8 +456,24 @@ mod group_move_authorization_tests {
             true,
             true,
             Some(crate::sector::SectorNumber::new(51)),
+            None,
             0,
             50,
+            None,
+            0,
+        ));
+    }
+
+    #[test]
+    fn duplicate_public_sector_with_distinct_exact_identity_keeps_gate_route() {
+        assert!(!group_move_uses_simple_route(
+            true,
+            true,
+            Some(crate::sector::SectorNumber::new(50)),
+            crate::fast_find_grid::SectorIndex::new(13),
+            0,
+            50,
+            crate::fast_find_grid::SectorIndex::new(12),
             0,
         ));
     }
@@ -3268,6 +3367,44 @@ fn group_move_route_goal_index(
         })
 }
 
+/// Prefer the exact sparse FastFindGrid slot retained by replay translation.
+/// A public sector number is not unique in retained topology, so an explicit
+/// slot must agree with the recorded public identity rather than falling back
+/// to a coincident spatial hit.
+fn resolve_group_move_route_goal_index(
+    recorded_goal: Option<(crate::sector::SectorNumber, u16)>,
+    exact_goal_index: Option<crate::fast_find_grid::SectorIndex>,
+    selected_sector: Option<crate::sector::SectorNumber>,
+    selected_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    selected_layer: u16,
+    selected_grid_sector: Option<&crate::fast_find_grid::GridSector>,
+    level: &crate::fast_find_grid::LevelGrid,
+) -> Option<crate::fast_find_grid::SectorIndex> {
+    if let Some(index) = exact_goal_index {
+        let (recorded_sector, recorded_layer) = recorded_goal.unwrap_or_else(|| {
+            panic!("replay group-move exact goal index requires a recorded goal identity")
+        });
+        let sector = level.sectors.get(usize::from(index)).unwrap_or_else(|| {
+            panic!("replay group-move exact goal index {index:?} is absent from retained topology")
+        });
+        assert_eq!(
+            (sector.sector_number, sector.layer),
+            (recorded_sector, recorded_layer),
+            "replay group-move exact goal index disagrees with its recorded public sector"
+        );
+        return Some(index);
+    }
+
+    group_move_route_goal_index(
+        recorded_goal,
+        selected_sector,
+        selected_sector_index,
+        selected_layer,
+        selected_grid_sector,
+        level,
+    )
+}
+
 #[inline]
 fn group_move_door_selection(
     spatial_clicked_door_index: Option<u32>,
@@ -3299,15 +3436,20 @@ fn group_move_uses_simple_route(
     is_door_click: bool,
     is_valid: bool,
     goal_sector: Option<crate::sector::SectorNumber>,
+    goal_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     goal_layer: u16,
     source_sector: u16,
+    source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     source_layer: u16,
 ) -> bool {
     // PerformMove passes the patch-aware pSectorGoal to AppendMoveToSequence.
     // A coincident mpSelectedSector door only controls formation authorization;
     // it cannot turn an equal source/goal sector into a door traversal.
-    let same_topology = goal_sector
-        .is_some_and(|goal| u16::from(goal) == source_sector && goal_layer == source_layer);
+    let same_topology = match (goal_sector_index, source_sector_index) {
+        (Some(goal), Some(source)) => goal == source,
+        _ => goal_sector
+            .is_some_and(|goal| u16::from(goal) == source_sector && goal_layer == source_layer),
+    };
     same_topology || (!is_door_click && (!is_valid || goal_sector.is_none()))
 }
 

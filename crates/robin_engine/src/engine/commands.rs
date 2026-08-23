@@ -312,6 +312,7 @@ impl EngineInner {
                 running,
                 show_marker,
                 goal_override,
+                goal_sector_index_override,
                 door_route_override,
                 recorded_gate_routes,
             } => {
@@ -323,6 +324,7 @@ impl EngineInner {
                     *running,
                     *show_marker,
                     *goal_override,
+                    *goal_sector_index_override,
                     *door_route_override,
                     recorded_gate_routes,
                 );
@@ -1411,6 +1413,7 @@ impl EngineInner {
                 running,
                 show_marker: _,
                 goal_override: _,
+                goal_sector_index_override: _,
                 door_route_override: _,
                 recorded_gate_routes: _,
             } => {
@@ -1843,6 +1846,7 @@ impl EngineInner {
                     // Macro replay always re-resolves via spatial lookup;
                     // patch redirects only fire from the live click path.
                     goal_override: None,
+                    goal_sector_index_override: None,
                     door_route_override: None,
                     recorded_gate_routes: Vec::new(),
                 },

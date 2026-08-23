@@ -1287,14 +1287,15 @@ impl TraceCommand {
                 goal_layer,
             } => {
                 let destination: MapPoint = destination.into();
-                let goal_override = match entity_map.translate_group_move_goal_sector(
-                    goal_sector,
-                    goal_layer,
-                    group_move_resolution
-                        .as_ref()
-                        .and_then(|resolution| resolution.unmapped_goal_search_sector),
-                ) {
-                    GroupMoveGoalTranslation::Runtime(goal) => {
+                let (goal_override, goal_sector_index_override) = match entity_map
+                    .translate_group_move_goal_sector(
+                        goal_sector,
+                        goal_layer,
+                        group_move_resolution
+                            .as_ref()
+                            .and_then(|resolution| resolution.unmapped_goal_search_sector),
+                    ) {
+                    GroupMoveGoalTranslation::Runtime(goal, index) => {
                         engine
                             .fast_grid()
                             .level
@@ -1308,7 +1309,7 @@ impl TraceCommand {
                                     goal.0
                                 )
                             });
-                        Some(goal)
+                        (Some(goal), Some(index))
                     }
                     GroupMoveGoalTranslation::RecordedUnmapped(goal) => {
                         assert!(
@@ -1321,7 +1322,7 @@ impl TraceCommand {
                              runtime sector {}",
                             goal.0
                         );
-                        Some(goal)
+                        (Some(goal), None)
                     }
                 };
                 PlayerCommand::GroupMove {
@@ -1333,6 +1334,7 @@ impl TraceCommand {
                     running,
                     show_marker,
                     goal_override,
+                    goal_sector_index_override,
                     door_route_override: group_move_resolution
                         .as_ref()
                         .map(|resolution| resolution.door_route),
@@ -6226,6 +6228,10 @@ struct EntityMap {
     /// canonical position-sector number. The raw numbers are allocation
     /// details rather than gameplay identity.
     sectors: BTreeMap<u16, u16>,
+    /// Original sparse sector slot to the exact Rust FastFindGrid arena slot.
+    /// Public sector numbers are insufficient when retained overlays share an
+    /// identity.
+    sector_indices: BTreeMap<u16, robin_engine::fast_find_grid::SectorIndex>,
     /// Original mixed gate-array slot to Rust's runtime door-table index.
     gates: Vec<robin_engine::gate::DoorIndex>,
     /// One past the highest creation order the mission start established.
@@ -6301,11 +6307,23 @@ impl EntityMap {
             .as_ref()
             .expect("parity replay requires retained Original fast-grid topology");
         let mut sectors = BTreeMap::new();
-        let mut reverse_sectors = BTreeMap::new();
-        for (original, runtime) in retained.position_sector_numbers.iter().enumerate() {
+        let mut sector_indices = BTreeMap::new();
+        for (original, (runtime, runtime_index)) in retained
+            .position_sector_numbers
+            .iter()
+            .zip(&retained.position_sector_indices)
+            .enumerate()
+        {
             let Some(runtime) = runtime else {
+                assert!(
+                    runtime_index.is_none(),
+                    "Original sparse sector slot {original} has an arena index but no public number"
+                );
                 continue;
             };
+            let runtime_index = runtime_index.unwrap_or_else(|| {
+                panic!("Original sparse sector slot {original} has a public number but no exact Rust arena index")
+            });
             let original = u16::try_from(original)
                 .expect("Original sparse sector slot exceeds its u16 identity domain");
             let runtime =
@@ -6314,12 +6332,10 @@ impl EntityMap {
                 sectors.insert(original, runtime).is_none(),
                 "Original sparse sector slot {original} was mapped twice"
             );
-            if let Some(previous) = reverse_sectors.insert(runtime, original) {
-                panic!(
-                    "Rust canonical sector {runtime} maps to both Original sparse slots \
-                     {previous} and {original}"
-                );
-            }
+            assert!(
+                sector_indices.insert(original, runtime_index).is_none(),
+                "Original sparse sector slot {original} had two exact arena mappings"
+            );
         }
         let runtime_creation_order_boundary = entities_by_creation_order
             .keys()
@@ -6329,6 +6345,7 @@ impl EntityMap {
             entities: result,
             entities_by_creation_order,
             sectors,
+            sector_indices,
             gates: engine.legacy_gate_order(assets),
             runtime_creation_order_boundary,
         }
@@ -6515,7 +6532,10 @@ impl EntityMap {
             let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
                 panic!("Rust position sector {runtime} exceeds its signed identity domain")
             });
-            GroupMoveGoalTranslation::Runtime((SectorNumber::new(runtime), layer))
+            let index = *self.sector_indices.get(&original).unwrap_or_else(|| {
+                panic!("mapped Original group-move sector {original} lost its exact Rust arena identity")
+            });
+            GroupMoveGoalTranslation::Runtime((SectorNumber::new(runtime), layer), index)
         } else if let Some(search_sector) = unmapped_goal_search_sector {
             let runtime = self.sectors.get(&search_sector).copied().unwrap_or_else(|| {
                 panic!(
@@ -6525,7 +6545,10 @@ impl EntityMap {
             let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
                 panic!("Rust position sector {runtime} exceeds its signed identity domain")
             });
-            GroupMoveGoalTranslation::Runtime((SectorNumber::new(runtime), layer))
+            let index = *self.sector_indices.get(&search_sector).unwrap_or_else(|| {
+                panic!("mapped group-move terminal sector {search_sector} lost its exact Rust arena identity")
+            });
+            GroupMoveGoalTranslation::Runtime((SectorNumber::new(runtime), layer), index)
         } else {
             let recorded = i16::try_from(original).unwrap_or_else(|_| {
                 panic!("Original group-move sector {original} exceeds its signed identity domain")
@@ -6557,7 +6580,10 @@ impl EntityMap {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GroupMoveGoalTranslation {
-    Runtime((SectorNumber, u16)),
+    Runtime(
+        (SectorNumber, u16),
+        robin_engine::fast_find_grid::SectorIndex,
+    ),
     RecordedUnmapped((SectorNumber, u16)),
 }
 
@@ -11222,6 +11248,7 @@ mod tests {
             entities: BTreeMap::from([(original_actor, rust_actor)]),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
+            sector_indices: BTreeMap::new(),
             gates: Vec::new(),
             runtime_creation_order_boundary: u32::MAX,
         };
@@ -11888,6 +11915,7 @@ mod tests {
             entities: BTreeMap::from([(old_trace_id, rust_id)]),
             entities_by_creation_order: BTreeMap::from([(158, rust_id)]),
             sectors: BTreeMap::new(),
+            sector_indices: BTreeMap::new(),
             gates: Vec::new(),
             runtime_creation_order_boundary: u32::MAX,
         };
@@ -11902,7 +11930,17 @@ mod tests {
         let map = EntityMap {
             entities: BTreeMap::new(),
             entities_by_creation_order: BTreeMap::new(),
-            sectors: BTreeMap::from([(55, 23)]),
+            sectors: BTreeMap::from([(55, 23), (56, 23)]),
+            sector_indices: BTreeMap::from([
+                (
+                    55,
+                    robin_engine::fast_find_grid::SectorIndex::new(7).unwrap(),
+                ),
+                (
+                    56,
+                    robin_engine::fast_find_grid::SectorIndex::new(8).unwrap(),
+                ),
+            ]),
             gates: Vec::new(),
             runtime_creation_order_boundary: 0,
         };
@@ -11912,11 +11950,18 @@ mod tests {
         // therefore depends only on retained construction topology.
         assert_eq!(
             map.translate_group_move_goal_sector(55, 0, None),
-            GroupMoveGoalTranslation::Runtime((SectorNumber::new(23), 0))
+            GroupMoveGoalTranslation::Runtime(
+                (SectorNumber::new(23), 0),
+                robin_engine::fast_find_grid::SectorIndex::new(7).unwrap(),
+            )
         );
         assert_eq!(
             map.translate_group_move_goal_sector(56, 0, None),
-            GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(56), 0))
+            GroupMoveGoalTranslation::Runtime(
+                (SectorNumber::new(23), 0),
+                robin_engine::fast_find_grid::SectorIndex::new(8).unwrap(),
+            ),
+            "two Original sparse slots may share a public identity while retaining distinct arena identities"
         );
         assert_eq!(
             map.translate_group_move_goal_sector(288, 4, None),
@@ -11931,6 +11976,7 @@ mod tests {
             entities: BTreeMap::new(),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
+            sector_indices: BTreeMap::new(),
             // Original constructed jump gate 1 between two stateful doors;
             // Rust installed the stateful doors first, so its runtime peer is
             // door-table index 3.
@@ -11979,6 +12025,7 @@ mod tests {
             entities: BTreeMap::new(),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
+            sector_indices: BTreeMap::new(),
             gates: (0..=max_gate).map(robin_engine::gate::DoorIndex).collect(),
             runtime_creation_order_boundary: 0,
         }
@@ -12210,6 +12257,10 @@ mod tests {
             entities: BTreeMap::new(),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::from([(491, 55)]),
+            sector_indices: BTreeMap::from([(
+                491,
+                robin_engine::fast_find_grid::SectorIndex::new(9).unwrap(),
+            )]),
             gates: Vec::new(),
             runtime_creation_order_boundary: 0,
         };
@@ -12219,7 +12270,10 @@ mod tests {
                 0,
                 resolution.and_then(|resolution| resolution.unmapped_goal_search_sector),
             ),
-            GroupMoveGoalTranslation::Runtime((SectorNumber::new(55), 0))
+            GroupMoveGoalTranslation::Runtime(
+                (SectorNumber::new(55), 0),
+                robin_engine::fast_find_grid::SectorIndex::new(9).unwrap(),
+            )
         );
     }
 
@@ -12256,6 +12310,7 @@ mod tests {
             entities: BTreeMap::from([(actor, EntityId::Pc(robin_engine::entity_id::PcId(12)))]),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::from([(148, 55)]),
+            sector_indices: BTreeMap::new(),
             gates: Vec::new(),
             runtime_creation_order_boundary: 0,
         }

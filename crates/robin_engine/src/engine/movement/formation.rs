@@ -110,6 +110,7 @@ impl EngineInner {
         run: bool,
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         door_route_override: Option<bool>,
         recorded_gate_routes: &[(EntityId, Vec<(u32, bool)>)],
     ) {
@@ -121,6 +122,7 @@ impl EngineInner {
             run,
             show_marker,
             goal_override,
+            goal_sector_index_override,
             door_route_override,
             recorded_gate_routes,
             None,
@@ -156,6 +158,7 @@ impl EngineInner {
             show_marker,
             None,
             None,
+            None,
             &[],
             Some(destinations),
         );
@@ -171,6 +174,7 @@ impl EngineInner {
         run: bool,
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         door_route_override: Option<bool>,
         recorded_gate_routes: &[(EntityId, Vec<(u32, bool)>)],
         explicit_destinations: Option<&[MapPoint]>,
@@ -286,8 +290,9 @@ impl EngineInner {
             );
         let (route_goal_sector, route_goal_layer) =
             group_move_route_goal(goal_override, hit.sector, hit.layer);
-        let route_goal_sector_index = group_move_route_goal_index(
+        let route_goal_sector_index = resolve_group_move_route_goal_index(
             goal_override,
+            goal_sector_index_override,
             hit.sector,
             hit.sector_idx,
             hit.layer,
@@ -594,8 +599,10 @@ impl EngineInner {
                 is_door_click,
                 is_valid,
                 pc_goal_sector,
+                pc_goal_sector_index,
                 pc_effective_layer,
                 u16::from(*src_sector),
+                src_sector.arena_index(),
                 *pc_src_layer,
             ) {
                 // Door clicks skip the walkable snap entirely.

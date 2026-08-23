@@ -1508,6 +1508,7 @@ impl EngineInner {
                     true,
                     None,
                     None,
+                    None,
                     &[],
                 );
                 order.duty = AlliedDuty::Hold {
@@ -1565,6 +1566,7 @@ impl EngineInner {
                     destination,
                     false,
                     true,
+                    None,
                     None,
                     None,
                     &[],

@@ -385,6 +385,7 @@ pub fn resolve_left_click(
             running: is_double,
             show_marker: false,
             goal_override,
+            goal_sector_index_override: None,
             door_route_override: None,
             recorded_gate_routes: Vec::new(),
         }];
@@ -426,6 +427,7 @@ pub fn resolve_left_click(
         running: is_double,
         show_marker: true,
         goal_override,
+        goal_sector_index_override: None,
         door_route_override: None,
         recorded_gate_routes: Vec::new(),
     }];
@@ -2217,6 +2219,7 @@ mod tests {
                 running: false,
                 show_marker: true,
                 goal_override: None,
+                goal_sector_index_override: None,
                 door_route_override: None,
                 recorded_gate_routes: Vec::new(),
             }]
