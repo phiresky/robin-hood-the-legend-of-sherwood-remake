@@ -251,6 +251,262 @@ mod group_move_authorization_tests {
         }
     }
 
+    fn square_group_sector(
+        number: i16,
+        layer: u16,
+        min: MapPoint,
+        max: MapPoint,
+    ) -> crate::fast_find_grid::GridSector {
+        crate::fast_find_grid::GridSector {
+            points: vec![
+                min,
+                MapPoint::new(max.x, min.y),
+                max,
+                MapPoint::new(min.x, max.y),
+            ],
+            bounding_box: MapBBox::from_corners(min, max),
+            ..replay_goal_sector(number, layer)
+        }
+    }
+
+    fn group_move_element(
+        point: MapPoint,
+        sector: crate::position_interface::SectorHandle,
+        layer: u16,
+    ) -> crate::element::ElementData {
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorPc,
+            ..Default::default()
+        };
+        element.set_position_map(point);
+        element.set_sector(Some(sector));
+        element.set_layer(layer);
+        element
+    }
+
+    #[test]
+    fn group_move_live_snapshot_recovers_duplicate_public_source_for_three_gate_route() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(32, 32);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let wrong_88_raw = engine.world.fast_grid_mut().add_sector(
+            square_group_sector(
+                88,
+                2,
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(200.0, 200.0),
+            ),
+            2,
+        );
+        let source_88_raw = engine.world.fast_grid_mut().add_sector(
+            square_group_sector(
+                88,
+                2,
+                MapPoint::new(650.0, 1550.0),
+                MapPoint::new(750.0, 1700.0),
+            ),
+            2,
+        );
+        let transit_70_raw = engine.world.fast_grid_mut().add_sector(
+            square_group_sector(
+                70,
+                1,
+                MapPoint::new(500.0, 1400.0),
+                MapPoint::new(600.0, 1500.0),
+            ),
+            1,
+        );
+        let outside_0_raw = engine.world.fast_grid_mut().add_sector(
+            square_group_sector(
+                0,
+                0,
+                MapPoint::new(700.0, 1300.0),
+                MapPoint::new(800.0, 1400.0),
+            ),
+            0,
+        );
+        let goal_77_raw = engine.world.fast_grid_mut().add_sector(
+            square_group_sector(
+                77,
+                1,
+                MapPoint::new(950.0, 1550.0),
+                MapPoint::new(1050.0, 1700.0),
+            ),
+            1,
+        );
+        assert_ne!(wrong_88_raw, source_88_raw);
+        let source_88 = crate::fast_find_grid::SectorIndex::new(source_88_raw).unwrap();
+        let transit_70 = crate::fast_find_grid::SectorIndex::new(transit_70_raw).unwrap();
+        let outside_0 = crate::fast_find_grid::SectorIndex::new(outside_0_raw).unwrap();
+        let goal_77 = crate::fast_find_grid::SectorIndex::new(goal_77_raw).unwrap();
+
+        let actor = EntityId::Pc(crate::entity_id::PcId(137));
+        let source_point = MapPoint::new(691.83026, 1641.3748);
+        let source = group_move_source_sector(
+            &engine,
+            actor,
+            &group_move_element(
+                source_point,
+                crate::position_interface::SectorHandle::new(88).unwrap(),
+                2,
+            ),
+        );
+        assert_eq!(source.arena_index(), Some(source_88));
+
+        let mut doors = vec![crate::gate::Door::default(); 115];
+        for door in &mut doors {
+            door.active = false;
+        }
+        doors[114] = crate::gate::Door {
+            active: true,
+            sector_out: crate::sector::SectorNumber::new(88),
+            sector_in: crate::sector::SectorNumber::new(70),
+            sector_out_index: Some(source_88),
+            sector_in_index: Some(transit_70),
+            point_out: source_point,
+            point_in: MapPoint::new(575.0, 1450.0),
+            ..Default::default()
+        };
+        doors[111] = crate::gate::Door {
+            active: true,
+            sector_out: crate::sector::SectorNumber::new(0),
+            sector_in: crate::sector::SectorNumber::new(70),
+            sector_out_index: Some(outside_0),
+            sector_in_index: Some(transit_70),
+            point_out: MapPoint::new(750.0, 1350.0),
+            point_in: MapPoint::new(550.0, 1450.0),
+            ..Default::default()
+        };
+        doors[60] = crate::gate::Door {
+            active: true,
+            sector_out: crate::sector::SectorNumber::new(0),
+            sector_in: crate::sector::SectorNumber::new(77),
+            sector_out_index: Some(outside_0),
+            sector_in_index: Some(goal_77),
+            point_out: MapPoint::new(775.0, 1350.0),
+            point_in: MapPoint::new(1000.0, 1600.0),
+            ..Default::default()
+        };
+        crate::gate::build_gate_links(&mut doors);
+        let path = find_group_move_gate_path(
+            &doors,
+            actor,
+            source_point,
+            source,
+            MapPoint::new(1004.536, 1614.76),
+            crate::sector::SectorNumber::new(77),
+            Some(goal_77),
+            1,
+            None,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("Pc137-style exact GroupMove must traverse the indexed gate graph");
+        assert_eq!(
+            path.iter()
+                .map(|step| (step.door_index.0, step.direct))
+                .collect::<Vec<_>>(),
+            vec![(114, true), (111, false), (60, true)]
+        );
+    }
+
+    #[test]
+    fn group_move_live_snapshot_keeps_empty_grid_numeric_compatibility() {
+        let engine = EngineInner::new();
+        let actor = EntityId::Pc(crate::entity_id::PcId(137));
+        let source = group_move_source_sector(
+            &engine,
+            actor,
+            &group_move_element(
+                MapPoint::new(10.0, 20.0),
+                crate::position_interface::SectorHandle::new(88).unwrap(),
+                2,
+            ),
+        );
+        assert_eq!(source.get(), 88);
+        assert_eq!(source.arena_index(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "ambiguous in the exact arena")]
+    fn group_move_live_snapshot_rejects_ambiguous_duplicate_public_source() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        for _ in 0..2 {
+            engine.world.fast_grid_mut().add_sector(
+                square_group_sector(
+                    88,
+                    2,
+                    MapPoint::new(100.0, 100.0),
+                    MapPoint::new(200.0, 200.0),
+                ),
+                2,
+            );
+        }
+        let _ = group_move_source_sector(
+            &engine,
+            EntityId::Pc(crate::entity_id::PcId(137)),
+            &group_move_element(
+                MapPoint::new(150.0, 150.0),
+                crate::position_interface::SectorHandle::new(88).unwrap(),
+                2,
+            ),
+        );
+    }
+
+    #[test]
+    fn group_move_current_door_endpoint_precedes_ambiguous_raw_position_recovery() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        for _ in 0..2 {
+            engine.world.fast_grid_mut().add_sector(
+                square_group_sector(
+                    88,
+                    2,
+                    MapPoint::new(100.0, 100.0),
+                    MapPoint::new(200.0, 200.0),
+                ),
+                2,
+            );
+        }
+        let far_index = crate::fast_find_grid::SectorIndex::new(37).unwrap();
+        let far_point = MapPoint::new(400.0, 500.0);
+        let door = crate::gate::Door {
+            sector_out: crate::sector::SectorNumber::new(88),
+            sector_in: crate::sector::SectorNumber::new(77),
+            sector_in_index: Some(far_index),
+            layer_in: 1,
+            point_in: far_point,
+            ..Default::default()
+        };
+        let mut entity = crate::element::Entity::Pc(crate::element::ActorPc {
+            element: group_move_element(
+                MapPoint::new(150.0, 150.0),
+                crate::position_interface::SectorHandle::new(88).unwrap(),
+                2,
+            ),
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        entity
+            .position_iface_mut()
+            .set_door(crate::position_interface::DoorHandle(0), true);
+
+        let (point, sector, layer) = group_move_route_source(
+            &engine,
+            EntityId::Pc(crate::entity_id::PcId(137)),
+            &entity,
+            &[door],
+        );
+        assert_eq!(point, far_point);
+        assert_eq!(sector.get(), 77);
+        assert_eq!(sector.arena_index(), Some(far_index));
+        assert_eq!(layer, 1);
+    }
+
     #[test]
     fn replay_exact_group_move_goal_survives_spatial_miss_and_duplicate_public_sectors() {
         let mut level = crate::fast_find_grid::LevelGrid::default();
@@ -3510,6 +3766,46 @@ fn player_group_move_action(run: bool) -> OrderType {
     } else {
         OrderType::WalkingUpright
     }
+}
+
+/// Recover the complete live `RHSector*` identity sampled by Original's
+/// `RHEngine::PerformGroupMove` before it calls `PerformMove`.
+///
+/// An adopted compatibility position can retain only the public sector
+/// number. In a loaded exact grid, resolve that omitted identity from the
+/// actor's current point/public number/layer using the same invariant-checked
+/// boundary as every other Rust `Position(element)` snapshot. A wholly empty
+/// fixture remains number-only; ambiguous or absent loaded topology is an
+/// invariant failure rather than a lossy public-number guess.
+#[inline]
+fn group_move_source_sector(
+    engine: &EngineInner,
+    actor: EntityId,
+    element: &crate::element::ElementData,
+) -> crate::position_interface::SectorHandle {
+    super::ai::ai_view_position_sector(engine, element).unwrap_or_else(|| {
+        panic!("selected group-move actor {actor:?} has no source sector identity")
+    })
+}
+
+#[inline]
+fn group_move_route_source(
+    engine: &EngineInner,
+    actor: EntityId,
+    entity: &crate::element::Entity,
+    doors: &[crate::gate::Door],
+) -> (MapPoint, crate::position_interface::SectorHandle, u16) {
+    let (door_handle, door_direction) = current_door_for_route_source(entity);
+    adapt_source_to_current_door_with_identity(doors, door_handle, door_direction).unwrap_or_else(
+        || {
+            let element = entity.element_data();
+            (
+                element.position_map(),
+                group_move_source_sector(engine, actor, element),
+                element.layer(),
+            )
+        },
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -220,26 +220,20 @@ impl EngineInner {
                 let e = self
                     .get_entity(pc_id)
                     .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"));
-                    let elem = e.element_data();
-                    let (position, sector, layer) = {
-                        let (door_handle, door_direction) = current_door_for_route_source(e);
-                        adapt_source_to_current_door_with_identity(
-                            &self.script_domains.interactables.doors,
-                            door_handle,
-                            door_direction,
-                        )
-                        .unwrap_or_else(|| {
-                            (
-                                elem.position_map(),
-                                elem.sector().unwrap_or_else(|| {
-                                    panic!(
-                                        "selected group-move actor {pc_id:?} has no source sector identity"
-                                    )
-                                }),
-                                elem.layer(),
-                            )
-                        })
-                    };
+                // Original passes the actor's complete live `RHSector*`
+                // from GetSector() into PerformMove/AppendMoveToSequence
+                // (RHengine.cpp:5407-5410, 5512-5515, 9941-10049). Restore
+                // omitted legacy arena identity at this exact snapshot
+                // boundary before same-sector classification or gate A*. A
+                // selected live door remains authoritative and is resolved
+                // first, while the actor may still display its old near-side
+                // position.
+                let (position, sector, layer) = group_move_route_source(
+                    self,
+                    pc_id,
+                    e,
+                    &self.script_domains.interactables.doors,
+                );
                 (pc_id, position, layer, sector)
             })
             .collect();
