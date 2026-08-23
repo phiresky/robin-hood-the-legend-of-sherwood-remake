@@ -10637,6 +10637,14 @@ impl EngineInner {
                 {
                     sync_snapshot_after_committed_step(snapshot, first_pre, first_post);
                 }
+                // Fast wall/ladder Execute arms contain two literal
+                // PerformMotion calls. Original refreshes the forecast at
+                // the end of each nonzero call, immediately after its
+                // position commit. Keep that first write here: when the
+                // second sprite frame has zero distance the stationary tail
+                // returns before the aggregate commit below, and the first
+                // call's forecast must remain observable.
+                refresh_motion_forecast(sprite, first_speed, None);
                 first_fast_commit = Some((first_pre, first_increment, first_speed, first_post));
             }
             let _ = sprite.position_iface.turn();
@@ -20179,6 +20187,59 @@ mod line_jump_tests {
         assert!(
             stationary_motion_waits(0.0, false, f32::NAN),
             "a zero-distance animation frame must not multiply an invalid movement increment by zero"
+        );
+    }
+
+    #[test]
+    fn first_fast_climb_commit_keeps_lift_forecast_when_second_call_is_stationary() {
+        use crate::coordinates::WorldVec3D;
+
+        let script = crate::sprite_script::SpriteScript {
+            action_id: OrderType::ClimbingWallUp as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]),
+        );
+
+        let set_increment_z = |sprite: &mut crate::sprite::Sprite, z| {
+            let mut state = sprite.position_iface.v48_serialized_state();
+            state.increment = WorldVec3D::new(0.25, -0.5, z);
+            sprite.position_iface.restore_v48_serialized_state(state);
+        };
+
+        set_increment_z(&mut sprite, 0.75);
+        refresh_motion_forecast(&mut sprite, 4.0, None);
+        assert_eq!(
+            sprite.position_iface.get_forecasted_movement(),
+            WorldVec3D::new(0.5, -1.0, 1.5),
+            "an upward first PerformMotion commit must publish positive lift movement"
+        );
+
+        // A zero-distance second PerformMotion never reaches Original's
+        // forecast write. The positive first-call value therefore remains.
+        refresh_motion_forecast(&mut sprite, 0.0, Some((0.0, 0.0)));
+        assert_eq!(
+            sprite.position_iface.get_forecasted_movement(),
+            WorldVec3D::new(0.5, -1.0, 1.5),
+            "a stationary second call must not clear the first call's forecast"
+        );
+
+        set_increment_z(&mut sprite, -0.75);
+        refresh_motion_forecast(&mut sprite, 4.0, None);
+        assert_eq!(
+            sprite.position_iface.get_forecasted_movement(),
+            WorldVec3D::new(0.5, -1.0, -1.5),
+            "a downward first PerformMotion commit must publish negative lift movement"
         );
     }
 
