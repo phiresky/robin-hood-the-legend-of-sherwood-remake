@@ -5846,6 +5846,10 @@ impl EngineInner {
         struct GateShot {
             door_index: crate::gate::DoorIndex,
             direct: bool,
+            // Exact sector on the source side of this gate.  This is the
+            // route's retained equivalent of Original's `pOldSector` when a
+            // legacy/compatibility caller supplies only the public number.
+            old_sector: crate::position_interface::SectorHandle,
             // Geometry used by the emitted sub-elements.
             entry: MapPoint,
             exit: MapPoint,
@@ -5871,80 +5875,92 @@ impl EngineInner {
             if self.scripts.mission.is_none() {
                 return None;
             }
-            let shots: Vec<GateShot> =
-                gate_path
-                    .iter()
-                    .filter_map(|step| {
-                        let door = self
-                            .script_domains
-                            .interactables
-                            .doors
-                            .get(usize::from(step.door_index))?;
-                        let (
-                            entry,
-                            exit,
-                            entry_layer,
-                            exit_layer,
-                            new_sector_number,
-                            new_sector_index,
-                        ) = if step.direct {
-                            (
-                                door.point_out,
-                                door.point_in,
-                                door.layer_out,
-                                door.layer_in,
-                                u16::from(door.sector_in),
-                                door.sector_in_index,
-                            )
-                        } else {
-                            (
-                                door.point_in,
-                                door.point_out,
-                                door.layer_in,
-                                door.layer_out,
-                                u16::from(door.sector_out),
-                                door.sector_out_index,
-                            )
-                        };
-                        let new_sector = crate::position_interface::SectorHandle::new(
-                            new_sector_number,
+            let shots: Vec<GateShot> = gate_path
+                .iter()
+                .filter_map(|step| {
+                    let door = self
+                        .script_domains
+                        .interactables
+                        .doors
+                        .get(usize::from(step.door_index))?;
+                    let (
+                        entry,
+                        exit,
+                        entry_layer,
+                        exit_layer,
+                        old_sector_number,
+                        old_sector_index,
+                        new_sector_number,
+                        new_sector_index,
+                    ) = if step.direct {
+                        (
+                            door.point_out,
+                            door.point_in,
+                            door.layer_out,
+                            door.layer_in,
+                            u16::from(door.sector_out),
+                            door.sector_out_index,
+                            u16::from(door.sector_in),
+                            door.sector_in_index,
                         )
-                        .map(|handle| {
-                            new_sector_index.map_or(handle, |index| handle.with_arena_index(index))
-                        })?;
-                        let is_jump = door.is_jump();
-                        let (jump_src, jump_dst) = if is_jump {
-                            let (s, d) = if step.direct {
-                                (door.jump_line_out, door.jump_line_in)
-                            } else {
-                                (door.jump_line_in, door.jump_line_out)
-                            };
-                            (
-                                s.and_then(crate::jump_line::JumpLineIndex::new),
-                                d.and_then(crate::jump_line::JumpLineIndex::new),
-                            )
+                    } else {
+                        (
+                            door.point_in,
+                            door.point_out,
+                            door.layer_in,
+                            door.layer_out,
+                            u16::from(door.sector_in),
+                            door.sector_in_index,
+                            u16::from(door.sector_out),
+                            door.sector_out_index,
+                        )
+                    };
+                    let old_sector = crate::position_interface::SectorHandle::new(
+                        old_sector_number,
+                    )
+                    .map(|handle| {
+                        old_sector_index.map_or(handle, |index| handle.with_arena_index(index))
+                    })?;
+                    let new_sector = crate::position_interface::SectorHandle::new(
+                        new_sector_number,
+                    )
+                    .map(|handle| {
+                        new_sector_index.map_or(handle, |index| handle.with_arena_index(index))
+                    })?;
+                    let is_jump = door.is_jump();
+                    let (jump_src, jump_dst) = if is_jump {
+                        let (s, d) = if step.direct {
+                            (door.jump_line_out, door.jump_line_in)
                         } else {
-                            (None, None)
+                            (door.jump_line_in, door.jump_line_out)
                         };
-                        let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
-                        let (entry_action, door_action) = (base_action, base_action);
-                        Some(GateShot {
-                            door_index: step.door_index,
-                            direct: step.direct,
-                            entry,
-                            exit,
-                            entry_layer,
-                            exit_layer,
-                            new_sector,
-                            is_jump,
-                            jump_line_src: jump_src,
-                            jump_line_dst: jump_dst,
-                            is_locked_pc_unlockable,
-                            entry_action,
-                            door_action,
-                        })
+                        (
+                            s.and_then(crate::jump_line::JumpLineIndex::new),
+                            d.and_then(crate::jump_line::JumpLineIndex::new),
+                        )
+                    } else {
+                        (None, None)
+                    };
+                    let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
+                    let (entry_action, door_action) = (base_action, base_action);
+                    Some(GateShot {
+                        door_index: step.door_index,
+                        direct: step.direct,
+                        old_sector,
+                        entry,
+                        exit,
+                        entry_layer,
+                        exit_layer,
+                        new_sector,
+                        is_jump,
+                        jump_line_src: jump_src,
+                        jump_line_dst: jump_dst,
+                        is_locked_pc_unlockable,
+                        entry_action,
+                        door_action,
                     })
-                    .collect();
+                })
+                .collect();
             shots
         }; // host borrow dropped here
 
@@ -6065,7 +6081,23 @@ impl EngineInner {
             // point (or CHANGE_POSITION out of a building), matching
             // original AppendMoveToSequence.  The door-vs-jump split
             // happens after this approach.
-            let old_is_building = prev_sector
+            // `FindPath*` retains exact sector pointers on every gate.  Old
+            // saves and a few compatibility paths can still hand this
+            // builder a number-only source handle; resolving that number via
+            // `sector_number_map` is ambiguous when the level has duplicate
+            // public sector numbers.  On the first gate, its authored source
+            // side is the exact identity of `pOldSector` used by Original's
+            // building-exit branch.  Recover it only when the public numbers
+            // agree; an already-enriched source remains authoritative.
+            let old_sector_for_classification = prev_sector.map(|sector| {
+                if sector.arena_index().is_none() && u16::from(sector) == u16::from(shot.old_sector)
+                {
+                    shot.old_sector
+                } else {
+                    sector
+                }
+            });
+            let old_is_building = old_sector_for_classification
                 .map(|s| is_building_sector(self, s))
                 .unwrap_or(false);
             tracing::trace!(

@@ -107,7 +107,19 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         level
             .sectors
             .push(make_sector(64, SectorType::MOTION | SectorType::AREA));
+        level.sectors.push(make_sector(
+            274,
+            SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+        ));
+        level
+            .sectors
+            .push(make_sector(274, SectorType::MOTION | SectorType::AREA));
+        level
+            .sectors
+            .push(make_sector(49, SectorType::MOTION | SectorType::AREA));
         level.sector_number_map.insert(SectorNumber::new(64), 1);
+        level.sector_number_map.insert(SectorNumber::new(274), 3);
+        level.sector_number_map.insert(SectorNumber::new(49), 4);
     }
     engine.script_domains.interactables.doors.push(Door {
         point_out: MapPoint::new(100.0, 100.0),
@@ -115,6 +127,15 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         sector_out: SectorNumber::new(64),
         sector_in: SectorNumber::new(48),
         sector_out_index: SectorIndex::new(0),
+        ..Door::default()
+    });
+    engine.script_domains.interactables.doors.push(Door {
+        point_in: MapPoint::new(200.0, 100.0),
+        point_out: MapPoint::new(220.0, 100.0),
+        sector_in: SectorNumber::new(274),
+        sector_out: SectorNumber::new(49),
+        sector_in_index: SectorIndex::new(2),
+        sector_out_index: SectorIndex::new(4),
         ..Door::default()
     });
     let source_sector = crate::position_interface::SectorHandle::new(64)
@@ -172,7 +193,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         Some(FieldValue::Integer(0..=30))
     ));
 
-    let (_, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
+    let (number_only_sequence, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
             owner,
@@ -196,9 +217,68 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             false,
         )
     });
+    assert_eq!(
+        number_only_draws,
+        [
+            RngSite::RuntimeBuildingExitWait,
+            RngSite::RuntimeBuildingExitWait,
+        ],
+        "the first route gate retains Original's exact building-side pointer even when the compatibility source handle has only a duplicate public number"
+    );
+    let number_only_sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(number_only_sequence.expect("number-only building route"))
+        .expect("registered number-only building route");
     assert!(
-        number_only_draws.is_empty(),
-        "the false control must still follow the public-number map's non-building sector"
+        number_only_sequence
+            .elements
+            .iter()
+            .any(|element| element.command == Command::ChangePosition)
+    );
+
+    let (indirect_sequence, indirect_draws) = crate::sim_rng::with_draw_trace(|| {
+        engine.build_gate_movement_sequence(
+            &sim,
+            owner,
+            crate::position_interface::SectorHandle::new(274),
+            vec![GatePathStep {
+                door_index: DoorIndex(1),
+                direct: false,
+            }],
+            GoalShape::Point {
+                point: MapPoint::new(240.0, 100.0),
+                tolerance: 0.0,
+            },
+            0,
+            OrderType::WalkingUpright,
+            true,
+            1.0,
+            MoveFlags::empty(),
+            Vec::new(),
+            Vec::new(),
+            false,
+            false,
+        )
+    });
+    assert_eq!(
+        indirect_draws,
+        [
+            RngSite::RuntimeBuildingExitWait,
+            RngSite::RuntimeBuildingExitWait,
+        ],
+        "replay-011 gate42's indirect route retains the exact authored sector-in identity for number-only source274"
+    );
+    let indirect_sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(indirect_sequence.expect("indirect building route"))
+        .expect("registered indirect building route");
+    assert!(
+        indirect_sequence
+            .elements
+            .iter()
+            .any(|element| element.command == Command::ChangePosition)
     );
 }
 
