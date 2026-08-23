@@ -443,6 +443,18 @@ fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> usize {
     restorations.len()
 }
 
+/// Whether a legacy loaded-save segment can retain process-local state which
+/// the RHSG payload omits.
+///
+/// An in-game reload calls `BeginSession` immediately before `Serialize` and
+/// `CaptureCampaign` immediately afterwards, so its recorded RNG prefix is
+/// empty. A fresh `RHGame` instead captures the campaign before mission
+/// construction; the nonempty prefix contains those setup draws and the new
+/// engine's constructor-zero transient state is authoritative.
+fn legacy_loaded_save_retains_process_transients(prefix_draw_count: usize) -> bool {
+    prefix_draw_count == 0
+}
+
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
     match start_state {
         TraceStartState::MissionStart => assert_eq!(
@@ -3503,10 +3515,18 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     } else if header.schema == 16
         && header.start_state == TraceStartState::LoadedSave
         && header.session_index > 1
+        && legacy_loaded_save_retains_process_transients(prefix_end)
     {
         let restored = apply_legacy_segment_visibility_fallback(&mut engine);
         eprintln!(
             "warning: legacy schema-16 segment lacks initial_npc_transients; reconstructed maximal_visibility for {restored} dead/unconscious NPCs"
+        );
+    } else if header.schema == 16
+        && header.start_state == TraceStartState::LoadedSave
+        && header.session_index > 1
+    {
+        eprintln!(
+            "warning: legacy schema-16 fresh-engine segment lacks initial_npc_transients; retained constructor-zero maximal_visibility"
         );
     }
     if rewind_loaded_save_rng {
@@ -8856,6 +8876,18 @@ mod tests {
         assert_eq!(
             reconstruct_unrecorded_maximal_visibility(false, std::iter::empty()),
             0
+        );
+    }
+
+    #[test]
+    fn legacy_visibility_fallback_only_applies_to_in_process_reload_envelopes() {
+        assert!(
+            legacy_loaded_save_retains_process_transients(0),
+            "in-game loaded-save sessions 5-8 have an empty post-load RNG prefix"
+        );
+        assert!(
+            !legacy_loaded_save_retains_process_transients(76),
+            "fresh-engine session 9 records mission-construction draws and must retain constructor zero"
         );
     }
 
