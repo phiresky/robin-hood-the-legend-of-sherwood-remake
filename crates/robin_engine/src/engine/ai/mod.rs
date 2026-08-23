@@ -3555,7 +3555,7 @@ fn build_one_entity_view(
 /// deliberately remains number-only. Once topology exists, a missing or
 /// ambiguous identity is an invariant failure rather than an invitation to
 /// guess through the lossy public-number map.
-fn ai_view_position_sector(
+pub(super) fn ai_view_position_sector(
     engine: &EngineInner,
     element: &crate::element::ElementData,
 ) -> Option<crate::position_interface::SectorHandle> {

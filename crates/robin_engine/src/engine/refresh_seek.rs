@@ -842,7 +842,11 @@ impl crate::engine::EngineInner {
         let (target_pos, target_sector, target_layer) = match self.get_entity(target) {
             Some(e) => {
                 let elem = e.element_data();
-                (elem.position_map(), elem.sector(), elem.layer())
+                (
+                    elem.position_map(),
+                    super::ai::ai_view_position_sector(self, elem),
+                    elem.layer(),
+                )
             }
             None => {
                 self.orders
@@ -1421,6 +1425,155 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn refresh_seek_recovers_moved_target_exact_sector_before_indexed_route() {
+        use crate::coordinates::MapBBox;
+        use crate::fast_find_grid::{GridSector, SectorIndex};
+        use crate::gate::{Door, DoorIndex, build_gate_links};
+        use crate::sector::{SectorNumber, SectorType};
+
+        let arena = |index| SectorIndex::new(index).unwrap();
+        let grid_sector = |number, layer, min_x, min_y, max_x, max_y| GridSector {
+            points: vec![
+                MapPoint::new(min_x, min_y),
+                MapPoint::new(max_x, min_y),
+                MapPoint::new(max_x, max_y),
+                MapPoint::new(min_x, max_y),
+            ],
+            bounding_box: MapBBox::from_coords(min_x, min_y, max_x, max_y),
+            sector_type: SectorType::MOTION | SectorType::AREA,
+            layer,
+            sector_number: SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = crate::engine::EngineInner::new();
+        engine.scripts.mission = Some(minimal_mission());
+        engine.world.fast_grid_mut().size_map(10, 10);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let wrong_target = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(grid_sector(88, 2, 450.0, 450.0, 500.0, 500.0), 2);
+        let source = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(grid_sector(0, 0, 10.0, 10.0, 100.0, 100.0), 0);
+        let middle = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(grid_sector(70, 1, 150.0, 10.0, 250.0, 100.0), 1);
+        let exact_target = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(grid_sector(88, 2, 300.0, 10.0, 400.0, 100.0), 2);
+        assert_ne!(wrong_target, exact_target);
+
+        let mut doors = (0..114)
+            .map(|_| Door {
+                active: false,
+                ..Door::default()
+            })
+            .collect::<Vec<_>>();
+        doors[111] = Door {
+            active: true,
+            point_out: MapPoint::new(90.0, 50.0),
+            point_in: MapPoint::new(160.0, 50.0),
+            layer_out: 0,
+            layer_in: 1,
+            sector_out: SectorNumber::new(0),
+            sector_in: SectorNumber::new(70),
+            sector_out_index: Some(arena(source)),
+            sector_in_index: Some(arena(middle)),
+            ..Door::default()
+        };
+        doors[113] = Door {
+            active: true,
+            point_in: MapPoint::new(240.0, 50.0),
+            point_out: MapPoint::new(310.0, 50.0),
+            layer_in: 1,
+            layer_out: 2,
+            sector_in: SectorNumber::new(70),
+            sector_out: SectorNumber::new(88),
+            sector_in_index: Some(arena(middle)),
+            sector_out_index: Some(arena(exact_target)),
+            ..Door::default()
+        };
+        build_gate_links(&mut doors);
+        engine.script_domains.interactables.doors = doors;
+
+        let owner = engine.add_entity(test_pc_at(50.0, 50.0, 0));
+        {
+            let owner_position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
+            owner_position.set_sector_topology(SectorHandle::new(0), Some(arena(source)));
+            owner_position.set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        }
+        let target = engine.add_entity(test_pc_at(350.0, 50.0, 88));
+        {
+            let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
+            target_element.set_layer(2);
+            target_element.set_sector(SectorHandle::new(88));
+        }
+
+        let mut seek =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RunningUpright);
+        if let SequenceElementData::Movement {
+            element,
+            flags,
+            tolerance,
+            ..
+        } = &mut seek.data
+        {
+            *element = Some(target);
+            *flags = MoveFlags::SEEK;
+            *tolerance = 0.0;
+        }
+        let seek_id = engine.orders.sequence_manager.launch_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(seek_id, 0);
+
+        assert!(engine.try_dispatch_cross_sector_entity_seek(
+            &sim,
+            &LevelAssets::new(),
+            owner,
+            seek_id,
+            0,
+            target,
+            OrderType::RunningUpright,
+            MoveFlags::SEEK,
+            0.0,
+        ));
+        let gates = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter_map(|element| match element.data {
+                SequenceElementData::Movement {
+                    gate_id: Some(gate),
+                    ..
+                } if element.owner == Some(owner) => Some(gate),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(gates, vec![DoorIndex(111), DoorIndex(113)]);
     }
 
     #[test]
