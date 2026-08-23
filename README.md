@@ -8,13 +8,17 @@ and plays them through a pure-Rust engine.
 
 ![Ferris in Robin Hood](docs/ferris-in-robin-hood.avif)
 
+## Creation
+
+I instrumented the original game to hook `rand()`, made pathfinding synchronous, and had it log every single thing that happens. This creates very large JSONL files. Then I replay these files in my engine and have an AI keep iterating on the code until the replay matches exactly. In between I look through code and refactor / refocus to try and ensure quality.
+
+I took a set of 500 savegames of the original game (from the internet and myself), then created a dataset of 60s replays with random mouse input, 10 per save. These now replay almost 100% correctly. Then in addition I'm going to play through a bunch of missions in the instrumented original so I have more complete recordings and see that those match as well.
+
 ## Status
 
-Playable mostly on the Leicester demo and the full campaign: main
-menu, missions, save/load, replays should all _mostly_ work. Most testing has been done on the demo so the campaign logic is likely not fully working yet.
-A fair amount of things are still broken, like bow / special items and some triggers.
-The six-crate workspace contains 300K+ lines of Rust and 3,000+ tests. See [NEW_FEATURES.md](docs/NEW_FEATURES.md)
-for new and future additions.
+The engine mostly works. Most gameplay works exactly like the original. I have some perf problems and some bugs especially with the UI and save handling.
+
+Some new features are already added, some incomplete, some TODO or "maybe later. Multiplayer for example - the basics work but it's not extensively tested. See [NEW_FEATURES.md](docs/NEW_FEATURES.md).
 
 ## Building
 
@@ -47,7 +51,7 @@ The packages do not include the original game data. Set `ROBINHOOD_DATA_DIR` to
 an extracted game data root as described in [Game data](#game-data). Intro and
 outro video playback is not currently included.
 
-Debug builds are tuned for fast iteration: `mold` linker,
+Debug builds are tuned for fast iteration: `wild` linker,
 `sccache` rustc wrapper, cranelift backend, dependencies built at
 `opt-level=2`. See [AGENTS.md](AGENTS.md) for the full notes.
 
