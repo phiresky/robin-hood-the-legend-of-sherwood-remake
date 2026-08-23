@@ -1334,6 +1334,7 @@ mod tests {
                     ..Position::default()
                 },
                 sector_out: 0,
+                sector_out_index: None,
                 sector_in: 18,
                 layer_out: 0,
                 // Proto-time state was unlocked. The serialized state below

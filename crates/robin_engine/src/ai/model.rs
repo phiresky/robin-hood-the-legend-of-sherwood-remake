@@ -2719,6 +2719,10 @@ pub struct DoorSeekInfo {
     pub point_out: MapPoint,
     pub position_in: Position,
     pub sector_out: u16,
+    /// Exact arena half of Original's `RHDoor::GetSectorOut()` pointer.
+    /// Older synthetic state may retain only the public number above.
+    #[serde(default)]
+    pub sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
     /// Sector on the inside of the door (the building).
     pub sector_in: u16,
     /// Layer (z-level) on the outside of the door. Used by

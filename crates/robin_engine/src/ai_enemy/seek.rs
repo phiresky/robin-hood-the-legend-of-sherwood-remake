@@ -1029,9 +1029,27 @@ impl EnemyAi {
                 continue;
             }
 
-            // Must be in the same sector as the seek center
-            if Some(door_info.sector_out) != seek_center.sector.map(u16::from) {
+            // Original compares the exact `RHSector*` carried by Position,
+            // not the public sector number. Duplicate public numbers occur
+            // in real levels; accepting a door from the wrong arena changes
+            // the personal seek point to that door's inside position and can
+            // immediately recurse through EVENT_COULDNT_REACHPOINT.
+            let Some(center_sector) = seek_center.sector else {
                 continue;
+            };
+            if door_info.sector_out != u16::from(center_sector) {
+                continue;
+            }
+            if let Some(center_index) = center_sector.arena_index() {
+                let door_index = door_info.sector_out_index.unwrap_or_else(|| {
+                    panic!(
+                        "building door {} exterior sector {} lacks exact arena identity required by seek center {center_index:?}",
+                        door_info.door_index, door_info.sector_out
+                    )
+                });
+                if door_index != center_index {
+                    continue;
+                }
             }
 
             // Must not be the building we're already in.
@@ -1640,6 +1658,144 @@ impl EnemyAi {
 mod tests {
     use super::*;
     use crate::ai_enemy::CampSoldierInfo;
+    use crate::coordinates::MapPoint;
+
+    fn seek_test_building_door(
+        door_index: u32,
+        point_out: MapPoint,
+        position_in: Position,
+        sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
+    ) -> DoorSeekInfo {
+        DoorSeekInfo {
+            door_index: crate::gate::DoorIndex(door_index),
+            door_type: crate::gate::DoorType::Building,
+            point_out,
+            position_in,
+            sector_out: 88,
+            sector_out_index,
+            sector_in: position_in
+                .sector
+                .expect("test door has an inside sector")
+                .get(),
+            layer_out: 2,
+            npc_villain_authorized_direct: true,
+        }
+    }
+
+    #[test]
+    fn enemy_behind_door_uses_exact_outside_sector_identity() {
+        let exact_outside = crate::fast_find_grid::SectorIndex::new(10).unwrap();
+        let duplicate_outside = crate::fast_find_grid::SectorIndex::new(11).unwrap();
+        let center = Position {
+            x: 100.0,
+            y: 100.0,
+            sector: SectorHandle::new(88).map(|sector| sector.with_arena_index(exact_outside)),
+            level: 2,
+        };
+        let wrong_inside = Position {
+            x: 900.0,
+            y: 900.0,
+            sector: SectorHandle::new(18),
+            level: 0,
+        };
+        let correct_inside = Position {
+            x: 200.0,
+            y: 200.0,
+            sector: SectorHandle::new(19),
+            level: 0,
+        };
+        let mut global = AiGlobalState::default();
+        // The wrong duplicate is closer and would win Rust's old public-only
+        // comparison. Original's RHSector* comparison must skip it.
+        global.door_seek_infos = vec![
+            seek_test_building_door(
+                0,
+                MapPoint::new(101.0, 100.0),
+                wrong_inside,
+                Some(duplicate_outside),
+            ),
+            seek_test_building_door(
+                1,
+                MapPoint::new(110.0, 100.0),
+                correct_inside,
+                Some(exact_outside),
+            ),
+        ];
+        global.houses = vec![
+            House {
+                sector_index: 18,
+                ..House::default()
+            },
+            House {
+                sector_index: 19,
+                ..House::default()
+            },
+        ];
+        let ai = EnemyAi::new(150);
+        let ctx = AiContext::default();
+        let direction = vec_to_sector(10.0, 0.0);
+
+        let mut exact_center = center;
+        ai.find_door_enemy_could_be_behind(
+            &mut exact_center,
+            direction,
+            &global,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+        assert_eq!(exact_center, correct_inside);
+
+        // Explicitly number-only compatibility data cannot distinguish the
+        // duplicate arena objects and retains the legacy public comparison.
+        let mut numeric_center = Position {
+            sector: SectorHandle::new(88),
+            ..center
+        };
+        ai.find_door_enemy_could_be_behind(
+            &mut numeric_center,
+            direction,
+            &global,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+        assert_eq!(numeric_center, wrong_inside);
+    }
+
+    #[test]
+    #[should_panic(expected = "lacks exact arena identity required by seek center")]
+    fn enemy_behind_door_rejects_missing_exact_outside_identity() {
+        let mut center = Position {
+            x: 100.0,
+            y: 100.0,
+            sector: SectorHandle::new(88).map(|sector| {
+                sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(10).unwrap())
+            }),
+            level: 2,
+        };
+        let inside = Position {
+            sector: SectorHandle::new(18),
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+        global.door_seek_infos.push(seek_test_building_door(
+            0,
+            MapPoint::new(101.0, 100.0),
+            inside,
+            None,
+        ));
+        global.houses.push(House {
+            sector_index: 18,
+            ..House::default()
+        });
+
+        EnemyAi::new(150).find_door_enemy_could_be_behind(
+            &mut center,
+            vec_to_sector(1.0, 0.0),
+            &global,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+    }
 
     #[test]
     fn sectorless_group_seek_center_recovers_original_position_sector() {

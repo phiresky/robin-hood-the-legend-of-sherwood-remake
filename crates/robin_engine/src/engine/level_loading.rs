@@ -4651,6 +4651,9 @@ impl EngineInner {
                 let sector_in_index = door.sector_in_index.unwrap_or_else(|| {
                     panic!("canonical door {idx} interior sector has no exact arena identity")
                 });
+                let sector_out_index = door.sector_out_index.unwrap_or_else(|| {
+                    panic!("canonical door {idx} exterior sector has no exact arena identity")
+                });
                 crate::ai::DoorSeekInfo {
                     door_index: crate::gate::DoorIndex(idx as u32),
                     door_type: door.door_type,
@@ -4665,6 +4668,7 @@ impl EngineInner {
                         level: door.layer_in,
                     },
                     sector_out: u16::from(door.sector_out),
+                    sector_out_index: Some(sector_out_index),
                     sector_in: u16::from(door.sector_in),
                     layer_out: door.layer_out,
                     npc_villain_authorized_direct,

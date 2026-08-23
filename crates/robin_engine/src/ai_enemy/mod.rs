@@ -6081,6 +6081,7 @@ mod tests {
             point_out,
             position_in,
             sector_out: 7,
+            sector_out_index: None,
             sector_in: 8,
             layer_out: 0,
             npc_villain_authorized_direct: cache_npc_villain_authorized_direct(&door),

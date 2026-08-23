@@ -170,6 +170,7 @@ mod building_door_membership_tests {
                 level: 8,
             },
             sector_out: 0,
+            sector_out_index: Some(SectorIndex::new(0).unwrap()),
             sector_in: 146,
             layer_out: 0,
             npc_villain_authorized_direct: true,
