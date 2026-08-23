@@ -669,11 +669,15 @@ mod prepared_forecast_tests {
 pub struct ForecastInput {
     pub position_map_x: f32,
     pub position_map_y: f32,
-    /// Raw sector number.  Kept as `u16` because the forecast logic
-    /// reassigns this to `door.sector_in` / `sector_out` (raw `u16`) and
-    /// feeds it into raw sector-number grid lookups; wrapping/unwrapping
-    /// each step would just add noise.
+    /// Public sector number retained for legacy number-only inputs and trace
+    /// output. Exact topology comes from `sector_handle` when available.
     pub sector: u16,
+    /// Exact live sector identity carried by the actor's RHposition. `None`
+    /// retains compatibility with number-only synthetic and legacy inputs.
+    /// When present, this is authoritative; it must never be reconstructed
+    /// through the public-number map because distinct arena sectors can share
+    /// one public number.
+    pub sector_handle: Option<SectorHandle>,
     pub layer: u16,
     pub direction: u16,
     pub forecasted_movement_z: f32,
@@ -728,6 +732,16 @@ pub fn prepare_forecast_destination_for_ia(
 ) -> PreparedForecastDestination {
     use crate::gate::DoorType;
 
+    let current_sector = input.sector_handle.unwrap_or_else(|| {
+        SectorHandle::new(input.sector)
+            .unwrap_or_else(|| panic!("ForecastInput has invalid sector {}", input.sector))
+    });
+    assert_eq!(
+        u16::from(current_sector),
+        input.sector,
+        "ForecastInput exact sector identity disagrees with its public sector"
+    );
+
     let (mut sector, mut layer, mut point, moving_upwards, current_door_index) =
         if let Some((door_idx, direct)) = input.door_pass {
             if let Some(door) = doors.get(usize::from(door_idx)) {
@@ -738,7 +752,7 @@ pub fn prepare_forecast_destination_for_ia(
                         DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::BuildingTrap
                     );
                     (
-                        u16::from(door.sector_in),
+                        sector_handle_for_door_side(door.sector_in, door.sector_in_index),
                         door.layer_in,
                         door.point_in,
                         up,
@@ -751,7 +765,7 @@ pub fn prepare_forecast_destination_for_ia(
                         DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::BuildingTrap
                     );
                     (
-                        u16::from(door.sector_out),
+                        sector_handle_for_door_side(door.sector_out, door.sector_out_index),
                         door.layer_out,
                         door.point_out,
                         up,
@@ -761,7 +775,7 @@ pub fn prepare_forecast_destination_for_ia(
             } else {
                 // Door index out of range — fall back to current position.
                 (
-                    input.sector,
+                    current_sector,
                     input.layer,
                     MapPoint::new(input.position_map_x, input.position_map_y),
                     input.forecasted_movement_z > 0.0,
@@ -771,7 +785,7 @@ pub fn prepare_forecast_destination_for_ia(
         } else {
             // Not passing a door — use current position.
             (
-                input.sector,
+                current_sector,
                 input.layer,
                 MapPoint::new(input.position_map_x, input.position_map_y),
                 input.forecasted_movement_z > 0.0,
@@ -784,16 +798,32 @@ pub fn prepare_forecast_destination_for_ia(
     let mut direction_written = true;
 
     // Look up the destination sector in the grid.
-    let grid_sector = sector_map
-        .get(&crate::sector::SectorNumber::new(sector as i16))
-        .and_then(|&idx| sectors.get(idx));
+    let grid_sector = match sector.arena_index() {
+        Some(index) => {
+            let grid_sector = sectors.get(usize::from(index)).unwrap_or_else(|| {
+                panic!("forecast sector arena index {index} is outside the runtime grid")
+            });
+            assert_eq!(
+                u16::from(grid_sector.sector_number),
+                u16::from(sector),
+                "forecast sector arena index {index} resolves to a conflicting public sector"
+            );
+            Some(grid_sector)
+        }
+        None => sector_map
+            .get(&crate::sector::SectorNumber::new(u16::from(sector) as i16))
+            .and_then(|&idx| sectors.get(idx)),
+    };
 
     if let Some(gs) = grid_sector {
         if gs.sector_type.is_lift() {
             // Target is on a lift — predict high/low exit.
             // Direction uses `(PointOut - PointMid)`.
-            if let Some(exit_door) = find_lift_exit_door(sector, moving_upwards, doors) {
-                sector = u16::from(exit_door.sector_out);
+            if let Some(exit_door) =
+                find_lift_exit_door(sector, moving_upwards, doors, &gs.gate_indices)
+            {
+                sector =
+                    sector_handle_for_door_side(exit_door.sector_out, exit_door.sector_out_index);
                 layer = exit_door.layer_out;
                 point = exit_door.point_out;
                 direction = door_exit_direction_from_mid(exit_door);
@@ -804,11 +834,9 @@ pub fn prepare_forecast_destination_for_ia(
             // entry gate; after PassDoor clears it, the NULL comparison in
             // Original accepts whichever real gate the first draw selects.
             // Direction uses `(PointOut - PointIn)`.
-            for (door_index, door) in doors
-                .iter()
-                .enumerate()
-                .filter(|(_, door)| door.sector_in == sector)
-            {
+            for (door_index, door) in doors.iter().enumerate().filter(|(_, door)| {
+                sector_identity_matches_door_side(sector, door.sector_in, door.sector_in_index)
+            }) {
                 if let Some(current_door) = current_door_index {
                     if door_index as u32 == u32::from(current_door) {
                         entry_gate = Some(building_gates.len());
@@ -818,7 +846,10 @@ pub fn prepare_forecast_destination_for_ia(
                     position: Position {
                         x: door.point_out.x,
                         y: door.point_out.y,
-                        sector: SectorHandle::new(u16::from(door.sector_out)),
+                        sector: Some(sector_handle_for_door_side(
+                            door.sector_out,
+                            door.sector_out_index,
+                        )),
                         level: door.layer_out,
                     },
                     direction: door_exit_direction_from_in(door),
@@ -835,7 +866,8 @@ pub fn prepare_forecast_destination_for_ia(
             } else if let Some(current_door) = current_door_index {
                 assert!(
                     entry_gate.is_some(),
-                    "building sector {sector} has no entry door {} in its ordered gate list",
+                    "building sector {} has no entry door {} in its ordered gate list",
+                    u16::from(sector),
                     u32::from(current_door)
                 );
             }
@@ -845,9 +877,10 @@ pub fn prepare_forecast_destination_for_ia(
 
     if forecast_ia_debug_enabled() && grid_sector.is_some_and(|gs| gs.sector_type.is_lift()) {
         eprintln!(
-            "FORECAST input={input:?} out=({}, {}, sector={sector}, layer={layer}) dir={direction} gates={} entry={entry_gate:?}",
+            "FORECAST input={input:?} out=({}, {}, sector={}, layer={layer}) dir={direction} gates={} entry={entry_gate:?}",
             point.x,
             point.y,
+            u16::from(sector),
             building_gates.len(),
         );
     }
@@ -857,7 +890,7 @@ pub fn prepare_forecast_destination_for_ia(
             position: Position {
                 x: point.x,
                 y: point.y,
-                sector: SectorHandle::new(sector),
+                sector: Some(sector),
                 level: layer,
             },
             direction,
@@ -879,21 +912,309 @@ pub fn prepare_forecast_destination_for_ia(
 /// precisely because a lift's high endpoint often carries another type.
 /// Selecting by type therefore misses the endpoint entirely on such lifts
 /// and silently falls back to the target's raw position.
-fn find_lift_exit_door(
-    lift_sector: u16,
+fn find_lift_exit_door<'a>(
+    lift_sector: SectorHandle,
     moving_upwards: bool,
-    doors: &[crate::gate::Door],
-) -> Option<&crate::gate::Door> {
-    let (low_index, high_index) = crate::gate::lift_endpoint_door_indices(
-        doors,
-        crate::sector::SectorNumber::new(lift_sector as i16),
-    )?;
-    let index = if moving_upwards {
-        high_index
-    } else {
-        low_index
-    };
-    doors.get(index as usize)
+    doors: &'a [crate::gate::Door],
+    gate_indices: &[crate::gate::DoorIndex],
+) -> Option<&'a crate::gate::Door> {
+    // Original asks the exact RHSectorLift object for its own ordered gate
+    // list, then selects the point-out Y extrema from that list
+    // (`RHSector.cpp:1493-1521`). A wall lift's doors may expose associated
+    // motion sectors through `sector_in`; that endpoint is not the owning
+    // lift object's identity and must not be used as a membership test.
+    let mut candidates = gate_indices.iter().map(|index| {
+        doors.get(usize::from(*index)).unwrap_or_else(|| {
+            panic!(
+                "lift sector {} references missing door {}",
+                u16::from(lift_sector),
+                index.0
+            )
+        })
+    });
+    let first = candidates.next()?;
+    let mut low = first;
+    let mut high = first;
+    for door in candidates {
+        if door.point_out.y > low.point_out.y {
+            low = door;
+        }
+        if door.point_out.y < high.point_out.y {
+            high = door;
+        }
+    }
+    assert!(
+        !std::ptr::eq(low, high),
+        "lift sector {} has fewer than two distinct high/low endpoint doors",
+        u16::from(lift_sector)
+    );
+    Some(if moving_upwards { high } else { low })
+}
+
+#[inline]
+fn sector_handle_for_door_side(
+    public: crate::sector::SectorNumber,
+    arena: Option<crate::fast_find_grid::SectorIndex>,
+) -> SectorHandle {
+    let handle = SectorHandle::new(u16::from(public))
+        .unwrap_or_else(|| panic!("door endpoint has invalid public sector {public}"));
+    arena.map_or(handle, |index| handle.with_arena_index(index))
+}
+
+#[inline]
+fn sector_identity_matches_door_side(
+    sector: SectorHandle,
+    public: crate::sector::SectorNumber,
+    arena: Option<crate::fast_find_grid::SectorIndex>,
+) -> bool {
+    match (sector.arena_index(), arena) {
+        (Some(sector), Some(door)) => sector == door,
+        (None, None) => u16::from(sector) == u16::from(public),
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
+#[cfg(test)]
+mod forecast_sector_identity_tests {
+    use super::*;
+
+    fn ordinary_sector(number: i16) -> crate::fast_find_grid::GridSector {
+        crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::AREA | crate::sector::SectorType::MOTION,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
+    #[test]
+    fn officer_forecast_keeps_exact_sector_for_gate18_route() {
+        let arena = |value| crate::fast_find_grid::SectorIndex::new(value).unwrap();
+        let exact = |public, index| {
+            SectorHandle::new(public)
+                .unwrap()
+                .with_arena_index(arena(index))
+        };
+        let input = ForecastInput {
+            position_map_x: 2142.0,
+            position_map_y: 1001.0,
+            sector: 27,
+            sector_handle: Some(exact(27, 0)),
+            layer: 0,
+            direction: 0,
+            forecasted_movement_z: 0.0,
+            door_pass: None,
+            passing_door_directly: false,
+        };
+        let sectors = vec![ordinary_sector(27)];
+        let forecast = prepare_forecast_destination_for_ia(
+            &input,
+            &[],
+            &sectors,
+            &std::collections::HashMap::new(),
+        )
+        .resolve(&crate::sim_rng::test_context());
+        assert_eq!(forecast.position.sector, Some(exact(27, 0)));
+
+        let door = crate::gate::Door {
+            active: true,
+            point_out: MapPoint::new(2133.0, 1215.0),
+            point_in: MapPoint::new(2136.0, 1198.0),
+            sector_out: crate::sector::SectorNumber::new(24),
+            sector_in: crate::sector::SectorNumber::new(27),
+            sector_out_index: Some(arena(1)),
+            sector_in_index: Some(arena(0)),
+            ..crate::gate::Door::default()
+        };
+        let goal = forecast
+            .position
+            .sector
+            .expect("forecast keeps target sector");
+        let path = crate::gate::find_path_gates_with_sector_indices(
+            std::slice::from_ref(&door),
+            (1731.0, 1556.0),
+            24,
+            Some(arena(1)),
+            (forecast.position.x, forecast.position.y),
+            u16::from(goal),
+            goal.arena_index(),
+            None,
+            false,
+            &|_| true,
+            &|_| None,
+        )
+        .expect("Soldier94 must route to Officer71 through gate18");
+        assert_eq!(path.len(), 1);
+        assert_eq!(path[0].door_index, crate::gate::DoorIndex(0));
+        assert!(path[0].direct);
+
+        assert!(
+            crate::gate::find_path_gates_with_sector_indices(
+                std::slice::from_ref(&door),
+                (1731.0, 1556.0),
+                24,
+                // Same public source number, distinct arena object: never
+                // seed gate18 through a numeric alias.
+                Some(arena(2)),
+                (forecast.position.x, forecast.position.y),
+                u16::from(goal),
+                goal.arena_index(),
+                None,
+                false,
+                &|_| true,
+                &|_| None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn number_only_forecast_input_remains_number_only() {
+        let input = ForecastInput {
+            position_map_x: 10.0,
+            position_map_y: 20.0,
+            sector: 27,
+            sector_handle: None,
+            layer: 0,
+            direction: 3,
+            forecasted_movement_z: 0.0,
+            door_pass: None,
+            passing_door_directly: false,
+        };
+        let mut sector_map = std::collections::HashMap::new();
+        sector_map.insert(crate::sector::SectorNumber::new(27), 0);
+        let forecast =
+            prepare_forecast_destination_for_ia(&input, &[], &[ordinary_sector(27)], &sector_map)
+                .resolve(&crate::sim_rng::test_context());
+        assert_eq!(forecast.position.sector, SectorHandle::new(27));
+        assert_eq!(forecast.position.sector.unwrap().arena_index(), None);
+    }
+
+    #[test]
+    fn door_lift_and_building_forecasts_keep_canonical_endpoint_identity() {
+        let arena = |value| crate::fast_find_grid::SectorIndex::new(value).unwrap();
+        let exact = |public, index| {
+            SectorHandle::new(public)
+                .unwrap()
+                .with_arena_index(arena(index))
+        };
+        let base_input = ForecastInput {
+            position_map_x: 100.0,
+            position_map_y: 200.0,
+            sector: 24,
+            sector_handle: Some(exact(24, 1)),
+            layer: 0,
+            direction: 0,
+            forecasted_movement_z: 0.0,
+            door_pass: None,
+            passing_door_directly: false,
+        };
+
+        let crossing = crate::gate::Door {
+            sector_out: crate::sector::SectorNumber::new(24),
+            sector_in: crate::sector::SectorNumber::new(27),
+            sector_out_index: Some(arena(1)),
+            sector_in_index: Some(arena(0)),
+            point_in: MapPoint::new(300.0, 400.0),
+            ..crate::gate::Door::default()
+        };
+        let door_forecast = prepare_forecast_destination_for_ia(
+            &ForecastInput {
+                door_pass: Some((crate::gate::DoorIndex(0), true)),
+                ..base_input
+            },
+            std::slice::from_ref(&crossing),
+            &[ordinary_sector(27)],
+            &std::collections::HashMap::new(),
+        )
+        .resolve(&crate::sim_rng::test_context());
+        assert_eq!(door_forecast.position.sector, Some(exact(27, 0)));
+
+        let mut lift_grid_sector = ordinary_sector(42);
+        lift_grid_sector.sector_type = crate::sector::SectorType::LIFT;
+        lift_grid_sector.lift_type = Some(crate::sector::LiftType::Wall);
+        lift_grid_sector.gate_indices = vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)];
+        let lift_doors = [
+            crate::gate::Door {
+                owning_lift_sector: Some(crate::sector::SectorNumber::new(42)),
+                // Wall-lift gates can expose associated motion sectors here;
+                // neither endpoint is the owning RHSectorLift object.
+                sector_in: crate::sector::SectorNumber::new(70),
+                sector_out: crate::sector::SectorNumber::new(5),
+                sector_in_index: Some(arena(3)),
+                sector_out_index: Some(arena(1)),
+                point_out: MapPoint::new(10.0, 100.0),
+                ..crate::gate::Door::default()
+            },
+            crate::gate::Door {
+                owning_lift_sector: Some(crate::sector::SectorNumber::new(42)),
+                sector_in: crate::sector::SectorNumber::new(71),
+                sector_out: crate::sector::SectorNumber::new(6),
+                sector_in_index: Some(arena(4)),
+                sector_out_index: Some(arena(2)),
+                point_out: MapPoint::new(20.0, 10.0),
+                ..crate::gate::Door::default()
+            },
+        ];
+        let lift_forecast = prepare_forecast_destination_for_ia(
+            &ForecastInput {
+                sector: 42,
+                sector_handle: Some(exact(42, 0)),
+                forecasted_movement_z: 1.0,
+                ..base_input
+            },
+            &lift_doors,
+            &[lift_grid_sector],
+            &std::collections::HashMap::new(),
+        )
+        .resolve(&crate::sim_rng::test_context());
+        assert_eq!(lift_forecast.position.sector, Some(exact(6, 2)));
+
+        let mut building_grid_sector = ordinary_sector(50);
+        building_grid_sector.sector_type = crate::sector::SectorType::BUILDING;
+        let building_doors = [
+            crate::gate::Door {
+                sector_in: crate::sector::SectorNumber::new(50),
+                sector_out: crate::sector::SectorNumber::new(24),
+                sector_in_index: Some(arena(0)),
+                sector_out_index: Some(arena(1)),
+                ..crate::gate::Door::default()
+            },
+            crate::gate::Door {
+                sector_in: crate::sector::SectorNumber::new(50),
+                sector_out: crate::sector::SectorNumber::new(27),
+                sector_in_index: Some(arena(0)),
+                sector_out_index: Some(arena(2)),
+                ..crate::gate::Door::default()
+            },
+        ];
+        let building_forecast = prepare_forecast_destination_for_ia(
+            &ForecastInput {
+                sector: 50,
+                sector_handle: Some(exact(50, 0)),
+                door_pass: Some((crate::gate::DoorIndex(0), true)),
+                passing_door_directly: true,
+                ..base_input
+            },
+            &building_doors,
+            &[building_grid_sector],
+            &std::collections::HashMap::new(),
+        )
+        .resolve(&crate::sim_rng::test_context());
+        assert_eq!(building_forecast.position.sector, Some(exact(27, 2)));
+    }
 }
 
 /// Pick a random building exit gate that isn't the entry door.

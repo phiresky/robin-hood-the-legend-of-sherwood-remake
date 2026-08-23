@@ -2398,6 +2398,7 @@ pub(super) fn extract_forecast_input(
         position_map_x: elem.position_map().x,
         position_map_y: elem.position_map().y,
         sector: elem.sector().map(u16::from).unwrap_or(0),
+        sector_handle: elem.sector(),
         layer: elem.layer(),
         direction: elem.direction() as u16,
         forecasted_movement_z: forecasted_z,
@@ -5068,6 +5069,7 @@ impl EngineInner {
                     position_map_x: pos_now.x,
                     position_map_y: pos_now.y,
                     sector: s.element.sector().map(u16::from).unwrap_or(0),
+                    sector_handle: s.element.sector(),
                     layer: s.element.layer(),
                     direction: s.element.direction() as u16,
                     forecasted_movement_z: s
