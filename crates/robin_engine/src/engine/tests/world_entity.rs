@@ -7294,7 +7294,7 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
 }
 
 #[test]
-fn final_review_combat_alert_partial_refusal_uses_only_acceptor_for_formation() {
+fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
     use crate::ai::{AiState, Position, Remark, Substate};
     use crate::profiles::ProfileRank;
 
@@ -7318,6 +7318,7 @@ fn final_review_combat_alert_partial_refusal_uses_only_acceptor_for_formation() 
     accepted_ai.base.me = accepted_id.index();
     accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
     accepted_ai.set_state(AiState::Default, Substate::DefaultOnPost);
+    accepted_ai.gather_direction = 10;
     complete_test_runtime_fixture(&mut engine, &mut assets);
     install_test_open_field_bbox(&mut engine);
     engine
@@ -7370,7 +7371,14 @@ fn final_review_combat_alert_partial_refusal_uses_only_acceptor_for_formation() 
         .get_entity(accepted_id)
         .and_then(Entity::enemy_ai)
         .expect("partial-refusal acceptor retains EnemyAi");
-    assert!(accepted.gather_position_instructed);
+    assert!(
+        !accepted.gather_position_instructed,
+        "Original CommandSoldiersToAttack only uses the accepted soldiers to orient the officer; it never assigns formation slots"
+    );
+    assert_eq!(
+        accepted.gather_direction, 10,
+        "a combat alert must preserve a direction authored by an independent state such as DoorFight"
+    );
     let refused = engine
         .get_entity(refused_id)
         .and_then(Entity::enemy_ai)

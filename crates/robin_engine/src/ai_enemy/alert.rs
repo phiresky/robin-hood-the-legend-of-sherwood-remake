@@ -425,10 +425,10 @@ impl EnemyAi {
 
     pub(super) fn finish_command_soldiers_to_attack(
         &mut self,
-        global: &AiGlobalState,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        _global: &AiGlobalState,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
         ctx: &AiContext,
-        tick: &AiPerTickData,
+        _tick: &AiPerTickData,
     ) -> bool {
         let center = self.base.seek_position;
         let my_pos = ctx.position;
@@ -453,74 +453,6 @@ impl EnemyAi {
                 .collect();
             let (avg_dir_vec_x, avg_dir_vec_y) =
                 average_alerted_direction_vector(my_pos, &alerted_positions);
-            // Try a line formation on the average
-            // soldier-direction side, then distribute slots to each
-            // alerted soldier (nearest-slot match, outdoor only) with
-            // `InstructGatherPosition`.  Indoor (door-step) variant is
-            // not yet wired — without it, `command_soldiers_to_attack`
-            // from inside a building still falls back to the plain
-            // `CallCombatAlert` broadcast and the existing turn/gather
-            // sequence below.
-            if !ctx.in_building
-                && let Some(grid) = grid
-            {
-                let avg_dir_start = formation_direction(avg_dir_vec_x, avg_dir_vec_y);
-                let mut slots: Option<Vec<Position>> = None;
-                let mut slot_direction: u16 = avg_dir_start;
-                for offset in 0..16u16 {
-                    let try_dir = (avg_dir_start + offset) & 15;
-                    if let Some(p) = self.can_put_soldiers_in_this_direction(
-                        ctx,
-                        global,
-                        tick,
-                        MapPoint::new(my_pos.x, my_pos.y),
-                        try_dir,
-                        alerted_count,
-                        grid,
-                    ) {
-                        slots = Some(p);
-                        slot_direction = try_dir;
-                        break;
-                    }
-                }
-
-                if let Some(mut slots) = slots {
-                    // Direction--; direction ^= 8.
-                    // — the loop postincrements past the last-tried
-                    // value, so the "correct" facing for each soldier
-                    // is the opposite of the tried direction.
-                    let face_threat = slot_direction ^ 8;
-                    // Nearest-slot match per soldier,
-                    // removing each slot as it's claimed.
-                    for (i, &handle) in self.alerted_us.iter().enumerate() {
-                        if slots.is_empty() {
-                            break;
-                        }
-                        let soldier_pos = alerted_positions[i];
-                        let mut best_idx = 0;
-                        let mut best_sq = f32::INFINITY;
-                        for (k, slot) in slots.iter().enumerate() {
-                            let sx = slot.x - soldier_pos.x;
-                            let sy = (slot.y - soldier_pos.y)
-                                * crate::position_interface::INVERSE_ASPECT_RATIO;
-                            let sq = sx * sx + sy * sy;
-                            if sq < best_sq {
-                                best_sq = sq;
-                                best_idx = k;
-                            }
-                        }
-                        let chosen = slots.remove(best_idx);
-                        self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::InstructGatherPosition {
-                                target: handle,
-                                position: chosen,
-                                direction: face_threat,
-                                call_instruction: false,
-                            },
-                        );
-                    }
-                }
-            }
 
             self.base.stop_all();
 
