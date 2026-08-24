@@ -3241,6 +3241,9 @@ pub(super) fn build_friend_swap_candidates(
     sequence_manager: &crate::sequence::SequenceManager,
     me_id: impl Into<crate::element::EntityId>,
     my_camp: crate::element::Camp,
+    position_sector: impl Fn(
+        &crate::element::ElementData,
+    ) -> Option<crate::position_interface::SectorHandle>,
 ) -> Vec<crate::ai::FriendSwapCandidate> {
     let me_id = me_id.into();
     let mut out = Vec::new();
@@ -3292,7 +3295,11 @@ pub(super) fn build_friend_swap_candidates(
                     crate::ai::Position {
                         x: element.position_map().x,
                         y: element.position_map().y,
-                        sector: element.sector(),
+                        // Original copies the exact RHSector* from
+                        // Position(element). Preserve the live arena object;
+                        // a duplicate public number cannot route the later
+                        // target swap by itself.
+                        sector: position_sector(element),
                         level: element.layer(),
                     }
                 },

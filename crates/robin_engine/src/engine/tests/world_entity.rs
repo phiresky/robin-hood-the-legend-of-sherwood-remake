@@ -4151,6 +4151,7 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
         &engine.orders.sequence_manager,
         owner,
         crate::element::Camp::Lacklandists,
+        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
     );
     assert_eq!(candidates.len(), 1);
     let candidate = &candidates[0];
@@ -4170,6 +4171,85 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
         crate::position_interface::SectorHandle::new(22)
     );
     assert_eq!(candidate.friend_primary_target_position.level, 4);
+}
+
+#[test]
+fn friend_swap_candidate_preserves_exact_duplicate_target_sector() {
+    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::fast_find_grid::GridSector;
+    use crate::sector::{SectorNumber, SectorType};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let square = |min: f32, max: f32| GridSector {
+        points: vec![
+            MapPoint::new(min, min),
+            MapPoint::new(max, min),
+            MapPoint::new(max, max),
+            MapPoint::new(min, max),
+        ],
+        bounding_box: MapBBox::from_coords(min, min, max, max),
+        sector_number: SectorNumber::new(88),
+        layer: 2,
+        sector_type: SectorType::MOTION,
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    };
+    let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
+    let level = std::sync::Arc::make_mut(&mut grid.level);
+    level.sectors = vec![square(0.0, 100.0), square(600.0, 800.0)];
+
+    let Entity::Soldier(friend_soldier) = engine.get_entity_mut(friend).unwrap() else {
+        panic!("friend changed kind")
+    };
+    friend_soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .unwrap()
+        .current_substate = crate::ai::Substate::AttackingRunningToEnemy;
+    friend_soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .unwrap()
+        .primary_target = target.index();
+
+    let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
+    target_element.set_position_map(MapPoint::new(684.1841, 745.0576));
+    target_element.set_layer(2);
+    target_element.set_sector(crate::position_interface::SectorHandle::new(88));
+
+    let candidates = crate::engine::ai::build_friend_swap_candidates(
+        &engine.world.entities,
+        &[],
+        &engine.orders.sequence_manager,
+        owner,
+        crate::element::Camp::Lacklandists,
+        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
+    );
+
+    let target_sector = candidates[0]
+        .friend_primary_target_position
+        .sector
+        .expect("friend target must retain its sector");
+    assert_eq!(u16::from(target_sector), 88);
+    assert_eq!(
+        target_sector.arena_index(),
+        crate::fast_find_grid::SectorIndex::new(1)
+    );
 }
 
 #[test]

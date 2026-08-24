@@ -1044,6 +1044,7 @@ impl EngineInner {
                 &self.orders.sequence_manager,
                 npc_id,
                 my_camp,
+                |element| super::ai_view_position_sector(self, element),
             );
             return tick;
         };
@@ -1227,6 +1228,7 @@ impl EngineInner {
             &self.orders.sequence_manager,
             npc_id,
             my_camp,
+            |element| super::ai_view_position_sector(self, element),
         );
 
         // Stashed-exit-door snapshot for the AlertSoldiers indoor
