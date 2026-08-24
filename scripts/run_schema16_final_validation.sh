@@ -18,6 +18,17 @@ shift 3
 campaigns=("$@")
 runner_mode=${SCHEMA16_FINAL_RUNNER_MODE:-}
 expected_bundle_sha=${SCHEMA16_FINAL_RUNNER_BUNDLE_SHA256:-}
+detected_cpus=$(nproc 2>/dev/null || printf '1\n')
+if [[ ! "$detected_cpus" =~ ^[1-9][0-9]*$ ]]; then
+    detected_cpus=1
+fi
+default_sweep_concurrency=$detected_cpus
+(( default_sweep_concurrency > 16 )) && default_sweep_concurrency=16
+sweep_concurrency=${SCHEMA16_FINAL_SWEEP_CONCURRENCY:-$default_sweep_concurrency}
+[[ "$sweep_concurrency" =~ ^[1-9][0-9]*$ ]] \
+    || { printf 'error: SCHEMA16_FINAL_SWEEP_CONCURRENCY must be a positive integer\n' >&2; exit 2; }
+(( sweep_concurrency <= 64 )) \
+    || { printf 'error: SCHEMA16_FINAL_SWEEP_CONCURRENCY must not exceed 64\n' >&2; exit 2; }
 
 audit_parent="$workspace/parity-save-replays/audits"
 outer_lock=${SCHEMA16_FINAL_OUTER_LOCK:-/tmp/robin-parity-runner.lock}
@@ -420,6 +431,29 @@ verify_exact_audit() {
     done <"$audit/traces.snapshot"
 }
 
+verify_existing_audit_proofs() {
+    local audit=$1 trace key status log marker_count actual
+    local -A allowed_statuses=() allowed_logs=()
+    while IFS= read -r trace; do
+        key=$(trace_key "$trace") || return 1
+        status="$audit/status/$key.status"
+        log="$audit/logs/$key.log"
+        allowed_statuses["$status"]=1
+        allowed_logs["$log"]=1
+        [[ -e "$status" || -e "$log" ]] || continue
+        [[ -f "$status" && -f "$log" ]] || return 1
+        cmp -s -- "$status" <(printf '0\n') || return 1
+        marker_count=$(grep -Fxc -- "$exact_eof_marker" "$log" || true)
+        [[ "$marker_count" == 1 ]] || return 1
+    done <"$audit/traces.snapshot"
+    while IFS= read -r -d '' actual; do
+        [[ -n "${allowed_statuses[$actual]+present}" ]] || return 1
+    done < <(find "$audit/status" -maxdepth 1 -type f -print0)
+    while IFS= read -r -d '' actual; do
+        [[ -n "${allowed_logs[$actual]+present}" ]] || return 1
+    done < <(find "$audit/logs" -maxdepth 1 -type f -print0)
+}
+
 [[ -d "$workspace" ]] || fail "workspace is not a directory: $workspace"
 workspace=$(realpath -e -- "$workspace")
 runner_arg_is_dir=0
@@ -474,6 +508,7 @@ if (( runner_is_bundle == 0 )) && file -b -- "$runner" | grep -q '^ELF '; then
 fi
 [[ -x "$workspace/scripts/run_parity_release_sweep.sh" ]] \
     || fail "missing release sweep under workspace: $workspace"
+command -v setsid >/dev/null || fail 'setsid is required for parallel worker cleanup'
 
 mkdir -p -- "$audit_parent" "$(dirname -- "$outer_lock")"
 exec {outer_lock_fd}>"$outer_lock"
@@ -553,7 +588,44 @@ else
 fi
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/schema16-final-validation.XXXXXX")
-trap 'rm -rf -- "$work_dir"' EXIT
+sweep_pids=()
+declare -A sweep_live_pids=()
+active_audit=
+cleanup_validation() {
+    local status=$? pid attempt alive temporary
+    trap - EXIT INT TERM
+    for pid in "${!sweep_live_pids[@]}"; do
+        kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    done
+    for attempt in {1..50}; do
+        alive=0
+        for pid in "${!sweep_live_pids[@]}"; do
+            if kill -0 -- "-$pid" 2>/dev/null; then
+                alive=1
+            fi
+        done
+        if (( alive == 0 )); then
+            break
+        fi
+        sleep 0.1
+    done
+    for pid in "${!sweep_live_pids[@]}"; do
+        kill -KILL -- "-$pid" 2>/dev/null || true
+    done
+    for pid in "${!sweep_live_pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+    if [[ -n "$active_audit" && -d "$active_audit" ]]; then
+        while IFS= read -r -d '' temporary; do
+            rm -f -- "$temporary"
+        done < <(find "$active_audit/logs" "$active_audit/status" \
+            -type f -name '*.tmp.*' -print0 2>/dev/null)
+    fi
+    rm -rf -- "$work_dir"
+    exit "$status"
+}
+trap cleanup_validation EXIT
+trap 'exit 130' INT TERM
 previous_seed=-1
 
 for campaign_index in "${!normalized_campaigns[@]}"; do
@@ -600,18 +672,71 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
         "$audit" "$campaign" "$manifest" "$identities" "$metadata" \
         "$snapshot_sha" "$identities_sha" || exit 2
 
-    if ! (
-        cd -- "$workspace"
-        env \
-            PARITY_SWEEP_FAIL_FAST=1 \
-            PARITY_SWEEP_GLOBAL_CONCURRENCY=1 \
-            PARITY_SWEEP_SLOT_DIR="$workspace/.git/parity-runner-slots" \
-            scripts/run_parity_release_sweep.sh \
-                "$workspace" "$audit" "$pinned_runner_exec" 0 1
-    ); then
+    # Refuse to launch any new work when a resume already contains a corrupt or
+    # non-exact proof. During a fresh run, the first failing worker publishes a
+    # shared stop file; no later trace starts, while in-flight workers finish
+    # and atomically publish their own results before this parent continues.
+    if ! verify_existing_audit_proofs "$audit"; then
         classify_failure "$audit"
         exit 1
     fi
+    fail_fast_stop="$audit/.parallel-fail-fast-stop"
+    active_audit=$audit
+    rm -f -- "$fail_fast_stop"
+    launch_tmp=$(mktemp "$audit/sweep-launch.env.tmp.XXXXXX") || exit 2
+    {
+        printf 'LAUNCHED_UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'SWEEP_CONCURRENCY=%s\n' "$sweep_concurrency"
+        printf 'FAIL_FAST_SEMANTICS=in_flight_complete_no_new_start_after_stop\n'
+    } >"$launch_tmp"
+    mv -f -- "$launch_tmp" "$audit/sweep-launch.env"
+    sweep_failed=0
+    sweep_pids=()
+    sweep_live_pids=()
+    for ((sweep_shard = 0; sweep_shard < sweep_concurrency; sweep_shard += 1)); do
+        (
+            cd -- "$workspace"
+            exec setsid env \
+                PARITY_SWEEP_FAIL_FAST=1 \
+                PARITY_SWEEP_FAIL_FAST_STOP="$fail_fast_stop" \
+                PARITY_SWEEP_GLOBAL_CONCURRENCY="$sweep_concurrency" \
+                PARITY_SWEEP_SLOT_DIR="$workspace/.git/parity-runner-slots" \
+                scripts/run_parity_release_sweep.sh \
+                    "$workspace" "$audit" "$pinned_runner_exec" \
+                    "$sweep_shard" "$sweep_concurrency" \
+                    {outer_lock_fd}>&-
+        ) &
+        sweep_pids+=("$!")
+        sweep_live_pids["$!"]=1
+    done
+    sweep_remaining=${#sweep_pids[@]}
+    while (( sweep_remaining > 0 )); do
+        sweep_status=0
+        sweep_finished_pid=
+        wait -n -p sweep_finished_pid || sweep_status=$?
+        sweep_remaining=$((sweep_remaining - 1))
+        if [[ -n "$sweep_finished_pid" ]]; then
+            unset 'sweep_live_pids[$sweep_finished_pid]'
+        fi
+        if (( sweep_status != 0 )); then
+            sweep_failed=1
+        fi
+        # Status 70 means a worker could not publish the coordination stop.
+        # Abort every worker group rather than allowing uncoordinated starts.
+        if (( sweep_status == 70 )); then
+            for sweep_pid in "${!sweep_live_pids[@]}"; do
+                kill -TERM -- "-$sweep_pid" 2>/dev/null || true
+            done
+        fi
+    done
+    sweep_pids=()
+    sweep_live_pids=()
+    active_audit=
+    if (( sweep_failed != 0 )); then
+        classify_failure "$audit"
+        exit 1
+    fi
+    rm -f -- "$fail_fast_stop"
 
     [[ "$(sha256_file "$pinned_runner")" == "$actual_runner_sha" ]] \
         || fail "pinned runner changed during validation: $pinned_runner"
@@ -662,6 +787,7 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
         printf 'RUNNER_BUNDLE_MANIFEST_SHA256=%s\n' "$runner_bundle_manifest_sha"
         printf 'RUNNER_LIB_MANIFEST_SHA256=%s\n' "$runner_lib_manifest_sha"
         printf 'NATIVE_CONVERSION_PROTOCOL=%s\n' "$native_conversion_protocol"
+        printf 'SWEEP_CONCURRENCY=%s\n' "$sweep_concurrency"
         printf 'SNAPSHOT_SHA256=%s\n' "$snapshot_sha"
         printf 'TRACE_IDENTITIES_SHA256=%s\n' "$identities_sha"
     } >"$verdict_tmp"

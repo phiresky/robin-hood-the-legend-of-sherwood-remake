@@ -51,7 +51,47 @@ PY
     exit 0
 fi
 printf '%s\n' "$trace" >>"$FAKE_RUNNER_INVOCATIONS"
+if [[ -n ${FAKE_RUNNER_STATE_DIR:-} ]]; then
+    mkdir -p "$FAKE_RUNNER_STATE_DIR"
+    exec 8>"$FAKE_RUNNER_STATE_DIR/lock"
+    flock 8
+    active=0
+    [[ ! -f "$FAKE_RUNNER_STATE_DIR/active" ]] \
+        || active=$(<"$FAKE_RUNNER_STATE_DIR/active")
+    active=$((active + 1))
+    printf '%s\n' "$active" >"$FAKE_RUNNER_STATE_DIR/active"
+    maximum=0
+    [[ ! -f "$FAKE_RUNNER_STATE_DIR/maximum" ]] \
+        || maximum=$(<"$FAKE_RUNNER_STATE_DIR/maximum")
+    if (( active > maximum )); then
+        printf '%s\n' "$active" >"$FAKE_RUNNER_STATE_DIR/maximum"
+    fi
+    flock -u 8
+    decrement_active() {
+        flock 8
+        active=$(<"$FAKE_RUNNER_STATE_DIR/active")
+        printf '%s\n' "$((active - 1))" >"$FAKE_RUNNER_STATE_DIR/active"
+        flock -u 8
+    }
+    trap decrement_active EXIT
+fi
 case "${trace##*/}" in
+    *01-parallel-fail-session-*.jsonl.zst)
+        if [[ ${FAKE_RUNNER_REPAIR:-0} != 1 ]]; then
+            for _attempt in {1..100}; do
+                [[ -f "$FAKE_RUNNER_STATE_DIR/inflight-started" ]] && break
+                sleep 0.01
+            done
+            printf '%s\n' 'deliberate parallel replay failure' >&2
+            exit 31
+        fi
+        ;;
+    *02-parallel-inflight-session-*.jsonl.zst|*05-interrupt-session-*.jsonl.zst)
+        : >"$FAKE_RUNNER_STATE_DIR/inflight-started"
+        sleep "${FAKE_RUNNER_SLEEP:-0.3}"
+        ;;
+    *03-parallel-after-session-*.jsonl.zst|*04-parallel-after-session-*.jsonl.zst)
+        ;;
     *02-fail-session-*.jsonl.zst)
         if [[ ${FAKE_RUNNER_REPAIR:-0} != 1 ]]; then
             printf '%s\n' 'deliberate replay failure' >&2
@@ -149,6 +189,18 @@ run_bundle_with_identity() {
 
 run_validation_repaired() {
     FAKE_RUNNER_REPAIR=1 run_validation "$@"
+}
+
+run_validation_parallel_state() {
+    local concurrency=$1 state_dir=$2 selected_runner=$3 selected_sha=$4
+    shift 4
+    env \
+        FAKE_RUNNER_STATE_DIR="$state_dir" \
+        SCHEMA16_FINAL_SWEEP_CONCURRENCY="$concurrency" \
+        FAKE_RUNNER_INVOCATIONS="$invocations" \
+        SCHEMA16_FINAL_RUNNER_MODE=direct \
+        SCHEMA16_FINAL_OUTER_LOCK="$test_root/final-validation.lock" \
+        "$validator" "$workspace" "$selected_runner" "$selected_sha" "$@"
 }
 
 expect_failure_without_run() {
@@ -462,6 +514,134 @@ chmod +x "$pinned_bundle/lib/ld-linux-x86-64.so.2"
 run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
 [[ "$(wc -l <"$invocations")" == "$before" ]]
 
+# Parallel fail-fast permits already-running work to publish, but starts no
+# later shard item after the first failure. Resume rejects the preserved
+# failure without launching anything; after explicit repair it skips the prior
+# exact proof and safely resumes with a different resource concurrency.
+parallel_campaign=$(make_campaign schema16-seed2970000-parallel-test 2970000 4)
+add_trace "$parallel_campaign" 01-parallel-fail
+add_trace "$parallel_campaign" 02-parallel-inflight
+add_trace "$parallel_campaign" 03-parallel-after
+add_trace "$parallel_campaign" 04-parallel-after
+parallel_state="$test_root/parallel-state"
+mkdir -p "$parallel_state"
+parallel_before=$(wc -l <"$invocations")
+if run_validation_parallel_state 2 "$parallel_state" \
+    "$runner" "$runner_sha" "$parallel_campaign"
+then
+    printf 'test failure: parallel validation accepted a failing trace\n' >&2
+    exit 1
+fi
+if [[ "$(wc -l <"$invocations")" != "$((parallel_before + 2))" ]]; then
+    printf 'test failure: a post-stop parallel trace was invoked\n' >&2
+    tail -n 4 "$invocations" >&2
+    exit 1
+fi
+[[ "$(<"$parallel_state/maximum")" == 2 ]]
+parallel_audit=$(audit_for unused "$parallel_campaign" "$runner_sha")
+parallel_failed="$parallel_campaign/traces/save/01-parallel-fail-session-0001.jsonl.zst"
+parallel_inflight="$parallel_campaign/traces/save/02-parallel-inflight-session-0001.jsonl.zst"
+parallel_after3="$parallel_campaign/traces/save/03-parallel-after-session-0001.jsonl.zst"
+parallel_after4="$parallel_campaign/traces/save/04-parallel-after-session-0001.jsonl.zst"
+[[ "$(<"$(status_for "$parallel_audit" "$parallel_failed")")" == 31 ]]
+parallel_inflight_status=$(status_for "$parallel_audit" "$parallel_inflight")
+if [[ "$(<"$parallel_inflight_status")" != 0 ]]; then
+    printf 'test failure: in-flight trace did not publish exact status\n' >&2
+    cat -- "$(log_for "$parallel_audit" "$parallel_inflight")" >&2
+    exit 1
+fi
+[[ ! -e "$(status_for "$parallel_audit" "$parallel_after3")" ]]
+[[ ! -e "$(status_for "$parallel_audit" "$parallel_after4")" ]]
+[[ -f "$parallel_audit/.parallel-fail-fast-stop" ]]
+if run_validation_parallel_state 2 "$parallel_state" \
+    "$runner" "$runner_sha" "$parallel_campaign"
+then
+    printf 'test failure: parallel resume crossed a preserved failure\n' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$invocations")" == "$((parallel_before + 2))" ]]
+rm -f -- \
+    "$(status_for "$parallel_audit" "$parallel_failed")" \
+    "$(log_for "$parallel_audit" "$parallel_failed")"
+FAKE_RUNNER_REPAIR=1 run_validation_parallel_state 3 "$parallel_state" \
+    "$runner" "$runner_sha" "$parallel_campaign"
+[[ "$(wc -l <"$invocations")" == "$((parallel_before + 5))" ]]
+[[ "$(grep -Fxc -- "$parallel_inflight" "$invocations")" == 1 ]]
+[[ ! -e "$parallel_audit/.parallel-fail-fast-stop" ]]
+grep -Fxq 'SWEEP_CONCURRENCY=3' "$parallel_audit/sweep-launch.env"
+grep -Fxq 'SWEEP_CONCURRENCY=3' "$parallel_audit/parity-verdict.env"
+! grep -Fq 'SWEEP_CONCURRENCY=' "$parallel_audit/validation.env"
+if find "$parallel_audit" -type f -name '*.tmp.*' -print -quit | grep -q .; then
+    printf 'test failure: parallel audit retained a temporary file\n' >&2
+    exit 1
+fi
+
+# TERM reaps every worker process group. An interrupted in-flight trace leaves
+# neither a verdict nor a partially-published status/log or private temp file.
+interrupt_campaign=$(make_campaign schema16-seed2980000-interrupt-test 2980000 1)
+add_trace "$interrupt_campaign" 05-interrupt
+interrupt_state="$test_root/interrupt-state"
+mkdir -p "$interrupt_state"
+env \
+    FAKE_RUNNER_SLEEP=30 \
+    FAKE_RUNNER_STATE_DIR="$interrupt_state" \
+    FAKE_RUNNER_INVOCATIONS="$invocations" \
+    SCHEMA16_FINAL_SWEEP_CONCURRENCY=2 \
+    SCHEMA16_FINAL_RUNNER_MODE=direct \
+    SCHEMA16_FINAL_OUTER_LOCK="$test_root/final-validation.lock" \
+    "$validator" "$workspace" "$runner" "$runner_sha" "$interrupt_campaign" \
+        >"$test_root/interrupt-validation.log" 2>&1 &
+locked_pid=$!
+interrupt_started=0
+for _attempt in {1..200}; do
+    if [[ -f "$interrupt_state/inflight-started" ]]; then
+        interrupt_started=1
+        break
+    fi
+    sleep 0.01
+done
+[[ "$interrupt_started" == 1 ]]
+kill -TERM "$locked_pid"
+if wait "$locked_pid"; then
+    printf 'test failure: interrupted validation exited successfully\n' >&2
+    exit 1
+fi
+locked_pid=
+interrupt_audit=$(audit_for unused "$interrupt_campaign" "$runner_sha")
+[[ ! -f "$interrupt_audit/parity-verdict.env" ]]
+[[ -z "$(find "$interrupt_audit/logs" "$interrupt_audit/status" -type f -print -quit)" ]]
+[[ -z "$(find "$interrupt_audit" -type f -name '*.tmp.*' -print -quit)" ]]
+if INTERRUPT_TARGET="$interrupt_campaign" INTERRUPT_RUNNER="$runner" python3 - <<'PY'
+import os
+from pathlib import Path
+
+target = os.environ["INTERRUPT_TARGET"].encode()
+runner = os.environ["INTERRUPT_RUNNER"].encode()
+ancestors = set()
+pid = os.getpid()
+while pid > 1:
+    ancestors.add(pid)
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().split()
+    except (FileNotFoundError, PermissionError):
+        break
+    pid = int(fields[3])
+for entry in Path("/proc").iterdir():
+    if not entry.name.isdigit() or int(entry.name) in ancestors:
+        continue
+    try:
+        command = (entry / "cmdline").read_bytes()
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        continue
+    if target in command and runner in command:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
+    printf 'test failure: interrupted validation left a runner process\n' >&2
+    exit 1
+fi
+
 # Seed 3 failure is published and classified, and seed 4 is never started.
 seed3=$(make_campaign schema16-seed3000000-final-test 3000000 2)
 add_trace "$seed3" 01-pass
@@ -475,11 +655,13 @@ if run_validation "$ordered_audit" "$runner" "$runner_sha" "$seed3" "$seed4"; th
     printf 'test failure: ordered validation crossed seed3 failure\n' >&2
     exit 1
 fi
-[[ "$(wc -l <"$invocations")" == "$((ordered_before + 2))" ]]
+ordered_failed_count=$(wc -l <"$invocations")
+(( ordered_failed_count >= ordered_before + 1 \
+    && ordered_failed_count <= ordered_before + 2 ))
 ! grep -Fq -- "$seed4/" "$invocations"
 seed3_audit=$(audit_for "$ordered_audit" "$seed3" "$runner_sha")
 [[ -f "$seed3_audit/parity-last-failure.env" ]]
-grep -Fq 'CLASSIFICATION=nonzero-or-malformed-status' \
+grep -Eq 'CLASSIFICATION=(nonzero-or-malformed-status|missing-status)' \
     "$seed3_audit/parity-last-failure.env"
 snapshot_before=$(sha256sum -- "$seed3_audit/traces.snapshot")
 
@@ -489,7 +671,7 @@ if run_validation "$ordered_audit" "$runner" "$runner_sha" "$seed3" "$seed4"; th
     printf 'test failure: resume accepted preserved seed3 failure\n' >&2
     exit 1
 fi
-[[ "$(wc -l <"$invocations")" == "$((ordered_before + 2))" ]]
+[[ "$(wc -l <"$invocations")" == "$ordered_failed_count" ]]
 failed_trace="$seed3/traces/save/02-fail-session-0001.jsonl.zst"
 rm -f -- \
     "$(status_for "$seed3_audit" "$failed_trace")" \

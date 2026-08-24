@@ -28,12 +28,24 @@ name=${trace##*/}
 printf '%s\n' "$name" >>"$FAKE_RUNNER_INVOCATIONS"
 case "$name" in
     01-pass.jsonl.zst|03-after.jsonl.zst|05-native.jsonl.zst)
+        if [[ "$name" == 01-pass.jsonl.zst \
+            && -n ${FAKE_PARALLEL_BARRIER:-} ]]
+        then
+            : >"$FAKE_PARALLEL_BARRIER"
+            sleep 0.2
+        fi
         printf '%s\n' 'parity trace matched every recorded frame'
         ;;
     02-fail.jsonl.zst)
         if [[ ${FAKE_RUNNER_REPAIR:-0} == 1 ]]; then
             printf '%s\n' 'parity trace matched every recorded frame'
         else
+            if [[ -n ${FAKE_PARALLEL_BARRIER:-} ]]; then
+                for _attempt in {1..100}; do
+                    [[ -f "$FAKE_PARALLEL_BARRIER" ]] && break
+                    sleep 0.01
+                done
+            fi
             printf '%s\n' 'deliberate replay failure' >&2
             exit 23
         fi
@@ -200,6 +212,42 @@ then
     exit 1
 fi
 [[ "$(wc -l <"$invocation_log")" == "$shape_invocations" ]]
+
+# With an explicit shared stop, independent shards may fail fast in parallel.
+# The pass is deliberately in flight when the other shard fails; it completes
+# and publishes, while the later item on its shard never starts.
+parallel_audit="$test_root/parallel-fail-fast"
+mkdir -p "$parallel_audit"
+printf '%s\n' \
+    "$traces/01-pass.jsonl.zst" \
+    "$traces/02-fail.jsonl.zst" \
+    "$traces/03-after.jsonl.zst" >"$parallel_audit/traces.snapshot"
+parallel_stop="$parallel_audit/shared-stop"
+parallel_barrier="$test_root/parallel-pass-started"
+parallel_before=$(wc -l <"$invocation_log")
+run_sweep_shape "$parallel_audit" 0 2 \
+    PARITY_SWEEP_FAIL_FAST=1 \
+    PARITY_SWEEP_GLOBAL_CONCURRENCY=2 \
+    PARITY_SWEEP_FAIL_FAST_STOP="$parallel_stop" \
+    FAKE_PARALLEL_BARRIER="$parallel_barrier" &
+parallel_pid0=$!
+run_sweep_shape "$parallel_audit" 1 2 \
+    PARITY_SWEEP_FAIL_FAST=1 \
+    PARITY_SWEEP_GLOBAL_CONCURRENCY=2 \
+    PARITY_SWEEP_FAIL_FAST_STOP="$parallel_stop" \
+    FAKE_PARALLEL_BARRIER="$parallel_barrier" &
+parallel_pid1=$!
+parallel_status0=0
+parallel_status1=0
+wait "$parallel_pid0" || parallel_status0=$?
+wait "$parallel_pid1" || parallel_status1=$?
+[[ "$parallel_status0" != 0 && "$parallel_status1" != 0 ]]
+[[ "$(wc -l <"$invocation_log")" == "$((parallel_before + 2))" ]]
+[[ "$(<"$(status_for "$parallel_audit" "$traces/01-pass.jsonl.zst")")" == 0 ]]
+[[ "$(<"$(status_for "$parallel_audit" "$traces/02-fail.jsonl.zst")")" == 23 ]]
+[[ ! -e "$(status_for "$parallel_audit" "$traces/03-after.jsonl.zst")" ]]
+[[ -f "$parallel_stop" ]]
+assert_no_temporaries "$parallel_audit"
 
 # Setup and atomic publication failures are terminal in fail-fast mode.
 bad_slot="$test_root/not-a-slot-directory"

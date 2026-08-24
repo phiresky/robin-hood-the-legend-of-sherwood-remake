@@ -24,15 +24,13 @@ fi
 workspace=$(pwd)
 snapshot="$audit_dir/traces.snapshot"
 
-# Runner processes from distinct audit directories must share the same slot
-# pool.  Original's asynchronous pathfinder is sensitive to several parity
-# runners competing on the host, so an audit-local lock can produce a result
-# that a serial replay cannot reproduce.  Keep the safe default globally
-# serial.  PARITY_SWEEP_CONCURRENCY remains a compatibility alias, but callers
-# that deliberately want parallelism should set the global spelling to the
-# same value for every participating sweep. PARITY_SWEEP_FAIL_FAST=1 is for a
-# single globally serial manifest: it stops at the first recorded non-exact
-# result and also refuses to resume past an existing non-exact result.
+# Recordings are independent and each runner has its own process state. Runner
+# processes from distinct audits nevertheless share this host-wide slot pool
+# so callers can bound aggregate CPU and memory use. PARITY_SWEEP_CONCURRENCY
+# remains a compatibility alias; coordinated callers should use the global
+# spelling consistently. Parallel fail-fast shards coordinate through an
+# explicit shared stop file: no new trace starts after a failure publishes it,
+# while already-running traces are allowed to finish and publish their proof.
 global_concurrency=${PARITY_SWEEP_GLOBAL_CONCURRENCY:-${PARITY_SWEEP_CONCURRENCY:-1}}
 if [[ ! "$global_concurrency" =~ ^[1-9][0-9]*$ ]]; then
     printf 'error: PARITY_SWEEP_GLOBAL_CONCURRENCY must be a positive integer\n' >&2
@@ -43,13 +41,24 @@ if [[ "$fail_fast" != 0 && "$fail_fast" != 1 ]]; then
     printf 'error: PARITY_SWEEP_FAIL_FAST must be 0 or 1\n' >&2
     exit 2
 fi
+fail_fast_stop=${PARITY_SWEEP_FAIL_FAST_STOP:-}
+fail_fast_gate=
 if [[ "$fail_fast" == 1 \
-    && ( "$shard" != 0 || "$shards" != 1 || "$global_concurrency" != 1 ) ]]
+    && ( "$shard" != 0 || "$shards" != 1 || "$global_concurrency" != 1 ) \
+    && -z "$fail_fast_stop" ]]
 then
     printf '%s\n' \
-        'error: PARITY_SWEEP_FAIL_FAST=1 requires SHARD=0, SHARDS=1, and global concurrency 1' \
+        'error: parallel PARITY_SWEEP_FAIL_FAST=1 requires PARITY_SWEEP_FAIL_FAST_STOP' \
         >&2
     exit 2
+fi
+if [[ -n "$fail_fast_stop" ]]; then
+    if [[ "$fail_fast_stop" != /* || "$fail_fast_stop" == *$'\n'* ]]; then
+        printf 'error: PARITY_SWEEP_FAIL_FAST_STOP must be an absolute newline-free path\n' >&2
+        exit 2
+    fi
+    mkdir -p -- "${fail_fast_stop%/*}" || exit 2
+    fail_fast_gate="${fail_fast_stop}.start-gate.lock"
 fi
 if ! mkdir -p "$audit_dir/logs" "$audit_dir/status" "$audit_dir/.trace-locks"; then
     if [[ "$fail_fast" == 1 ]]; then
@@ -65,6 +74,14 @@ fi
 
 exact_eof_marker='parity trace matched every recorded frame'
 integrity_status='integrity-eof-marker'
+run_log=
+cleanup_private_log() {
+    if [[ -n "$run_log" ]]; then
+        rm -f -- "$run_log"
+    fi
+}
+trap cleanup_private_log EXIT
+trap 'cleanup_private_log; exit 130' INT TERM
 
 write_status() {
     local destination=$1
@@ -85,6 +102,9 @@ write_status() {
 acquire_runner_slot() {
     local slot
     while true; do
+        if [[ "$fail_fast" == 1 && -n "$fail_fast_stop" && -e "$fail_fast_stop" ]]; then
+            return 1
+        fi
         for ((slot = 0; slot < global_concurrency; slot += 1)); do
             exec {runner_slot_fd}>"$runner_slot_dir/$slot.lock"
             if flock -n "$runner_slot_fd"; then
@@ -94,6 +114,36 @@ acquire_runner_slot() {
         done
         sleep 1
     done
+}
+
+publish_fail_fast_stop() {
+    local temporary
+    [[ "$fail_fast" == 1 && -n "$fail_fast_stop" ]] || return 0
+    exec {stop_gate_fd}>"$fail_fast_gate" || return 1
+    flock "$stop_gate_fd" || { exec {stop_gate_fd}>&-; return 1; }
+    if [[ -e "$fail_fast_stop" ]]; then
+        exec {stop_gate_fd}>&-
+        return 0
+    fi
+    temporary=$(mktemp "${fail_fast_stop}.tmp.XXXXXX") \
+        || { exec {stop_gate_fd}>&-; return 1; }
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$temporary" \
+        || { rm -f -- "$temporary"; exec {stop_gate_fd}>&-; return 1; }
+    # A hard link is an atomic create-without-replace. Multiple failing shards
+    # may race here; exactly one publishes and all observe the same stop path.
+    ln -- "$temporary" "$fail_fast_stop" 2>/dev/null || [[ -e "$fail_fast_stop" ]] \
+        || { rm -f -- "$temporary"; exec {stop_gate_fd}>&-; return 1; }
+    rm -f -- "$temporary"
+    exec {stop_gate_fd}>&-
+}
+
+stop_after_failure() {
+    if ! publish_fail_fast_stop; then
+        printf 'error: unable to publish shared fail-fast stop: %s\n' \
+            "$fail_fast_stop" >&2
+        exit 70
+    fi
+    exit 1
 }
 
 status_is_exact_eof() {
@@ -137,6 +187,9 @@ campaign_key_prefix=${corpus_relative//\//__}
 
 mapfile -t traces < "$snapshot"
 for ((index = shard; index < ${#traces[@]}; index += shards)); do
+    if [[ "$fail_fast" == 1 && -n "$fail_fast_stop" && -e "$fail_fast_stop" ]]; then
+        exit 1
+    fi
     trace=${traces[index]}
     relative=${trace#"$corpus_dir"/}
     key=${relative//\//__}
@@ -157,6 +210,11 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     exec {trace_lock_fd}>"$audit_dir/.trace-locks/$full_key.lock"
     flock "$trace_lock_fd"
 
+    if [[ "$fail_fast" == 1 && -n "$fail_fast_stop" && -e "$fail_fast_stop" ]]; then
+        exec {trace_lock_fd}>&-
+        exit 1
+    fi
+
     existing_status=
     existing_log=
     if [[ -f "$status" ]]; then
@@ -171,7 +229,7 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         if [[ "$fail_fast" == 1 ]] \
             && ! status_is_exact_eof "$existing_status" "$existing_log"
         then
-            exit 1
+            stop_after_failure
         fi
         continue
     fi
@@ -196,7 +254,7 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         fi
         exec {trace_lock_fd}>&-
         if [[ "$fail_fast" == 1 ]]; then
-            exit 1
+            stop_after_failure
         fi
         continue
     fi
@@ -211,16 +269,44 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         printf 'error: unable to create private parity log for: %s\n' "$log" >&2
         exec {trace_lock_fd}>&-
         if [[ "$fail_fast" == 1 ]]; then
-            exit 1
+            stop_after_failure
         fi
         continue
     fi
 
-    acquire_runner_slot
-    if timeout --signal=TERM --kill-after=10s 900s \
-        env ROBINHOOD_DATA_DIR="$workspace/datadirs/fullgame_linux" \
-        "$runner" --no-auto-dump "$trace" > "$run_log" 2>&1
-    then
+    if ! acquire_runner_slot; then
+        rm -f -- "$run_log"
+        exec {trace_lock_fd}>&-
+        exit 1
+    fi
+    runner_command_status=0
+    if [[ "$fail_fast" == 1 && -n "$fail_fast_stop" ]]; then
+        exec {start_gate_fd}>"$fail_fast_gate"
+        flock "$start_gate_fd"
+        if [[ -e "$fail_fast_stop" ]]; then
+            exec {start_gate_fd}>&-
+            exec {runner_slot_fd}>&-
+            rm -f -- "$run_log"
+            run_log=
+            exec {trace_lock_fd}>&-
+            exit 1
+        fi
+        timeout --foreground --signal=TERM --kill-after=10s 900s \
+            env ROBINHOOD_DATA_DIR="$workspace/datadirs/fullgame_linux" \
+            "$runner" --no-auto-dump "$trace" > "$run_log" 2>&1 \
+            {start_gate_fd}>&- &
+        runner_pid=$!
+        # Publication of a failure cannot cross this boundary: the runner is
+        # already started before its shard releases the shared start gate.
+        exec {start_gate_fd}>&-
+        wait "$runner_pid" || runner_command_status=$?
+    else
+        timeout --foreground --signal=TERM --kill-after=10s 900s \
+            env ROBINHOOD_DATA_DIR="$workspace/datadirs/fullgame_linux" \
+            "$runner" --no-auto-dump "$trace" > "$run_log" 2>&1 \
+            || runner_command_status=$?
+    fi
+    if (( runner_command_status == 0 )); then
         marker_count=$(grep -Fxc -- "$exact_eof_marker" "$run_log" || true)
         if [[ "$marker_count" == 1 ]]; then
             runner_status=0
@@ -228,22 +314,41 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
             runner_status=$integrity_status
         fi
     else
-        runner_status=$?
+        runner_status=$runner_command_status
+    fi
+    stop_publication_failed=0
+    if [[ "$fail_fast" == 1 && "$runner_status" != 0 ]]; then
+        publish_fail_fast_stop || stop_publication_failed=1
     fi
     result_published=0
     if mv -f -- "$run_log" "$log" \
         && write_status "$status" "$runner_status"
     then
         result_published=1
+        run_log=
     else
         printf 'error: unable to publish parity result: %s\n' "$log" >&2
         rm -f -- "$run_log"
+    fi
+    if [[ "$fail_fast" == 1 && "$result_published" != 1 \
+        && "$runner_status" == 0 ]]
+    then
+        publish_fail_fast_stop || stop_publication_failed=1
     fi
     exec {runner_slot_fd}>&-
     exec {trace_lock_fd}>&-
     if [[ "$fail_fast" == 1 \
         && ( "$result_published" != 1 || "$runner_status" != 0 ) ]]
     then
+        if (( stop_publication_failed != 0 )); then
+            printf 'error: unable to publish shared fail-fast stop: %s\n' \
+                "$fail_fast_stop" >&2
+            exit 70
+        fi
         exit 1
     fi
 done
+
+if [[ "$fail_fast" == 1 && -n "$fail_fast_stop" && -e "$fail_fast_stop" ]]; then
+    exit 1
+fi
