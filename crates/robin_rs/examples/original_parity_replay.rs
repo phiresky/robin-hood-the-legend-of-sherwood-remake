@@ -3728,6 +3728,7 @@ const TRACE_NATIVE_VERSION: u32 = 66;
 /// stable trace identity used by sweep status keys, EOF ledgers, and
 /// completion markers.
 const TRACE_NATIVE_SUFFIX: &str = ".parity.bitcode.zst";
+const TRACE_CONVERSION_QUARANTINE_SUFFIX: &str = ".parity-conversion-source";
 const TRACE_NATIVE_FOOTER_MAGIC: [u8; 16] = *b"RHPRTRACEFOOTER!";
 const TRACE_NATIVE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
@@ -3736,10 +3737,13 @@ const TRACE_NATIVE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Keep the reader bounded at zstd's platform maximum while accepting those
 // valid trace frames.
 const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
-// bitcode + zstd 19 measured ~2.8x smaller caches than the previous bincode +
-// zstd default, and bitcode's dense output keeps high-level zstd fast (the
-// `--bench-encodings` experiment; see git history for the numbers).
-const TRACE_NATIVE_ZSTD_LEVEL: i32 = 19;
+// Bitcode's dense output makes level 9 a good throughput/size tradeoff. A
+// representative min/median/max corpus benchmark made it 12-17x faster than
+// level 19 for only 16-19% larger native traces. Long-distance matching was
+// neutral at level 19 and made level 9 both slower and 5-8% larger, so the
+// native writer deliberately leaves it disabled.
+const TRACE_NATIVE_ZSTD_LEVEL: i32 = 9;
+const TRACE_NATIVE_LONG_DISTANCE_MATCHING: bool = false;
 /// Frames per on-disk block. bitcode gets its size win from packing many
 /// values into one buffer, so records are grouped into blocks; a few hundred
 /// records already captured nearly all of the whole-trace win in the format
@@ -6104,6 +6108,20 @@ fn trace_source_fingerprint(trace_path: &Path) -> String {
     )
 }
 
+fn absolute_trace_path(trace_path: &Path) -> PathBuf {
+    absolute_trace_path_from(
+        trace_path,
+        &std::env::current_dir().expect("read current directory for relative parity trace"),
+    )
+}
+
+fn absolute_trace_path_from(trace_path: &Path, current_dir: &Path) -> PathBuf {
+    if trace_path.is_absolute() {
+        return trace_path.to_owned();
+    }
+    current_dir.join(trace_path)
+}
+
 /// Canonicalize the logical trace path even when only its native artifact
 /// still exists on disk (a converted recording is deleted, but its
 /// `.jsonl.zst` path remains the trace's identity).
@@ -6377,6 +6395,67 @@ fn validate_standalone_native_trace(native_path: &Path) {
         header.version,
         footer.version,
     );
+
+    // A conversion may have crashed after unlinking the JSONL source.  In
+    // that state the native file is authoritative, so accepting it based on
+    // only its header/footer would conceal a corrupt compressed block.  Read
+    // the complete record stream before reporting an already-converted
+    // source as successful.
+    let mut reader = BinaryTraceReader::open(native_path);
+    let decoded_header = reader.read_header();
+    let mut timeline = TraceTimeline::new(decoded_header.trace.initial_frame);
+    loop {
+        match reader.read_record() {
+            BinaryTraceRecord::Frame(frame) => timeline
+                .observe(frame.frame_before, frame.frame_after)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "standalone native parity trace {} breaks the frame timeline: {error}",
+                        native_path.display()
+                    )
+                }),
+            BinaryTraceRecord::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            } => {
+                assert!(
+                    rng_suffix.is_some(),
+                    "standalone native parity trace {} lost its RNG suffix",
+                    native_path.display()
+                );
+                let final_frame = final_frame.unwrap_or_else(|| {
+                    panic!(
+                        "standalone native parity trace {} lost its final frame",
+                        native_path.display()
+                    )
+                });
+                let frame_count = frame_count.unwrap_or_else(|| {
+                    panic!(
+                        "standalone native parity trace {} lost its frame count",
+                        native_path.display()
+                    )
+                });
+                timeline
+                    .validate_terminator(frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "standalone native parity trace {} terminator disagrees with its frames: {error}",
+                            native_path.display()
+                        )
+                    });
+                reader
+                    .validate_terminator(frame_count, final_frame)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "standalone native parity trace {} disagrees with its fixed footer: {error}",
+                            native_path.display()
+                        )
+                    });
+                break;
+            }
+        }
+    }
 }
 
 /// `--convert`: turn a JSONL recording into its native parity trace and
@@ -6395,6 +6474,10 @@ fn validate_standalone_native_trace(native_path: &Path) {
 /// derivations of it. Completion markers (`*.complete`) are left in place —
 /// they carry the trace's capture provenance and its identity persists.
 fn convert_recording_to_native(trace_path: &Path) {
+    // `Path::parent()` is `Some("")` for a bare relative file name. Resolve
+    // the input before publishing so cleanup always has a real directory and
+    // `--convert replay.jsonl.zst` behaves like `--convert ./replay.jsonl.zst`.
+    let trace_path = absolute_trace_path(trace_path);
     let display = trace_path.display();
     assert!(
         !trace_path
@@ -6403,17 +6486,124 @@ fn convert_recording_to_native(trace_path: &Path) {
             .ends_with(TRACE_NATIVE_SUFFIX),
         "{display} already is a native parity trace"
     );
-    assert!(
-        trace_path.is_file(),
-        "recording {display} does not exist; nothing to convert"
-    );
-    let source_bytes = std::fs::metadata(trace_path)
+    let native_path = native_binary_trace_path(&trace_path);
+    let quarantine_path = conversion_quarantine_path(&trace_path);
+    // State classification and recovery are protected by the same stable
+    // lock inode as generation and deletion.
+    let _generation_lock = lock_native_trace_generation(&native_path);
+    reject_conversion_symlink(&trace_path);
+    reject_conversion_symlink(&quarantine_path);
+    reject_conversion_symlink(&native_path);
+
+    match (trace_path.exists(), quarantine_path.exists()) {
+        (true, true) => {
+            panic!(
+                "conversion conflict: producer recreated {display} while pending quarantine {} exists; preserve both",
+                quarantine_path.display()
+            );
+        }
+        (false, true) => {
+            assert!(
+                native_path.is_file(),
+                "pending conversion quarantine {} has no native counterpart {}",
+                quarantine_path.display(),
+                native_path.display()
+            );
+            let fingerprint = trace_source_fingerprint(&quarantine_path);
+            let verified =
+                verify_converted_native_trace(&quarantine_path, &native_path, fingerprint);
+            let removed_derived =
+                finish_verified_conversion(&trace_path, &quarantine_path, &verified);
+            eprintln!(
+                "recovered conversion of {display} into {} ({} frames); deleted the pending source and {removed_derived} obsolete derived files",
+                native_path.display(),
+                verified.decoded_frames
+            );
+            return;
+        }
+        (false, false) => {
+            assert!(
+                native_path.is_file(),
+                "recording {display} does not exist and has no native counterpart {}",
+                native_path.display()
+            );
+            validate_standalone_native_trace(&native_path);
+            eprintln!(
+                "recording {display} was already converted into {}",
+                native_path.display()
+            );
+            return;
+        }
+        (true, false) => {}
+    }
+    assert!(trace_path.is_file(), "recording {display} is not a file");
+    let source_bytes = std::fs::metadata(&trace_path)
         .expect("stat recording before conversion")
         .len();
-    let native_path = ensure_native_binary_trace(trace_path);
+    let source_fingerprint = trace_source_fingerprint(&trace_path);
+    let native_path =
+        ensure_native_binary_trace_locked(&trace_path, &native_path, source_fingerprint.clone());
 
-    // Independent re-read of the published artifact.
-    let mut reader = BinaryTraceReader::open(&native_path);
+    // Independent re-read of the published artifact. Keep the proof token in
+    // the type flow so the destructive cleanup below cannot move ahead of the
+    // complete native readback accidentally.
+    let verified = verify_converted_native_trace(&trace_path, &native_path, source_fingerprint);
+    move_verified_recording_to_quarantine(&trace_path, &quarantine_path, &verified)
+        .unwrap_or_else(|error| panic!("refuse to quarantine converted recording: {error}"));
+    let removed_derived = finish_verified_conversion(
+        &trace_path,
+        &quarantine_path,
+        &VerifiedNativeReadback {
+            source_path: quarantine_path.clone(),
+            ..verified.clone()
+        },
+    );
+
+    let native_bytes = std::fs::metadata(&native_path)
+        .expect("stat native parity trace after conversion")
+        .len();
+    eprintln!(
+        "converted {display} ({:.2} MiB) into {} ({:.2} MiB, {} frames);          deleted the recording and {removed_derived} obsolete derived files",
+        source_bytes as f64 / (1024.0 * 1024.0),
+        native_path.display(),
+        native_bytes as f64 / (1024.0 * 1024.0),
+        verified.decoded_frames,
+    );
+}
+
+#[derive(Clone, Debug)]
+struct VerifiedNativeReadback {
+    decoded_frames: u64,
+    source_path: PathBuf,
+    source_fingerprint: String,
+}
+
+fn verify_converted_native_trace(
+    trace_path: &Path,
+    native_path: &Path,
+    source_fingerprint: String,
+) -> VerifiedNativeReadback {
+    let mut source_lines = open_jsonl_trace(trace_path).lines();
+    let source_header_line = source_lines
+        .next()
+        .expect("recording lost its header during native readback")
+        .expect("read recording header during native readback");
+    let source_trace: TraceHeader = serde_json::from_str(&source_header_line)
+        .expect("reparse recording header during native readback");
+    let source_prefix_line = source_lines
+        .next()
+        .expect("recording lost its RNG prefix during native readback")
+        .expect("read recording RNG prefix during native readback");
+    let source_prefix: TraceRngPrefix = serde_json::from_str(&source_prefix_line)
+        .expect("reparse recording RNG prefix during native readback");
+    let expected_header = BinaryTraceHeader {
+        version: TRACE_NATIVE_VERSION,
+        source_fingerprint: source_fingerprint.clone(),
+        trace: source_trace,
+        rng_prefix: source_prefix,
+    };
+
+    let mut reader = BinaryTraceReader::open(native_path);
     let header = reader.read_header();
     assert_eq!(
         header.version,
@@ -6421,11 +6611,37 @@ fn convert_recording_to_native(trace_path: &Path) {
         "native parity trace {} decodes with the wrong version",
         native_path.display()
     );
+    assert_eq!(
+        bitcode::encode(&header),
+        bitcode::encode(&expected_header),
+        "native parity trace {} header differs semantically from its recording",
+        native_path.display()
+    );
     let mut timeline = TraceTimeline::new(header.trace.initial_frame);
     let mut decoded_frames = 0_u64;
     loop {
         match reader.read_record() {
             BinaryTraceRecord::Frame(frame) => {
+                let line_number = decoded_frames + 3;
+                let source_line = source_lines
+                    .next()
+                    .unwrap_or_else(|| {
+                        panic!("recording ended before native frame on line {line_number}")
+                    })
+                    .unwrap_or_else(|error| {
+                        panic!("read recording frame on line {line_number}: {error}")
+                    });
+                let source_frame = parse_trace_frame(&source_line, line_number as usize)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "recording has its terminator before native frame on line {line_number}"
+                        )
+                    });
+                assert_eq!(
+                    bitcode::encode(&frame),
+                    bitcode::encode(&source_frame),
+                    "native parity frame on line {line_number} differs semantically from its recording"
+                );
                 timeline
                     .observe(frame.frame_before, frame.frame_after)
                     .unwrap_or_else(|error| {
@@ -6437,12 +6653,33 @@ fn convert_recording_to_native(trace_path: &Path) {
                 decoded_frames += 1;
             }
             BinaryTraceRecord::End {
+                rng_suffix,
                 final_frame,
                 frame_count,
-                ..
             } => {
+                let line_number = decoded_frames + 3;
+                let source_line = source_lines
+                    .next()
+                    .unwrap_or_else(|| {
+                        panic!("recording ended before native terminator on line {line_number}")
+                    })
+                    .unwrap_or_else(|error| {
+                        panic!("read recording terminator on line {line_number}: {error}")
+                    });
+                let source_end: TraceRngOnly =
+                    serde_json::from_str(&source_line).unwrap_or_else(|error| {
+                        panic!("parse recording terminator on line {line_number}: {error}")
+                    });
                 let final_frame = final_frame.expect("native End record lost its final frame");
                 let frame_count = frame_count.expect("native End record lost its frame count");
+                let rng_suffix = rng_suffix.expect("native End record lost its RNG suffix");
+                assert_eq!(
+                    bitcode::encode(&rng_suffix),
+                    bitcode::encode(&source_end.draws),
+                    "native RNG suffix differs semantically from its recording"
+                );
+                assert_eq!(final_frame, source_end.final_frame);
+                assert_eq!(frame_count, source_end.frame_count);
                 assert_eq!(frame_count, decoded_frames);
                 timeline
                     .validate_terminator(frame_count, final_frame)
@@ -6464,66 +6701,274 @@ fn convert_recording_to_native(trace_path: &Path) {
             }
         }
     }
-
-    // The recording has exactly header, RNG prefix, one line per frame, and
-    // the rng_suffix terminator.
-    let recorded_lines = open_jsonl_trace(trace_path)
-        .lines()
-        .map(|line| line.expect("re-read recording line count"))
-        .count() as u64;
-    assert_eq!(
-        recorded_lines,
-        decoded_frames + 3,
-        "recording {display} has {recorded_lines} lines but the native trace decoded {decoded_frames} frames"
+    assert!(
+        source_lines.next().is_none(),
+        "recording {} has data after its native terminator",
+        trace_path.display()
     );
 
-    std::fs::remove_file(trace_path)
-        .unwrap_or_else(|error| panic!("delete converted recording {display}: {error}"));
+    assert_eq!(
+        header.source_fingerprint,
+        source_fingerprint,
+        "native parity trace {} was not built from the source fingerprint held by this conversion",
+        native_path.display()
+    );
+
+    VerifiedNativeReadback {
+        decoded_frames,
+        source_path: trace_path.to_owned(),
+        source_fingerprint,
+    }
+}
+
+fn conversion_quarantine_path(trace_path: &Path) -> PathBuf {
+    let mut path = trace_path.as_os_str().to_owned();
+    path.push(TRACE_CONVERSION_QUARANTINE_SUFFIX);
+    PathBuf::from(path)
+}
+
+fn reject_conversion_symlink(path: &Path) {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => assert!(
+            !conversion_path_is_symlink(path),
+            "conversion paths must not be symbolic links: {}",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("inspect conversion path {}: {error}", path.display()),
+    }
+}
+
+fn conversion_path_is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn move_verified_recording_to_quarantine(
+    trace_path: &Path,
+    quarantine_path: &Path,
+    verified: &VerifiedNativeReadback,
+) -> Result<(), String> {
+    if trace_path != verified.source_path {
+        return Err(format!(
+            "verified source path {} changed to {} before quarantine",
+            verified.source_path.display(),
+            trace_path.display()
+        ));
+    }
+    let parent = trace_path
+        .parent()
+        .expect("absolute converted recording always has a parent directory");
+    if quarantine_path.exists() {
+        return Err(format!(
+            "deterministic conversion quarantine {} already exists",
+            quarantine_path.display()
+        ));
+    }
+    std::fs::rename(trace_path, &quarantine_path).map_err(|error| {
+        format!(
+            "atomically quarantine converted recording {} as {}: {error}",
+            trace_path.display(),
+            quarantine_path.display()
+        )
+    })?;
+    sync_directory(parent, "converted recording quarantine");
+
+    let quarantined_fingerprint = trace_source_fingerprint(&quarantine_path);
+    if quarantined_fingerprint == verified.source_fingerprint {
+        return Ok(());
+    }
+
+    let restoration = match restore_quarantined_recording_no_replace(quarantine_path, trace_path) {
+        Ok(()) => {
+            std::fs::remove_file(quarantine_path)
+                .map_err(|error| format!("remove restored recording quarantine link: {error}"))?;
+            sync_directory(parent, "mismatched recording restoration");
+            "restored it without overwriting another producer".to_owned()
+        }
+        Err(error) => {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!(
+                    "canonical pathname was recreated; preserved mismatched content at {}",
+                    quarantine_path.display()
+                )
+            } else {
+                return Err(format!(
+                    "recording changed and atomic no-replace restoration {} -> {} failed: {error}; preserved mismatched content at {}",
+                    quarantine_path.display(),
+                    trace_path.display(),
+                    quarantine_path.display()
+                ));
+            }
+        }
+    };
+    Err(format!(
+        "recording {} changed after native readback (expected {:?}, found {:?}); {restoration}",
+        trace_path.display(),
+        verified.source_fingerprint,
+        quarantined_fingerprint
+    ))
+}
+
+/// Atomically restore a quarantined source without replacing a producer that
+/// recreated the canonical pathname. Both paths share a filesystem, so a
+/// hard link provides the required no-replace operation.
+fn restore_quarantined_recording_no_replace(
+    quarantine_path: &Path,
+    trace_path: &Path,
+) -> std::io::Result<()> {
+    std::fs::hard_link(quarantine_path, trace_path)
+}
+
+fn finish_verified_conversion(
+    trace_path: &Path,
+    quarantine_path: &Path,
+    verified: &VerifiedNativeReadback,
+) -> usize {
+    assert_eq!(verified.source_path, quarantine_path);
+    assert_eq!(
+        trace_source_fingerprint(quarantine_path),
+        verified.source_fingerprint,
+        "pending conversion source changed after native readback"
+    );
+    assert!(
+        !trace_path.exists(),
+        "conversion conflict: producer recreated {} while its verified quarantine still exists",
+        trace_path.display(),
+    );
+    let parent = trace_path
+        .parent()
+        .expect("absolute converted recording always has a parent directory");
+    commit_verified_conversion_files(trace_path, quarantine_path, || {})
+        .unwrap_or_else(|error| panic!("conversion committed with a producer conflict: {error}"));
     let mut removed_derived = 0_usize;
-    if let (Some(parent), Some(name)) = (trace_path.parent(), trace_path.file_name()) {
+    if let Some(name) = trace_path.file_name() {
         let obsolete_prefix = format!("{}.parity-cache-v", name.to_string_lossy());
-        for entry in std::fs::read_dir(parent).expect("list recording directory for cleanup") {
-            let entry = entry.expect("read recording directory entry");
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(&obsolete_prefix)
+        let entries = match std::fs::read_dir(parent) {
+            Ok(entries) => entries,
+            Err(error) => {
+                eprintln!("warning: could not list obsolete conversion derivations: {error}");
+                return 0;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    eprintln!("warning: could not read obsolete derivation entry: {error}");
+                    continue;
+                }
+            };
+            if is_obsolete_native_derivation(&entry.file_name().to_string_lossy(), &obsolete_prefix)
             {
-                std::fs::remove_file(entry.path()).unwrap_or_else(|error| {
-                    panic!(
-                        "delete obsolete derivation {}: {error}",
+                match std::fs::remove_file(entry.path()) {
+                    Ok(()) => removed_derived += 1,
+                    Err(error) => eprintln!(
+                        "warning: could not delete obsolete derivation {}: {error}",
                         entry.path().display()
-                    )
-                });
-                removed_derived += 1;
+                    ),
+                }
+            }
+        }
+        if removed_derived > 0 {
+            if let Err(error) = File::open(parent).and_then(|directory| directory.sync_all()) {
+                eprintln!(
+                    "warning: could not sync {} after obsolete converted recording cleanup: {error}",
+                    parent.display()
+                );
             }
         }
     }
-    // The generation lock only serialises rebuilding a native trace from its
-    // recording. The recording is gone, so no rebuild can ever contend again
-    // and leaving the lock behind would litter every corpus directory (and
-    // every capture attempt directory) with an empty file.
+    removed_derived
+}
+
+fn commit_verified_conversion_files(
+    trace_path: &Path,
+    quarantine_path: &Path,
+    before_quarantine_unlink: impl FnOnce(),
+) -> Result<(), String> {
+    let parent = trace_path
+        .parent()
+        .expect("absolute converted recording always has a parent directory");
+    if trace_path.exists() {
+        return Err(format!(
+            "producer recreated canonical recording {} before quarantine commit",
+            trace_path.display()
+        ));
+    }
+    before_quarantine_unlink();
+    std::fs::remove_file(quarantine_path).unwrap_or_else(|error| {
+        panic!(
+            "delete quarantined converted recording {}: {error}",
+            quarantine_path.display()
+        )
+    });
+    sync_directory(parent, "converted recording transaction commit");
+    if trace_path.exists() {
+        return Err(format!(
+            "producer recreated canonical recording {} during quarantine commit; new recording was preserved",
+            trace_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn is_obsolete_native_derivation(file_name: &str, prefix: &str) -> bool {
+    let Some(suffix) = file_name.strip_prefix(prefix) else {
+        return false;
+    };
+    let digit_count = suffix
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    digit_count > 0
+        && (digit_count == suffix.len() || suffix.as_bytes().get(digit_count) == Some(&b'.'))
+}
+
+fn native_trace_generation_lock_path(native_path: &Path) -> PathBuf {
     let mut lock_name = native_path.as_os_str().to_owned();
     lock_name.push(".lock");
-    let lock_path = PathBuf::from(lock_name);
-    match std::fs::remove_file(&lock_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!(
-            "delete native parity trace generation lock {}: {error}",
-            lock_path.display()
-        ),
-    }
+    PathBuf::from(lock_name)
+}
 
-    let native_bytes = std::fs::metadata(&native_path)
-        .expect("stat native parity trace after conversion")
-        .len();
-    eprintln!(
-        "converted {display} ({:.2} MiB) into {} ({:.2} MiB, {decoded_frames} frames);          deleted the recording and {removed_derived} obsolete derived files",
-        source_bytes as f64 / (1024.0 * 1024.0),
-        native_path.display(),
-        native_bytes as f64 / (1024.0 * 1024.0),
-    );
+fn lock_native_trace_generation(native_path: &Path) -> File {
+    let lock_path = native_trace_generation_lock_path(native_path);
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "open native parity trace lock {}: {error}",
+                lock_path.display()
+            )
+        });
+    lock_file.lock_exclusive().unwrap_or_else(|error| {
+        panic!(
+            "lock native parity trace generation {}: {error}",
+            lock_path.display()
+        )
+    });
+    lock_file
+}
+
+fn sync_directory(directory: &Path, operation: &str) {
+    File::open(directory)
+        .unwrap_or_else(|error| {
+            panic!(
+                "open directory {} after {operation}: {error}",
+                directory.display()
+            )
+        })
+        .sync_all()
+        .unwrap_or_else(|error| {
+            panic!(
+                "sync directory {} after {operation}: {error}",
+                directory.display()
+            )
+        });
 }
 
 fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
@@ -6550,27 +6995,16 @@ fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
         validate_standalone_native_trace(&native_path);
         return native_path;
     }
-    let mut lock_name = native_path.as_os_str().to_owned();
-    lock_name.push(".lock");
-    let lock_path = PathBuf::from(lock_name);
-    let lock_file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .unwrap_or_else(|error| {
-            panic!(
-                "open native parity trace lock {}: {error}",
-                lock_path.display()
-            )
-        });
-    lock_file.lock_exclusive().unwrap_or_else(|error| {
-        panic!(
-            "lock native parity trace generation {}: {error}",
-            lock_path.display()
-        )
-    });
+    let _generation_lock = lock_native_trace_generation(&native_path);
     let fingerprint = trace_source_fingerprint(trace_path);
+    ensure_native_binary_trace_locked(trace_path, &native_path, fingerprint)
+}
+
+fn ensure_native_binary_trace_locked(
+    trace_path: &Path,
+    native_path: &Path,
+    fingerprint: String,
+) -> PathBuf {
     match try_read_binary_trace_header(&native_path) {
         Ok(header)
             if header.version == TRACE_NATIVE_VERSION
@@ -6589,7 +7023,7 @@ fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
                 )
             });
             eprintln!("loaded native parity trace {}", native_path.display());
-            return native_path;
+            return native_path.to_owned();
         }
         Ok(header) => eprintln!(
             "rebuilding stale native parity trace {} (version {}, fingerprint {:?})",
@@ -6634,9 +7068,10 @@ fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
         rng_prefix,
     };
 
-    let parent = native_path
-        .parent()
-        .expect("native parity trace path has no parent");
+    let parent = match native_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
     let mut temporary = tempfile::NamedTempFile::new_in(parent).unwrap_or_else(|error| {
         panic!(
             "create temporary native parity trace beside {}: {error}",
@@ -6755,6 +7190,7 @@ fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
             error.error
         )
     });
+    sync_directory(parent, "native parity trace publication");
     let compressed_bytes = std::fs::metadata(&native_path)
         .expect("stat completed native parity trace")
         .len();
@@ -6764,7 +7200,7 @@ fn ensure_native_binary_trace(trace_path: &std::path::Path) -> PathBuf {
         compressed_bytes as f64 / (1024.0 * 1024.0),
         started.elapsed().as_secs_f64()
     );
-    native_path
+    native_path.to_owned()
 }
 
 impl BinaryTraceReader {
@@ -6930,10 +7366,6 @@ fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHea
     read_binary_record(&mut decoder, "native parity trace header")
 }
 
-/// zstd tuning shared by the cache writer and its tests: long-distance
-/// matching with the platform-maximum window (the CLI's `--long=31`), so
-/// frames can match against state snapshots from anywhere earlier in the
-/// trace. The cache readers already accept windows up to the same maximum.
 /// A compression window wide enough for `expected_bytes` of encoded stream,
 /// never wider than the reader accepts. A streaming encoder cannot know how
 /// much is coming, so it reserves the whole window up front: pinning every
@@ -7004,9 +7436,11 @@ fn configure_cache_compression<W: Write>(
     encoder: &mut zstd::stream::write::Encoder<'_, W>,
     expected_bytes: Option<u64>,
 ) {
-    encoder
-        .long_distance_matching(true)
-        .unwrap_or_else(|error| panic!("enable cache long-distance matching: {error}"));
+    if TRACE_NATIVE_LONG_DISTANCE_MATCHING {
+        encoder
+            .long_distance_matching(true)
+            .unwrap_or_else(|error| panic!("enable cache long-distance matching: {error}"));
+    }
     encoder
         .window_log(native_stream_window_log(expected_bytes))
         .unwrap_or_else(|error| panic!("configure cache compression window: {error}"));
@@ -10755,13 +11189,29 @@ mod tests {
         records: &[BinaryTraceRecord],
         footer: Option<BinaryTraceFooter>,
     ) -> tempfile::NamedTempFile {
+        write_test_native_records_with_compression(
+            records,
+            footer,
+            TRACE_NATIVE_ZSTD_LEVEL,
+            TRACE_NATIVE_LONG_DISTANCE_MATCHING,
+        )
+    }
+
+    fn write_test_native_records_with_compression(
+        records: &[BinaryTraceRecord],
+        footer: Option<BinaryTraceFooter>,
+        level: i32,
+        long_distance_matching: bool,
+    ) -> tempfile::NamedTempFile {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         {
-            let mut encoder = zstd::stream::write::Encoder::new(
-                BufWriter::new(file.as_file_mut()),
-                TRACE_NATIVE_ZSTD_LEVEL,
-            )
-            .unwrap();
+            let mut encoder =
+                zstd::stream::write::Encoder::new(BufWriter::new(file.as_file_mut()), level)
+                    .unwrap();
+            if long_distance_matching {
+                encoder.long_distance_matching(true).unwrap();
+            }
+            encoder.window_log(20).unwrap();
             for record in records {
                 write_binary_record(
                     &mut encoder,
@@ -10791,6 +11241,200 @@ mod tests {
             final_frame: Some(final_frame),
             frame_count: Some(frame_count),
         }
+    }
+
+    #[test]
+    fn native_level_nine_policy_round_trips_records_and_footer() {
+        assert_eq!(TRACE_NATIVE_VERSION, 66);
+        assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 9);
+        assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING);
+
+        let footer = BinaryTraceFooter {
+            version: TRACE_NATIVE_VERSION,
+            frame_count: 0,
+            final_frame: 10,
+        };
+        let native = write_test_native_records(&[complete_test_end(0, 10)], Some(footer));
+        let mut reader = BinaryTraceReader::open(native.path());
+        assert!(matches!(
+            reader.read_record(),
+            BinaryTraceRecord::End { .. }
+        ));
+        reader.validate_terminator(0, 10).unwrap();
+        assert_eq!(read_binary_trace_footer(native.path()).unwrap(), footer);
+    }
+
+    #[test]
+    fn native_reader_keeps_level_nineteen_ldm_version_sixty_six_compatible() {
+        let footer = BinaryTraceFooter {
+            version: 66,
+            frame_count: 0,
+            final_frame: 10,
+        };
+        let native = write_test_native_records_with_compression(
+            &[complete_test_end(0, 10)],
+            Some(footer),
+            19,
+            true,
+        );
+        let mut reader = BinaryTraceReader::open(native.path());
+        assert!(matches!(
+            reader.read_record(),
+            BinaryTraceRecord::End { .. }
+        ));
+        reader.validate_terminator(0, 10).unwrap();
+    }
+
+    #[test]
+    fn conversion_cleanup_resolves_relative_and_absolute_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let relative = Path::new("relative-trace.jsonl.zst");
+        let resolved_relative = absolute_trace_path_from(relative, directory.path());
+        assert_eq!(resolved_relative, directory.path().join(relative));
+
+        let absolute = directory.path().join("absolute-trace.jsonl.zst");
+        assert_eq!(
+            absolute_trace_path_from(&absolute, Path::new("/ignored")),
+            absolute
+        );
+
+        for trace in [&resolved_relative, &absolute] {
+            std::fs::write(trace, b"recording").unwrap();
+            let fingerprint = trace_source_fingerprint(trace);
+            let quarantine = conversion_quarantine_path(trace);
+            let obsolete = PathBuf::from(format!(
+                "{}.parity-cache-v63.test",
+                trace.as_os_str().to_string_lossy()
+            ));
+            std::fs::write(&obsolete, b"derived").unwrap();
+            let verified = VerifiedNativeReadback {
+                decoded_frames: 0,
+                source_path: trace.to_path_buf(),
+                source_fingerprint: fingerprint,
+            };
+            move_verified_recording_to_quarantine(trace, &quarantine, &verified).unwrap();
+            assert_eq!(
+                finish_verified_conversion(
+                    trace,
+                    &quarantine,
+                    &VerifiedNativeReadback {
+                        source_path: quarantine.clone(),
+                        ..verified
+                    },
+                ),
+                1
+            );
+            assert!(!trace.exists());
+            assert!(!obsolete.exists());
+        }
+    }
+
+    #[test]
+    fn replaced_recording_is_not_eligible_for_verified_deletion() {
+        let directory = tempfile::tempdir().unwrap();
+        let recording = directory.path().join("recording.jsonl.zst");
+        std::fs::write(&recording, b"authoritative recording").unwrap();
+        let verified = VerifiedNativeReadback {
+            decoded_frames: 0,
+            source_path: recording.clone(),
+            source_fingerprint: trace_source_fingerprint(&recording),
+        };
+        // Preserve the byte length so this specifically proves the content
+        // digest catches a replacement that the old line-count gate missed.
+        std::fs::write(&recording, b"replacement recording!!").unwrap();
+        let quarantine = conversion_quarantine_path(&recording);
+
+        assert!(
+            move_verified_recording_to_quarantine(&recording, &quarantine, &verified)
+                .unwrap_err()
+                .contains("changed after native readback")
+        );
+        assert!(recording.exists());
+        assert_eq!(
+            std::fs::read(&recording).unwrap(),
+            b"replacement recording!!"
+        );
+    }
+
+    #[test]
+    fn quarantine_restore_never_overwrites_a_recreated_recording() {
+        let parent = tempfile::tempdir().unwrap();
+        let quarantined_path = parent.path().join("recording.parity-conversion-source");
+        std::fs::write(&quarantined_path, b"quarantined replacement").unwrap();
+        let canonical_path = parent.path().join("recording.jsonl.zst");
+        std::fs::write(&canonical_path, b"new producer recording").unwrap();
+
+        let error = restore_quarantined_recording_no_replace(&quarantined_path, &canonical_path)
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            std::fs::read(&canonical_path).unwrap(),
+            b"new producer recording"
+        );
+        assert_eq!(
+            std::fs::read(&quarantined_path).unwrap(),
+            b"quarantined replacement"
+        );
+    }
+
+    #[test]
+    fn conversion_commit_never_unlinks_a_recreated_recording() {
+        let directory = tempfile::tempdir().unwrap();
+        let quarantine = directory
+            .path()
+            .join("recording.jsonl.zst.parity-conversion-source");
+        let canonical = directory.path().join("recording.jsonl.zst");
+        std::fs::write(&quarantine, b"verified source").unwrap();
+
+        let conflict = commit_verified_conversion_files(&canonical, &quarantine, || {
+            // This models a producer winning the pathname after the initial
+            // conflict check and immediately before quarantine deletion.
+            std::fs::write(&canonical, b"new producer recording").unwrap();
+        })
+        .unwrap_err();
+
+        assert!(conflict.contains("new recording was preserved"));
+        assert_eq!(
+            std::fs::read(&canonical).unwrap(),
+            b"new producer recording"
+        );
+        assert!(!quarantine.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn conversion_rejects_symlinked_logical_inputs() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target.jsonl.zst");
+        let link = directory.path().join("recording.jsonl.zst");
+        std::fs::write(&target, b"recording").unwrap();
+        symlink(&target, &link).unwrap();
+        assert!(conversion_path_is_symlink(&link));
+        assert!(!conversion_path_is_symlink(&target));
+        assert_eq!(std::fs::read(&target).unwrap(), b"recording");
+    }
+
+    #[test]
+    fn obsolete_derivation_cleanup_requires_a_numeric_version() {
+        let prefix = "trace.jsonl.zst.parity-cache-v";
+        assert!(is_obsolete_native_derivation(
+            "trace.jsonl.zst.parity-cache-v64.native-bincode.zst",
+            prefix
+        ));
+        assert!(is_obsolete_native_derivation(
+            "trace.jsonl.zst.parity-cache-v9",
+            prefix
+        ));
+        assert!(!is_obsolete_native_derivation(
+            "trace.jsonl.zst.parity-cache-vicious",
+            prefix
+        ));
+        assert!(!is_obsolete_native_derivation(
+            "trace.jsonl.zst.parity-cache-v64backup",
+            prefix
+        ));
     }
 
     #[test]
