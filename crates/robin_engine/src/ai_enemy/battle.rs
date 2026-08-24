@@ -2474,11 +2474,21 @@ impl EnemyAi {
             tick.primary_target_position
                 .unwrap_or_else(|| panic!("AttackEnemy target {enemy} has no Position() snapshot"))
         } else {
-            tick.nearby_fighters
-                .iter()
-                .find(|fighter| fighter.handle == enemy)
-                .map(|fighter| fighter.position)
-                .or_else(|| ctx.entity_view(enemy).map(|view| view.position))
+            // BattleDecisions can select a target appended from a nearby
+            // friend's live GetPrimaryTarget() after the dedicated target
+            // snapshot was built. Original immediately evaluates
+            // Position(pEnemy), including that actor's exact RHSector*.
+            // The broad fighter snapshot is detection geometry sampled at an
+            // earlier owner boundary and can retain only the duplicate public
+            // sector number, so the live entity view must win here.
+            ctx.entity_view(enemy)
+                .map(|view| view.position)
+                .or_else(|| {
+                    tick.nearby_fighters
+                        .iter()
+                        .find(|fighter| fighter.handle == enemy)
+                        .map(|fighter| fighter.position)
+                })
                 .unwrap_or_else(|| panic!("AttackEnemy target {enemy} disappeared"))
         };
         self.base.seek_position = enemy_pos;
@@ -4548,6 +4558,60 @@ mod tests {
 
         assert_eq!(ai.base.primary_target, 252);
         assert_eq!(ai.base.seek_position, authoritative);
+    }
+
+    #[test]
+    fn attack_enemy_retarget_uses_live_exact_sector_over_number_only_fighter_snapshot() {
+        // Continue/replay-026, frame 7896: BattleDecisions initially
+        // snapshots PC282, then an attacking friend contributes PC137. Both
+        // target positions use public sector 88, but only the live Position()
+        // carries the arena object needed to find gates 111 and 114.
+        let mut ai = EnemyAi::new(153);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontimeRunning;
+
+        let public = crate::position_interface::SectorHandle::new(88).unwrap();
+        let exact = public.with_arena_index(crate::fast_find_grid::SectorIndex::new(137).unwrap());
+        let live_target = Position {
+            x: 684.1841,
+            y: 1545.0576,
+            sector: Some(exact),
+            level: 2,
+        };
+        let number_only = Position {
+            sector: Some(public),
+            ..live_target
+        };
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(137, pc_view_at(live_target));
+        let ctx = AiContext {
+            is_swordfighting: true,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 282;
+        tick.primary_target_position = Some(Position {
+            x: 900.0,
+            y: 1800.0,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        });
+        tick.nearby_fighters.push(FighterSnapshot {
+            handle: 137,
+            position: number_only,
+            ..FighterSnapshot::default()
+        });
+
+        ai.attack_enemy(137, None, &ctx, &tick, None);
+
+        assert_eq!(ai.base.primary_target, 137);
+        assert_eq!(ai.base.seek_position, live_target);
+        assert_eq!(
+            ai.base.seek_position.sector.unwrap().arena_index(),
+            Some(crate::fast_find_grid::SectorIndex::new(137).unwrap())
+        );
     }
 
     fn reconsider_approach_lift_grid() -> crate::fast_find_grid::FastFindGrid {
