@@ -27,6 +27,29 @@ cat >"$runner" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 trace=${!#}
+if [[ " $* " == *' --convert '* ]]; then
+    if [[ ${trace##*/} == *convert-fail* \
+        && ${FAKE_CONVERTER_REPAIR:-0} != 1 ]]; then
+        printf '%s\n' 'deliberate conversion failure' >&2
+        exit 29
+    fi
+    python3 - "$trace" "$trace.parity.bitcode.zst" <<'PY'
+from pathlib import Path
+import hashlib
+import os
+import sys
+
+source = Path(sys.argv[1])
+native = Path(sys.argv[2])
+stat = source.stat()
+digest = hashlib.sha256(source.read_bytes()).hexdigest()
+native.write_text(
+    f"fake-native:length={stat.st_size}:modified={stat.st_mtime_ns}:sha256={digest}\n"
+)
+os.unlink(source)
+PY
+    exit 0
+fi
 printf '%s\n' "$trace" >>"$FAKE_RUNNER_INVOCATIONS"
 case "${trace##*/}" in
     *02-fail-session-*.jsonl.zst)
@@ -58,6 +81,23 @@ add_trace() {
     local campaign=$1 stem=$2
     mkdir -p "$campaign/traces/save"
     printf 'fake trace\n' >"$campaign/traces/save/$stem-session-0001.jsonl.zst"
+    : >"$campaign/traces/save/$stem.complete"
+}
+
+add_native_trace() {
+    local campaign=$1 stem=$2 logical
+    mkdir -p "$campaign/traces/save"
+    logical="$campaign/traces/save/$stem-session-0001.jsonl.zst"
+    printf 'fake native trace\n' >"$logical.parity.bitcode.zst"
+    : >"$campaign/traces/save/$stem.complete"
+}
+
+add_coexisting_trace() {
+    local campaign=$1 stem=$2 logical
+    mkdir -p "$campaign/traces/save"
+    logical="$campaign/traces/save/$stem-session-0001.jsonl.zst"
+    printf 'fake legacy trace\n' >"$logical"
+    printf 'fake native trace\n' >"$logical.parity.bitcode.zst"
     : >"$campaign/traces/save/$stem.complete"
 }
 
@@ -152,7 +192,7 @@ expect_failure_without_run "$before" \
 locked_campaign=$(make_campaign schema16-seed2500000-locked-test 2500000 1)
 add_trace "$locked_campaign" 01-pass
 locked_audit="$test_root/audit-locked"
-held_outer=/tmp/robin-parity-runner.lock
+held_outer=${SCHEMA16_TEST_OUTER_LOCK:-/tmp/robin-parity-runner.lock}
 slot_dir="$workspace/.git/parity-runner-slots"
 mkdir -p "$slot_dir"
 exec {held_outer_fd}>"$held_outer"
@@ -160,6 +200,7 @@ flock "$held_outer_fd"
 before=$(wc -l <"$invocations")
 env \
     FAKE_RUNNER_INVOCATIONS="$invocations" \
+    SCHEMA16_FINAL_OUTER_LOCK="$held_outer" \
     "$validator" "$workspace" "$runner" "$runner_sha" "$locked_campaign" \
     >"$test_root/locked-validation.log" 2>&1 &
 locked_pid=$!
@@ -188,6 +229,92 @@ exec {held_slot_fd}>&-
 wait "$locked_pid"
 locked_pid=
 [[ "$(wc -l <"$invocations")" == "$((before + 1))" ]]
+
+# Conversion failure is preserved outside the not-yet-created audit and stops
+# before any replay. A repaired resume is idempotent and completes normally.
+conversion=$(make_campaign schema16-seed2900000-conversion-test 2900000 1)
+add_trace "$conversion" 01-convert-fail
+conversion_audit=$(audit_for "$test_root/audit-conversion" "$conversion" "$runner_sha")
+before=$(wc -l <"$invocations")
+expect_failure_without_run "$before" \
+    run_validation "$test_root/audit-conversion" "$runner" "$runner_sha" "$conversion"
+[[ ! -e "$conversion_audit" ]]
+grep -Fxq '29' "$conversion_audit.conversion.status"
+[[ -f "$conversion/traces/save/01-convert-fail-session-0001.jsonl.zst" ]]
+FAKE_CONVERTER_REPAIR=1 run_validation \
+    "$test_root/audit-conversion" "$runner" "$runner_sha" "$conversion"
+[[ "$(wc -l <"$invocations")" == "$((before + 1))" ]]
+[[ ! -e "$conversion/traces/save/01-convert-fail-session-0001.jsonl.zst" ]]
+[[ -f "$conversion/traces/save/01-convert-fail-session-0001.jsonl.zst.parity.bitcode.zst" ]]
+
+# Logical trace identity is independent of its physical representation. Native
+# bitcode-only, legacy JSONL, and the lazy-conversion coexistence window each
+# contribute exactly one manifest entry. The pinned converter normalizes the
+# latter two before the immutable audit is initialized, including the source
+# length, nanosecond mtime, and content hash in the resulting native bytes.
+formats=$(make_campaign schema16-seed3000000-format-test 3000000 3)
+add_trace "$formats" 01-legacy
+add_native_trace "$formats" 02-native
+add_coexisting_trace "$formats" 03-coexist
+formats_before=$(wc -l <"$invocations")
+run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$((formats_before + 3))" ]]
+formats_audit=$(audit_for "$test_root/audit-formats" "$formats" "$runner_sha")
+native_logical="$formats/traces/save/02-native-session-0001.jsonl.zst"
+coexist_logical="$formats/traces/save/03-coexist-session-0001.jsonl.zst"
+grep -Fxq "$(sha256sum -- "$native_logical.parity.bitcode.zst" | cut -d' ' -f1)  $native_logical" \
+    "$formats_audit/traces.sha256"
+[[ ! -e "$formats/traces/save/01-legacy-session-0001.jsonl.zst" ]]
+[[ ! -e "$coexist_logical" ]]
+grep -Fxq "$(sha256sum -- "$coexist_logical.parity.bitcode.zst" | cut -d' ' -f1)  $coexist_logical" \
+    "$formats_audit/traces.sha256"
+
+# Replacing native bytes at the same physical path invalidates the frozen
+# logical identity.
+cp "$native_logical.parity.bitcode.zst" "$test_root/native.saved"
+printf 'mutated native bytes\n' >"$native_logical.parity.bitcode.zst"
+before=$(wc -l <"$invocations")
+expect_failure_without_run "$before" \
+    run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ ! -f "$formats_audit/parity-verdict.env" ]]
+mv "$test_root/native.saved" "$native_logical.parity.bitcode.zst"
+run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+cp "$coexist_logical.parity.bitcode.zst" "$test_root/coexist-native.saved"
+printf 'fake legacy trace\n' >"$coexist_logical"
+python3 - "$coexist_logical" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+path = Path(sys.argv[1])
+stat = path.stat()
+os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+PY
+expect_failure_without_run "$before" \
+    run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+mv "$test_root/coexist-native.saved" "$coexist_logical.parity.bitcode.zst"
+run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+mv "$coexist_logical.parity.bitcode.zst" "$test_root/coexist-native.saved"
+expect_failure_without_run "$before" \
+    run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+mv "$test_root/coexist-native.saved" "$coexist_logical.parity.bitcode.zst"
+run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+printf 'new legacy source beside native cache\n' >"$native_logical"
+cp "$native_logical.parity.bitcode.zst" "$test_root/native-before-source.saved"
+expect_failure_without_run "$before" \
+    run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+mv "$test_root/native-before-source.saved" "$native_logical.parity.bitcode.zst"
+run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
 
 # Seed 3 failure is published and classified, and seed 4 is never started.
 seed3=$(make_campaign schema16-seed3000000-final-test 3000000 2)
@@ -239,15 +366,16 @@ grep -Fxq "TRACE_IDENTITIES_SHA256=$(sha256sum -- "$seed4_audit/traces.sha256" |
 # Replacing compressed bytes at the same canonical path invalidates the frozen
 # identity before resume can trust the old status/log proof.
 first_trace="$seed3/traces/save/01-pass-session-0001.jsonl.zst"
-cp "$first_trace" "$test_root/trace.saved"
-printf 'same path, different compressed bytes\n' >"$first_trace"
+first_physical="$first_trace.parity.bitcode.zst"
+cp "$first_physical" "$test_root/trace.saved"
+printf 'same path, different compressed bytes\n' >"$first_physical"
 before=$(wc -l <"$invocations")
 expect_failure_without_run "$before" \
     run_validation_repaired "$ordered_audit" "$runner" "$runner_sha" "$seed3" "$seed4"
 [[ ! -f "$seed3_audit/parity-verdict.env" ]]
 [[ ! -f "$seed4_audit/parity-verdict.env" ]]
 [[ -f "$seed3_audit/parity-verdict.previous.env" ]]
-mv "$test_root/trace.saved" "$first_trace"
+mv "$test_root/trace.saved" "$first_physical"
 run_validation_repaired "$ordered_audit" "$runner" "$runner_sha" "$seed3" "$seed4"
 [[ "$(wc -l <"$invocations")" == "$before" ]]
 
@@ -336,7 +464,7 @@ runner2_seed4_audit=$(audit_for "$ordered_audit" "$seed4" "$runner2_sha")
 # metadata and current/previous verdict files never become ledger keys.
 python3 - \
     "$repository/scripts/update_permanent_eof_ledgers.py" \
-    "$audit_parent" "$workspace" "$seed3" "$seed4" <<'PY'
+    "$audit_parent" "$workspace" "$formats" "$seed3" "$seed4" <<'PY'
 from __future__ import annotations
 
 import importlib.util
@@ -357,8 +485,11 @@ keys = module.exact_keys(audit_roots)
 for campaign in campaigns:
     prefix = campaign.relative_to(workspace).as_posix().replace("/", "__") + "__"
     expected = {
-        trace.relative_to(workspace).as_posix().replace("/", "__")
-        for trace in (campaign / "traces").rglob("*.jsonl.zst")
+        trace.relative_to(workspace).as_posix()
+        .removesuffix(".parity.bitcode.zst")
+        .replace("/", "__")
+        for trace in (campaign / "traces").rglob("*.jsonl.zst*")
+        if trace.name.endswith((".jsonl.zst", ".jsonl.zst.parity.bitcode.zst"))
     }
     discovered = {key for key in keys if key.startswith(prefix)}
     assert discovered == expected, (campaign, discovered, expected)

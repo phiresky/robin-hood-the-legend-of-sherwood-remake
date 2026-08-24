@@ -32,6 +32,54 @@ sha256_file() {
     printf '%s\n' "${value%% *}"
 }
 
+# Bind the stable logical `.jsonl.zst` identity to its normalized native bytes.
+# Any legacy source here means normalization raced with another writer or did
+# not complete, so never freeze that unstable representation.
+trace_identity_digest() {
+    local logical=$1 native="$1.parity.bitcode.zst"
+    if [[ -e "$logical" ]]; then
+        printf 'error: legacy trace remains after native normalization: %s\n' \
+            "$logical" >&2
+        return 1
+    elif [[ -f "$native" ]]; then
+        sha256_file "$native"
+    else
+        printf 'error: logical trace has no normalized native artifact: %s\n' \
+            "$logical" >&2
+        return 1
+    fi
+}
+
+normalize_manifest_to_native() {
+    local manifest=$1 audit=$2 trace native conversion_log conversion_status status
+    conversion_log="$audit.conversion.log"
+    conversion_status="$audit.conversion.status"
+    : >"$conversion_log"
+    while IFS= read -r trace; do
+        native="$trace.parity.bitcode.zst"
+        if [[ -f "$trace" ]]; then
+            status=0
+            "$pinned_runner" --convert "$trace" >>"$conversion_log" 2>&1 \
+                || status=$?
+            printf '%s\n' "$status" >"$conversion_status"
+            if (( status != 0 )); then
+                printf 'error: native trace conversion failed with status %s: %s (see %s)\n' \
+                    "$status" "$trace" "$conversion_log" >&2
+                return 1
+            fi
+            [[ ! -e "$trace" && -f "$native" ]] || {
+                printf 'error: converter did not replace legacy trace with native artifact: %s\n' \
+                    "$trace" >&2
+                return 1
+            }
+        elif [[ ! -f "$native" ]]; then
+            printf 'error: logical trace has no legacy or native artifact: %s\n' \
+                "$trace" >&2
+            return 1
+        fi
+    done <"$manifest"
+}
+
 read_campaign_uint() {
     local campaign=$1 key=$2
     local -a values=()
@@ -115,7 +163,8 @@ build_trace_identities() {
 
     : >"$unsorted"
     while IFS= read -r trace; do
-        digest=$(sha256_file "$trace") || { rm -f -- "$unsorted"; return 1; }
+        digest=$(trace_identity_digest "$trace") \
+            || { rm -f -- "$unsorted"; return 1; }
         printf '%s  %s\n' "$digest" "$trace" >>"$unsorted" \
             || { rm -f -- "$unsorted"; return 1; }
     done <"$manifest"
@@ -343,6 +392,13 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
 
     require_campaign_drained "$campaign" || exit 2
     manifest="$work_dir/manifest-$seed_base"
+    build_complete_manifest "$campaign" "$expected" "$manifest" || exit 2
+    # A normal replay lazily creates a native cache beside legacy JSONL, which
+    # would change the physical representation after the audit was frozen.
+    # Normalize legacy and coexistence inputs first using the pinned converter;
+    # `--convert` independently audits readback before deleting the source.
+    normalize_manifest_to_native "$manifest" "$audit" || exit 2
+    require_campaign_drained "$campaign" || exit 2
     build_complete_manifest "$campaign" "$expected" "$manifest" || exit 2
     snapshot_sha=$(sha256_file "$manifest") || exit 2
     identities="$work_dir/identities-$seed_base"
