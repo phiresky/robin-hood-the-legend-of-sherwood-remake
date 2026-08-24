@@ -213,6 +213,11 @@ fn swordfight_facing_target_position<'a>(
     }
 }
 
+fn live_swordfight_target_position(primary_target: HumanHandle, ctx: &AiContext) -> Position {
+    ctx.expect_entity_view(primary_target, "ReconsiderSwordfight step-in target")
+        .position
+}
+
 #[track_caller]
 fn phalanx_member_detects_360(
     member: &PhalanxMemberThemList,
@@ -3497,7 +3502,13 @@ impl EnemyAi {
             && self.my_line_jump.is_none()
             && !self.combat_trainer
         {
-            let target_pos = primary.position;
+            // Original passes `Position(mpMe->GetPrincipalOpponent())` directly to
+            // `GoNear` here (RHartificialmalignity.cpp:14092).  The fighter
+            // snapshot carries combat scalars, but its position can be a
+            // number-only compatibility snapshot.  Routing needs the live
+            // RHposition analogue so duplicate public sector numbers retain
+            // their exact arena identity.
+            let target_pos = live_swordfight_target_position(self.base.primary_target, ctx);
             self.set_state(AiState::Attacking, Substate::AttackingMovingAroundOldEnemy);
             self.base
                 .go_near(target_pos, self.sword_range as i32, GotoFlags::SWORD, ctx);
@@ -5285,6 +5296,152 @@ mod tests {
             swordfight_facing_target_position(&refreshed_primary, &tick),
             &refreshed_primary.position,
             "a refreshed principal opponent must not inherit the old target's live geometry"
+        );
+    }
+
+    #[test]
+    fn swordfight_step_in_uses_live_exact_target_sector() {
+        use crate::fast_find_grid::SectorIndex;
+
+        const TARGET: u32 = 137;
+        let target = crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        let mut target_view = crate::ai_entity_view::entity_view_from_entity(
+            &target,
+            313,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        let exact_sector = crate::position_interface::SectorHandle::new(88)
+            .unwrap()
+            .with_arena_index(SectorIndex::new(114).unwrap());
+        target_view.position = Position {
+            x: 650.92444,
+            y: 1537.1555,
+            sector: Some(exact_sector),
+            level: 2,
+        };
+        target_view.active = true;
+        target_view.camp = crate::element::Camp::Royalists;
+        target_view.detection_position =
+            crate::coordinates::MapPoint::new(target_view.position.x, target_view.position.y);
+        target_view.detection_position_world = crate::coordinates::WorldPoint3D::new(
+            target_view.position.x,
+            target_view.position.y,
+            0.0,
+        );
+        let mut legacy_view = target_view.clone();
+        legacy_view.position.sector = crate::position_interface::SectorHandle::new(88);
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(TARGET, target_view);
+        views.insert(TARGET + 1, legacy_view);
+        let owner_position = Position {
+            x: 550.92444,
+            y: 1537.1555,
+            sector: crate::position_interface::SectorHandle::new(70),
+            level: 1,
+        };
+        let ctx = AiContext {
+            position: owner_position,
+            self_layer: 1,
+            direction: vec_to_sector(650.92444 - owner_position.x, 1537.1555 - owner_position.y),
+            camp: crate::element::Camp::Lacklandists,
+            is_swordfighting: true,
+            self_is_active: true,
+            self_upright_eye_world: crate::coordinates::WorldPoint3D::new(
+                owner_position.x,
+                owner_position.y,
+                0.0,
+            ),
+            sq_self_view_radius: 1_000_000.0,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let resolved = live_swordfight_target_position(TARGET, &ctx);
+        assert_eq!(resolved.sector, Some(exact_sector));
+        assert_eq!(resolved.level, 2);
+        assert_eq!(
+            resolved.sector.and_then(|sector| sector.arena_index()),
+            SectorIndex::new(114),
+            "a number-only fighter snapshot must not replace the live target's exact sector"
+        );
+        assert_eq!(
+            live_swordfight_target_position(TARGET + 1, &ctx).sector,
+            crate::position_interface::SectorHandle::new(88),
+            "legacy number-only live views remain number-only; this boundary must not guess an arena slot"
+        );
+
+        let number_only_target = Position {
+            x: 650.92444,
+            y: 1537.1555,
+            sector: crate::position_interface::SectorHandle::new(88),
+            level: 2,
+        };
+        let target_fighter = FighterSnapshot {
+            handle: TARGET,
+            position: number_only_target,
+            raw_position: number_only_target,
+            is_swordfighting: true,
+            is_able_to_fight: true,
+            sword_range_maximal: 50,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 182,
+            position: owner_position,
+            raw_position: owner_position,
+            principal_opponent: TARGET,
+            is_friendly: true,
+            sword_range_default: 50,
+            sword_range_maximal: 50,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(target_fighter.clone());
+        tick.reconsider_swordfight_enemies.push(target_fighter);
+
+        let seed = (0..10_000)
+            .find(|seed| {
+                let sim = SimulationContext::with_seed(*seed);
+                !drunk_combat_freezes(&sim, 0)
+            })
+            .expect("find a sober two-draw seed");
+        let mut ai = EnemyAi::new(182);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
+        ai.base.primary_target = TARGET;
+        ai.sword_range = 50;
+        ai.reconsider_swordfight(
+            &SimulationContext::with_seed(seed),
+            false,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base
+                .last_goto_destination
+                .sector
+                .and_then(|sector| sector.arena_index()),
+            SectorIndex::new(114),
+            "the production too-far GoNear writer must carry the live target's exact arena identity"
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingMovingAroundOldEnemy
         );
     }
 
