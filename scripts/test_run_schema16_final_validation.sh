@@ -131,8 +131,20 @@ run_validation() {
     shift 3
     env \
         FAKE_RUNNER_INVOCATIONS="$invocations" \
+        SCHEMA16_FINAL_RUNNER_MODE="${FAKE_RUNNER_MODE:-direct}" \
+        SCHEMA16_FINAL_RUNNER_BUNDLE_SHA256="${FAKE_BUNDLE_SHA:-}" \
         SCHEMA16_FINAL_OUTER_LOCK="$test_root/final-validation.lock" \
         "$validator" "$workspace" "$selected_runner" "$selected_sha" "$@"
+}
+
+run_bundle_validation() {
+    FAKE_RUNNER_MODE=bundle FAKE_BUNDLE_SHA=$bundle_identity run_validation "$@"
+}
+
+run_bundle_with_identity() {
+    local identity=$1
+    shift
+    FAKE_RUNNER_MODE=bundle FAKE_BUNDLE_SHA=$identity run_validation "$@"
 }
 
 run_validation_repaired() {
@@ -200,6 +212,7 @@ flock "$held_outer_fd"
 before=$(wc -l <"$invocations")
 env \
     FAKE_RUNNER_INVOCATIONS="$invocations" \
+    SCHEMA16_FINAL_RUNNER_MODE=direct \
     SCHEMA16_FINAL_OUTER_LOCK="$held_outer" \
     "$validator" "$workspace" "$runner" "$runner_sha" "$locked_campaign" \
     >"$test_root/locked-validation.log" 2>&1 &
@@ -314,6 +327,139 @@ expect_failure_without_run "$before" \
 [[ "$(wc -l <"$invocations")" == "$before" ]]
 mv "$test_root/native-before-source.saved" "$native_logical.parity.bitcode.zst"
 run_validation "$test_root/audit-formats" "$runner" "$runner_sha" "$formats"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+# A packaged runner is pinned and audited by its caller-authenticated composite
+# identity while retaining the raw ELF/script hash as separate provenance.
+# Direct runners above remain supported for focused local fixtures.
+bundle="$test_root/fake-runner-bundle"
+mkdir -p "$bundle/lib"
+cp "$runner" "$bundle/original_parity_replay"
+printf '\n# distinct bundled runner\n' >>"$bundle/original_parity_replay"
+chmod +x "$bundle/original_parity_replay"
+cat >"$bundle/original_parity_replay.remote" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+exec "$bundle_dir/lib/ld-linux-x86-64.so.2" --library-path "$bundle_dir/lib" \
+    "$bundle_dir/original_parity_replay" "$@"
+EOF
+chmod +x "$bundle/original_parity_replay.remote"
+cat >"$bundle/lib/ld-linux-x86-64.so.2" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --library-path ]]
+[[ ! -v LD_LIBRARY_PATH ]]
+shift 2
+exec "$@"
+EOF
+chmod +x "$bundle/lib/ld-linux-x86-64.so.2"
+printf 'fake provenance\nNATIVE_CONVERSION_PROTOCOL=2\n' >"$bundle/PROVENANCE.txt"
+printf '/lib64/ld-linux-x86-64.so.2 => %s/lib/ld-linux-x86-64.so.2 (0x1)\n' \
+    "$bundle" >"$bundle/LOADER_LIST.txt"
+(
+    cd "$bundle"
+    sha256sum lib/ld-linux-x86-64.so.2 >LIB_SHA256SUMS
+    sha256sum original_parity_replay original_parity_replay.remote LIB_SHA256SUMS \
+        PROVENANCE.txt LOADER_LIST.txt >SHA256SUMS
+)
+bundle_sha=$(sha256sum -- "$bundle/original_parity_replay")
+bundle_sha=${bundle_sha%% *}
+bundle_main_manifest_sha=$(sha256sum -- "$bundle/SHA256SUMS" | cut -d' ' -f1)
+bundle_lib_manifest_sha=$(sha256sum -- "$bundle/LIB_SHA256SUMS" | cut -d' ' -f1)
+bundle_identity=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
+    "$bundle_main_manifest_sha" "$bundle_lib_manifest_sha" \
+    | sha256sum | cut -d' ' -f1)
+bundle_campaign=$(make_campaign schema16-seed2950000-bundle-test 2950000 1)
+add_native_trace "$bundle_campaign" 01-bundle-pass
+legacy_bundle_pin="$workspace/.git/schema16-final-runners/$bundle_sha"
+mkdir -p "$legacy_bundle_pin"
+cp "$bundle/original_parity_replay" "$legacy_bundle_pin/original_parity_replay"
+printf '%s  original_parity_replay\n' "$bundle_sha" >"$legacy_bundle_pin/runner.sha256"
+bundle_before=$(wc -l <"$invocations")
+run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+[[ "$(wc -l <"$invocations")" == "$((bundle_before + 1))" ]]
+bundle_audit=$(audit_for "$test_root/audit-bundle" "$bundle_campaign" "$bundle_identity")
+pinned_bundle="$workspace/.git/schema16-final-runners/$bundle_identity"
+[[ -x "$pinned_bundle/original_parity_replay.remote" ]]
+[[ -f "$legacy_bundle_pin/runner.sha256" ]]
+grep -Fxq "RUNNER=$pinned_bundle/original_parity_replay.remote" \
+    "$bundle_audit/parity-verdict.env"
+grep -Fxq "RUNNER_SHA256=$bundle_sha" "$bundle_audit/parity-verdict.env"
+grep -Fxq 'NATIVE_CONVERSION_PROTOCOL=2' "$bundle_audit/validation.env"
+grep -Fxq 'NATIVE_CONVERSION_PROTOCOL=2' "$bundle_audit/parity-verdict.env"
+
+cp "$bundle/PROVENANCE.txt" "$test_root/provenance.saved"
+cp "$bundle/SHA256SUMS" "$test_root/protocol-manifest.saved"
+printf 'fake provenance\nNATIVE_CONVERSION_PROTOCOL=1\n' >"$bundle/PROVENANCE.txt"
+(
+    cd "$bundle"
+    sha256sum original_parity_replay original_parity_replay.remote LIB_SHA256SUMS \
+        PROVENANCE.txt LOADER_LIST.txt >SHA256SUMS
+)
+old_protocol_manifest_sha=$(sha256sum -- "$bundle/SHA256SUMS" | cut -d' ' -f1)
+old_protocol_identity=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
+    "$old_protocol_manifest_sha" "$bundle_lib_manifest_sha" \
+    | sha256sum | cut -d' ' -f1)
+before=$(wc -l <"$invocations")
+expect_failure_without_run "$before" \
+    run_bundle_with_identity "$old_protocol_identity" \
+        "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+mv "$test_root/provenance.saved" "$bundle/PROVENANCE.txt"
+mv "$test_root/protocol-manifest.saved" "$bundle/SHA256SUMS"
+
+printf 'unmanifested runtime input\n' >"$bundle/lib/libunexpected.so"
+expect_failure_without_run "$before" \
+    run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+rm -f -- "$bundle/lib/libunexpected.so"
+
+mv "$bundle/lib/ld-linux-x86-64.so.2" "$test_root/loader.saved"
+expect_failure_without_run "$before" \
+    run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+[[ ! -f "$bundle_audit/parity-verdict.env" ]]
+mv "$test_root/loader.saved" "$bundle/lib/ld-linux-x86-64.so.2"
+
+cp "$bundle/original_parity_replay.remote" "$test_root/wrapper.saved"
+printf '\n# tampered wrapper\n' >>"$bundle/original_parity_replay.remote"
+expect_failure_without_run "$before" \
+    run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+mv "$test_root/wrapper.saved" "$bundle/original_parity_replay.remote"
+chmod +x "$bundle/original_parity_replay.remote"
+
+cp "$bundle/SHA256SUMS" "$test_root/bundle-manifest.saved"
+cp "$bundle/original_parity_replay.remote" "$test_root/wrapper.saved"
+printf '\n# re-manifested malicious wrapper\n' >>"$bundle/original_parity_replay.remote"
+(
+    cd "$bundle"
+    sha256sum original_parity_replay original_parity_replay.remote LIB_SHA256SUMS \
+        PROVENANCE.txt LOADER_LIST.txt >SHA256SUMS
+)
+expect_failure_without_run "$before" \
+    run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+mv "$test_root/wrapper.saved" "$bundle/original_parity_replay.remote"
+chmod +x "$bundle/original_parity_replay.remote"
+mv "$test_root/bundle-manifest.saved" "$bundle/SHA256SUMS"
+
+mv "$bundle/original_parity_replay.remote" "$test_root/wrapper.saved"
+ln -s "$test_root/wrapper.saved" "$bundle/original_parity_replay.remote"
+expect_failure_without_run "$before" \
+    run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+rm -f -- "$bundle/original_parity_replay.remote"
+mv "$test_root/wrapper.saved" "$bundle/original_parity_replay.remote"
+chmod +x "$bundle/original_parity_replay.remote"
+
+run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+[[ "$(wc -l <"$invocations")" == "$before" ]]
+
+chmod u+w "$pinned_bundle/lib/ld-linux-x86-64.so.2"
+printf '\n# corrupted pinned loader\n' >>"$pinned_bundle/lib/ld-linux-x86-64.so.2"
+expect_failure_without_run "$before" \
+    run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
+[[ ! -f "$bundle_audit/parity-verdict.env" ]]
+cp "$bundle/lib/ld-linux-x86-64.so.2" \
+    "$pinned_bundle/lib/ld-linux-x86-64.so.2"
+chmod +x "$pinned_bundle/lib/ld-linux-x86-64.so.2"
+run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
 [[ "$(wc -l <"$invocations")" == "$before" ]]
 
 # Seed 3 failure is published and classified, and seed 4 is never started.

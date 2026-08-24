@@ -16,10 +16,13 @@ runner=$2
 expected_runner_sha=$3
 shift 3
 campaigns=("$@")
+runner_mode=${SCHEMA16_FINAL_RUNNER_MODE:-}
+expected_bundle_sha=${SCHEMA16_FINAL_RUNNER_BUNDLE_SHA256:-}
 
 audit_parent="$workspace/parity-save-replays/audits"
 outer_lock=${SCHEMA16_FINAL_OUTER_LOCK:-/tmp/robin-parity-runner.lock}
 exact_eof_marker='parity trace matched every recorded frame'
+unset LD_LIBRARY_PATH
 
 fail() {
     printf 'error: %s\n' "$*" >&2
@@ -29,6 +32,111 @@ fail() {
 sha256_file() {
     local value
     value=$(sha256sum -- "$1") || return 1
+    printf '%s\n' "${value%% *}"
+}
+
+verify_runner_bundle() {
+    local bundle=$1 loader_proof_root=${2:-$1} manifest line path
+    [[ -x "$bundle/original_parity_replay" \
+        && -x "$bundle/original_parity_replay.remote" \
+        && -x "$bundle/lib/ld-linux-x86-64.so.2" \
+        && -f "$bundle/SHA256SUMS" \
+        && -f "$bundle/LIB_SHA256SUMS" \
+        && -f "$bundle/PROVENANCE.txt" \
+        && -f "$bundle/LOADER_LIST.txt" ]] \
+        || { printf 'error: incomplete parity runner bundle: %s\n' "$bundle" >&2; return 1; }
+    mapfile -t protocol_values < <(
+        sed -n 's/^NATIVE_CONVERSION_PROTOCOL=//p' "$bundle/PROVENANCE.txt"
+    )
+    [[ ${#protocol_values[@]} == 1 && "${protocol_values[0]}" == 2 ]] \
+        || { printf 'error: bundle must authenticate NATIVE_CONVERSION_PROTOCOL=2: %s\n' \
+            "$bundle" >&2; return 1; }
+    if find "$bundle" -type l -print -quit | grep -q .; then
+        printf 'error: runner bundle contains a symlink: %s\n' "$bundle" >&2
+        return 1
+    fi
+    for manifest in "$bundle/SHA256SUMS" "$bundle/LIB_SHA256SUMS"; do
+        while IFS= read -r line; do
+            [[ "$line" =~ ^[0-9a-fA-F]{64}[[:space:]][\ \*](.+)$ ]] \
+                || { printf 'error: malformed bundle checksum entry: %s\n' "$manifest" >&2; return 1; }
+            path=${BASH_REMATCH[1]}
+            [[ "$path" != /* && "$path" != ../* && "$path" != */../* \
+                && "$path" != *'/..' && "$path" != *$'\n'* ]] \
+                || { printf 'error: unsafe bundle checksum path: %s\n' "$path" >&2; return 1; }
+        done <"$manifest"
+    done
+    if ! diff -u -- \
+        <(find "$bundle/lib" -type f -printf 'lib/%P\n' | LC_ALL=C sort) \
+        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/LIB_SHA256SUMS" \
+            | LC_ALL=C sort) >&2
+    then
+        printf 'error: library manifest does not exactly cover bundle lib tree: %s\n' \
+            "$bundle" >&2
+        return 1
+    fi
+    if ! diff -u -- \
+        <(find "$bundle" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+            | LC_ALL=C sort) \
+        <(printf 'lib\n') >&2
+    then
+        printf 'error: runner bundle has an unexpected root directory: %s\n' \
+            "$bundle" >&2
+        return 1
+    fi
+    if ! diff -u -- \
+        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt \
+            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
+        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/SHA256SUMS" \
+            | LC_ALL=C sort) >&2
+    then
+        printf 'error: main manifest does not exactly cover bundle root files: %s\n' \
+            "$bundle" >&2
+        return 1
+    fi
+    if ! diff -u -- \
+        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt SHA256SUMS \
+            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
+        <(find "$bundle" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) >&2
+    then
+        printf 'error: runner bundle root file set is not canonical: %s\n' \
+            "$bundle" >&2
+        return 1
+    fi
+    grep -Fq -- "=> $loader_proof_root/lib/ld-linux-x86-64.so.2 " \
+        "$bundle/LOADER_LIST.txt" \
+        || { printf 'error: loader proof is not from authenticated final bundle path: %s\n' \
+            "$loader_proof_root" >&2; return 1; }
+    if ! awk -v prefix="$loader_proof_root/lib/" '
+        /=>/ {
+            resolved=$0
+            sub(/^.*=>[[:space:]]*/, "", resolved)
+            sub(/[[:space:]].*$/, "", resolved)
+            if (index(resolved, prefix) != 1) exit 1
+        }
+    ' "$bundle/LOADER_LIST.txt"; then
+        printf 'error: loader proof resolves outside authenticated lib tree: %s\n' \
+            "$loader_proof_root" >&2
+        return 1
+    fi
+    grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay$' "$bundle/SHA256SUMS" \
+        && grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay\.remote$' "$bundle/SHA256SUMS" \
+        && grep -Eq '^[0-9a-fA-F]{64} [ *]LIB_SHA256SUMS$' "$bundle/SHA256SUMS" \
+        && grep -Eq '^[0-9a-fA-F]{64} [ *]PROVENANCE\.txt$' "$bundle/SHA256SUMS" \
+        && grep -Eq '^[0-9a-fA-F]{64} [ *]LOADER_LIST\.txt$' "$bundle/SHA256SUMS" \
+        && grep -Eq '^[0-9a-fA-F]{64} [ *]lib/ld-linux-x86-64\.so\.2$' "$bundle/LIB_SHA256SUMS" \
+        || { printf 'error: bundle manifests omit required runtime inputs: %s\n' "$bundle" >&2; return 1; }
+    (cd -- "$bundle" \
+        && sha256sum --strict -c SHA256SUMS \
+        && sha256sum --strict -c LIB_SHA256SUMS) >/dev/null \
+        || { printf 'error: parity runner bundle checksum failure: %s\n' "$bundle" >&2; return 1; }
+}
+
+runner_bundle_digest() {
+    local bundle=$1 main_sha lib_sha value
+    main_sha=$(sha256_file "$bundle/SHA256SUMS") || return 1
+    lib_sha=$(sha256_file "$bundle/LIB_SHA256SUMS") || return 1
+    value=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
+        "$main_sha" "$lib_sha" | sha256sum) || return 1
     printf '%s\n' "${value%% *}"
 }
 
@@ -59,7 +167,7 @@ normalize_manifest_to_native() {
         native="$trace.parity.bitcode.zst"
         if [[ -f "$trace" ]]; then
             status=0
-            "$pinned_runner" --convert "$trace" >>"$conversion_log" 2>&1 \
+            "$pinned_runner_exec" --convert "$trace" >>"$conversion_log" 2>&1 \
                 || status=$?
             printf '%s\n' "$status" >"$conversion_status"
             if (( status != 0 )); then
@@ -314,6 +422,11 @@ verify_exact_audit() {
 
 [[ -d "$workspace" ]] || fail "workspace is not a directory: $workspace"
 workspace=$(realpath -e -- "$workspace")
+runner_arg_is_dir=0
+if [[ -d "$runner" ]]; then
+    runner_arg_is_dir=1
+    runner=$(realpath -e -- "$runner")/original_parity_replay
+fi
 [[ -x "$runner" ]] || fail "runner is not executable: $runner"
 runner=$(realpath -e -- "$runner")
 [[ "$expected_runner_sha" =~ ^[0-9a-fA-F]{64}$ ]] \
@@ -322,6 +435,43 @@ expected_runner_sha=${expected_runner_sha,,}
 actual_runner_sha=$(sha256_file "$runner") || fail "cannot hash runner: $runner"
 [[ "$actual_runner_sha" == "$expected_runner_sha" ]] \
     || fail "runner hash mismatch: expected $expected_runner_sha, got $actual_runner_sha"
+runner_source_dir=${runner%/*}
+runner_is_bundle=0
+runner_wrapper_sha=none
+runner_bundle_manifest_sha=none
+runner_lib_manifest_sha=none
+native_conversion_protocol=fixture-direct
+case "$runner_mode" in
+bundle)
+    [[ "$expected_bundle_sha" =~ ^[0-9a-fA-F]{64}$ ]] \
+        || fail 'bundle mode requires SCHEMA16_FINAL_RUNNER_BUNDLE_SHA256'
+    expected_bundle_sha=${expected_bundle_sha,,}
+    runner_is_bundle=1
+    runner_identity=$expected_bundle_sha
+    ;;
+direct)
+    [[ -z "$expected_bundle_sha" ]] \
+        || fail 'direct mode does not accept SCHEMA16_FINAL_RUNNER_BUNDLE_SHA256'
+    (( runner_arg_is_dir == 0 )) || fail 'direct runner must be an executable file'
+    [[ ! -e "$runner_source_dir/original_parity_replay.remote" \
+        && ! -e "$runner_source_dir/SHA256SUMS" \
+        && ! -e "$runner_source_dir/LIB_SHA256SUMS" \
+        && ! -e "$runner_source_dir/lib" ]] \
+        || fail 'direct mode refuses a packaged runner; select bundle mode'
+    runner_identity=$actual_runner_sha
+    ;;
+*) fail 'SCHEMA16_FINAL_RUNNER_MODE must be exactly direct or bundle' ;;
+esac
+if (( runner_is_bundle == 0 )) && file -b -- "$runner" | grep -q '^ELF '; then
+    command -v readelf >/dev/null || fail 'readelf is required to verify the ELF loader'
+    direct_loader=$(readelf -l -- "$runner" \
+        | sed -n 's/.*Requesting program interpreter: \([^]]*\)].*/\1/p')
+    [[ -n "$direct_loader" && -x "$direct_loader" ]] \
+        || fail "ELF interpreter is missing or not executable: ${direct_loader:-unknown}"
+    if ldd -- "$runner" | grep -Fq 'not found'; then
+        fail "direct runner has an unresolved shared library: $runner"
+    fi
+fi
 [[ -x "$workspace/scripts/run_parity_release_sweep.sh" ]] \
     || fail "missing release sweep under workspace: $workspace"
 
@@ -346,7 +496,7 @@ for campaign_arg in "${campaigns[@]}"; do
     campaign_label=${campaign_label:0:48}
     normalized_campaigns+=("$campaign")
     campaign_audits+=(
-        "$audit_parent/schema16-final-${campaign_label}-path-$path_digest-runner-$actual_runner_sha"
+        "$audit_parent/schema16-final-${campaign_label}-path-$path_digest-runner-$runner_identity"
     )
 done
 for audit in "${campaign_audits[@]}"; do
@@ -356,23 +506,51 @@ for audit in "${campaign_audits[@]}"; do
     fi
 done
 
-runner_dir="$workspace/.git/schema16-final-runners/$actual_runner_sha"
+if (( runner_is_bundle == 1 )); then
+    verify_runner_bundle "$runner_source_dir" || exit 2
+    native_conversion_protocol=2
+    runner_wrapper_sha=$(sha256_file "$runner_source_dir/original_parity_replay.remote") \
+        || exit 2
+    runner_bundle_manifest_sha=$(sha256_file "$runner_source_dir/SHA256SUMS") \
+        || exit 2
+    runner_lib_manifest_sha=$(sha256_file "$runner_source_dir/LIB_SHA256SUMS") \
+        || exit 2
+    [[ "$(runner_bundle_digest "$runner_source_dir")" == "$expected_bundle_sha" ]] \
+        || fail "runner bundle trust digest mismatch: $runner_source_dir"
+fi
+
+runner_dir="$workspace/.git/schema16-final-runners/$runner_identity"
 pinned_runner="$runner_dir/original_parity_replay"
+pinned_runner_exec="$pinned_runner"
 mkdir -p -- "$workspace/.git/schema16-final-runners"
 if [[ ! -e "$runner_dir" ]]; then
     runner_tmp=$(mktemp -d \
         "$workspace/.git/schema16-final-runners/.runner-$actual_runner_sha.tmp.XXXXXX")
-    cp -p -- "$runner" "$runner_tmp/original_parity_replay"
-    chmod 0555 "$runner_tmp/original_parity_replay"
-    printf '%s  original_parity_replay\n' "$actual_runner_sha" >"$runner_tmp/runner.sha256"
+    if (( runner_is_bundle == 1 )); then
+        cp -a --no-preserve=ownership -- "$runner_source_dir/." "$runner_tmp/"
+        verify_runner_bundle "$runner_tmp" "$runner_source_dir" || exit 2
+    else
+        cp -p -- "$runner" "$runner_tmp/original_parity_replay"
+        chmod 0555 "$runner_tmp/original_parity_replay"
+        printf '%s  original_parity_replay\n' "$actual_runner_sha" >"$runner_tmp/runner.sha256"
+    fi
     mv -- "$runner_tmp" "$runner_dir"
 fi
 [[ -x "$pinned_runner" ]] || fail "pinned runner is not executable: $pinned_runner"
 [[ "$(sha256_file "$pinned_runner")" == "$actual_runner_sha" ]] \
     || fail "pinned runner hash mismatch: $pinned_runner"
-cmp -s -- "$runner_dir/runner.sha256" \
-    <(printf '%s  original_parity_replay\n' "$actual_runner_sha") \
-    || fail "pinned runner metadata mismatch: $runner_dir/runner.sha256"
+if (( runner_is_bundle == 1 )); then
+    verify_runner_bundle "$runner_dir" "$runner_source_dir" || exit 2
+    [[ "$(sha256_file "$runner_dir/original_parity_replay.remote")" == "$runner_wrapper_sha" \
+        && "$(sha256_file "$runner_dir/SHA256SUMS")" == "$runner_bundle_manifest_sha" \
+        && "$(sha256_file "$runner_dir/LIB_SHA256SUMS")" == "$runner_lib_manifest_sha" ]] \
+        || fail "pinned runner bundle provenance mismatch: $runner_dir"
+    pinned_runner_exec="$runner_dir/original_parity_replay.remote"
+else
+    cmp -s -- "$runner_dir/runner.sha256" \
+        <(printf '%s  original_parity_replay\n' "$actual_runner_sha") \
+        || fail "pinned runner metadata mismatch: $runner_dir/runner.sha256"
+fi
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/schema16-final-validation.XXXXXX")
 trap 'rm -rf -- "$work_dir"' EXIT
@@ -411,6 +589,10 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
         printf 'PARITY_TRACE_SCHEMA=16\n'
         printf 'EXPECTED_LOGICAL_REPLAYS=%s\n' "$expected"
         printf 'RUNNER_SHA256=%s\n' "$actual_runner_sha"
+        printf 'RUNNER_WRAPPER_SHA256=%s\n' "$runner_wrapper_sha"
+        printf 'RUNNER_BUNDLE_MANIFEST_SHA256=%s\n' "$runner_bundle_manifest_sha"
+        printf 'RUNNER_LIB_MANIFEST_SHA256=%s\n' "$runner_lib_manifest_sha"
+        printf 'NATIVE_CONVERSION_PROTOCOL=%s\n' "$native_conversion_protocol"
         printf 'SNAPSHOT_SHA256=%s\n' "$snapshot_sha"
         printf 'TRACE_IDENTITIES_SHA256=%s\n' "$identities_sha"
     } >"$metadata"
@@ -425,7 +607,7 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
             PARITY_SWEEP_GLOBAL_CONCURRENCY=1 \
             PARITY_SWEEP_SLOT_DIR="$workspace/.git/parity-runner-slots" \
             scripts/run_parity_release_sweep.sh \
-                "$workspace" "$audit" "$pinned_runner" 0 1
+                "$workspace" "$audit" "$pinned_runner_exec" 0 1
     ); then
         classify_failure "$audit"
         exit 1
@@ -433,6 +615,13 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
 
     [[ "$(sha256_file "$pinned_runner")" == "$actual_runner_sha" ]] \
         || fail "pinned runner changed during validation: $pinned_runner"
+    if (( runner_is_bundle == 1 )); then
+        verify_runner_bundle "$runner_dir" "$runner_source_dir" || exit 2
+        [[ "$(sha256_file "$runner_dir/original_parity_replay.remote")" == "$runner_wrapper_sha" \
+            && "$(sha256_file "$runner_dir/SHA256SUMS")" == "$runner_bundle_manifest_sha" \
+            && "$(sha256_file "$runner_dir/LIB_SHA256SUMS")" == "$runner_lib_manifest_sha" ]] \
+            || fail "pinned runner bundle changed during validation: $runner_dir"
+    fi
     [[ "$(sha256_file "$audit/traces.snapshot")" == "$snapshot_sha" ]] \
         || fail "frozen snapshot changed during validation: $audit/traces.snapshot"
 
@@ -467,8 +656,12 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
         printf 'PASSED=%s\n' "$expected"
         printf 'FAILED=0\n'
         printf 'EXACT_PARITY=1\n'
-        printf 'RUNNER=%s\n' "$pinned_runner"
+        printf 'RUNNER=%s\n' "$pinned_runner_exec"
         printf 'RUNNER_SHA256=%s\n' "$actual_runner_sha"
+        printf 'RUNNER_WRAPPER_SHA256=%s\n' "$runner_wrapper_sha"
+        printf 'RUNNER_BUNDLE_MANIFEST_SHA256=%s\n' "$runner_bundle_manifest_sha"
+        printf 'RUNNER_LIB_MANIFEST_SHA256=%s\n' "$runner_lib_manifest_sha"
+        printf 'NATIVE_CONVERSION_PROTOCOL=%s\n' "$native_conversion_protocol"
         printf 'SNAPSHOT_SHA256=%s\n' "$snapshot_sha"
         printf 'TRACE_IDENTITIES_SHA256=%s\n' "$identities_sha"
     } >"$verdict_tmp"
