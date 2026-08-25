@@ -7787,7 +7787,7 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
 }
 
 #[test]
-fn sword_damage_amulet_coma_terminates_during_translation() {
+fn sword_damage_amulet_coma_preserves_carried_body_and_terminates_during_translation() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_soldier(
@@ -7799,6 +7799,14 @@ fn sword_damage_amulet_coma_terminates_during_translation() {
         None,
     ));
     let victim = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 10.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+    let carried = engine.add_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -7840,6 +7848,13 @@ fn sword_damage_amulet_coma_terminates_during_translation() {
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
         victim_entity.pc_data_mut().unwrap().life_points = 1;
+        victim_entity.set_posture(Posture::CarryingCorpse);
+        victim_entity.pc_data_mut().unwrap().carried = Some(carried);
+        victim_entity
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Tied);
+        victim_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
         victim_entity
             .position_iface_mut()
             .set_map_goal(crate::coordinates::MapPoint::new(25.0, 100.0));
@@ -7848,6 +7863,12 @@ fn sword_damage_amulet_coma_terminates_during_translation() {
             .unwrap()
             .continuation
             .motion_state = crate::sprite::MotionState::Start;
+    }
+    {
+        let carried_entity = engine.get_entity_mut(carried).unwrap();
+        carried_entity.set_posture(Posture::Carried);
+        carried_entity.human_data_mut().unwrap().carrier = Some(victim);
+        carried_entity.actor_data_mut().unwrap().execution_frozen = true;
     }
 
     let mut damage =
@@ -7863,6 +7884,21 @@ fn sword_damage_amulet_coma_terminates_during_translation() {
     let victim_entity = engine.get_entity(victim).unwrap();
     assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
     assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+    assert_eq!(victim_entity.pc_data().unwrap().carried, Some(carried));
+    assert_eq!(
+        victim_entity.actor_data().unwrap().action_state,
+        ActionState::Moving,
+        "the coma posture change bypasses PC::TranslateSwordDamage's CarryingCorpse arm"
+    );
+    let carried_entity = engine.get_entity(carried).unwrap();
+    assert_eq!(carried_entity.element_data().posture, Posture::Carried);
+    assert_eq!(carried_entity.human_data().unwrap().carrier, Some(victim));
+    assert!(carried_entity.actor_data().unwrap().execution_frozen);
+    assert_eq!(
+        carried_entity.actor_data().unwrap().installed_order,
+        None,
+        "the bypassed DropCorpse must not launch the carried body's Wait singleton"
+    );
     assert_eq!(
         victim_entity.position_iface().map_goal(),
         crate::coordinates::MapPoint::ZERO,
