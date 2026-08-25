@@ -87,3 +87,60 @@ pub(super) fn apply_local_viewport_scroll(host: &mut Host, dir: engine_api::Scro
     host.viewport.scroll_by(delta);
     host.input.cancel_multi_selection();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::dispatch_local_command;
+    use crate::host::Host;
+    use crate::multiplayer::{NetChannels, NetOutbound};
+    use robin_engine::campaign::Campaign;
+    use robin_engine::engine::{Engine, LevelAssets};
+    use robin_engine::player_command::{FrameCommands, PlayerCommand};
+
+    #[test]
+    fn single_player_dispatch_records_each_command_exactly_once() {
+        let mut assets = LevelAssets::default();
+        let mut engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut host = Host::scratch(640.0, 480.0);
+        let mut commands = FrameCommands::new();
+
+        dispatch_local_command(
+            &mut host,
+            &mut engine,
+            &mut commands,
+            &assets,
+            &PlayerCommand::QuitMissionRequested,
+        );
+
+        assert_eq!(commands.commands.len(), 1);
+    }
+
+    #[test]
+    fn multiplayer_dispatch_defers_recording_until_the_server_echo() {
+        let mut assets = LevelAssets::default();
+        let mut engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut host = Host::scratch(640.0, 480.0);
+        let (channels, _incoming, outgoing, _, _) = NetChannels::new();
+        host.transport.net = Some(channels);
+        let mut commands = FrameCommands::new();
+
+        dispatch_local_command(
+            &mut host,
+            &mut engine,
+            &mut commands,
+            &assets,
+            &PlayerCommand::QuitMissionRequested,
+        );
+
+        assert!(commands.commands.is_empty());
+        assert!(matches!(
+            outgoing.recv().expect("outbound command"),
+            NetOutbound::Input {
+                command: PlayerCommand::QuitMissionRequested,
+                ..
+            }
+        ));
+    }
+}

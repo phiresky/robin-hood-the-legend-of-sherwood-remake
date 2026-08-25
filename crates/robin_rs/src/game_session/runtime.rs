@@ -573,11 +573,26 @@ impl TimelineRuntime {
     /// `ResynchronizeAfterLoad`; the original has no command journal. The Rust
     /// equivalent must additionally invalidate all journals and checkpoints
     /// whose future was derived from the replaced state.
-    fn reset_reconstruction_history(&mut self) {
+    fn reset_reconstruction_history(
+        &mut self,
+        sim_frame: u32,
+        engine: &Engine,
+        assets: &LevelAssets,
+    ) {
         self.rewind_buffer = RewindBuffer::new();
         self.recent_timeline_history.clear();
         if let Some(checker) = self.rollback_checker.as_mut() {
             checker.reset();
+        }
+
+        // Save/load processing and normal replay injection both happen after
+        // `open_frame`. Replacing history discards that old-state pending
+        // capture, so reopen the same pre-tick frame against the adopted
+        // state. The Original likewise loads before this loop iteration's
+        // `PerformHourglass` (`original-code/RHgame.cpp:1664-1880`).
+        self.rewind_buffer.begin_frame(sim_frame, engine, assets);
+        if let Some(checker) = self.rollback_checker.as_mut() {
+            checker.begin_frame(sim_frame, engine);
         }
     }
 
@@ -815,7 +830,9 @@ impl TimelineRuntime {
         &mut self,
         event: crate::main_entry::SaveLoadEvent,
         frame: &mut MissionFrame,
+        sim_frame: u32,
         engine: &Engine,
+        assets: &LevelAssets,
     ) {
         match event {
             crate::main_entry::SaveLoadEvent::SaveWritten { identity } => {
@@ -852,7 +869,7 @@ impl TimelineRuntime {
             } => {
                 // The engine state jumped; buffered rewind history no longer
                 // describes this timeline's future.
-                self.reset_reconstruction_history();
+                self.reset_reconstruction_history(sim_frame, engine, assets);
                 if !frame.commands.commands.is_empty() {
                     tracing::debug!(
                         dropped = frame.commands.commands.len(),
@@ -942,12 +959,9 @@ impl TimelineRuntime {
         )?;
         if load_applied {
             // The boundary helper resets rewind itself because debugger-step
-            // callers use it directly. TimelineRuntime owns the remaining
-            // reconstruction consumers.
-            self.recent_timeline_history.clear();
-            if let Some(checker) = self.rollback_checker.as_mut() {
-                checker.reset();
-            }
+            // callers use it directly. TimelineRuntime additionally rebases
+            // every reconstruction consumer on the adopted pre-tick state.
+            self.reset_reconstruction_history(manager.sim_frame, &manager.engine, assets);
         }
         Ok(())
     }
@@ -1169,7 +1183,9 @@ mod tests {
         live.note_save_load_event(
             crate::main_entry::SaveLoadEvent::SaveWritten { identity },
             &mut frame,
+            0,
             &engine,
+            &assets,
         );
         for _ in 0..5 {
             live.replay_recorder.as_mut().unwrap().end_frame();
@@ -1202,7 +1218,9 @@ mod tests {
                 is_continue: true,
             },
             &mut frame,
+            5,
             &engine,
+            &assets,
         );
         live.replay_recorder.as_mut().unwrap().end_frame();
         drop(live);
@@ -1337,6 +1355,49 @@ mod tests {
 
         assert!(error.contains("save-marker desync"), "{error}");
         assert!(pinned_saves.is_empty());
+    }
+
+    #[test]
+    fn whole_state_discontinuity_reopens_the_current_frame_before_commit() {
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(
+            640.0,
+            480.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .expect("fixture engine");
+        let mut manager = EngineManager::new(engine, robin_engine::player_command::PlayerId::HOST);
+        manager.set_sim_frame(crate::rewind::SNAPSHOT_INTERVAL);
+        let mut host = Host::scratch(640.0, 480.0);
+        let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+        let mut frame = MissionFrame::new(0);
+
+        timeline.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
+        // Save-load/replay adoption replaces the state after open_frame but
+        // before this loop iteration's tick and history commit.
+        timeline.reset_reconstruction_history(manager.sim_frame, &manager.engine, &assets);
+        timeline.begin_simulation();
+        timeline.begin_bookkeeping();
+        timeline.commit_simulation_history(
+            &mut host,
+            &mut manager,
+            &frame,
+            FrameCommitPolicy {
+                store_rewind_commands: true,
+            },
+        );
+
+        assert_eq!(
+            timeline.rewind_buffer.next_record_frame(),
+            crate::rewind::SNAPSHOT_INTERVAL + 1
+        );
+        assert!(
+            timeline
+                .rewind_buffer
+                .commands_for(crate::rewind::SNAPSHOT_INTERVAL)
+                .is_some()
+        );
     }
 
     #[test]
