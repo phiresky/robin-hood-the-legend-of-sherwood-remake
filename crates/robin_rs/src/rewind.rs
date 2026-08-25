@@ -9,12 +9,12 @@
 //! replays commands forward to reconstruct the exact pre-tick state at
 //! the target frame.
 //!
-//! The per-frame command log kept here is independent of
-//! [`robin_engine::replay::ReplayRecorder`] (which writes JSONL to disk) and
-//! [`crate::rollback_checker::RollbackChecker`] (which only keeps a
-//! short 5-frame ring).  It has to cover the full span from the oldest
-//! retained snapshot to "now", so it grows with how far back the
-//! oldest bucket reaches — bounded by the exponential retention.
+//! The per-frame command journal is an instance of the same shared timeline
+//! primitive used by [`crate::rollback_checker::RollbackChecker`]. It remains
+//! independent of [`robin_engine::replay::ReplayRecorder`] (which writes JSONL
+//! to disk), and has to cover the full span from the oldest retained snapshot
+//! to "now", so it grows with how far back the oldest bucket reaches — bounded
+//! by the exponential retention.
 //!
 //! This is a dev / debug feature; bypasses the replay recorder and the
 //! rollback checker while active (both would see the time-reversal as
@@ -26,10 +26,10 @@
 //! per tracked frame.  The Engine already clones cheaply enough that
 //! the rollback checker does it on every frame, so this is fine.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 use crate::sim_timeline::{
-    CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, SnapshotHistory,
+    CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, TimelineHistory,
     replay_one_frame,
 };
 use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
@@ -54,20 +54,10 @@ const BUCKET_GROWTH: f32 = 1.3;
 /// reconstruct any recent frame by replaying forward from the nearest
 /// snapshot.
 pub struct RewindBuffer {
-    /// Exponentially spaced snapshots, oldest first.
-    snapshots: SnapshotHistory,
-    /// One entry per simulated frame from [`Self::oldest_cmd_frame`]
-    /// up to the most recently recorded frame, holding the commands
-    /// applied during that frame.
-    commands: VecDeque<Vec<PlayerInput>>,
-    /// Frame number of `commands[0]`.  Undefined when
-    /// `commands.is_empty()`.
-    oldest_cmd_frame: u32,
-    /// Pending pre-tick snapshot captured in `begin_frame`, consumed
-    /// by `end_frame`.  None when
-    /// begin_frame hasn't been called for the current frame yet (e.g.
-    /// paused frame).
-    pending: Option<Snapshot>,
+    /// Shared checkpoint + command-journal lifecycle. Rewind adds only its
+    /// interactive seek cache and exponential-retention policy around this
+    /// reusable timeline primitive.
+    history: TimelineHistory,
     /// Active rewind session cache — populated while BACKSPACE is
     /// held so consecutive rewind-steps reuse earlier replay work
     /// instead of re-cloning a snapshot and ticking forward from
@@ -84,7 +74,7 @@ pub struct RewindBuffer {
 impl RewindBuffer {
     pub fn new() -> Self {
         Self {
-            snapshots: SnapshotHistory::new(
+            history: TimelineHistory::new(
                 CheckpointPolicy::EveryNthFrame {
                     interval: SNAPSHOT_INTERVAL,
                 },
@@ -93,9 +83,6 @@ impl RewindBuffer {
                     growth: BUCKET_GROWTH,
                 },
             ),
-            commands: VecDeque::new(),
-            oldest_cmd_frame: 0,
-            pending: None,
             session: None,
         }
     }
@@ -125,48 +112,14 @@ impl RewindBuffer {
     /// [`SNAPSHOT_INTERVAL`] — non-aligned frames still need to
     /// register their commands but don't add to the snapshot ring.
     pub fn begin_frame(&mut self, frame: u32, engine: &Engine, _assets: &LevelAssets) {
-        if self.snapshots.should_checkpoint(frame) {
-            self.pending = Some(Snapshot::new(frame, engine));
-        } else {
-            self.pending = None;
-        }
+        self.history.begin_frame(frame, engine);
     }
 
     /// Finalize the frame: commit the pending snapshot (if any), push
     /// the frame's commands onto the log, and prune the snapshot ring
     /// to exponential spacing.
     pub fn end_frame(&mut self, cmds: Vec<PlayerInput>) {
-        let frame = if let Some(snap) = self.pending.take() {
-            let f = snap.frame;
-            self.snapshots.remember(snap);
-            f
-        } else if let Some(back) = self.commands.back() {
-            // No snapshot this frame; infer the frame number from the
-            // tail of the command log so we stay contiguous.
-            let _ = back;
-            self.oldest_cmd_frame + self.commands.len() as u32
-        } else {
-            // Very first frame after startup and it didn't align to
-            // SNAPSHOT_INTERVAL.  Nothing to anchor the command log
-            // against, so drop the commands — without a snapshot we
-            // couldn't rewind into them anyway.
-            return;
-        };
-
-        if self.commands.is_empty() {
-            self.oldest_cmd_frame = frame;
-        }
-        self.commands.push_back(cmds);
-
-        // Trim commands older than the oldest retained snapshot; they
-        // can never be needed for a rewind replay (we always start
-        // from a snapshot that's at or before the target frame).
-        if let Some(oldest) = self.snapshots.oldest_frame() {
-            while self.oldest_cmd_frame < oldest && !self.commands.is_empty() {
-                self.commands.pop_front();
-                self.oldest_cmd_frame += 1;
-            }
-        }
+        self.history.commit_frame(cmds);
     }
 
     /// Reconstruct the pre-tick sim state at `target_frame` by
@@ -201,7 +154,7 @@ impl RewindBuffer {
         // Pick the closest starting point ≤ target_frame.  A cached
         // state beats a retained snapshot when both are available.
         let mut snapshot = self
-            .snapshots
+            .history
             .restore(target_frame, RestorePolicy::LatestAtOrBefore)
             .ok()?;
         if let Some(cache) = &self.session
@@ -215,8 +168,7 @@ impl RewindBuffer {
         let mut scratch_dev = DevState::default();
         let mut scratch_display = HostDisplayState::default();
         while snapshot.frame < target_frame {
-            let cmd_idx = snapshot.frame.checked_sub(self.oldest_cmd_frame)? as usize;
-            let cmds = self.commands.get(cmd_idx)?;
+            let cmds = self.history.commands_for(snapshot.frame)?;
             replay_one_frame(
                 &mut snapshot,
                 &mut scratch_display,
@@ -239,7 +191,7 @@ impl RewindBuffer {
     /// from the newest.  Used by the main loop to decide whether a
     /// rewind request has any chance of succeeding.
     pub fn oldest_reachable_frame(&self) -> Option<u32> {
-        self.snapshots.oldest_frame()
+        self.history.oldest_checkpoint_frame()
     }
 
     /// The frame number that [`Self::end_frame`] would next record.
@@ -251,20 +203,19 @@ impl RewindBuffer {
     /// already has commands for, so the player is currently replaying
     /// forward through previously-recorded inputs after a rewind.
     pub fn next_record_frame(&self) -> u32 {
-        self.oldest_cmd_frame + self.commands.len() as u32
+        self.history.next_record_frame()
     }
 
     /// Frame number of the oldest entry in the command log.  Frames
     /// before this have rolled off the buffer and can no longer be
     /// targeted by [`Self::rewind_to`] / [`Self::splice_late_input`].
     pub fn oldest_cmd_frame(&self) -> u32 {
-        self.oldest_cmd_frame
+        self.history.oldest_command_frame().unwrap_or(0)
     }
 
     /// Recorded commands for `frame`, if present.
     pub fn commands_for(&self, frame: u32) -> Option<&[PlayerInput]> {
-        let idx = frame.checked_sub(self.oldest_cmd_frame)? as usize;
-        self.commands.get(idx).map(Vec::as_slice)
+        self.history.commands_for(frame)
     }
 
     /// Append a late-arriving input into the buffer's command log at
@@ -281,14 +232,7 @@ impl RewindBuffer {
     /// past [`Self::next_record_frame`] (caller should queue it as a
     /// future input instead of trying to splice).
     pub fn splice_late_input(&mut self, frame: u32, input: PlayerInput) -> bool {
-        let Some(idx) = frame.checked_sub(self.oldest_cmd_frame) else {
-            return false;
-        };
-        let Some(slot) = self.commands.get_mut(idx as usize) else {
-            return false;
-        };
-        slot.push(input);
-        true
+        self.history.append_input(frame, input)
     }
 
     /// Discard every command entry at `frame` or later, and every
@@ -300,13 +244,7 @@ impl RewindBuffer {
     /// state for the frame that's diverging, which is still a valid
     /// rewind target.
     pub fn truncate_future(&mut self, frame: u32) {
-        let Some(idx) = frame.checked_sub(self.oldest_cmd_frame) else {
-            return;
-        };
-        while self.commands.len() > idx as usize {
-            self.commands.pop_back();
-        }
-        self.snapshots.truncate_after(frame);
+        self.history.truncate_future(frame);
     }
 }
 
@@ -387,15 +325,18 @@ mod tests {
         use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 
         let mut buf = RewindBuffer::new();
-        // Manually seed a few frames of command logs so we can splice
-        // without standing up a full Engine.  oldest_cmd_frame defaults
-        // to 0, so we mark frames 0..=2 as recorded.
-        buf.commands.push_back(Vec::new());
-        buf.commands.push_back(Vec::new());
-        buf.commands.push_back(Vec::new());
-        // begin_session would normally manage oldest_cmd_frame; force
-        // it here to match the seed above.
-        buf.oldest_cmd_frame = 0;
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(
+            640.0,
+            480.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .expect("fixture engine");
+        for frame in 0..3 {
+            buf.begin_frame(frame, &engine, &assets);
+            buf.end_frame(Vec::new());
+        }
 
         let inp = PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown);
         assert!(buf.splice_late_input(1, inp.clone()));
@@ -405,8 +346,7 @@ mod tests {
 
         // Out-of-range frames return false without mutating.
         assert!(!buf.splice_late_input(99, inp.clone()));
-        // Below oldest_cmd_frame: also false.
-        buf.oldest_cmd_frame = 5;
+        buf.truncate_future(0);
         assert!(!buf.splice_late_input(2, inp));
     }
 }
