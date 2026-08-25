@@ -201,6 +201,7 @@ pub mod ingame_menu;
 pub mod input;
 pub mod input_translator;
 pub(crate) mod json_value;
+pub mod key_config;
 pub mod key_config_store;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;

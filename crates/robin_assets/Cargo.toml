@@ -18,7 +18,6 @@ flate2 = "1"
 bitcode.workspace = true
 serde_json.workspace = true
 zstd.workspace = true
-winit = { version = "0.30", default-features = false, features = ["serde"] }
 # Official libjxl Rust port (https://github.com/libjxl/jxl-rs). Used to
 # decode terrain `.map` files when the converter has transcoded them to
 # JPEG XL. Disable default SIMD because this workspace currently uses
@@ -38,8 +37,3 @@ bzip2 = "0.6"
 
 [dev-dependencies]
 tempfile.workspace = true
-
-# The library keeps winit platform-neutral for wasm consumers. Standalone
-# Linux test targets still need one native backend selected so winit compiles.
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-winit = { version = "0.30", default-features = false, features = ["x11"] }

@@ -1,13 +1,14 @@
 //! Per-profile key-binding persistence.
 //!
-//! Each profile gets its own active and custom slots. The store lives on
-//! the host side because [`robin_assets::keyconfig::KeyConfig`] depends
-//! on `robin_engine`, which would invert the crate dependency if we
-//! tried to put it on `robin_engine::PlayerProfile`. See Decision 5B.
+//! Each profile gets its own active and custom slots. The original game stores
+//! both configurations on `RHPlayerProfile` and copies the active one into its
+//! input translator. The Rust port keeps the same per-profile ownership on the
+//! host side because physical [`winit::keyboard::KeyCode`] values are not
+//! deterministic engine state.
 //!
 //! Stored as `<save_directory>/keyconfigs.json` next to `profiles.json`.
 
-use robin_assets::keyconfig::KeyConfig;
+use crate::key_config::KeyConfig;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

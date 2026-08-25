@@ -1,7 +1,9 @@
-//! Keyboard binding configuration.
+//! Host-side keyboard binding configuration.
 //!
 //! Stores named action strings with primary and secondary key slots, and
-//! provides hardcoded default presets.
+//! provides hardcoded default presets. The original game owns these bindings
+//! as part of each player profile and copies the active profile's bindings into
+//! its input translator; they are application input state, not game assets.
 
 use winit::keyboard::KeyCode;
 
@@ -327,5 +329,95 @@ mod tests {
         let b = restored.get_binding("Crouch").unwrap();
         assert_eq!(b.primary_key, Some(KeyCode::ShiftLeft));
         assert_eq!(b.secondary_key, Some(KeyCode::ShiftRight));
+    }
+
+    #[test]
+    fn serialized_shape_remains_compatible_with_existing_keyconfigs() {
+        let json = r#"{"bindings":[{"action":"Crouch","primary_key":"ShiftLeft","secondary_key":"ShiftRight"},{"action":"Minimap","primary_key":"KeyM","secondary_key":null}],"key_type":1}"#;
+
+        let cfg: KeyConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.key_type, 1);
+        assert_eq!(
+            cfg.get_binding("Crouch").unwrap().primary_key,
+            Some(KeyCode::ShiftLeft)
+        );
+        assert_eq!(serde_json::to_string(&cfg).unwrap(), json);
+    }
+
+    #[test]
+    fn preset_bindings_remain_exact() {
+        use KeyCode::*;
+
+        let mut default_keys = vec![None; REAL_KEY_COUNT as usize];
+        KeyConfig::default_preset().get_keys_array(&mut default_keys);
+        assert_eq!(
+            default_keys,
+            vec![
+                Some(NumpadAdd),
+                Some(NumpadSubtract),
+                Some(ArrowUp),
+                Some(ArrowDown),
+                Some(ArrowLeft),
+                Some(ArrowRight),
+                Some(Semicolon),
+                Some(Digit1),
+                Some(Digit2),
+                Some(Digit3),
+                Some(Digit4),
+                Some(Digit5),
+                Some(KeyQ),
+                Some(KeyD),
+                Some(KeyC),
+                Some(KeyS),
+                Some(ShiftLeft),
+                Some(CapsLock),
+                Some(KeyG),
+                Some(KeyH),
+                Some(KeyJ),
+                Some(ControlLeft),
+                Some(KeyA),
+                Some(Space),
+                Some(Backspace),
+                Some(AltLeft),
+                Some(F1),
+                Some(F5),
+            ]
+        );
+
+        let mut alternate_keys = vec![None; REAL_KEY_COUNT as usize];
+        KeyConfig::alternate_preset().get_keys_array(&mut alternate_keys);
+        assert_eq!(
+            alternate_keys,
+            vec![
+                Some(NumpadAdd),
+                Some(NumpadSubtract),
+                Some(ArrowUp),
+                Some(ArrowDown),
+                Some(ArrowLeft),
+                Some(ArrowRight),
+                Some(NumpadMultiply),
+                Some(Numpad1),
+                Some(Numpad2),
+                Some(Numpad3),
+                Some(Numpad4),
+                Some(Numpad5),
+                Some(Numpad6),
+                Some(Numpad0),
+                Some(PageDown),
+                Some(PageUp),
+                Some(ShiftRight),
+                Some(CapsLock),
+                Some(Numpad7),
+                Some(Numpad8),
+                Some(Numpad9),
+                Some(ControlRight),
+                Some(Enter),
+                Some(Space),
+                Some(Backspace),
+                Some(AltRight),
+                Some(F1),
+                Some(F5),
+            ]
+        );
     }
 }
