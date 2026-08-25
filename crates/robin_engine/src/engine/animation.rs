@@ -4758,6 +4758,7 @@ impl EngineInner {
             striking_down_sword_direction_goal,
             taking_direction_goal,
             pc_target_direction_goal,
+            waiting_on_shoulders_direction,
         ) = {
             let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                 panic!(
@@ -5115,6 +5116,24 @@ impl EngineInner {
             } else {
                 None
             };
+            let waiting_on_shoulders_direction =
+                (anim_type == OrderType::WaitingOnShoulders).then(|| {
+                    let carrier_id = entity
+                        .human_data()
+                        .and_then(|human| human.carrier)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "WaitingOnShoulders owner {entity_id:?} has no carrier at legacy slot {}",
+                                entity_id.index()
+                            )
+                        });
+                    let carrier = self.world.entities.get(carrier_id).unwrap_or_else(|| {
+                        panic!(
+                            "WaitingOnShoulders owner {entity_id:?} references missing carrier {carrier_id:?}"
+                        )
+                    });
+                    (carrier.element_data().direction() + 8) & 15
+                });
 
             (
                 principal_frames,
@@ -5127,6 +5146,7 @@ impl EngineInner {
                 striking_down_sword_direction,
                 taking_direction,
                 target_direction,
+                waiting_on_shoulders_direction,
             )
         };
 
@@ -5528,6 +5548,12 @@ impl EngineInner {
                     }
                     if let Some(direction) = pc_target_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
+                    }
+                    if let Some(direction) = waiting_on_shoulders_direction {
+                        // RHElementActorPC::Execute(WAITING_ON_SHOULDERS)
+                        // snaps to the carrier's reversed live direction
+                        // before PerformAction selects the directional row.
+                        entity.element_data_mut().set_direction_instantly(direction);
                     }
                     if order_is_initialising
                         && anim_type == OrderType::Pointing
@@ -6866,5 +6892,71 @@ mod shoulder_idle_initialization_tests {
             next_outcomes.shoulder_carried_waits.is_empty(),
             "the carried Wait is an initialization-only side effect"
         );
+    }
+
+    #[test]
+    fn waiting_on_shoulders_selects_row_from_live_carrier_direction() {
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::types::LevelAssets::new();
+        let mut engine = EngineInner::new();
+
+        let mut helper = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        helper.element.set_direction_instantly(4);
+        let helper_id = engine.add_entity(Entity::Pc(helper));
+
+        let mut climber = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::OnShoulders,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        climber.human.carrier = Some(helper_id);
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WaitingOnShoulders as usize] = 100;
+        let script = SpriteScript {
+            action_id: OrderType::WaitingOnShoulders as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let scripts = vec![script; 116];
+        climber.element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(scripts),
+            std::sync::Arc::new(conversion),
+        );
+        let climber_id = engine.add_entity(Entity::Pc(climber));
+
+        let mut wait = SequenceElement::new(1, Command::Wait, Some(climber_id));
+        wait.orders
+            .push_back(Order::test_new(OrderType::WaitingOnShoulders, 0.0, 0.0));
+        let wait_id = engine.orders.sequence_manager.launch_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(wait_id, 0);
+
+        engine.tick_actor_animation_for(&sim, &assets, climber_id);
+
+        let climber = engine.get_entity(climber_id).unwrap().element_data();
+        assert_eq!(climber.direction(), 12);
+        assert_eq!(climber.sprite.current_row, 112);
     }
 }
