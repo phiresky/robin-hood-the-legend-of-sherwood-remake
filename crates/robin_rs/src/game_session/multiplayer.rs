@@ -446,6 +446,10 @@ pub(crate) fn drain_net_inputs(
                 rollback_telemetry = Some(telemetry);
                 rewrote_sim_state = true;
             } else {
+                // The late input was accepted into the authoritative command
+                // journal, so checkpoints after its frame are stale even
+                // when reconstruction cannot currently reach `sim_frame`.
+                recent_timeline_history.truncate_after(earliest);
                 tracing::error!(
                     earliest_frame = earliest,
                     target_frame = manager.sim_frame,
@@ -571,7 +575,12 @@ fn rewind_from_recent_timeline_history(
         .ok()?;
     let restore_us = restore_start.elapsed().as_micros();
 
-    recent_timeline_history.truncate_after(start_frame);
+    // Rebuild corrected checkpoints transactionally. A missing command (or
+    // any future fallible replay input) must leave the last known-good recent
+    // history available to a fallback path rather than publishing a partial
+    // reconstruction.
+    let mut corrected_history = recent_timeline_history.clone();
+    corrected_history.truncate_after(start_frame);
     let mut scratch_host = Host::default();
     let mut scratch_dev = engine_api::DevState::default();
     let mut scratch_display = engine_api::HostDisplayState::default();
@@ -582,7 +591,7 @@ fn rewind_from_recent_timeline_history(
     let replay_start = web_time::Instant::now();
     while snapshot.frame < target_frame {
         let remember_start = web_time::Instant::now();
-        recent_timeline_history.remember(snapshot.clone());
+        corrected_history.remember(snapshot.clone());
         replay_remember_us += remember_start.elapsed().as_micros();
         let command_lookup_start = web_time::Instant::now();
         let cmds = rewind_buffer.commands_for(snapshot.frame)?;
@@ -599,9 +608,10 @@ fn rewind_from_recent_timeline_history(
         replay_tick_us += frame_timing.tick_us;
     }
     let remember_start = web_time::Instant::now();
-    recent_timeline_history.remember(snapshot.clone());
+    corrected_history.remember(snapshot.clone());
     replay_remember_us += remember_start.elapsed().as_micros();
     let replay_us = replay_start.elapsed().as_micros();
+    *recent_timeline_history = corrected_history;
 
     Some((
         snapshot.engine,
@@ -833,11 +843,14 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::{MultiplayerAdmissionEvent, drain_net_inputs, validate_multiplayer_launch_args};
+    use super::{
+        MultiplayerAdmissionEvent, drain_net_inputs, rewind_from_recent_timeline_history,
+        validate_multiplayer_launch_args,
+    };
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
     use crate::rewind::RewindBuffer;
-    use crate::sim_timeline::{CheckpointPolicy, RetentionPolicy, SnapshotHistory};
+    use crate::sim_timeline::{CheckpointPolicy, RestorePolicy, RetentionPolicy, SnapshotHistory};
     use robin_engine::campaign::Campaign;
     use robin_engine::engine::{Engine, LevelAssets};
     use robin_engine::engine_manager::EngineManager;
@@ -945,5 +958,30 @@ mod tests {
             &mut hashes,
             &mut recent,
         );
+    }
+
+    #[test]
+    fn failed_recent_history_rebuild_does_not_publish_partial_checkpoints() {
+        let (_host, manager, assets, _incoming, _outgoing) = network_drain_fixture();
+        let mut rewind = RewindBuffer::new();
+        for frame in 0..2 {
+            rewind.begin_frame(frame, &manager.engine, &assets);
+            rewind.end_frame(Vec::new());
+        }
+        let mut recent = SnapshotHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        for frame in 1..=3 {
+            assert!(recent.checkpoint(frame, &manager.engine));
+        }
+
+        // Frame 2 has no command entry, so reconstruction from frame 1 to 3
+        // must fail after doing some work without truncating frames 2 and 3.
+        assert!(
+            rewind_from_recent_timeline_history(3, &assets, &rewind, &mut recent, 1, 1).is_none()
+        );
+        assert!(recent.restore(2, RestorePolicy::Exact).is_ok());
+        assert!(recent.restore(3, RestorePolicy::Exact).is_ok());
     }
 }

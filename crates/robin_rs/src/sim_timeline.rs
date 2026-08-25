@@ -152,26 +152,43 @@ pub struct CommandJournal {
     next_frame: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+enum CommandRecordError {
+    #[error("timeline commands must be recorded contiguously: frame {actual}, expected {expected}")]
+    Discontinuous { actual: u32, expected: u32 },
+    #[error("simulation frame counter overflowed command journal")]
+    FrameOverflow,
+}
+
 impl CommandJournal {
     /// Record one complete frame. Non-empty journals are strictly contiguous:
     /// a gap or duplicate means a caller crossed a timeline discontinuity
     /// without first clearing or truncating the journal.
     pub fn record(&mut self, frame: u32, commands: Vec<PlayerInput>) {
-        if let Some(expected) = self.next_frame {
-            assert_eq!(
-                frame, expected,
-                "timeline commands must be recorded contiguously"
-            );
-        }
+        let next_frame = self
+            .validate_record(frame)
+            .unwrap_or_else(|error| panic!("{error}"));
         if self.commands.is_empty() && self.next_frame.is_none() {
             self.oldest_frame = frame;
         }
         self.commands.push_back(commands);
-        self.next_frame = Some(
-            frame
-                .checked_add(1)
-                .expect("simulation frame counter overflowed command journal"),
-        );
+        self.next_frame = Some(next_frame);
+    }
+
+    /// Validate a record before either the journal or an associated
+    /// checkpoint store publishes state.
+    fn validate_record(&self, frame: u32) -> Result<u32, CommandRecordError> {
+        if let Some(expected) = self.next_frame {
+            if frame != expected {
+                return Err(CommandRecordError::Discontinuous {
+                    actual: frame,
+                    expected,
+                });
+            }
+        }
+        frame
+            .checked_add(1)
+            .ok_or(CommandRecordError::FrameOverflow)
     }
 
     pub fn commands_for(&self, frame: u32) -> Option<&[PlayerInput]> {
@@ -395,12 +412,23 @@ impl TimelineHistory {
     pub fn commit_frame(&mut self, commands: Vec<PlayerInput>) -> bool {
         let pending = self
             .pending
-            .take()
+            .as_ref()
             .expect("timeline frame committed without a matching begin_frame");
 
         if self.checkpoints.oldest_frame().is_none() && pending.checkpoint.is_none() {
+            self.pending = None;
             return false;
         }
+        // Validate command addressing and overflow before publishing the
+        // pending checkpoint. Otherwise a caught assertion would expose a
+        // checkpoint with no matching journal frame.
+        self.commands
+            .validate_record(pending.frame)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let pending = self
+            .pending
+            .take()
+            .expect("validated pending timeline frame disappeared");
         if let Some(checkpoint) = pending.checkpoint {
             self.checkpoints.remember(checkpoint);
         }
@@ -424,7 +452,16 @@ impl TimelineHistory {
     }
 
     pub fn append_input(&mut self, frame: u32, input: PlayerInput) -> bool {
-        self.commands.append_input(frame, input)
+        if !self.commands.append_input(frame, input) {
+            return false;
+        }
+
+        // A checkpoint at `frame` is the state before this input and remains
+        // valid. Every later checkpoint was derived without the newly-added
+        // command and must not be selected as a replay starting point.
+        self.checkpoints.truncate_after(frame);
+        self.pending = None;
+        true
     }
 
     pub fn oldest_checkpoint_frame(&self) -> Option<u32> {
@@ -452,7 +489,19 @@ impl TimelineHistory {
         }
         self.commands.truncate_from(frame);
         self.checkpoints.truncate_after(frame);
-        self.pending = None;
+
+        // The normal branch path opens the current pre-tick frame before
+        // discovering live input that diverges from recorded history. That
+        // pending capture is precisely the branch-point state and must still
+        // be committed with the replacement commands. A pending capture for
+        // any other frame belongs to the discarded future.
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.frame != frame)
+        {
+            self.pending = None;
+        }
     }
 
     pub fn clear(&mut self) {
@@ -804,6 +853,18 @@ mod tests {
     }
 
     #[test]
+    fn command_journal_overflow_does_not_publish_the_frame() {
+        let journal = CommandJournal::default();
+
+        assert_eq!(
+            journal.validate_record(u32::MAX),
+            Err(CommandRecordError::FrameOverflow)
+        );
+        assert!(journal.is_empty());
+        assert_eq!(journal.next_frame, None);
+    }
+
+    #[test]
     fn timeline_history_commits_checkpoint_and_commands_at_one_boundary() {
         use robin_engine::campaign::Campaign;
         use robin_engine::player_command::{PlayerCommand, PlayerId};
@@ -838,5 +899,95 @@ mod tests {
         history.begin_frame(13, &engine);
         assert!(history.commit_frame(Vec::new()));
         assert_eq!(history.next_record_frame(), 14);
+    }
+
+    #[test]
+    fn branch_truncation_keeps_the_open_branch_frame_committable() {
+        use robin_engine::campaign::Campaign;
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        for frame in 10..13 {
+            history.begin_frame(frame, &engine);
+            assert!(history.commit_frame(Vec::new()));
+        }
+
+        // The host opens frame 13 before input admission discovers that live
+        // input is replacing the already-recorded branch from frame 13.
+        history.begin_frame(13, &engine);
+        history.truncate_future(13);
+        assert!(history.commit_frame(Vec::new()));
+        assert_eq!(history.next_record_frame(), 14);
+        assert_eq!(
+            history
+                .restore(13, RestorePolicy::Exact)
+                .expect("branch-point checkpoint")
+                .frame,
+            13
+        );
+    }
+
+    #[test]
+    fn rejected_timeline_commit_does_not_publish_its_checkpoint() {
+        use robin_engine::campaign::Campaign;
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        history.begin_frame(7, &engine);
+        assert!(history.commit_frame(Vec::new()));
+        history.begin_frame(9, &engine);
+
+        assert_eq!(
+            history.commands.validate_record(9),
+            Err(CommandRecordError::Discontinuous {
+                actual: 9,
+                expected: 8,
+            })
+        );
+        assert!(history.restore(9, RestorePolicy::Exact).is_err());
+        assert!(history.commands_for(9).is_none());
+
+        // The rejected capture was never consumed or published; a caller can
+        // replace it with the correct contiguous frame.
+        history.begin_frame(8, &engine);
+        assert!(history.commit_frame(Vec::new()));
+        assert!(history.restore(8, RestorePolicy::Exact).is_ok());
+    }
+
+    #[test]
+    fn late_input_invalidates_only_checkpoints_derived_after_its_frame() {
+        use robin_engine::campaign::Campaign;
+        use robin_engine::player_command::{PlayerCommand, PlayerId};
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        for frame in 20..24 {
+            history.begin_frame(frame, &engine);
+            assert!(history.commit_frame(Vec::new()));
+        }
+
+        assert!(
+            history.append_input(21, PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),)
+        );
+        assert!(history.restore(21, RestorePolicy::Exact).is_ok());
+        assert!(history.restore(22, RestorePolicy::Exact).is_err());
+        assert!(history.restore(23, RestorePolicy::Exact).is_err());
+        assert_eq!(history.next_record_frame(), 24);
+        assert!(history.commands_for(23).is_some());
     }
 }

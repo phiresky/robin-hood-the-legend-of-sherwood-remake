@@ -116,6 +116,11 @@ impl HeadlessMission {
         let network_paused = net_drain.pause_simulation;
         let tick_paused = self.runtime.control.manual_pause || network_paused;
         let net_inputs = net_drain.inputs;
+        // Network ingress may adopt/rewind whole state, but due commands are
+        // inputs to the resulting frame boundary. Capture before applying
+        // them so rollback replay does not start post-command and apply the
+        // journaled inputs a second time.
+        let mut frame = self.runtime.begin_frame(frame_started_at_ms);
         if !net_inputs.is_empty() {
             self.runtime.world.manager.engine.apply_commands(
                 &mut self.runtime.world.host.frontend.engine_display,
@@ -124,7 +129,6 @@ impl HeadlessMission {
                 &net_inputs,
             );
         }
-        let mut frame = self.runtime.begin_frame(frame_started_at_ms);
         frame.commands.commands.extend(net_inputs);
 
         if !tick_paused
@@ -158,15 +162,18 @@ impl HeadlessMission {
         });
         super::frame_perf::record(super::frame_perf::Phase::Simulation, simulation_start);
         self.runtime.drain_host_rpc();
-        self.drain_headless_modals_and_steps(&mut frame, !network_paused);
+        self.drain_headless_modals(&mut frame);
         self.runtime.timeline.trace(FrameContractStage::ModalDrain);
 
         // Original ordering differs here: graphical crosses this boundary
         // after presentation, but headless must do so before frame-zero
-        // recorder commit. See the frame-contract tests in runtime.rs.
+        // recorder commit and before a debugger step can advance frame one.
+        // See the frame-contract tests in runtime.rs.
         self.runtime.run_post_initialize();
         let paused = tick_paused;
-        self.commit_frame(&mut frame, paused);
+        self.commit_simulation_history(&frame, paused);
+        self.drain_headless_steps(!network_paused);
+        self.finish_frame_recording(&mut frame, !paused);
 
         let replay_finished = self
             .runtime
@@ -242,22 +249,13 @@ impl HeadlessMission {
         result
     }
 
-    fn drain_headless_modals_and_steps(
-        &mut self,
-        frame: &mut super::runtime::MissionFrame,
-        allow_timeline_steps: bool,
-    ) {
-        let MissionRuntime {
-            world,
-            timeline,
-            control,
-        } = &mut self.runtime;
+    fn drain_headless_modals(&mut self, frame: &mut super::runtime::MissionFrame) {
+        let MissionRuntime { world, .. } = &mut self.runtime;
         let MissionWorld {
             host,
-            game,
             manager,
             assets,
-            dev,
+            ..
         } = world;
 
         if host
@@ -289,23 +287,6 @@ impl HeadlessMission {
                     .push(PlayerInput::new(host.transport.local_seat, command));
             }
         }
-
-        let mut active_modal: Option<ActiveModal> = None;
-        if allow_timeline_steps {
-            drain_steps(
-                manager,
-                host,
-                assets,
-                dev,
-                game,
-                &mut timeline.rewind_buffer,
-                &mut timeline.rollback_checker,
-                &mut timeline.replay_player,
-                &mut timeline.playback_pinned_saves,
-                &mut control.manual_pause,
-                &mut active_modal,
-            );
-        }
         let dismissed = if self.policy.auto_dismiss_modals {
             dismiss_pending_modals(host)
         } else {
@@ -322,9 +303,11 @@ impl HeadlessMission {
         }
     }
 
-    fn commit_frame(&mut self, frame: &mut super::runtime::MissionFrame, paused: bool) {
+    /// Commit the outer frame before any debugger-driven forward ticks reuse
+    /// the rewind/checker begin/end lifecycle. Graphical already has this
+    /// ordering; headless must not leave its pending frame open across steps.
+    fn commit_simulation_history(&mut self, frame: &super::runtime::MissionFrame, paused: bool) {
         if paused {
-            self.runtime.timeline.finish_recording(frame);
             return;
         }
         let MissionRuntime {
@@ -338,8 +321,6 @@ impl HeadlessMission {
                 store_rewind_commands: true,
             },
         );
-        timeline.record_commands(frame, true);
-        timeline.finish_recording(frame);
         world.manager.sim_frame += 1;
         if let Some(net) = world.host.transport.net.as_ref()
             && world.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
@@ -347,11 +328,60 @@ impl HeadlessMission {
             net.set_initial_snapshot(world.manager.sim_frame, &world.manager.engine);
         }
     }
+
+    fn drain_headless_steps(&mut self, allow_timeline_steps: bool) {
+        if !allow_timeline_steps {
+            return;
+        }
+        let MissionRuntime {
+            world,
+            timeline,
+            control,
+        } = &mut self.runtime;
+        let mut active_modal: Option<ActiveModal> = None;
+        drain_steps(
+            &mut world.manager,
+            &mut world.host,
+            &world.assets,
+            &mut world.dev,
+            &mut world.game,
+            &mut timeline.rewind_buffer,
+            &mut timeline.rollback_checker,
+            &mut timeline.replay_player,
+            &mut timeline.playback_pinned_saves,
+            &mut control.manual_pause,
+            &mut active_modal,
+        );
+    }
+
+    fn finish_frame_recording(
+        &mut self,
+        frame: &mut super::runtime::MissionFrame,
+        simulation_advanced: bool,
+    ) {
+        if simulation_advanced {
+            self.runtime.timeline.record_commands(frame, true);
+        }
+        self.runtime.timeline.finish_recording(frame);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::HeadlessPolicy;
+    use super::{HeadlessMission, HeadlessPolicy};
+    use crate::game::Game;
+    use crate::game_session::replay_init::ReplayAndRollback;
+    use crate::game_session::runtime::{
+        FrameContract, MissionControl, MissionRuntime, MissionWorld, TimelineRuntime,
+    };
+    use crate::host::Host;
+    use crate::multiplayer::{NetChannels, NetEvent};
+    use crate::rewind::RewindBuffer;
+    use robin_engine::campaign::Campaign;
+    use robin_engine::engine::{DevState, Engine, LevelAssets};
+    use robin_engine::engine_manager::EngineManager;
+    use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+    use std::sync::Arc;
 
     #[test]
     fn replay_runner_policy_keeps_current_headless_contract_explicit() {
@@ -359,5 +389,162 @@ mod tests {
 
         assert!(policy.auto_dismiss_modals);
         assert!(policy.exit_when_replay_finishes);
+    }
+
+    #[test]
+    fn due_network_commands_are_applied_after_the_headless_checkpoint() {
+        let mut level_assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut level_assets)
+            .expect("fixture engine");
+        let initial_hash = robin_engine::replay::state_hash(&engine);
+        let assets = Arc::new(level_assets);
+        let (channels, incoming, _outgoing, _, _) = NetChannels::new();
+        let mut host = Host::scratch(640.0, 480.0);
+        host.transport.local_seat = PlayerId::HOST;
+        host.transport.net = Some(channels);
+        incoming
+            .send(NetEvent::Input {
+                server_frame: 0,
+                origin_frame: 0,
+                target_frame: 0,
+                input: PlayerInput::new(
+                    PlayerId(2),
+                    PlayerCommand::SetAmountOfSpeaking { amount: 9 },
+                ),
+            })
+            .expect("queue current-frame network command");
+        let manager = EngineManager::new(engine, PlayerId::HOST);
+        let timeline = TimelineRuntime::new(
+            ReplayAndRollback {
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Headless,
+            false,
+            true,
+        );
+        let control = MissionControl::new(false, manager.engine.weather().night_color);
+        let runtime = MissionRuntime::new(
+            MissionWorld::new(
+                host,
+                Game::default(),
+                manager,
+                Arc::clone(&assets),
+                DevState::default(),
+            ),
+            timeline,
+            control,
+        );
+        let mut mission = HeadlessMission {
+            runtime,
+            policy: HeadlessPolicy::replay_runner(),
+        };
+
+        mission.run_frame(&crate::main_entry::CliArgs::default());
+
+        let checkpoint = mission
+            .runtime
+            .timeline
+            .rewind_buffer
+            .rewind_to(&assets, 0)
+            .expect("frame-0 pre-command checkpoint");
+        assert_eq!(robin_engine::replay::state_hash(&checkpoint), initial_hash);
+        assert_eq!(
+            mission
+                .runtime
+                .timeline
+                .rewind_buffer
+                .commands_for(0)
+                .map(<[_]>::len),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn headless_outer_frame_commits_before_forward_step_reuses_timeline_lifecycle() {
+        let mut level_assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut level_assets)
+            .expect("fixture engine");
+        let assets = Arc::new(level_assets);
+        let host = Host::scratch(640.0, 480.0);
+        let manager = EngineManager::new(engine, PlayerId::HOST);
+        let timeline = TimelineRuntime::new(
+            ReplayAndRollback {
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Headless,
+            false,
+            true,
+        );
+        let control = MissionControl::new(false, manager.engine.weather().night_color);
+        let runtime = MissionRuntime::new(
+            MissionWorld::new(
+                host,
+                Game::default(),
+                manager,
+                Arc::clone(&assets),
+                DevState::default(),
+            ),
+            timeline,
+            control,
+        );
+        let mut mission = HeadlessMission {
+            runtime,
+            policy: HeadlessPolicy::replay_runner(),
+        };
+        let frame = mission.runtime.begin_frame(0);
+        mission.runtime.run_tick(super::TickPolicy {
+            skip_tick: false,
+            paused: false,
+        });
+
+        // This is the ordering enforced by run_frame: publish the normal
+        // frame before run_forward_ticks opens and commits its own frame.
+        mission.commit_simulation_history(&frame, false);
+        let advanced = {
+            let MissionRuntime {
+                world, timeline, ..
+            } = &mut mission.runtime;
+            crate::game_session::tick::run_forward_ticks(
+                &mut world.manager,
+                &mut world.host,
+                &world.assets,
+                &mut world.dev,
+                &mut world.game,
+                &mut timeline.rewind_buffer,
+                &mut timeline.rollback_checker,
+                &mut timeline.replay_player,
+                &mut timeline.playback_pinned_saves,
+                1,
+            )
+            .expect("forward step after outer commit")
+            .0
+        };
+
+        assert_eq!(advanced, 1);
+        assert_eq!(mission.runtime.world.manager.sim_frame, 2);
+        assert!(
+            mission
+                .runtime
+                .timeline
+                .rewind_buffer
+                .commands_for(0)
+                .is_some()
+        );
+        assert!(
+            mission
+                .runtime
+                .timeline
+                .rewind_buffer
+                .commands_for(1)
+                .is_some()
+        );
     }
 }

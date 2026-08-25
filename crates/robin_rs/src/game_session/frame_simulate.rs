@@ -301,7 +301,6 @@ fn drive_leave_mission_prompt(
         if mode == ScriptedModalMode::AutoDismiss {
             let cmd = PlayerCommand::QuitMissionRequested;
             dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
-            frame.commands.push(cmd);
         } else if let Some(menu_resources) = resources.menu.as_ref() {
             let kind = engine_player_command::ModalKind::MissionState {
                 kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,

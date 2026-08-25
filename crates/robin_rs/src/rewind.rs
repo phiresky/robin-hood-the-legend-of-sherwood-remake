@@ -232,7 +232,14 @@ impl RewindBuffer {
     /// past [`Self::next_record_frame`] (caller should queue it as a
     /// future input instead of trying to splice).
     pub fn splice_late_input(&mut self, frame: u32, input: PlayerInput) -> bool {
-        self.history.append_input(frame, input)
+        if !self.history.append_input(frame, input) {
+            return false;
+        }
+        // Interactive seek caches are also derived state. Reusing one after
+        // editing an earlier command would bypass the late input just like a
+        // stale retained checkpoint would.
+        self.session = None;
+        true
     }
 
     /// Discard every command entry at `frame` or later, and every
@@ -348,5 +355,41 @@ mod tests {
         assert!(!buf.splice_late_input(99, inp.clone()));
         buf.truncate_future(0);
         assert!(!buf.splice_late_input(2, inp));
+    }
+
+    #[test]
+    fn splice_late_input_drops_snapshots_derived_from_the_old_command_stream() {
+        use crate::sim_timeline::{RestoreError, RestorePolicy};
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+
+        let mut buf = RewindBuffer::new();
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(
+            640.0,
+            480.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .expect("fixture engine");
+        for frame in 0..=SNAPSHOT_INTERVAL {
+            buf.begin_frame(frame, &engine, &assets);
+            buf.end_frame(Vec::new());
+        }
+        assert!(
+            buf.history
+                .restore(SNAPSHOT_INTERVAL, RestorePolicy::Exact)
+                .is_ok()
+        );
+        buf.begin_session();
+        let input = PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown);
+
+        assert!(buf.splice_late_input(1, input));
+        assert!(buf.session.is_none());
+        assert!(matches!(
+            buf.history.restore(SNAPSHOT_INTERVAL, RestorePolicy::Exact),
+            Err(RestoreError::CheckpointUnavailable { .. })
+        ));
+        assert!(buf.history.restore(0, RestorePolicy::Exact).is_ok());
+        assert!(buf.commands_for(SNAPSHOT_INTERVAL).is_some());
     }
 }

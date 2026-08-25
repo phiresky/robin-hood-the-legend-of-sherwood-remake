@@ -93,6 +93,14 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     );
     let mp_clock_pause = net_drain.pause_simulation;
     let net_inputs = net_drain.inputs;
+
+    // Enter the shared runtime's input phase after network state correction
+    // but before any command for this frame. Current-frame network inputs are
+    // commands *to* this pre-tick state and must be applied only after it is
+    // captured; otherwise replay starts from a post-command checkpoint and
+    // applies the journaled commands twice. The recorder hash samples this
+    // same boundary so recording and playback remain in lockstep.
+    runtime.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
     if !net_inputs.is_empty() {
         manager.engine.apply_commands(
             &mut host.frontend.engine_display,
@@ -128,20 +136,6 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     // headless construction never reaches this presentation stage.
     host.draw_order = manager.engine.compute_display_order();
 
-    // Enter the shared runtime's input phase. This captures the
-    // rollback/rewind snapshots and replay state hash at the "start of
-    // frame N — after N-1's tick, before N's commands" point,
-    // before any event-loop handler (Resized → inline
-    // `MinimapResize`, live input → local viewport edits, …)
-    // mutates the engine.  The recorder write and the player
-    // check MUST sample here in lockstep; if the recording
-    // captures post-input state while the replay checks
-    // pre-input state, every hash-carrying frame spuriously
-    // desyncs.  The actual write is deferred to the recorder
-    // block further down so the existing
-    // `!rewind_active && !consumed_buffered` gating stays in
-    // one place.
-    runtime.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
     FrameStart {
         frame,
         mp_clock_pause,
@@ -848,7 +842,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 checker.reset();
             }
             if let Some(event) = save_load.event {
-                runtime.note_save_load_event(event, &mut frame, &manager.engine);
+                runtime.note_save_load_event(
+                    event,
+                    &mut frame,
+                    manager.sim_frame,
+                    &manager.engine,
+                    assets.as_ref(),
+                );
             }
             if callbacks.pending_level_restart {
                 callbacks.pending_level_restart = false;
@@ -881,7 +881,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             checker.reset();
         }
         if let Some(event) = save_load.event {
-            runtime.note_save_load_event(event, &mut frame, &manager.engine);
+            runtime.note_save_load_event(
+                event,
+                &mut frame,
+                manager.sim_frame,
+                &manager.engine,
+                assets.as_ref(),
+            );
         }
 
         // A rejected/missing/unappliable Restart payload must leave this
