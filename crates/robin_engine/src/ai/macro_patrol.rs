@@ -819,9 +819,7 @@ pub fn prepare_forecast_destination_for_ia(
         if gs.sector_type.is_lift() {
             // Target is on a lift — predict high/low exit.
             // Direction uses `(PointOut - PointMid)`.
-            if let Some(exit_door) =
-                find_lift_exit_door(sector, moving_upwards, doors, &gs.gate_indices)
-            {
+            if let Some(exit_door) = find_lift_exit_door(sector, moving_upwards, doors) {
                 sector =
                     sector_handle_for_door_side(exit_door.sector_out, exit_door.sector_out_index);
                 layer = exit_door.layer_out;
@@ -916,39 +914,15 @@ fn find_lift_exit_door<'a>(
     lift_sector: SectorHandle,
     moving_upwards: bool,
     doors: &'a [crate::gate::Door],
-    gate_indices: &[crate::gate::DoorIndex],
 ) -> Option<&'a crate::gate::Door> {
-    // Original asks the exact RHSectorLift object for its own ordered gate
-    // list, then selects the point-out Y extrema from that list
-    // (`RHSector.cpp:1493-1521`). A wall lift's doors may expose associated
-    // motion sectors through `sector_in`; that endpoint is not the owning
-    // lift object's identity and must not be used as a membership test.
-    let mut candidates = gate_indices.iter().map(|index| {
-        doors.get(usize::from(*index)).unwrap_or_else(|| {
-            panic!(
-                "lift sector {} references missing door {}",
-                u16::from(lift_sector),
-                index.0
-            )
-        })
-    });
-    let first = candidates.next()?;
-    let mut low = first;
-    let mut high = first;
-    for door in candidates {
-        if door.point_out.y > low.point_out.y {
-            low = door;
-        }
-        if door.point_out.y < high.point_out.y {
-            high = door;
-        }
-    }
-    assert!(
-        !std::ptr::eq(low, high),
-        "lift sector {} has fewer than two distinct high/low endpoint doors",
-        u16::from(lift_sector)
-    );
-    Some(if moving_upwards { high } else { low })
+    let lift_sector = crate::sector::SectorNumber::new(u16::from(lift_sector) as i16);
+    let (low, high) = crate::gate::lift_endpoint_door_indices(doors, lift_sector)?;
+    let endpoint = if moving_upwards { high } else { low };
+    Some(
+        doors
+            .get(endpoint as usize)
+            .expect("lift endpoint selector returned an invalid door index"),
+    )
 }
 
 #[inline]
@@ -1145,7 +1119,11 @@ mod forecast_sector_identity_tests {
         let mut lift_grid_sector = ordinary_sector(42);
         lift_grid_sector.sector_type = crate::sector::SectorType::LIFT;
         lift_grid_sector.lift_type = Some(crate::sector::LiftType::Wall);
-        lift_grid_sector.gate_indices = vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)];
+        lift_grid_sector.gate_indices = vec![
+            crate::gate::DoorIndex(0),
+            crate::gate::DoorIndex(1),
+            crate::gate::DoorIndex(2),
+        ];
         let lift_doors = [
             crate::gate::Door {
                 owning_lift_sector: Some(crate::sector::SectorNumber::new(42)),
@@ -1165,6 +1143,18 @@ mod forecast_sector_identity_tests {
                 sector_in_index: Some(arena(4)),
                 sector_out_index: Some(arena(2)),
                 point_out: MapPoint::new(20.0, 10.0),
+                ..crate::gate::Door::default()
+            },
+            // Grid gate lists include linked foreign doors as well as the
+            // doors embedded in the lift proto. Its more-extreme Y must not
+            // replace the lift-owned high endpoint selected by Original.
+            crate::gate::Door {
+                owning_lift_sector: None,
+                sector_in: crate::sector::SectorNumber::new(42),
+                sector_out: crate::sector::SectorNumber::new(99),
+                sector_in_index: Some(arena(0)),
+                sector_out_index: Some(arena(5)),
+                point_out: MapPoint::new(30.0, -100.0),
                 ..crate::gate::Door::default()
             },
         ];
