@@ -4308,6 +4308,7 @@ impl EngineInner {
                             &self.orders.sequence_manager,
                             owner,
                             target_id,
+                            |element| crate::engine::ai::ai_view_position_sector(self, element),
                             &|sector| self.building_sector_is_authorized(sector),
                             &|sector| self.get_sector_lift_type(sector),
                         )
@@ -4432,6 +4433,7 @@ impl EngineInner {
                             &self.orders.sequence_manager,
                             owner,
                             target_id,
+                            |element| crate::engine::ai::ai_view_position_sector(self, element),
                             &|sector| self.building_sector_is_authorized(sector),
                             &|sector| self.get_sector_lift_type(sector),
                         )
@@ -5923,10 +5925,13 @@ impl EngineInner {
             return;
         };
 
-        // Look up the first gate's `point_in` and the building's sector
-        // number. Sector number comes from the grid sector tagged
-        // `building_index == bld_idx` (populated at level load).
-        let (gate_point_in, sector_num) = {
+        // Look up the first gate's `point_in` and the exact building sector.
+        // Original stores the `RHSectorBuilding*` itself on the actor, while
+        // the actor's layer is the separate special layer.  Retain both the
+        // public number and arena object here: recovering by number + actor
+        // layer is impossible because building sectors live on the lift
+        // layer.
+        let (gate_point_in, building_sector) = {
             let gate_handle = self
                 .script_domains
                 .buildings
@@ -5938,14 +5943,31 @@ impl EngineInner {
                 .and_then(crate::natives::ScriptHandleCodec::door_index)
                 .and_then(|di| self.script_domains.interactables.doors.get(di))
                 .map(|d| d.point_in);
-            let sn = self.world.fast_grid.level.sectors.iter().find_map(|gs| {
-                if gs.building_index == crate::sector::BuildingIdx::new(bld_idx as u16) {
-                    Some(gs.sector_number)
-                } else {
-                    None
-                }
+            let mut sectors = self
+                .world
+                .fast_grid
+                .level
+                .sectors
+                .iter()
+                .enumerate()
+                .filter(|(_, gs)| {
+                    gs.building_index == crate::sector::BuildingIdx::new(bld_idx as u16)
+                });
+            let first_sector = sectors.next().map(|(index, gs)| (index, gs.sector_number));
+            assert!(
+                sectors.next().is_none(),
+                "PutActorInBuilding: building {building} resolves to multiple grid sectors"
+            );
+            let sector = first_sector.map(|(index, sector_number)| {
+                let public = crate::position_interface::SectorHandle::new(u16::from(sector_number))
+                    .expect("building sector uses the null public-sector sentinel");
+                let arena = crate::fast_find_grid::SectorIndex::new(
+                    u32::try_from(index).expect("building sector arena index exceeds u32"),
+                )
+                .expect("building sector arena index equals the null sentinel");
+                public.with_arena_index(arena)
             });
-            (point_in, sn)
+            (point_in, sector)
         };
 
         let Some(point_in) = gate_point_in else {
@@ -5954,7 +5976,7 @@ impl EngineInner {
             );
             return;
         };
-        let Some(sector_num) = sector_num else {
+        let Some(building_sector) = building_sector else {
             tracing::warn!(
                 "PutActorInBuilding: building {building} has no grid sector — cannot position actor"
             );
@@ -5970,9 +5992,9 @@ impl EngineInner {
             elem.hidden_in_building = true;
             elem.active = false;
             elem.set_layer(special_layer);
-            elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
-                sector_num,
-            )));
+            elem.sprite
+                .position_iface
+                .set_sector_topology(Some(building_sector), building_sector.arena_index());
             elem.set_position_map(point_in);
             elem.update_grid_cell();
             // After `SetPositionMap` on the gate's point-in, re-derive
@@ -6023,16 +6045,6 @@ impl EngineInner {
                     let elem = carried_entity.element_data_mut();
                     elem.hidden_in_building = true;
                     elem.active = false;
-                    elem.set_layer(special_layer);
-                    elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
-                        sector_num,
-                    )));
-                    elem.set_position_map(point_in);
-                    elem.update_grid_cell();
-                    if carried_entity.actor_data().is_some() {
-                        let pi = carried_entity.position_iface_mut();
-                        pi.set_map_position(point_in);
-                    }
                 }
                 // Push the carried into the occupants list.
                 if bld_idx >= self.script_domains.buildings.occupants.len() {
@@ -6078,7 +6090,8 @@ impl EngineInner {
 
         tracing::debug!(
             "PutActorInBuilding: actor={actor} building={building} \
-             → layer={special_layer}, sector={sector_num}, pos=({:.1},{:.1})",
+             → layer={special_layer}, sector={}, pos=({:.1},{:.1})",
+            building_sector.get(),
             point_in.x,
             point_in.y,
         );
@@ -6104,6 +6117,123 @@ mod script_context_tests {
             classes: vec![startup],
         })
         .expect("minimal StartUp script must load")
+    }
+
+    #[test]
+    fn put_actor_in_building_retains_exact_sector_across_special_layer() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(8);
+        let lift_layer = engine.world.fast_grid.lift_layer();
+        let special_layer = engine.world.fast_grid.level.special_layer;
+        assert_ne!(lift_layer, special_layer);
+
+        let public = crate::sector::SectorNumber::new(353);
+        let arena_raw = engine.world.fast_grid_mut().add_sector(
+            crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::MOTION
+                    | crate::sector::SectorType::AREA
+                    | crate::sector::SectorType::BUILDING,
+                layer: lift_layer,
+                sector_number: public,
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: crate::sector::BuildingIdx::new(0),
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            lift_layer,
+        );
+        let arena = crate::fast_find_grid::SectorIndex::new(arena_raw)
+            .expect("test building arena index is valid");
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_in: crate::coordinates::MapPoint::new(1222.0, 2078.0),
+                layer_in: lift_layer,
+                sector_in: public,
+                sector_in_index: Some(arena),
+                ..Default::default()
+            });
+        engine.script_domains.buildings.gates = vec![vec![
+            crate::natives::ScriptHandleCodec::door_handle_from_index(0),
+        ]];
+
+        let mut carried_element = crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorCivilian,
+            active: true,
+            ..Default::default()
+        };
+        carried_element.set_layer(2);
+        carried_element.set_sector(crate::position_interface::SectorHandle::new(12));
+        carried_element.set_position_map(crate::coordinates::MapPoint::new(80.0, 90.0));
+        let carried_id = engine.add_entity(crate::element::Entity::Civilian(
+            crate::element::ActorCivilian {
+                element: carried_element,
+                actor: Default::default(),
+                human: Default::default(),
+                npc: Default::default(),
+                civilian: Default::default(),
+            },
+        ));
+        let actor_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                carried: Some(carried_id),
+                ..Default::default()
+            },
+        }));
+        engine.put_actor_in_building(
+            crate::natives::ScriptHandleCodec::actor_handle(actor_id),
+            crate::natives::ScriptHandleCodec::building_handle_from_index(0),
+        );
+
+        let actor = engine
+            .get_entity(actor_id)
+            .expect("scripted building occupant remains live");
+        assert_eq!(actor.element_data().layer(), special_layer);
+        let sector = actor
+            .element_data()
+            .sector()
+            .expect("scripted building occupant retains a sector");
+        assert_eq!(sector.get(), u16::from(public));
+        assert_eq!(sector.arena_index(), Some(arena));
+        assert_eq!(
+            crate::engine::ai::ai_view_position_sector(&engine, actor.element_data()),
+            Some(sector),
+            "AI Position consumes the retained building pointer without trying to recover it from the actor's different layer"
+        );
+
+        let carried = engine
+            .get_entity(carried_id)
+            .expect("carried actor remains live after recursive building entry");
+        assert!(!carried.element_data().active);
+        assert!(carried.element_data().hidden_in_building);
+        assert_eq!(carried.element_data().layer(), 2);
+        let carried_sector = carried.element_data().sector().unwrap();
+        assert_eq!(carried_sector.get(), 12);
+        assert_eq!(carried_sector.arena_index(), None);
+        assert_eq!(
+            carried.element_data().position_map(),
+            crate::coordinates::MapPoint::new(80.0, 90.0),
+            "RHScript::PutActorInBulding changes only the requested actor's topology and position"
+        );
     }
 
     #[test]

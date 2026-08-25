@@ -1707,8 +1707,8 @@ mod mission_level_builder_tests {
     use super::MissionLevelBuilder;
     use crate::coordinates::MapPoint;
     use crate::element::{
-        ActorCivilian, ActorData, CivilianData, ElementData, ElementKind, Entity, HumanData,
-        NpcData,
+        ActorCivilian, ActorData, ActorPc, CivilianData, ElementData, ElementKind, Entity,
+        HumanData, NpcData, PcData,
     };
     use crate::engine::{
         EngineInner, JumpGateAttachment, LegacyGridSectorAsset, LegacyGridTopologyAssets,
@@ -2193,13 +2193,35 @@ mod mission_level_builder_tests {
             },
         ];
         loaded.mission.building_tenants = vec![RawBuildingTenants {
-            tenant_element_indices: vec![0],
+            tenant_element_indices: vec![1],
             arrow_reserve: false,
         }];
         let builder = MissionLevelBuilder::new("trap-tenant", false, &loaded);
         let assets = door_assets(2, 1);
         let mut engine = EngineInner::new();
-        engine.world.entities.push(Some(civilian()));
+        let carried_id = engine.add_entity(civilian());
+        {
+            let carried = engine
+                .get_entity_mut(carried_id)
+                .expect("carried fixture exists")
+                .element_data_mut();
+            carried.set_layer(2);
+            carried.set_sector(crate::position_interface::SectorHandle::new(12));
+            carried.set_position_map(MapPoint::new(80.0, 90.0));
+        }
+        engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                carried: Some(carried_id),
+                ..Default::default()
+            },
+        }));
 
         let plan = builder
             .preflight(&engine, &assets, &loaded)
@@ -2212,6 +2234,10 @@ mod mission_level_builder_tests {
             .build_mission_level_stages(&assets, &loaded, &plan)
             .expect("construct canonical trap door");
         let adapted_point = engine.script_domains.interactables.doors[1].point_in;
+        let adapted_sector = engine.script_domains.interactables.doors[1].sector_in;
+        let adapted_sector_index = engine.script_domains.interactables.doors[1]
+            .sector_in_index
+            .expect("canonical building door retains its interior arena identity");
         assert_ne!(adapted_point, MapPoint::new(30.0, 40.0));
 
         engine
@@ -2221,13 +2247,42 @@ mod mission_level_builder_tests {
         let (_, tenant) = engine
             .world
             .entities
-            .get_legacy_slot(0)
+            .get_legacy_slot(1)
             .expect("tenant remains in authored slot");
         assert_eq!(
             tenant.element_data().sprite.position_iface.map_position(),
             adapted_point
         );
+        let tenant_sector = tenant
+            .element_data()
+            .sector()
+            .expect("attached building tenant has a sector");
+        assert_eq!(tenant_sector.get(), u16::from(adapted_sector));
+        assert_eq!(tenant_sector.arena_index(), Some(adapted_sector_index));
         assert!(!tenant.element_data().active);
+
+        let carried = engine
+            .get_entity(carried_id)
+            .expect("carried tenant fixture remains live");
+        assert!(
+            carried.element_data().active,
+            "InitOccupant changes the tenant's active state, not its carried actor's"
+        );
+        let carried_sector = carried
+            .element_data()
+            .sector()
+            .expect("ChangeLayerAndSector propagates the building sector to carried actors");
+        assert_eq!(carried_sector.get(), u16::from(adapted_sector));
+        assert_eq!(carried_sector.arena_index(), Some(adapted_sector_index));
+        assert_eq!(
+            carried.element_data().layer(),
+            tenant.element_data().layer()
+        );
+        assert_eq!(
+            carried.element_data().position_map(),
+            MapPoint::new(80.0, 90.0),
+            "InitOccupant changes only the tenant's position after propagated topology"
+        );
     }
 }
 
@@ -5590,6 +5645,12 @@ impl EngineInner {
             // point rather than the raw proto point staged before construction.
             let first_door_point_in = first_door.point_in;
             let first_door_sector_in = u16::from(first_door.sector_in);
+            let first_door_sector_in_index = first_door.sector_in_index.unwrap_or_else(|| {
+                panic!(
+                    "building {} first door has no exact interior sector identity",
+                    building.building_index
+                )
+            });
             for &element_index in &building.tenant_element_indices {
                 let entity_id = self
                     .world
@@ -5599,28 +5660,54 @@ impl EngineInner {
                         building_index: building.building_index,
                         element_index,
                     })?;
-                let entity = self.world.entities.get_mut(entity_id).ok_or(
-                    MissionLevelBuildError::MissingBuildingTenant {
-                        building_index: building.building_index,
-                        element_index,
-                    },
-                )?;
-                if !entity.is_human() {
-                    return Err(MissionLevelBuildError::NonHumanBuildingTenant {
-                        building_index: building.building_index,
-                        element_index,
+                let carried = {
+                    let entity = self.world.entities.get_mut(entity_id).ok_or(
+                        MissionLevelBuildError::MissingBuildingTenant {
+                            building_index: building.building_index,
+                            element_index,
+                        },
+                    )?;
+                    if !entity.is_human() {
+                        return Err(MissionLevelBuildError::NonHumanBuildingTenant {
+                            building_index: building.building_index,
+                            element_index,
+                        });
+                    }
+                    let carried = entity.pc_data().and_then(|pc| pc.carried);
+                    let elem = entity.element_data_mut();
+                    elem.active = false;
+                    let pi = &mut elem.sprite.position_iface;
+                    pi.set_map_position(first_door_point_in);
+                    pi.set_layer(
+                        crate::position_interface::Layer::new(lift_layer)
+                            .expect("building lift layer equals the null sentinel"),
+                    );
+                    pi.set_sector_topology(
+                        crate::position_interface::SectorHandle::new(first_door_sector_in),
+                        Some(first_door_sector_in_index),
+                    );
+                    carried
+                };
+                // `RHElementActorHuman::ChangeLayerAndSector` copies the
+                // building pointer and lift layer to a PC's carried actor.
+                // `InitOccupant` then changes only the tenant's position.
+                if let Some(carried_id) = carried {
+                    let carried = self.world.entities.get_mut(carried_id).unwrap_or_else(|| {
+                        panic!(
+                            "building {} tenant {element_index} references missing carried actor {carried_id:?}",
+                            building.building_index
+                        )
                     });
+                    let pi = &mut carried.element_data_mut().sprite.position_iface;
+                    pi.set_layer(
+                        crate::position_interface::Layer::new(lift_layer)
+                            .expect("building lift layer equals the null sentinel"),
+                    );
+                    pi.set_sector_topology(
+                        crate::position_interface::SectorHandle::new(first_door_sector_in),
+                        Some(first_door_sector_in_index),
+                    );
                 }
-                let elem = entity.element_data_mut();
-                elem.active = false;
-                let pi = &mut elem.sprite.position_iface;
-                pi.set_map_position(first_door_point_in);
-                if let Some(layer) = crate::position_interface::Layer::new(lift_layer) {
-                    pi.set_layer(layer);
-                }
-                pi.set_sector(crate::position_interface::SectorHandle::new(
-                    first_door_sector_in,
-                ));
             }
         }
         Ok(())
