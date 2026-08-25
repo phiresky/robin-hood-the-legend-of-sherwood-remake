@@ -103,8 +103,9 @@ pub(crate) struct LegacyPathAdoptionPlan {
 
 impl LegacyPathAdoptionPlan {
     pub(crate) fn apply(self, engine: &mut EngineInner) {
-        engine.orders.failed_path_requests = self.failed;
-        engine.orders.pending_path_requests = self.pending;
+        engine
+            .orders
+            .install_legacy_path_schedule(self.pending, self.failed);
         engine.world.pathfinder.states = self.pathfinder_states;
         engine.world.fast_grid_mut().line_active = self.line_active;
         engine.world.fast_grid_mut().sector_active = self.sector_active;

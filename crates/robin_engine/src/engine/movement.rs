@@ -2661,7 +2661,7 @@ impl FailedPathRequest {
 /// Snapshot of one legacy `RHpathRequest` waiting for A*.
 ///
 /// Direct / straight moves never enter this queue. Requests that do need A*
-/// snapshot their dispatch inputs here, then [`MovementContext`] resolves at
+/// snapshot their dispatch inputs here, then [`PathScheduleContext`] resolves at
 /// most one request at the original `RHEngine::ProcessPathRequests` point per
 /// frame.
 #[derive(
@@ -3081,10 +3081,14 @@ impl PendingPathRequestQueue {
 /// feedback. It only advances the pathfinder queue and classifies expired
 /// failures; the root tick performs the cross-owner consequences (path order
 /// installation and hero speech) immediately after each returned item.
-pub(super) struct MovementContext<'a> {
+pub(super) struct PathScheduleContext<'a> {
     frame_counter: u32,
-    world: &'a mut WorldState,
-    orders: &'a mut OrderRuntime,
+    entities: &'a crate::entities::Entities,
+    fast_grid: &'a crate::fast_find_grid::FastFindGrid,
+    pathfinder: &'a mut crate::pathfinder::PathFinder,
+    pending_path_requests: &'a mut PendingPathRequestQueue,
+    failed_path_requests: &'a mut Vec<FailedPathRequest>,
+    sequence_manager: &'a crate::sequence::SequenceManager,
 }
 
 pub(super) enum CompletedPathWork {
@@ -3101,16 +3105,24 @@ pub(super) struct ExpiredPathWork {
     pub(super) age: u32,
 }
 
-impl<'a> MovementContext<'a> {
+impl<'a> PathScheduleContext<'a> {
     pub(super) fn new(
         frame_counter: u32,
-        world: &'a mut WorldState,
-        orders: &'a mut OrderRuntime,
+        entities: &'a crate::entities::Entities,
+        fast_grid: &'a crate::fast_find_grid::FastFindGrid,
+        pathfinder: &'a mut crate::pathfinder::PathFinder,
+        pending_path_requests: &'a mut PendingPathRequestQueue,
+        failed_path_requests: &'a mut Vec<FailedPathRequest>,
+        sequence_manager: &'a crate::sequence::SequenceManager,
     ) -> Self {
         Self {
             frame_counter,
-            world,
-            orders,
+            entities,
+            fast_grid,
+            pathfinder,
+            pending_path_requests,
+            failed_path_requests,
+            sequence_manager,
         }
     }
 
@@ -3118,12 +3130,12 @@ impl<'a> MovementContext<'a> {
     /// Stale results are discarded exactly where the old root helper discarded
     /// them; no later request is completed at this barrier.
     pub(super) fn take_completed(&mut self) -> Option<CompletedPathWork> {
-        let (processed, valid) = self.orders.pending_path_requests.take_completed()?;
+        let (processed, valid) = self.pending_path_requests.take_completed()?;
         let request = processed.request;
         if crate::pathfinder::parity_path_capture_is_active() {
             crate::pathfinder::record_parity_path_event(
                 crate::pathfinder::ParityPathEvent::Completed {
-                    request: parity_path_request_state(&self.world.fast_grid, &request),
+                    request: parity_path_request_state(self.fast_grid, &request),
                     valid,
                     // Original records the raw path even when cancellation
                     // makes the delivery invalid. A failed A* request has an
@@ -3136,7 +3148,6 @@ impl<'a> MovementContext<'a> {
             return None;
         }
         let still_live = self
-            .orders
             .sequence_manager
             .get_element(request.seq_id, request.elem_idx)
             .is_some_and(|elem| {
@@ -3168,8 +3179,8 @@ impl<'a> MovementContext<'a> {
         // (`original-code/RHpathfinder.cpp:538-598`). Skipping a request here
         // because its element died would hand the freed result slot to the
         // next queued request a frame early.
-        let retained_cancelled_head = self.orders.pending_path_requests.ignore_next_path;
-        let Some(request) = self.orders.pending_path_requests.pop_to_start() else {
+        let retained_cancelled_head = self.pending_path_requests.ignore_next_path;
+        let Some(request) = self.pending_path_requests.pop_to_start() else {
             return;
         };
         // Original FindPathNodes observes mbIgnoreNextPath and exits before
@@ -3177,9 +3188,9 @@ impl<'a> MovementContext<'a> {
         // invalid completion with an empty raw path; it must not calculate a
         // route merely because Rust runs pathfinding synchronously.
         let waypoints = retained_cancelled_path_result(retained_cancelled_head).or_else(|| {
-            self.world.pathfinder.find_path(
+            self.pathfinder.find_path(
                 assets.pathfinder_graph.as_ref(),
-                &self.world.fast_grid,
+                self.fast_grid,
                 request.layer,
                 request.sector,
                 request.half_diagonal_idx,
@@ -3188,9 +3199,7 @@ impl<'a> MovementContext<'a> {
                 request.use_first_point,
             )
         });
-        self.orders
-            .pending_path_requests
-            .set_in_flight(request, waypoints);
+        self.pending_path_requests.set_in_flight(request, waypoints);
     }
 
     /// Remove stale failures and return expired live entries in their stored
@@ -3200,9 +3209,8 @@ impl<'a> MovementContext<'a> {
     pub(super) fn take_expired_failures(&mut self) -> Vec<ExpiredPathWork> {
         let mut still_waiting = Vec::new();
         let mut expired = Vec::new();
-        for request in std::mem::take(&mut self.orders.failed_path_requests) {
+        for request in std::mem::take(self.failed_path_requests) {
             let still_live = self
-                .orders
                 .sequence_manager
                 .get_element(request.seq_id, request.elem_idx)
                 .is_some_and(|element| {
@@ -3220,18 +3228,14 @@ impl<'a> MovementContext<'a> {
                 continue;
             }
 
-            let owner_is_pc = self
-                .world
-                .entities
-                .get(request.owner)
-                .is_some_and(Entity::is_pc);
+            let owner_is_pc = self.entities.get(request.owner).is_some_and(Entity::is_pc);
             expired.push(ExpiredPathWork {
                 request,
                 owner_is_pc,
                 age,
             });
         }
-        self.orders.failed_path_requests = still_waiting;
+        *self.failed_path_requests = still_waiting;
         expired
     }
 }

@@ -14,8 +14,8 @@ pub(crate) struct OrderRuntime {
     pub(crate) next_order_id: u32,
     pub(crate) messenger: Messenger,
     pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
-    pub(crate) pending_path_requests: movement::PendingPathRequestQueue,
-    pub(crate) failed_path_requests: Vec<movement::FailedPathRequest>,
+    pub(in crate::engine) pending_path_requests: movement::PendingPathRequestQueue,
+    pub(in crate::engine) failed_path_requests: Vec<movement::FailedPathRequest>,
     pub(crate) timer_elements: Vec<TimerEntry>,
     pub(crate) sequence_manager: SequenceManager,
     pub(crate) pending_reinforcements: Vec<Option<EntityId>>,
@@ -45,6 +45,42 @@ impl OrderRuntime {
 
     pub(crate) fn allocate_order_id(&mut self) -> std::num::NonZeroU32 {
         crate::order::alloc_order_id(&mut self.next_order_id)
+    }
+
+    /// Split the exact scheduler-owned leaves used by the path barrier.
+    ///
+    /// The sequence manager is read-only here. Path completion consequences
+    /// (sequence mutation, hero speech, and condolation dispatch) remain owned
+    /// by the root tick coordinator at their Original call positions.
+    pub(in crate::engine) fn path_schedule_parts(
+        &mut self,
+    ) -> (
+        &mut movement::PendingPathRequestQueue,
+        &mut Vec<movement::FailedPathRequest>,
+        &SequenceManager,
+    ) {
+        let Self {
+            pending_path_requests,
+            failed_path_requests,
+            sequence_manager,
+            ..
+        } = self;
+        (
+            pending_path_requests,
+            failed_path_requests,
+            sequence_manager,
+        )
+    }
+
+    /// Atomically install preflighted legacy path queues without exposing the
+    /// scheduler's mutable queue fields outside the engine module.
+    pub(crate) fn install_legacy_path_schedule(
+        &mut self,
+        pending: movement::PendingPathRequestQueue,
+        failed: Vec<movement::FailedPathRequest>,
+    ) {
+        self.pending_path_requests = pending;
+        self.failed_path_requests = failed;
     }
 
     /// Validate invariants that must survive queueing and snapshot restore.

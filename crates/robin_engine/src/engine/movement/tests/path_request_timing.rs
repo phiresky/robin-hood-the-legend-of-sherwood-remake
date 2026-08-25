@@ -205,7 +205,7 @@ mod suite {
     }
 
     #[test]
-    fn movement_context_expires_live_failure_only_after_100_frames() {
+    fn path_schedule_context_expires_live_failure_without_mutating_sequence_state() {
         let owner = EntityId::Pc(PcId(7));
         let mut world = WorldState::new();
         let mut orders = OrderRuntime::new();
@@ -229,13 +229,37 @@ mod suite {
                 10,
             ));
 
-        let at_boundary =
-            MovementContext::new(110, &mut world, &mut orders).take_expired_failures();
+        let at_boundary = {
+            let (entities, fast_grid, pathfinder) = world.path_schedule_parts();
+            let (pending, failed, sequence_manager) = orders.path_schedule_parts();
+            PathScheduleContext::new(
+                110,
+                entities,
+                fast_grid,
+                pathfinder,
+                pending,
+                failed,
+                sequence_manager,
+            )
+            .take_expired_failures()
+        };
         assert!(at_boundary.is_empty());
         assert_eq!(orders.failed_path_requests.len(), 1);
 
-        let after_boundary =
-            MovementContext::new(111, &mut world, &mut orders).take_expired_failures();
+        let after_boundary = {
+            let (entities, fast_grid, pathfinder) = world.path_schedule_parts();
+            let (pending, failed, sequence_manager) = orders.path_schedule_parts();
+            PathScheduleContext::new(
+                111,
+                entities,
+                fast_grid,
+                pathfinder,
+                pending,
+                failed,
+                sequence_manager,
+            )
+            .take_expired_failures()
+        };
         assert_eq!(after_boundary.len(), 1);
         assert_eq!(after_boundary[0].request.owner, owner);
         assert_eq!(after_boundary[0].age, 101);
@@ -244,5 +268,14 @@ mod suite {
             "missing entity is not fabricated"
         );
         assert!(orders.failed_path_requests.is_empty());
+        assert_eq!(
+            orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("path context retains the live movement element")
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "sequence mutation remains a root-coordinator consequence"
+        );
     }
 }

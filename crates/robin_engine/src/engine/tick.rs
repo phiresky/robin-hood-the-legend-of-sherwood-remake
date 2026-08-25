@@ -2,7 +2,7 @@
 
 mod deferred_outcomes;
 
-use super::movement::{CompletedPathWork, MovementContext};
+use super::movement::{CompletedPathWork, PathScheduleContext};
 #[cfg(test)]
 use super::sequence_runtime::{
     DirectAbilityCommandContext, LiftWaitCommandContext, NpcAttentionCommandContext,
@@ -3633,21 +3633,11 @@ impl EngineInner {
         // one-call latency and one-completion-per-frame observation order.
         let had_in_flight = self.orders.pending_path_requests.has_in_flight();
         self.trace_path_barrier("enter");
-        let completed = MovementContext::new(
-            self.control.frame_counter,
-            &mut self.world,
-            &mut self.orders,
-        )
-        .take_completed();
+        let completed = self.path_schedule_context().take_completed();
         self.trace_path_barrier_completed("take1", &completed);
         self.apply_completed_path_work(sim, assets, completed);
 
-        MovementContext::new(
-            self.control.frame_counter,
-            &mut self.world,
-            &mut self.orders,
-        )
-        .start_next(assets);
+        self.path_schedule_context().start_next(assets);
         self.trace_path_barrier("after_start1");
 
         // Synchronous mode may deliver the request started above at this same
@@ -3655,12 +3645,7 @@ impl EngineInner {
         // call. If an older result (including a stale one) occupied that slot,
         // the newly computed result remains in-flight until the next frame.
         if sim.config().synchronous_pathfinding && !had_in_flight {
-            let completed = MovementContext::new(
-                self.control.frame_counter,
-                &mut self.world,
-                &mut self.orders,
-            )
-            .take_completed();
+            let completed = self.path_schedule_context().take_completed();
             self.trace_path_barrier_completed("take2", &completed);
             self.apply_completed_path_work(sim, assets, completed);
 
@@ -3670,12 +3655,7 @@ impl EngineInner {
             // before returning.  Keep that successor parked in-flight: it
             // must not be delivered at this barrier, but a later cancellation
             // observes its already-computed raw path.
-            MovementContext::new(
-                self.control.frame_counter,
-                &mut self.world,
-                &mut self.orders,
-            )
-            .start_next(assets);
+            self.path_schedule_context().start_next(assets);
             self.trace_path_barrier("after_start2");
         }
 
@@ -3687,12 +3667,7 @@ impl EngineInner {
         // fire `HERO_UNABLE_TO_DO_SOMETHING` for PCs.  Runs before the
         // hourglass dispatch so same-tick failures & retries both age
         // correctly.
-        let expired = MovementContext::new(
-            self.control.frame_counter,
-            &mut self.world,
-            &mut self.orders,
-        )
-        .take_expired_failures();
+        let expired = self.path_schedule_context().take_expired_failures();
         for expired in expired {
             let request = expired.request;
             if expired.owner_is_pc {
@@ -3759,6 +3734,24 @@ impl EngineInner {
                 amount,
             ));
         }
+    }
+
+    /// Construct the path scheduler from exact leaf borrows of its two
+    /// persistent owners. Cross-domain consequences deliberately remain in
+    /// [`Self::hourglass_phase_paths`] after each scheduler operation returns.
+    fn path_schedule_context(&mut self) -> PathScheduleContext<'_> {
+        let frame_counter = self.control.frame_counter;
+        let (entities, fast_grid, pathfinder) = self.world.path_schedule_parts();
+        let (pending, failed, sequence_manager) = self.orders.path_schedule_parts();
+        PathScheduleContext::new(
+            frame_counter,
+            entities,
+            fast_grid,
+            pathfinder,
+            pending,
+            failed,
+            sequence_manager,
+        )
     }
 
     fn trace_path_barrier(&self, stage: &str) {
