@@ -169,6 +169,31 @@ assert c.execute("select count(*) from work_completions").fetchone()[0] == 1
 assert c.execute("select outcome from replay_runs").fetchone()[0] == "exact_eof"
 PY
 
+setup_case recovery_namespace
+# This is the pre-fix scratch location for the same reusable worker ID. Its
+# nonzero result represents retained evidence from an older runner rollout.
+# The current trust/audit namespace must neither upload nor interpret it.
+legacy_result="$local_root/.agent-debug/distributed-replay-worker/local:namespace/audit/results/$(printf old-runner | sha256sum | cut -d' ' -f1)"
+mkdir -p -- "$legacy_result"
+printf '101\n' >"$legacy_result/status"
+other_trust=$(printf '%064d' 0 | tr 0 f)
+audit_identity=$(printf 'distributed-replay-worker-audit-v1\nAUDIT=%s\nCORPUS=%s\n' \
+    "$remote_audit" "$corpus" | sha256sum); audit_identity=${audit_identity%% *}
+other_runner_result="$local_root/.agent-debug/distributed-replay-worker/$other_trust/$audit_identity/local:namespace/audit/results/$(printf other-runner | sha256sum | cut -d' ' -f1)"
+mkdir -p -- "$other_runner_result"
+printf '101\n' >"$other_runner_result/status"
+FAKE_RUNNER_MODE=exact run_worker namespace
+[[ ! -e "$remote_audit/STOP.env" ]]
+[[ -f "$legacy_result/status" ]]
+[[ -f "$other_runner_result/status" ]]
+[[ $(find "$remote_audit/results" -mindepth 1 -maxdepth 1 -type d | wc -l) == 1 ]]
+python3 - "$database" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+assert c.execute("select count(*) from work_completions").fetchone()[0] == 1
+assert c.execute("select outcome from replay_runs").fetchone()[0] == "exact_eof"
+PY
+
 setup_case failure
 add_second_replay
 TEST_ONESHOT=0 FAKE_RUNNER_MODE=fail-first run_worker failure

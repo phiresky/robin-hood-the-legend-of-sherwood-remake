@@ -115,7 +115,12 @@ exact_marker='parity trace matched every recorded frame'
 workspace=$(realpath -e -- "$workspace_arg")
 bundle=$(realpath -e -- "$bundle_arg")
 data_dir=$(realpath -e -- "$workspace/datadirs/fullgame_linux")
-scratch="$workspace/.agent-debug/distributed-replay-worker/$worker_id"
+audit_identity=$(printf 'distributed-replay-worker-audit-v1\nAUDIT=%s\nCORPUS=%s\n' \
+    "$remote_audit" "$corpus" | sha256sum)
+audit_identity=${audit_identity%% *}
+# Recovery must never inspect evidence produced for a different authenticated
+# runner or audit. Worker IDs are intentionally reusable across rollouts.
+scratch="$workspace/.agent-debug/distributed-replay-worker/$bundle_trust_sha/$audit_identity/$worker_id"
 local_audit="$scratch/audit"
 [[ "$mode" == local ]] || local_audit=$remote_audit
 mkdir -p -- "$scratch/work" "$local_audit/results" "$local_audit/attempts"
