@@ -2967,9 +2967,7 @@ impl EngineInner {
             let (door, door_direction) = super::movement::current_door_for_route_source(entity);
             (
                 entity.element_data().position_map(),
-                entity
-                    .element_data()
-                    .sector()
+                super::ai::ai_view_position_sector(self, entity.element_data())
                     .unwrap_or_else(|| panic!("target interaction actor {actor:?} has no sector")),
                 entity.element_data().posture,
                 entity.actor_auth_info(),
@@ -2983,9 +2981,9 @@ impl EngineInner {
                 .unwrap_or_else(|| panic!("target interaction requires missing target {target:?}"));
             (
                 entity.element_data().position_map(),
-                entity.element_data().sector().unwrap_or_else(|| {
-                    panic!("target interaction target {target:?} has no sector")
-                }),
+                super::ai::ai_view_position_sector(self, entity.element_data()).unwrap_or_else(
+                    || panic!("target interaction target {target:?} has no sector"),
+                ),
                 entity.element_data().layer(),
                 entity.cxx_current_point_map().unwrap_or_else(|| {
                     panic!("target interaction target {target:?} has no current point")
@@ -4944,6 +4942,10 @@ mod tests {
 
     #[test]
     fn target_interaction_door_adaptation_omits_redundant_sector_assertion() {
+        use crate::coordinates::{MapBBox, MapPoint};
+        use crate::fast_find_grid::GridSector;
+        use crate::sector::{SectorNumber, SectorType};
+
         let target_sector = crate::position_interface::SectorHandle::new(51).unwrap();
 
         assert_eq!(
@@ -4971,6 +4973,52 @@ mod tests {
             target_interaction_assert_source_sector(exact_source, exact_target),
             Some(exact_source),
             "overlapping public sector numbers are distinct Original RHSector pointers"
+        );
+
+        let mut engine = EngineInner::new();
+        let recovered_index = engine.world.fast_grid_mut().add_sector(
+            GridSector {
+                points: vec![
+                    MapPoint::new(0.0, 0.0),
+                    MapPoint::new(400.0, 0.0),
+                    MapPoint::new(400.0, 400.0),
+                    MapPoint::new(0.0, 400.0),
+                ],
+                bounding_box: MapBBox::from_coords(0.0, 0.0, 400.0, 400.0),
+                sector_type: SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
+                layer: 0,
+                sector_number: SectorNumber::new(51),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            0,
+        );
+        let mut actor = ElementData::default();
+        actor.set_position_map(MapPoint::new(100.0, 100.0));
+        actor.set_sector(Some(target_sector));
+        let recovered_source = crate::engine::ai::ai_view_position_sector(&engine, &actor)
+            .expect("number-only actor sector is recoverable from its position");
+        let exact_target = target_sector.with_arena_index(
+            crate::fast_find_grid::SectorIndex::new(recovered_index)
+                .expect("test arena index is valid"),
+        );
+        assert_eq!(
+            recovered_source, exact_target,
+            "loaded actors that retained only a public number recover Original's exact sector pointer"
+        );
+        assert_eq!(
+            target_interaction_assert_source_sector(recovered_source, exact_target),
+            None,
+            "same-sector target interactions must emit Move directly instead of AssertPosition then losing Move at the building tail"
         );
     }
 

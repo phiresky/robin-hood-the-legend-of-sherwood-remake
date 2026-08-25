@@ -3640,8 +3640,12 @@ pub(super) fn ai_view_position_sector(
             [] => panic!(
                 "AI Position sector {public} layer {layer} is absent from the loaded exact arena"
             ),
-            _ => panic!(
-                "AI Position sector {public} at {point:?} has no containing sector and is ambiguous in the exact arena"
+            _ => unique_gate_endpoint_sector(engine, public, layer, &candidates).unwrap_or_else(
+                || {
+                    panic!(
+                        "AI Position sector {public} at {point:?} has no containing sector and is ambiguous in the exact arena"
+                    )
+                },
             ),
         },
         _ => panic!("AI Position sector {public} at {point:?} is ambiguous in the exact arena"),
@@ -3649,6 +3653,47 @@ pub(super) fn ai_view_position_sector(
     let index = crate::fast_find_grid::SectorIndex::new(index as u32)
         .expect("AI Position exact sector index exceeds the arena range");
     Some(sector.with_arena_index(index))
+}
+
+/// Recover the pointer identity Original carries when an actor is standing on
+/// a gate endpoint just outside both adjacent sector polygons. Public sector
+/// numbers remain lossy, so this is valid only when every matching gate
+/// endpoint names the same exact arena sector.
+fn unique_gate_endpoint_sector(
+    engine: &EngineInner,
+    public: crate::sector::SectorNumber,
+    layer: u16,
+    candidates: &[(usize, &crate::fast_find_grid::GridSector)],
+) -> Option<usize> {
+    let mut unique = None;
+    for door in &engine.script_domains.interactables.doors {
+        for (endpoint_public, endpoint_layer, endpoint_index) in [
+            (door.sector_out, door.layer_out, door.sector_out_index),
+            (door.sector_in, door.layer_in, door.sector_in_index),
+        ] {
+            if endpoint_public != public || endpoint_layer != layer {
+                continue;
+            }
+            let Some(endpoint_index) = endpoint_index else {
+                continue;
+            };
+            let endpoint_index = usize::from(endpoint_index);
+            if !candidates
+                .iter()
+                .any(|(candidate_index, _)| *candidate_index == endpoint_index)
+            {
+                panic!(
+                    "gate endpoint sector {endpoint_index} disagrees with public sector {public} layer {layer}"
+                );
+            }
+            match unique {
+                None => unique = Some(endpoint_index),
+                Some(previous) if previous == endpoint_index => {}
+                Some(_) => return None,
+            }
+        }
+    }
+    unique
 }
 
 #[cfg(test)]
@@ -3888,6 +3933,40 @@ mod ai_view_position_sector_tests {
         element.set_layer(2);
         element.set_sector(crate::position_interface::SectorHandle::new(88));
         let _ = ai_view_position_sector(&engine, &element);
+    }
+
+    #[test]
+    fn gate_endpoint_recovers_actor_outside_duplicate_sector_polygons() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(8, 8);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let wrong = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(square_sector(58, 2, 300.0, 350.0), 2);
+        let endpoint = engine
+            .world
+            .fast_grid_mut()
+            .add_sector(square_sector(58, 2, 100.0, 200.0), 2);
+        assert_ne!(wrong, endpoint);
+        engine.script_domains.interactables.doors.push(Door {
+            sector_out: SectorNumber::new(58),
+            sector_out_index: SectorIndex::new(endpoint),
+            layer_out: 2,
+            ..Door::default()
+        });
+
+        let mut element = crate::element::ElementData::default();
+        element.set_position_map(MapPoint::new(250.0, 250.0));
+        element.set_layer(2);
+        element.set_sector(crate::position_interface::SectorHandle::new(58));
+
+        assert_eq!(
+            ai_view_position_sector(&engine, &element)
+                .expect("gate endpoint identity is recoverable")
+                .arena_index(),
+            SectorIndex::new(endpoint)
+        );
     }
 }
 
