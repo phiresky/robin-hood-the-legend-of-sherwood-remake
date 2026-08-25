@@ -2569,6 +2569,59 @@ fn point_refreshing_seek_returns_terminated_without_refreshing() {
 }
 
 #[test]
+fn entity_refreshing_seek_with_cleared_actor_target_terminates_without_refreshing() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let stale_target = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RefreshingSeek);
+    movement
+        .orders
+        .push_back(Order::test_new(OrderType::RefreshingSeek, 0.0, 0.0));
+    if let SequenceElementData::Movement { flags, element, .. } = &mut movement.data {
+        *flags = MoveFlags::SEEK | MoveFlags::SEEK_IN_BUILDINGS;
+        *element = Some(stale_target);
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    assert_eq!(
+        engine.tick_refreshing_seek_for_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            owner,
+        ),
+        Some(MotionState::Terminated),
+        "the actor-level null target is authoritative over the stale route element target"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress,
+        "derived Execute returns Terminated; base Actor completion retires the element"
+    );
+    assert_eq!(
+        engine.orders.sequence_manager.sequences_iter().count(),
+        1,
+        "a completed seek must not launch a replacement route"
+    );
+}
+
+#[test]
 fn point_refreshing_seek_with_successor_projects_back_to_in_progress() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
