@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use anyhow::Context as _;
 use winit::platform::android::activity::AndroidApp;
 
 /// Entry point called by `android-activity`'s NativeActivity glue.
@@ -20,7 +21,7 @@ fn android_main(app: AndroidApp) {
             code
         }
         Err(error) => {
-            tracing::error!("Android startup failed: {error}");
+            tracing::error!("Android startup failed: {error:#}");
             1
         }
     };
@@ -43,7 +44,7 @@ fn android_main(app: AndroidApp) {
     unsafe { libc::_exit(exit_code) };
 }
 
-fn run_android(app: AndroidApp) -> Result<i32, String> {
+fn run_android(app: AndroidApp) -> anyhow::Result<i32> {
     install_android_paths(&app);
 
     let mut args = crate::main_entry::parse_cli();
@@ -56,8 +57,7 @@ fn run_android(app: AndroidApp) -> Result<i32, String> {
     args.http_server = 0;
     let shipping = load_bundled_shipping_datadir(&app)?;
     let (campaign, profiles, application_context) =
-        crate::main_entry::rust_init_with_shipping(Some(shipping))
-            .map_err(|error| error.to_string())?;
+        crate::main_entry::rust_init_with_shipping(Some(shipping))?;
 
     crate::window::run_with_android_game(
         app,
@@ -82,7 +82,8 @@ fn run_android(app: AndroidApp) -> Result<i32, String> {
             }
         },
     )
-    .map_err(|error| format!("Android window/event-loop init failed: {error}"))
+    .map_err(anyhow::Error::msg)
+    .context("Android window/event-loop init failed")
 }
 
 fn request_activity_finish(app: &AndroidApp, exit_code: i32) -> Result<(), String> {
@@ -174,7 +175,7 @@ fn set_env(key: &str, value: impl AsRef<Path>) {
 
 fn load_bundled_shipping_datadir(
     app: &AndroidApp,
-) -> Result<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>, String> {
+) -> anyhow::Result<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>> {
     use std::ffi::CString;
     use std::io::Read;
 
@@ -182,17 +183,17 @@ fn load_bundled_shipping_datadir(
     let mut asset = app
         .asset_manager()
         .open(&name)
-        .ok_or("Android APK asset Data/datadir.bin is missing")?;
+        .ok_or_else(|| anyhow::anyhow!("Android APK asset Data/datadir.bin is missing"))?;
     let mut bytes = Vec::with_capacity(asset.length());
     asset
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("read APK asset Data/datadir.bin: {error}"))?;
+        .context("read APK asset Data/datadir.bin")?;
 
     let datadir = robin_assets::shipping_datadir::ShippingDatadir::from_compressed_bytes(&bytes)
-        .map_err(|error| format!("decode APK asset Data/datadir.bin: {error:#}"))?;
+        .context("decode APK asset Data/datadir.bin")?;
     let datadir = std::sync::Arc::new(datadir);
     robin_assets::shipping_datadir::install_global(datadir.clone())
-        .map_err(|error| format!("install Android shipping datadir: {error:#}"))?;
+        .context("install Android shipping datadir")?;
     tracing::info!("Loaded bundled Android shipping datadir from APK assets");
     Ok(datadir)
 }
