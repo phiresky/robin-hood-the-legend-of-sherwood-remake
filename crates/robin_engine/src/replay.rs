@@ -1017,6 +1017,7 @@ mod tests {
             running: false,
             already_authorized: false,
             goal_override: None,
+            goal_sector_index_override: None,
         };
         let mut json = serde_json::to_value(current).unwrap();
         let fields = json
@@ -1025,6 +1026,7 @@ mod tests {
             .expect("externally tagged DropAle command fields");
         fields.remove("already_authorized");
         fields.remove("goal_override");
+        fields.remove("goal_sector_index_override");
 
         let decoded: PlayerCommand = serde_json::from_value(json).unwrap();
         assert!(matches!(
@@ -1032,6 +1034,7 @@ mod tests {
             PlayerCommand::DropAleAt {
                 already_authorized: false,
                 goal_override: None,
+                goal_sector_index_override: None,
                 ..
             }
         ));

@@ -221,6 +221,12 @@ pub enum PlayerCommand {
         /// point can select an overlapping floor instead.
         #[serde(default)]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        /// Replay-only exact sparse FastFindGrid identity for
+        /// `goal_override`. Original compares sector pointers while public
+        /// sector numbers are not unique, so retaining only the number can
+        /// turn a valid cross-building route into no route at all.
+        #[serde(default)]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
     },
     /// Shield two-click protocol, first click: stash the focusable PC to
     /// protect in [`ShieldState::protected_pc`] and flip

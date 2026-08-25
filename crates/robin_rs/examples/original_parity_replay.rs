@@ -1739,15 +1739,23 @@ impl TraceCommand {
                 target,
                 running,
             } => {
-                let (already_authorized, goal_override) = drop_ale_resolution
-                    .map(|resolution| (true, Some(resolution.goal)))
-                    .unwrap_or((false, None));
+                let (already_authorized, goal_override, goal_sector_index_override) =
+                    drop_ale_resolution
+                        .map(|resolution| {
+                            (
+                                true,
+                                Some(resolution.goal),
+                                Some(resolution.goal_sector_index),
+                            )
+                        })
+                        .unwrap_or((false, None, None));
                 PlayerCommand::DropAleAt {
                     actor: entity_map.translate(actor),
                     target_pos: target.into(),
                     running,
                     already_authorized,
                     goal_override,
+                    goal_sector_index_override,
                 }
             }
             Self::ShieldSelectProtected {
@@ -2516,6 +2524,7 @@ struct TraceRouteGate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReplayDropAleResolution {
     goal: (SectorNumber, u16),
+    goal_sector_index: robin_engine::fast_find_grid::SectorIndex,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2753,11 +2762,11 @@ fn resolve_schema_sixteen_drop_ale(
         "schema-16 route ordinal {ordinal} matched twice"
     );
 
+    let (goal_sector, goal_sector_index) =
+        entity_map.translate_required_drop_ale_goal_sector(event.goal_sector);
     Some(ReplayDropAleResolution {
-        goal: (
-            entity_map.translate_required_drop_ale_goal_sector(event.goal_sector),
-            event.goal_level,
-        ),
+        goal: (goal_sector, event.goal_level),
+        goal_sector_index,
     })
 }
 
@@ -8548,7 +8557,10 @@ impl EntityMap {
         }
     }
 
-    fn translate_required_drop_ale_goal_sector(&self, original: u16) -> SectorNumber {
+    fn translate_required_drop_ale_goal_sector(
+        &self,
+        original: u16,
+    ) -> (SectorNumber, robin_engine::fast_find_grid::SectorIndex) {
         let runtime = self.sectors.get(&original).copied().unwrap_or_else(|| {
             panic!(
                 "schema-16 DropAle route goal Original sector {original} has no retained Rust position-sector mapping"
@@ -8557,7 +8569,12 @@ impl EntityMap {
         let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
             panic!("Rust DropAle goal sector {runtime} exceeds its signed identity domain")
         });
-        SectorNumber::new(runtime)
+        let index = *self.sector_indices.get(&original).unwrap_or_else(|| {
+            panic!(
+                "mapped schema-16 DropAle route goal Original sector {original} lost its exact Rust arena identity"
+            )
+        });
+        (SectorNumber::new(runtime), index)
     }
 
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
@@ -14740,11 +14757,12 @@ mod tests {
     }
 
     fn drop_ale_route_map(actor: TraceEntityId) -> EntityMap {
+        let goal_sector_index = robin_engine::fast_find_grid::SectorIndex::new(37).unwrap();
         EntityMap {
             entities: BTreeMap::from([(actor, EntityId::Pc(robin_engine::entity_id::PcId(12)))]),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::from([(148, 55)]),
-            sector_indices: BTreeMap::new(),
+            sector_indices: BTreeMap::from([(148, goal_sector_index)]),
             gates: Vec::new(),
             runtime_creation_order_boundary: 0,
         }
@@ -14782,6 +14800,7 @@ mod tests {
             ),
             Some(ReplayDropAleResolution {
                 goal: (SectorNumber::new(55), 4),
+                goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(37).unwrap(),
             })
         );
         assert_eq!(consumed, BTreeSet::from([7]));

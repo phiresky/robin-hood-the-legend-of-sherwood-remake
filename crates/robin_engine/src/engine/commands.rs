@@ -784,6 +784,7 @@ impl EngineInner {
                 running,
                 already_authorized,
                 goal_override,
+                goal_sector_index_override,
             } => {
                 self.apply_drop_ale_at(
                     *actor,
@@ -791,6 +792,7 @@ impl EngineInner {
                     *running,
                     *already_authorized,
                     *goal_override,
+                    *goal_sector_index_override,
                 );
             }
             ShieldSelectProtected {
@@ -1532,6 +1534,7 @@ impl EngineInner {
                 running,
                 already_authorized: _,
                 goal_override: _,
+                goal_sector_index_override: _,
             } => {
                 if *actor != recording_pc {
                     return;
@@ -1971,6 +1974,7 @@ impl EngineInner {
                     running,
                     already_authorized: false,
                     goal_override: None,
+                    goal_sector_index_override: None,
                 },
                 crate::macro_store::QaReplayCommand::Swordfight { target, running } => {
                     // See Interaction arm — whole-sequence abort on
@@ -2080,6 +2084,7 @@ impl EngineInner {
                     running,
                     already_authorized,
                     goal_override,
+                    goal_sector_index_override,
                 } = &cmd
             {
                 self.apply_drop_ale_at_with_recovery(
@@ -2089,6 +2094,7 @@ impl EngineInner {
                     true,
                     *already_authorized,
                     *goal_override,
+                    *goal_sector_index_override,
                 );
                 posture_recovery_embedded = true;
             } else {
@@ -3994,6 +4000,7 @@ impl EngineInner {
         running: bool,
         already_authorized: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
     ) {
         self.apply_drop_ale_at_with_recovery(
             actor,
@@ -4002,6 +4009,7 @@ impl EngineInner {
             false,
             already_authorized,
             goal_override,
+            goal_sector_index_override,
         );
     }
 
@@ -4015,6 +4023,7 @@ impl EngineInner {
         append_posture_recovery: bool,
         already_authorized: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
     ) {
         use crate::order::OrderType;
 
@@ -4067,11 +4076,36 @@ impl EngineInner {
             goal_override.is_some(),
             "resolved DropAle commands must carry both already_authorized and goal_override"
         );
+        assert!(
+            goal_sector_index_override.is_none() || goal_override.is_some(),
+            "DropAle exact goal-sector identity requires a goal_override"
+        );
         let (goal_sector, goal_layer) = if let Some((goal_sector, goal_layer)) = goal_override {
-            (
-                crate::position_interface::SectorHandle::new(u16::from(goal_sector)),
-                goal_layer,
-            )
+            let public_sector = u16::from(goal_sector);
+            let mut sector = crate::position_interface::SectorHandle::new(public_sector)
+                .unwrap_or_else(|| {
+                    panic!("DropAle goal_override has invalid public sector {public_sector}")
+                });
+            if let Some(index) = goal_sector_index_override {
+                let indexed_sector = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(usize::from(index))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "DropAle exact goal-sector arena {index} is outside the FastFindGrid sector table"
+                        )
+                    });
+                assert_eq!(
+                    indexed_sector.sector_number, goal_sector,
+                    "DropAle exact goal-sector arena {index} has public sector {}, expected {goal_sector}",
+                    indexed_sector.sector_number,
+                );
+                sector = sector.with_arena_index(index);
+            }
+            (Some(sector), goal_layer)
         } else {
             let reference = self
                 .get_entity(actor)
@@ -5593,7 +5627,7 @@ mod tests {
         let (mut engine, assets, pc_id, source, _) = setup_drop_ale_sector_identity_scene();
         let destination = crate::coordinates::MapPoint::new(80.0, 90.0);
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         assert_eq!(goal.and_then(|sector| sector.arena_index()), Some(source));
         assert_eq!(layer, 0);
@@ -5641,7 +5675,7 @@ mod tests {
         let (mut engine, _, pc_id, source, alias) = setup_drop_ale_sector_identity_scene();
         let destination = crate::coordinates::MapPoint::new(180.0, 90.0);
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
 
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         let goal = goal.expect("DropAle target must resolve to a sector");
@@ -5685,7 +5719,7 @@ mod tests {
             0,
         );
 
-        engine.apply_drop_ale_at(pc_id, destination, false, false, None);
+        engine.apply_drop_ale_at(pc_id, destination, false, false, None, None);
 
         let (_, goal, layer) = drop_ale_seek_goal(&engine);
         let goal = goal.expect("DropAle patch target resolves through its underlying sector");
@@ -5728,6 +5762,7 @@ mod tests {
                 running: false,
                 already_authorized: false,
                 goal_override: None,
+                goal_sector_index_override: None,
             },
         );
 
@@ -5738,12 +5773,7 @@ mod tests {
 
     #[test]
     fn resolved_replay_drop_ale_preserves_authorized_point_and_route_goal() {
-        let (mut engine, assets, pc_id) = setup_drop_ale_macro_scene();
-        engine
-            .players
-            .macro_store
-            .get_or_insert(pc_id)
-            .clear_slot(0);
+        let (mut engine, assets, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
         let authorized = crate::coordinates::MapPoint::new(2607.467_041, 881.610_474);
 
         engine.apply_command(
@@ -5756,7 +5786,8 @@ mod tests {
                 target_pos: authorized,
                 running: false,
                 already_authorized: true,
-                goal_override: Some((crate::sector::SectorNumber::new(55), 4)),
+                goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
+                goal_sector_index_override: Some(goal_index),
             },
         );
 
@@ -5764,9 +5795,99 @@ mod tests {
             drop_ale_seek_goal(&engine),
             (
                 authorized,
-                crate::position_interface::SectorHandle::new(55),
-                4,
+                crate::position_interface::SectorHandle::new(0)
+                    .map(|sector| sector.with_arena_index(goal_index)),
+                0,
             )
+        );
+    }
+
+    #[test]
+    fn resolved_replay_drop_ale_without_exact_index_keeps_legacy_number_only_goal() {
+        let (mut engine, assets, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+        let authorized = crate::coordinates::MapPoint::new(180.0, 90.0);
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::DropAleAt {
+                actor: pc_id,
+                target_pos: authorized,
+                running: false,
+                already_authorized: true,
+                goal_override: Some((crate::sector::SectorNumber::new(0), 0)),
+                goal_sector_index_override: None,
+            },
+        );
+
+        assert_eq!(
+            drop_ale_seek_goal(&engine),
+            (
+                authorized,
+                crate::position_interface::SectorHandle::new(0),
+                0,
+            )
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the FastFindGrid sector table")]
+    fn resolved_replay_drop_ale_rejects_out_of_range_exact_index() {
+        let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            true,
+            Some((crate::sector::SectorNumber::new(0), 0)),
+            crate::fast_find_grid::SectorIndex::new(9999),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has public sector")]
+    fn resolved_replay_drop_ale_rejects_disagreeing_exact_index() {
+        let (mut engine, _, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level).sectors
+            [usize::from(goal_index)]
+        .sector_number = crate::sector::SectorNumber::new(1);
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            true,
+            Some((crate::sector::SectorNumber::new(0), 0)),
+            Some(goal_index),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "exact goal-sector identity requires a goal_override")]
+    fn drop_ale_rejects_exact_index_without_goal_override() {
+        let (mut engine, _, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            false,
+            None,
+            Some(goal_index),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "goal_override has invalid public sector")]
+    fn resolved_replay_drop_ale_rejects_invalid_public_sector() {
+        let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint::new(180.0, 90.0),
+            false,
+            true,
+            Some((crate::sector::SectorNumber::new(-1), 0)),
+            None,
         );
     }
 
@@ -6739,6 +6860,7 @@ mod tests {
             crate::coordinates::MapPoint { x: 80.0, y: 90.0 },
             false,
             false,
+            None,
             None,
         );
 
