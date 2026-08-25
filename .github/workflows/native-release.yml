@@ -77,15 +77,21 @@ jobs:
         include:
           # The Windows binary is cross-compiled from Linux with the
           # windows-gnu toolchain (MinGW), matching local release builds.
+          # Keep pack_executable equal to the friendly Velopack title: the
+          # portable bundle names its root stub after the title, while updates
+          # maintain the stub named by mainExe. Different names leave both
+          # launchers behind after the first portable update.
           - name: Windows x86-64
             target: x86_64-pc-windows-gnu
             runtime: win-x64
             executable: robin.exe
+            pack_executable: Robin Hood - The Legend of Sherwood.exe
             artifact: robin-windows-x86_64
           - name: Linux x86-64
             target: x86_64-unknown-linux-gnu
             runtime: linux-x64
             executable: robin
+            pack_executable: robin
             artifact: robin-linux-x86_64
     runs-on: ubuntu-22.04
 
@@ -179,6 +185,8 @@ jobs:
 
       - name: Build release binary
         shell: bash
+        env:
+          ROBIN_PACKAGE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           # TODO: Bundle FFmpeg DLLs on Windows, then restore the default
           # `video` feature for packaged builds.
@@ -188,7 +196,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p target/package-input target/release-assets
-          cp "target/${{ matrix.target }}/release/${{ matrix.executable }}" target/package-input/
+          cp \
+            "target/${{ matrix.target }}/release/${{ matrix.executable }}" \
+            "target/package-input/${{ matrix.pack_executable }}"
           cp README.md target/package-input/
           # Engine-shipped overlay datadirs, resolved relative to the
           # executable at runtime: the core overlay (bitmap fonts, UI
@@ -223,7 +233,7 @@ jobs:
             --packId io.github.phiresky.robinhood \
             --packVersion "${{ steps.version.outputs.version }}" \
             --packDir target/package-input \
-            --mainExe robin.exe \
+            --mainExe "${{ matrix.pack_executable }}" \
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime win-x64 \
             --outputDir target/velopack
@@ -236,7 +246,7 @@ jobs:
             --packId io.github.phiresky.robinhood \
             --packVersion "${{ steps.version.outputs.version }}" \
             --packDir target/package-input \
-            --mainExe robin \
+            --mainExe "${{ matrix.pack_executable }}" \
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime linux-x64 \
             --outputDir target/velopack

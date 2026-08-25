@@ -802,9 +802,9 @@ impl LoadingScreenRenderer {
 }
 
 fn loading_version_text(datadir_kind: LoadingDatadirKind) -> String {
-    let base = concat!("v", env!("CARGO_PKG_VERSION"), " ", env!("ROBIN_GIT_HASH"));
+    let base = crate::version::version_label();
     match datadir_kind {
-        LoadingDatadirKind::FullGame => base.to_string(),
+        LoadingDatadirKind::FullGame => base,
         LoadingDatadirKind::DemoI => format!("{base} DEMO I"),
         LoadingDatadirKind::DemoII => format!("{base} DEMO II"),
     }

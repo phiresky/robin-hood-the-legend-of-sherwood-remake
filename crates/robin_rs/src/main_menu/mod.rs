@@ -747,7 +747,8 @@ fn render_text_layer(
     }
 
     // ── Auto-update status (bottom-left corner) ─────────────────────
-    if let (Some(line), Some(font)) = (update_status_line(), info_font) {
+    if let Some(font) = info_font {
+        let line = update_status_line();
         let y = MENU_H - font.height() as i32 - 4;
         renderer.render_text_argb(font, &line, 8, y);
     }
@@ -783,25 +784,31 @@ fn render_text_layer(
     }
 }
 
-/// Human-readable auto-update progress for the menu's bottom-left corner.
-///
-/// Desktop-only — Velopack updates don't exist on wasm/Android, so those
-/// targets never show a line.
-fn update_status_line() -> Option<String> {
+/// Human-readable version and auto-update progress for the menu's bottom-left
+/// corner.
+fn update_status_line() -> String {
+    let version = crate::version::version_label();
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     {
         use crate::auto_update::UpdateStatus;
-        return Some(match crate::auto_update::update_status()? {
-            UpdateStatus::Downloading { version } => {
-                format!("Downloading update v{version}...")
+        return match crate::auto_update::update_status() {
+            Some(UpdateStatus::Downloading {
+                version: update_version,
+            }) => {
+                format!("{version} - Downloading update v{update_version}...")
             }
-            UpdateStatus::ReadyOnExit { version } => {
-                format!("Update v{version} will install on exit")
+            Some(UpdateStatus::ReadyOnExit {
+                version: update_version,
+            }) => {
+                format!("{version} - Update v{update_version} will install on exit")
             }
-        });
+            None => format!("{version} - Up to date"),
+        };
     }
-    #[allow(unreachable_code)]
-    None
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        format!("{version} - Up to date")
+    }
 }
 
 fn build_profile_info_lines(
@@ -889,5 +896,12 @@ mod tests {
     #[test]
     fn substitute_i_no_placeholder() {
         assert_eq!(substitute_i("no format", 5), "no format");
+    }
+
+    #[test]
+    fn update_line_always_shows_version_and_up_to_date_status() {
+        let line = update_status_line();
+        assert!(line.starts_with(&crate::version::version_label()));
+        assert!(line.ends_with("Up to date"));
     }
 }

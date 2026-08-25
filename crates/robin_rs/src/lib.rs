@@ -16,6 +16,7 @@ use std::sync::{Mutex, Once, OnceLock};
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod auto_update;
+pub mod version;
 
 static TRACING_INIT: Once = Once::new();
 #[cfg(not(target_arch = "wasm32"))]

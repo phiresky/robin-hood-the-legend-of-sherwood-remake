@@ -169,12 +169,9 @@ fn compute_mask_mixed() {
 }
 
 #[test]
-fn version_text_uses_cargo_version_and_git_hash_for_full_game() {
+fn version_text_uses_packaged_application_version_for_full_game() {
     let text = loading_version_text(LoadingDatadirKind::FullGame);
-    assert_eq!(
-        text,
-        concat!("v", env!("CARGO_PKG_VERSION"), " ", env!("ROBIN_GIT_HASH"))
-    );
+    assert_eq!(text, crate::version::version_label());
 }
 
 #[test]
