@@ -192,30 +192,12 @@ fn is_facing_swordfight_target(
     matches!(facing_delta, 15 | 0 | 1)
 }
 
-fn swordfight_facing_target_position<'a>(
-    primary: &'a FighterSnapshot,
-    tick: &'a AiPerTickData,
-) -> &'a Position {
-    // ReconsiderSwordfight uses GetPositionGround() for this guard, not the
-    // AI Position() helper used by the fighter snapshots. The distinction is
-    // observable while the opponent passes a door: Position() forecasts the
-    // committed gate side, whereas GetPositionGround() remains at the live
-    // actor position until movement advances it.
-    // The target can change synchronously after this tick snapshot was built
-    // (notably when the principal opponent is refreshed above). Never pair a
-    // replacement target with the preceding target's literal position.
-    if tick.primary_target_snapshot_handle == primary.handle {
-        tick.primary_target_live_position
-            .as_ref()
-            .unwrap_or(&primary.position)
-    } else {
-        &primary.position
-    }
-}
-
 fn live_swordfight_target_position(primary_target: HumanHandle, ctx: &AiContext) -> Position {
-    ctx.expect_entity_view(primary_target, "ReconsiderSwordfight step-in target")
-        .position
+    let view = ctx.expect_entity_view(primary_target, "ReconsiderSwordfight step-in target");
+    let mut position = view.position;
+    position.x = view.detection_position.x;
+    position.y = view.detection_position.y;
+    position
 }
 
 #[track_caller]
@@ -3111,12 +3093,18 @@ impl EnemyAi {
         };
 
         // Are we facing the primary opponent?
-        let facing_target_position = swordfight_facing_target_position(&primary, tick);
+        // Original reads the refreshed principal opponent's literal
+        // `GetPositionGround()` here (`RHartificialmalignity.cpp:13822-13832`).
+        // `FighterSnapshot::position` is the AI `Position()` result and may
+        // forecast movement or a door endpoint. It is especially stale when
+        // `mpPrimaryTarget` changes immediately above, because the tick's
+        // owner-local live position still belongs to the preceding target.
+        let facing_target_position = live_swordfight_target_position(self.base.primary_target, ctx);
         let facing_primary = is_facing_swordfight_target(
             &ctx.position,
             ctx.elevation,
             ctx.direction,
-            facing_target_position,
+            &facing_target_position,
             primary.elevation,
         );
         if reconsider_debug {
@@ -5316,27 +5304,35 @@ mod tests {
             &soldier,
             elevation,
             12,
-            swordfight_facing_target_position(&primary, &tick),
+            &live_pc,
             primary.elevation,
         ));
     }
 
     #[test]
-    fn swordfight_facing_guard_rejects_stale_live_position_after_target_refresh() {
-        let refreshed_primary = FighterSnapshot {
-            handle: 131,
-            position: position(1400.0, 2100.0),
-            ..FighterSnapshot::default()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.primary_target_snapshot_handle = 252;
-        tick.primary_target_live_position = Some(position(1307.6046, 2248.1819));
+    fn swordfight_facing_guard_uses_literal_position_after_principal_refresh() {
+        // SuN1Sh1nE Savegame_024 replay-037 frame 922: Position(45)
+        // forecast movement north far enough to fail this guard, while the
+        // literal GetPositionGround(45) remained due east and entered RNG.
+        let soldier = position(972.98877, 2075.3225);
+        let forecast = position(1019.0, 2089.0);
+        let live = position(1022.0, 2069.0);
+        let target_elevation = 6.0522804;
 
-        assert_eq!(
-            swordfight_facing_target_position(&refreshed_primary, &tick),
-            &refreshed_primary.position,
-            "a refreshed principal opponent must not inherit the old target's live geometry"
-        );
+        assert!(!is_facing_swordfight_target(
+            &soldier,
+            0.0,
+            4,
+            &forecast,
+            target_elevation,
+        ));
+        assert!(is_facing_swordfight_target(
+            &soldier,
+            0.0,
+            4,
+            &live,
+            target_elevation,
+        ));
     }
 
     #[test]
