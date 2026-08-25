@@ -2022,7 +2022,7 @@ mod tests {
             element,
             actor: ActorData::default(),
             human: HumanData {
-                opponents: vec![opponent],
+                opponents: vec![opponent].into(),
                 ..Default::default()
             },
             npc: NpcData {

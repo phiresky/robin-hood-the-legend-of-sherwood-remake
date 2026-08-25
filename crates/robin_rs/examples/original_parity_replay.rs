@@ -10408,7 +10408,7 @@ fn compare_frame(
                     .human_data()
                     .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"))
                     .opponents
-                    .clone();
+                    .ids();
                 compare(&mut differences, id, "human.opponents", expected, actual);
             }
             if let Some(expected) = &expected_human.opponent_jump_lines {
@@ -10419,14 +10419,10 @@ fn compare_frame(
                 let human = actual.human_data().unwrap_or_else(|| {
                     panic!("trace reports human opponent jump lines for non-human {id:?}")
                 });
-                assert_eq!(
-                    human.opponents.len(),
-                    human.opponent_jump_lines.len(),
-                    "Rust {id:?} opponent and jump-line arrays differ in length"
-                );
                 let actual: Vec<Option<[u32; 4]>> = human
-                    .opponent_jump_lines
-                    .iter()
+                    .opponents
+                    .iter_with_jump_lines()
+                    .map(|(_, line_index)| line_index)
                     .map(|line_index| {
                         line_index.map(|line_index| {
                             let line = engine
