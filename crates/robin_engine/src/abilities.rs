@@ -386,17 +386,6 @@ pub fn begin_carry(
         return BeginResult::Impossible;
     }
 
-    // Save target posture (Dead is mapped to DeadBack so the
-    // dropped-body posture restored later carries the back-down variant).
-    let target_posture = {
-        let target = entities[target_id].as_ref().unwrap();
-        let p = target.element_data().posture;
-        if p == Posture::Dead {
-            Posture::DeadBack
-        } else {
-            p
-        }
-    };
     let target_pos = {
         let target = entities[target_id].as_ref().unwrap();
         target.element_data().position_map()
@@ -415,17 +404,6 @@ pub fn begin_carry(
         return BeginResult::Impossible;
     }
     let order_id = alloc_order_id(order_id_counter);
-
-    // Preserve the posture that DropCorpse must restore, but do not publish
-    // the carrier relationship during translation. Original assigns
-    // `mpCarried` and calls `SetCarrier(this)` only in the first Execute of
-    // TRANSITION_WAITING_UPRIGHT_CARRYING_CORPSE, after its validity check
-    // (RHelementactorpc.cpp:4835-4860). A command interrupted while an older
-    // transition prefix is still playing therefore has no partially grabbed
-    // body for SendCondolationCard(TAKE_CORPSE) to drop.
-    if let Some(pc) = carrier.pc_data_mut() {
-        pc.set_live_carried_posture(target_posture);
-    }
 
     // Set up the ability tracker and push the pickup animation order.
     let actor = match carrier.actor_data_mut() {
@@ -477,6 +455,20 @@ pub(crate) fn initialize_carry_relationship(
     carrier_id: EntityId,
     target_id: EntityId,
 ) {
+    // Original snapshots the new body's posture only when the pickup order
+    // first executes. Translation may still be playing a generated drop
+    // prefix for an older restored body, whose own mCarriedPosture must remain
+    // authoritative until that prefix releases it.
+    let target_posture = entities
+        .get(target_id)
+        .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"))
+        .element_data()
+        .posture;
+    let target_posture = if target_posture == Posture::Dead {
+        Posture::DeadBack
+    } else {
+        target_posture
+    };
     let carrier = entities
         .get_mut(carrier_id)
         .unwrap_or_else(|| panic!("Carry owner {carrier_id:?} vanished at initialization"));
@@ -486,7 +478,14 @@ pub(crate) fn initialize_carry_relationship(
     // Original assigns mpCarried unconditionally. This intentionally replaces
     // a stale/restored link to another body after the Execute-time validity
     // check has accepted the new target.
+    let acquiring_target = pc.carried != Some(target_id);
     pc.carried = Some(target_id);
+    if acquiring_target {
+        // This helper may be reached again while the pickup animation remains
+        // active. Original's assignment is guarded by IsInitialisation(), so
+        // do not resnapshot after CarryDone changes the target to Carried.
+        pc.set_live_carried_posture(target_posture);
+    }
 
     let target = entities
         .get_mut(target_id)
@@ -3260,7 +3259,7 @@ mod tests {
             element: ElementData {
                 kind: ElementKind::ActorPc,
                 active: true,
-                posture: Posture::Lying,
+                posture: Posture::Tied,
                 ..Default::default()
             },
             actor: Default::default(),
@@ -3313,6 +3312,12 @@ mod tests {
             .unwrap()
             .carried = Some(old_target);
         entities
+            .get_mut(carrier)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .set_live_carried_posture(Posture::Tied);
+        entities
             .get_mut(old_target)
             .unwrap()
             .human_data_mut()
@@ -3350,6 +3355,16 @@ mod tests {
         );
         assert_eq!(
             entities
+                .get(carrier)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .live_carried_posture(),
+            Posture::Tied,
+            "translation must preserve the old body's restored drop posture through its prefix"
+        );
+        assert_eq!(
+            entities
                 .get(old_target)
                 .unwrap()
                 .human_data()
@@ -3369,8 +3384,33 @@ mod tests {
             "first Execute must replace the restored mpCarried link"
         );
         assert_eq!(
+            entities
+                .get(carrier)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .live_carried_posture(),
+            Posture::Lying,
+            "first Execute must snapshot the new target's posture"
+        );
+        assert_eq!(
             entities.get(target).unwrap().human_data().unwrap().carrier,
             Some(carrier)
+        );
+        entities
+            .get_mut(target)
+            .unwrap()
+            .set_posture(Posture::Carried);
+        initialize_carry_relationship(&mut entities, carrier, target);
+        assert_eq!(
+            entities
+                .get(carrier)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .live_carried_posture(),
+            Posture::Lying,
+            "later Execute calls must not replace the first-Execute posture with Carried"
         );
         assert_eq!(
             entities
