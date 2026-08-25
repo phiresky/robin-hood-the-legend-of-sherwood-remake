@@ -977,13 +977,35 @@ impl EngineInner {
                     chief_id.index()
                 )
             });
-            let chief_point = chief.element_data().position_map();
-            tick.patrol_chief_position = crate::ai::Position {
-                x: chief_point.x,
-                y: chief_point.y,
-                sector: chief.element_data().sector(),
-                level: chief.element_data().layer(),
-            };
+            // CoordinatePatrol subtracts `Position(mpPatrolChief)`, not the
+            // chief's literal sprite position
+            // (`original-code/RHartificialintelligence.cpp:7845-7847`).
+            // `Position` substitutes the committed gate side while an actor's
+            // selected element is PassDoor (:4365-4378); this matters while
+            // the chief is still interpolating along the door rail.
+            tick.patrol_chief_position = super::resolve_ai_position_with(
+                &self.world.entities,
+                self.script_domains.interactables.doors.as_slice(),
+                &self.orders.sequence_manager,
+                chief_id,
+                |position_id| {
+                    let element = self
+                        .world
+                        .entities
+                        .get(position_id)
+                        .unwrap_or_else(|| {
+                            panic!("patrol-chief position owner {position_id:?} disappeared")
+                        })
+                        .element_data();
+                    crate::ai::Position {
+                        x: element.position_map().x,
+                        y: element.position_map().y,
+                        sector: element.sector(),
+                        level: element.layer(),
+                    }
+                },
+            )
+            .effective;
             tick.patrol_chief_state = chief_ai.current_state;
         }
 
@@ -1514,7 +1536,12 @@ impl EngineInner {
                     Position {
                         x: element.position_map().x,
                         y: element.position_map().y,
-                        sector: element.sector(),
+                        // `Position(element)` carries the exact `RHSector*`.
+                        // Legacy-loaded actors can retain only its public
+                        // number on ElementData, so recover the arena identity
+                        // before combat-position proposals copy this snapshot
+                        // into a cross-door GoTo destination.
+                        sector: super::ai_view_position_sector(self, element),
                         level: element.layer(),
                     }
                 },

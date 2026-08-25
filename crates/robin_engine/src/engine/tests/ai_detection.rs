@@ -2946,6 +2946,84 @@ fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
 }
 
 #[test]
+fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
+    use crate::ai::AiState;
+    use crate::coordinates::MapPoint;
+    use crate::element::{Camp, Command};
+    use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::sector::SectorNumber;
+
+    let mut engine = EngineInner::new();
+    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let minion_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    {
+        let chief = engine.get_entity_mut(chief_id).unwrap();
+        chief
+            .element_data_mut()
+            .set_position_map(MapPoint::new(814.0, 1110.2));
+        chief.ai_controller_mut().unwrap().current_state = AiState::Default;
+    }
+    engine
+        .get_entity_mut(minion_id)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .patrol_chief = Some(chief_id);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.script_domains.interactables.doors = vec![Door {
+        door_type: DoorType::LiftLow,
+        sector_out: SectorNumber::new(89),
+        sector_in: SectorNumber::new(96),
+        sector_out_index: crate::fast_find_grid::SectorIndex::new(89),
+        sector_in_index: crate::fast_find_grid::SectorIndex::new(96),
+        point_out: MapPoint::new(821.0, 1124.0),
+        point_in: MapPoint::new(811.0, 1103.0),
+        layer_out: 2,
+        layer_in: 3,
+        ..Door::default()
+    }];
+    let mut pass = crate::sequence::SequenceElement::new_movement(
+        1,
+        Command::PassDoor,
+        Some(chief_id),
+        crate::order::OrderType::WalkingStairs,
+    );
+    if let crate::sequence::SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass.data
+    {
+        *gate_id = Some(DoorIndex(0));
+        *direction = 0;
+    } else {
+        unreachable!("PassDoor fixture must be a movement element")
+    }
+    crate::sim_rng::with_seed(0xA013_0518, |sim| {
+        // This minimal fixture has no installed mission, so entity-view
+        // construction intentionally has no canonical door table. Build its
+        // otherwise-unrelated scratch snapshot before selecting PassDoor;
+        // build_npc_tick_data below must resolve the chief from live state.
+        let scratch = engine.build_sim_scratch(sim, &assets);
+        let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(pass_sequence, 0);
+        let tick = engine.build_npc_tick_data(sim, minion_id, &scratch, &assets);
+        assert_eq!(tick.patrol_chief_position.x, 821.0);
+        assert_eq!(tick.patrol_chief_position.y, 1124.0);
+        assert_eq!(tick.patrol_chief_position.level, 2);
+        assert_eq!(
+            tick.patrol_chief_position.sector,
+            crate::position_interface::SectorHandle::new(89).map(|handle| {
+                handle.with_arena_index(crate::fast_find_grid::SectorIndex::new(89).unwrap())
+            })
+        );
+    });
+}
+
+#[test]
 fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::coordinates::MapPoint;
