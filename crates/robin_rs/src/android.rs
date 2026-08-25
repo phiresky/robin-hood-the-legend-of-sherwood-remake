@@ -56,7 +56,8 @@ fn run_android(app: AndroidApp) -> Result<i32, String> {
     args.http_server = 0;
     let shipping = load_bundled_shipping_datadir(&app)?;
     let (campaign, profiles, application_context) =
-        crate::main_entry::rust_init_with_shipping(Some(shipping))?;
+        crate::main_entry::rust_init_with_shipping(Some(shipping))
+            .map_err(|error| error.to_string())?;
 
     crate::window::run_with_android_game(
         app,

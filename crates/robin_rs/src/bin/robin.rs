@@ -240,7 +240,8 @@ async fn wasm_main(
 ) -> Result<(), String> {
     let args = robin_rs::main_entry::parse_cli();
     let (campaign, profiles, shipping) =
-        robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
+        robin_rs::main_entry::rust_init_with_shipping(Some(shipping))
+            .map_err(|error| error.to_string())?;
     tracing::info!("Rust initialization complete.");
 
     robin_rs::window::run_with_game(
