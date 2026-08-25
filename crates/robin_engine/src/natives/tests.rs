@@ -903,6 +903,20 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
             MoveFlags::CALLED_BY_SCRIPT,
             1.0,
         ));
+        assert!(context.append_move_to_sequence(
+            actor,
+            crate::order::OrderType::RunningUpright,
+            (20.0, 20.0),
+            goal,
+            0,
+            (30.0, 30.0),
+            source,
+            0,
+            None,
+            0.0,
+            MoveFlags::CALLED_BY_SCRIPT,
+            1.0,
+        ));
     }
 
     let elements = &host
@@ -913,12 +927,17 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
         .expect("recording remains open")
         .sequence
         .elements;
-    assert_eq!(elements.len(), 1);
+    assert_eq!(elements.len(), 2);
     assert_eq!(elements[0].command, crate::element::Command::Move);
     let SequenceElementData::Movement { destination, .. } = &elements[0].data else {
         panic!("recorded Move must retain movement data")
     };
     assert_eq!(*destination, MapPoint::new(20.0, 20.0));
+    assert_eq!(elements[1].command, crate::element::Command::Move);
+    let SequenceElementData::Movement { destination, .. } = &elements[1].data else {
+        panic!("second recorded Move must retain movement data")
+    };
+    assert_eq!(*destination, MapPoint::new(30.0, 30.0));
 }
 
 #[test]

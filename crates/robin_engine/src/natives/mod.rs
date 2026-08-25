@@ -1054,6 +1054,13 @@ impl NativeContext<'_, '_> {
             to_pt(source),
             _source_layer,
         );
+        let goal_sector = resolve_script_position_sector(
+            &self.fast_grid.level,
+            &self.script_domains.interactables.doors,
+            goal_sector,
+            to_pt(goal),
+            goal_layer,
+        );
 
         // Counter for `record_seq_step`: the very first emission stays
         // at the caller-provided recording level; every subsequent
