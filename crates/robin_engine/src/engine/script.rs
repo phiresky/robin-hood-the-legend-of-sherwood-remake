@@ -961,12 +961,17 @@ impl EngineInner {
                     if index >= script.bindings.script_point_count {
                         return None;
                     }
+                    let sector_number = *script.bindings.location_sectors.get(index)?;
+                    let sector = script
+                        .bindings
+                        .location_sector_handles
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .or_else(|| crate::position_interface::SectorHandle::new(sector_number))?;
                     Some((
                         *script.bindings.location_positions.get(index)?,
-                        Some((
-                            *script.bindings.location_layers.get(index)?,
-                            *script.bindings.location_sectors.get(index)?,
-                        )),
+                        Some((*script.bindings.location_layers.get(index)?, sector)),
                     ))
                 } else {
                     let computed = script
@@ -974,7 +979,12 @@ impl EngineInner {
                         .computed_locations
                         .get(index - script.bindings.script_location_count)?
                         .as_ref()?;
-                    Some((computed.position, computed.layer.zip(computed.sector)))
+                    let sector = computed.sector_handle.or_else(|| {
+                        computed
+                            .sector
+                            .and_then(crate::position_interface::SectorHandle::new)
+                    });
+                    Some((computed.position, computed.layer.zip(sector)))
                 }
             });
             let Some(((x, y), dest_layer_sector)) = resolved else {
@@ -993,16 +1003,34 @@ impl EngineInner {
                     .element_data_mut();
                 element.set_position_map(crate::coordinates::MapPoint { x, y });
                 element.set_layer(layer);
-                element.set_sector(crate::position_interface::SectorHandle::new(sector));
-                let valid_motion = self.world.fast_grid.level.sectors.iter().any(|candidate| {
-                    candidate.sector_number.get() == sector as i16
-                        && candidate.layer == layer
-                        && candidate.sector_type.is_motion()
-                        && candidate.sector_type.is_area()
-                });
+                element
+                    .sprite
+                    .position_iface
+                    .set_sector_topology(Some(sector), sector.arena_index());
+                let valid_motion = if let Some(index) = sector.arena_index() {
+                    self.world
+                        .fast_grid
+                        .level
+                        .sectors
+                        .get(usize::from(index))
+                        .is_some_and(|candidate| {
+                            candidate.sector_number.get() == sector.get() as i16
+                                && candidate.layer == layer
+                                && candidate.sector_type.is_motion()
+                                && candidate.sector_type.is_area()
+                        })
+                } else {
+                    self.world.fast_grid.level.sectors.iter().any(|candidate| {
+                        candidate.sector_number.get() == sector.get() as i16
+                            && candidate.layer == layer
+                            && candidate.sector_type.is_motion()
+                            && candidate.sector_type.is_area()
+                    })
+                };
                 if !valid_motion {
                     tracing::warn!(
-                        "SetActorLocation: location {location} references non-motion sector {sector}"
+                        "SetActorLocation: location {location} references non-motion sector {}",
+                        sector.get()
                     );
                     return Ok(0);
                 }
@@ -1014,10 +1042,7 @@ impl EngineInner {
                     actor_handle,
                     x,
                     y,
-                    dest_layer_sector: dest_layer_sector.and_then(|(layer, sector)| {
-                        crate::position_interface::SectorHandle::new(sector)
-                            .map(|sector| (layer, sector))
-                    }),
+                    dest_layer_sector,
                     spawn_elevation_probe: None,
                 }],
             );
