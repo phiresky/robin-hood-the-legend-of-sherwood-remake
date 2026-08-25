@@ -9,9 +9,11 @@ set -euo pipefail
 #          "LIB_SHA256SUMS=<sha256(LIB_SHA256SUMS)>\n")
 # Direct executable + raw SHA is rejected unless the explicit
 # NATIVE_CONVERT_TEST_ALLOW_DIRECT_RUNNER=1 fixture escape hatch is set. The
-# default is a globally quiet host, two jobs, and a separate 7200-second
-# conversion watchdog. NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1 is corpus-safe but
-# requires one idle-priority job; target admission/import locks are always held.
+# default is a globally quiet host, two jobs (up to eight when explicitly
+# requested and admitted by the per-job memory gate), and a separate
+# 7200-second conversion watchdog. NATIVE_CONVERT_ALLOW_OTHER_CORPORA=1 is
+# corpus-safe but requires one idle-priority job; target admission/import locks
+# are always held.
 
 if (( $# != 5 )); then
     printf 'usage: %s WORKSPACE CORPUS PINNED_RUNNER_OR_BUNDLE TRUST_SHA256 AUDIT_DIR\n' "$0" >&2
@@ -30,6 +32,7 @@ allow_other_corpora=${NATIVE_CONVERT_ALLOW_OTHER_CORPORA:-0}
 allow_direct_fixture=${NATIVE_CONVERT_TEST_ALLOW_DIRECT_RUNNER:-0}
 minimum_free_kib=${NATIVE_CONVERT_MIN_FREE_KIB:-10485760}
 minimum_available_kib_per_job=${NATIVE_CONVERT_MIN_AVAILABLE_KIB_PER_JOB:-8388608}
+meminfo_path=${NATIVE_CONVERT_TEST_MEMINFO:-/proc/meminfo}
 
 fail() {
     printf 'error: %s\n' "$*" >&2
@@ -42,6 +45,20 @@ sha256_file() {
     printf '%s\n' "${result%% *}"
 }
 
+normalize_bounded_uint() {
+    local LC_ALL=C value=$1 limit=$2
+    [[ "$value" =~ ^[0-9]+$ ]] || return 1
+    while [[ ${#value} -gt 1 && "$value" == 0* ]]; do
+        value=${value#0}
+    done
+    if (( ${#value} > ${#limit} )) \
+        || { (( ${#value} == ${#limit} )) && [[ "$value" > "$limit" ]]; }
+    then
+        return 1
+    fi
+    printf '%s\n' "$value"
+}
+
 write_atomic() {
     local destination=$1 temporary
     temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
@@ -51,8 +68,11 @@ write_atomic() {
     fi
 }
 
-[[ "$jobs" =~ ^[1-9][0-9]*$ && "$jobs" -le 3 ]] \
-    || fail 'NATIVE_CONVERT_JOBS must be between 1 and 3'
+[[ "$jobs" =~ ^[0-9]+$ ]] \
+    || fail 'NATIVE_CONVERT_JOBS must be an unsigned integer between 1 and 8'
+jobs=$(normalize_bounded_uint "$jobs" 8) \
+    || fail 'NATIVE_CONVERT_JOBS must be between 1 and 8'
+(( jobs >= 1 )) || fail 'NATIVE_CONVERT_JOBS must be between 1 and 8'
 [[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -ge 3600 ]] \
     || fail 'NATIVE_CONVERT_TIMEOUT_SECONDS must be at least 3600'
 [[ "$allow_other_corpora" == 0 || "$allow_other_corpora" == 1 ]] \
@@ -61,8 +81,15 @@ write_atomic() {
     || fail 'NATIVE_CONVERT_TEST_ALLOW_DIRECT_RUNNER must be 0 or 1'
 [[ "$minimum_free_kib" =~ ^[0-9]+$ ]] \
     || fail 'NATIVE_CONVERT_MIN_FREE_KIB must be an unsigned integer'
+minimum_free_kib=$(normalize_bounded_uint "$minimum_free_kib" 9223372036854775807) \
+    || fail 'NATIVE_CONVERT_MIN_FREE_KIB exceeds signed 64-bit KiB arithmetic'
+# jobs is at most eight, so this bound makes required_memory_kib multiplication
+# safe in Bash's signed arithmetic as well as rejecting accidental absurd input.
 [[ "$minimum_available_kib_per_job" =~ ^[0-9]+$ ]] \
     || fail 'NATIVE_CONVERT_MIN_AVAILABLE_KIB_PER_JOB must be an unsigned integer'
+minimum_available_kib_per_job=$(normalize_bounded_uint \
+    "$minimum_available_kib_per_job" 1152921504606846975) \
+    || fail 'NATIVE_CONVERT_MIN_AVAILABLE_KIB_PER_JOB exceeds safe eight-job arithmetic'
 [[ "$expected_trust_sha" =~ ^[0-9a-f]{64}$ ]] \
     || fail 'TRUST_SHA256 must contain 64 hexadecimal digits'
 
@@ -82,6 +109,11 @@ else
     [[ -x "$runner_arg" ]] || fail "runner is not executable: $runner_arg"
     runner=$(realpath -e -- "$runner_arg")
     runner_dir=${runner%/*}
+fi
+if [[ "$meminfo_path" != /proc/meminfo ]]; then
+    (( allow_direct_fixture == 1 && runner_is_bundle == 0 )) \
+        || fail 'custom meminfo is restricted to direct-runner test fixtures'
+    [[ -f "$meminfo_path" ]] || fail "test meminfo is not a file: $meminfo_path"
 fi
 
 audit=$(realpath -m -- "$audit_arg")
@@ -232,9 +264,14 @@ exec {audit_lock_fd}>"$audit_lock" || fail "cannot open audit lock: $audit_lock"
 flock -n "$audit_lock_fd" || fail "another process owns audit lock: $audit_lock"
 corpus_digest=$(printf '%s' "${corpus#"$workspace"/}" | sha256sum)
 corpus_digest=${corpus_digest%% *}
-mkdir -p -- "$workspace/.git/native-conversion-locks" \
+native_lock_dir=${NATIVE_CONVERT_LOCK_DIR:-$workspace/.git/native-conversion-locks}
+native_lock_dir=$(realpath -m -- "$native_lock_dir") \
+    || fail 'cannot resolve native-conversion lock directory'
+[[ "$native_lock_dir" == "$workspace"/* ]] \
+    || fail 'native-conversion lock directory must be below workspace'
+mkdir -p -- "$native_lock_dir" \
     || fail 'cannot create native-conversion lock directory'
-exec {corpus_lock_fd}>"$workspace/.git/native-conversion-locks/$corpus_digest.lock" \
+exec {corpus_lock_fd}>"$native_lock_dir/$corpus_digest.lock" \
     || fail 'cannot open corpus conversion lock'
 flock -n "$corpus_lock_fd" || fail "another conversion owns corpus: $corpus"
 
@@ -258,7 +295,7 @@ processes_matching() {
     for process in /proc/[0-9]*/cmdline; do
         pid=${process#/proc/}; pid=${pid%/cmdline}
         [[ "$pid" != "$$" ]] || continue
-        command=$(tr '\0' ' ' <"$process" 2>/dev/null) || continue
+        command=$(tr '\0' ' ' 2>/dev/null <"$process") || continue
         case "$command" in
             *original_parity_replay*' --convert '*|*' -PARITYTRACE '*|*run_schema16_distributed_capture.sh*|*rsync*) ;;
             *) continue ;;
@@ -285,7 +322,7 @@ fi
 available_kib=$(df -Pk -- "$corpus" | awk 'NR == 2 {print $4}')
 [[ "$available_kib" =~ ^[0-9]+$ && "$available_kib" -ge "$minimum_free_kib" ]] \
     || fail "insufficient free disk KiB: ${available_kib:-unknown}"
-memory_available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+memory_available_kib=$(awk '/^MemAvailable:/ {print $2}' "$meminfo_path")
 required_memory_kib=$((jobs * minimum_available_kib_per_job))
 [[ "$memory_available_kib" =~ ^[0-9]+$ \
     && "$memory_available_kib" -ge "$required_memory_kib" ]] \
