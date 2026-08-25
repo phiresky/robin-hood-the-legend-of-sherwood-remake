@@ -2981,7 +2981,7 @@ impl Engine {
 
     // ── Tick ────────────────────────────────────────────────────────
 
-    /// Advance one complete authoritative simulation frame.
+    /// Advance one authoritative engine-hourglass transaction.
     ///
     /// This is the migration target for drivers that currently call external
     /// replay hooks, `apply_commands`, and `perform_hourglass` separately. It
@@ -2996,7 +2996,12 @@ impl Engine {
     /// while command handlers are incrementally disentangled from UI scratch;
     /// none of them is part of [`SimulationFrameInput`]. Rendering, widgets,
     /// audio playback, and mission `PostInitialize` remain outside this call,
-    /// at their Original post-hourglass boundaries.
+    /// at their Original post-hourglass boundaries. This is not a complete
+    /// `RHGame` host-loop frame: it cannot represent a paused/gated iteration
+    /// with no `PerformHourglass`, or a parity command produced by a nested
+    /// refresh after the main hourglass body. Post-tick host native, batch,
+    /// console, and command mutations likewise need a separate journal phase
+    /// before this can own production history commits.
     pub fn advance_frame(
         &mut self,
         display: &mut super::HostDisplayState,
@@ -3829,7 +3834,12 @@ mod tests {
         assert_eq!(crate::replay::state_hash(&framed), legacy_hash);
         assert_eq!(
             serde_json::to_value(output.events.side_effects()).expect("serialize frame events"),
-            serde_json::to_value(legacy_events).expect("serialize legacy side effects"),
+            serde_json::to_value(&legacy_events).expect("serialize legacy side effects"),
+        );
+        assert_eq!(
+            output.events.side_effects().pending_minimap_position,
+            legacy_events.pending_minimap_position,
+            "this host-local effect is serde-skipped and must be compared explicitly"
         );
         assert_eq!(
             serde_json::to_value(&framed_display).expect("serialize framed display"),
@@ -3839,7 +3849,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_api_applies_sound_external_fact_at_pre_command_boundary() {
+    fn frame_api_applies_sound_external_fact_at_pre_hourglass_boundary() {
         use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
 
         let (mut framed, assets) = frame_api_fixture();
@@ -3889,11 +3899,113 @@ mod tests {
 
     #[test]
     fn rejected_external_fact_prevents_command_and_hourglass() {
-        use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
 
         let (mut engine, assets) = frame_api_fixture();
-        let profile_id = 0x4651_0000;
+        engine.set_external_director_completion_replay(true);
+
+        // Launch a real camera command. The first completion therefore mutates
+        // the Engine before the second, invalid completion is rejected.
+        let mut camera = SequenceElement::new_generic(1, Command::CameraGoto, None);
+        camera.set_property(
+            Field::CameraPoint,
+            FieldValue::GeoPoint2D { x: 100.0, y: 100.0 },
+        );
+        camera.set_property(Field::CameraSpeed, FieldValue::Integer(0));
+        let mut sequence = Sequence::new();
+        sequence.append_element(camera);
+        let sequence_id = engine
+            .inner
+            .orders
+            .sequence_manager
+            .launch_sequence(sequence);
         engine
+            .inner
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        let mut display = super::super::HostDisplayState::default();
+        engine.inner.feedback.cutscene_camera.sequence_element =
+            Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
+        assert!(
+            engine
+                .inner
+                .feedback
+                .cutscene_camera
+                .sequence_element
+                .is_some(),
+            "fixture must have an active CameraGoto"
+        );
+
+        let engine_hash_before = crate::replay::state_hash(&engine);
+        let display_before =
+            serde_json::to_value(&display).expect("serialize display before rejected frame");
+        let mut accepted_engine = engine.clone();
+        let mut accepted_display = display.clone();
+        accepted_engine
+            .apply_external_director_completion(
+                DirectorCompletion::CameraGoto,
+                &mut accepted_display,
+                &assets,
+            )
+            .expect("the first director fact must be independently valid");
+        assert_ne!(
+            crate::replay::state_hash(&accepted_engine),
+            engine_hash_before,
+            "the accepted prefix must mutate the staged engine"
+        );
+        let mut input = InputState::default();
+        input.right_mouse_down = true;
+        let mut dev = DevState::default();
+        dev.projectile_cheat_rain = 7;
+
+        let error = engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                SimulationFrameInput::new(vec![
+                    SimCommand::from(PlayerCommand::SetMenToBlazonConversionMode { on: true }),
+                    SimCommand::from(PlayerCommand::MouseRightUp),
+                ])
+                .with_external_facts(vec![
+                    ExternalFact::DirectorCompletion(DirectorCompletion::CameraGoto),
+                    ExternalFact::DirectorCompletion(DirectorCompletion::CameraGoto),
+                ]),
+            )
+            .expect_err("the second completion has no active camera command");
+
+        assert!(matches!(
+            error,
+            FrameAdvanceError::DirectorCompletionRejected {
+                index: 1,
+                completion: DirectorCompletion::CameraGoto,
+                ..
+            }
+        ));
+        assert_eq!(crate::replay::state_hash(&engine), engine_hash_before);
+        assert_eq!(engine.frame_counter(), 0);
+        assert!(!engine.is_men_to_blazon_conversion_mode());
+        assert_eq!(
+            serde_json::to_value(&display).expect("serialize display after rejected frame"),
+            display_before,
+        );
+        assert!(input.right_mouse_down, "commands must not have run");
+        assert_eq!(
+            dev.projectile_cheat_rain, 7,
+            "the hourglass must not have run"
+        );
+    }
+
+    #[test]
+    fn external_facts_are_part_of_the_authoritative_frame_journal() {
+        use crate::sound::{ExclamationGroup, PendingExclamation, ResolvedExclamation};
+
+        let (mut initial, assets) = frame_api_fixture();
+        let profile_id = 0x4651_0000;
+        initial
             .inner
             .feedback
             .sound_sim
@@ -3905,43 +4017,81 @@ mod tests {
                 exclamation_id: 62,
                 variant: -1,
             });
+        let mut complete_journal = initial.clone();
+        let mut command_only_journal = initial;
+        let command = SimCommand::from(PlayerCommand::Noop);
+        let resolution = ResolvedExclamation {
+            actor_id: 191,
+            identifier: profile_id | 62,
+            exclamation_id: 62,
+            duration_frames: 24,
+        };
+
+        let mut complete_display = super::super::HostDisplayState::default();
+        let mut complete_input = InputState::default();
+        let mut complete_dev = DevState::default();
+        let complete_output = complete_journal
+            .advance_frame(
+                &mut complete_display,
+                &mut complete_input,
+                &assets,
+                &mut complete_dev,
+                SimulationFrameInput::new(vec![command.clone()])
+                    .with_external_facts(vec![ExternalFact::LiveSoundBoundary(vec![resolution])]),
+            )
+            .expect("advance complete frame journal");
+
+        let mut command_only_display = super::super::HostDisplayState::default();
+        let mut command_only_input = InputState::default();
+        let mut command_only_dev = DevState::default();
+        let command_only_output = command_only_journal
+            .advance_frame(
+                &mut command_only_display,
+                &mut command_only_input,
+                &assets,
+                &mut command_only_dev,
+                SimulationFrameInput::new(vec![command]),
+            )
+            .expect("advance command-only frame journal");
+
+        assert_ne!(
+            complete_output.state_hash, command_only_output.state_hash,
+            "replaying commands without the recorded host sound fact must not be treated as equivalent"
+        );
+        assert_eq!(complete_journal.sound_sim().playing_exclamations.len(), 1);
+        assert!(complete_journal.sound_sim().pending_exclamations.is_empty());
+        assert!(
+            command_only_journal
+                .sound_sim()
+                .playing_exclamations
+                .is_empty()
+        );
+        assert_eq!(
+            command_only_journal.sound_sim().pending_exclamations.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn closed_body_gate_is_not_a_paused_presentation_boundary() {
+        let (mut engine, assets) = frame_api_fixture();
         let mut display = super::super::HostDisplayState::default();
         let mut input = InputState::default();
         let mut dev = DevState::default();
 
-        let error = engine
+        let output = engine
             .advance_frame(
                 &mut display,
                 &mut input,
                 &assets,
                 &mut dev,
-                SimulationFrameInput::new(vec![SimCommand::from(
-                    PlayerCommand::SetMenToBlazonConversionMode { on: true },
-                )])
-                .with_external_facts(vec![
-                    ExternalFact::LiveSoundBoundary(vec![ResolvedExclamation {
-                        actor_id: 191,
-                        identifier: profile_id | 62,
-                        exclamation_id: 62,
-                        duration_frames: 24,
-                    }]),
-                    ExternalFact::DirectorCompletion(DirectorCompletion::CameraGoto),
-                ]),
+                SimulationFrameInput::default().with_simulation_body_allowed(false),
             )
-            .expect_err("director replay mode is disabled");
+            .expect("advance with only the actor/world body gated");
 
-        assert!(matches!(
-            error,
-            FrameAdvanceError::DirectorCompletionRejected {
-                index: 1,
-                completion: DirectorCompletion::CameraGoto,
-                ..
-            }
-        ));
-        assert_eq!(engine.frame_counter(), 0);
-        assert!(!engine.is_men_to_blazon_conversion_mode());
-        assert_eq!(engine.sound_sim().pending_exclamations.len(), 1);
-        assert!(engine.sound_sim().playing_exclamations.is_empty());
+        assert_eq!(output.frame_before, 0);
+        assert_eq!(output.frame_after, 1);
+        assert_eq!(engine.frame_counter(), 1);
     }
 
     #[test]
