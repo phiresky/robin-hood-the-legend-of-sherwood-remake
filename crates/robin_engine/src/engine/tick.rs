@@ -778,6 +778,91 @@ mod generic_actor_line_crossing_tests {
         let (stale, retained, _) = dying_find_place_increment_after_crossing(2, true);
         assert_eq!(retained, stale);
     }
+
+    #[test]
+    fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() {
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(4, 4);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        for (offset, patch_index) in [(131.0, 0), (132.0, 1)] {
+            engine.world.fast_grid_mut().add_line(
+                GridLine::new_patch(
+                    MapPoint::new(100.0, offset),
+                    MapPoint::new(160.0, offset),
+                    crate::patch::PatchIndex::new(patch_index)
+                        .expect("test patch index is representable"),
+                ),
+                0,
+            );
+        }
+
+        let stale = MapVec::new(1.0, 0.0);
+        let destination = MapPoint::new(130.0, 134.0);
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Tied,
+            ..ElementData::default()
+        };
+        element.set_position_map(MapPoint::new(130.0, 130.0));
+        element.sprite.position_iface.set_map_increment(stale);
+        // The outgoing movement condolence writes the zero idle goal and
+        // invalidates the cached increment before corpse placement commits.
+        element.sprite.position_iface.set_map_goal(MapPoint::ZERO);
+        element.set_position_map_delayed(destination);
+        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData {
+                unconscious: true,
+                ..HumanData::default()
+            },
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        }));
+
+        let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+        let mut order = Order::test_new(OrderType::BeingTied, 0.0, 0.0);
+        order.compute_direction = false;
+        wait.orders.push_back(order);
+        let sequence_id = engine.orders.sequence_manager.launch_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        let crossing_count = engine
+            .world
+            .fast_grid
+            .get_actor_crossing_line_indices(0, MapPoint::new(130.0, 130.0), destination)
+            .len();
+        let elevation_count = engine
+            .world
+            .fast_grid
+            .get_crossing_elevation_line_indices(0, MapPoint::new(130.0, 130.0), destination)
+            .len();
+        assert_eq!(crossing_count, 2);
+        assert_eq!(elevation_count, 0);
+
+        engine.apply_delayed_actor_position(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+        );
+
+        let position = engine
+            .get_entity(owner)
+            .expect("delayed-position owner remains live")
+            .position_iface();
+        let recomputed = position.get_increment_map();
+        let dx = -destination.x;
+        let dy = -destination.y;
+        let norm = (dx * dx + dy * dy).sqrt();
+        let expected = MapVec::new(dx / norm, dy / norm);
+        assert_ne!(recomputed, stale);
+        assert!((recomputed.x - expected.x).abs() < 1.0e-6);
+        assert!((recomputed.y - expected.y).abs() < 1.0e-6);
+    }
 }
 
 #[cfg(test)]

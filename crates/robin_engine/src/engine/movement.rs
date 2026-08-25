@@ -4571,8 +4571,39 @@ impl EngineInner {
             return;
         }
 
-        let crossed = self.check_for_line_crossing(assets, entity_id, old_pos, new_pos, layer);
-        if crossed {
+        // Original queries one unified LINE_CROSS list here.  Its multi-line
+        // arm runs the shared UpdateRoll/ComputeIncrementAll tail even when
+        // every crossed line is non-elevation.  Keep the candidate count
+        // intact across the elevation and callback dispatches; splitting the
+        // queries first loses that observable `count > 1` branch.
+        let crossing_indices = self
+            .world
+            .fast_grid
+            .get_actor_crossing_line_indices(layer, old_pos, new_pos);
+        let crossing_count = crossing_indices.len();
+        let elevation_indices = crossing_indices
+            .iter()
+            .copied()
+            .filter(|&line_index| {
+                self.world.fast_grid.level.lines[usize::from(line_index)].is_elevation
+            })
+            .collect::<Vec<_>>();
+        let callback_indices = crossing_indices
+            .into_iter()
+            .filter(|&line_index| {
+                crossing_count == 1
+                    || !self.world.fast_grid.level.lines[usize::from(line_index)].is_elevation
+            })
+            .collect::<Vec<_>>();
+        let crossed_elevation = self.check_for_elevation_line_crossing_indices(
+            assets,
+            entity_id,
+            old_pos,
+            new_pos,
+            layer,
+            elevation_indices,
+        );
+        if crossed_elevation || crossing_count > 1 {
             if is_human {
                 self.update_roll_after_crossing(assets, entity_id);
             }
@@ -4590,7 +4621,14 @@ impl EngineInner {
             }
         }
         let _ = is_pc;
-        self.check_for_non_elevation_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
+        self.check_for_non_elevation_line_crossing_indices(
+            sim,
+            assets,
+            entity_id,
+            old_pos,
+            new_pos,
+            callback_indices,
+        );
     }
 
     /// Match `RHSectorBuilding::IsAuthorized()` for gate pathfinding.
