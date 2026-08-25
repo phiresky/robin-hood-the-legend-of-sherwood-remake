@@ -116,12 +116,18 @@ enum RecordedInteractionIdentityError {
 /// sector, the route is a direct Move and must not gain a leading
 /// AssertPosition merely because the actor's raw sector differed earlier.
 fn target_interaction_assert_source_sector(
-    adapted_source_sector: u16,
+    adapted_source_sector: crate::position_interface::SectorHandle,
     target_sector: crate::position_interface::SectorHandle,
-) -> Result<Option<crate::position_interface::SectorHandle>, u16> {
-    let source_sector = crate::position_interface::SectorHandle::new(adapted_source_sector)
-        .ok_or(adapted_source_sector)?;
-    Ok((source_sector != target_sector).then_some(source_sector))
+) -> Option<crate::position_interface::SectorHandle> {
+    let same_sector = match (
+        adapted_source_sector.arena_index(),
+        target_sector.arena_index(),
+    ) {
+        (Some(source), Some(target)) => source == target,
+        (None, None) => adapted_source_sector == target_sector,
+        (Some(_), None) | (None, Some(_)) => false,
+    };
+    (!same_sector).then_some(adapted_source_sector)
 }
 
 impl EngineInner {
@@ -2995,23 +3001,31 @@ impl EngineInner {
             crate::order::OrderType::WalkingUpright
         };
 
-        let (gate_path, gate_source_sector) = if actor_sector == target_sector {
+        let same_sector = match (actor_sector.arena_index(), target_sector.arena_index()) {
+            (Some(actor), Some(target)) => actor == target,
+            (None, None) => actor_sector == target_sector,
+            (Some(_), None) | (None, Some(_)) => false,
+        };
+        let (gate_path, gate_source_sector) = if same_sector {
             (Vec::new(), None)
         } else {
-            let (source_pos, source_sector) = super::movement::adapt_source_to_current_door(
-                &self.script_domains.interactables.doors,
-                door,
-                door_direction,
-            )
-            .map(|(position, sector, _)| (position, sector))
-            .unwrap_or((actor_pos, u16::from(actor_sector)));
+            let (source_pos, source_sector) =
+                super::movement::adapt_source_to_current_door_with_identity(
+                    &self.script_domains.interactables.doors,
+                    door,
+                    door_direction,
+                )
+                .map(|(position, sector, _)| (position, sector))
+                .unwrap_or((actor_pos, actor_sector));
             let level = self.world.fast_grid.level.clone();
-            let Some(path) = crate::gate::find_path_gates(
+            let Some(path) = crate::gate::find_path_gates_with_sector_indices(
                 &self.script_domains.interactables.doors,
                 (source_pos.x, source_pos.y),
-                source_sector,
+                source_sector.get(),
+                source_sector.arena_index(),
                 (target_pos.x, target_pos.y),
-                u16::from(target_sector),
+                target_sector.get(),
+                target_sector.arena_index(),
                 Some(&actor_auth),
                 false,
                 &|sector| self.building_sector_is_authorized(sector),
@@ -3033,12 +3047,7 @@ impl EngineInner {
             };
             (
                 path,
-                target_interaction_assert_source_sector(source_sector, target_sector)
-                    .unwrap_or_else(|source_sector| {
-                        panic!(
-                            "target interaction for {actor:?} adapted to invalid source sector {source_sector}"
-                        )
-                    }),
+                target_interaction_assert_source_sector(source_sector, target_sector),
             )
         };
 
@@ -4938,14 +4947,30 @@ mod tests {
         let target_sector = crate::position_interface::SectorHandle::new(51).unwrap();
 
         assert_eq!(
-            target_interaction_assert_source_sector(51, target_sector),
-            Ok(None),
+            target_interaction_assert_source_sector(
+                crate::position_interface::SectorHandle::new(51).unwrap(),
+                target_sector,
+            ),
+            None,
             "adapting door 10 from sector 48 onto its sector-51 far side must produce the Original's direct interaction Move"
         );
         assert_eq!(
-            target_interaction_assert_source_sector(48, target_sector),
-            Ok(crate::position_interface::SectorHandle::new(48)),
+            target_interaction_assert_source_sector(
+                crate::position_interface::SectorHandle::new(48).unwrap(),
+                target_sector,
+            ),
+            crate::position_interface::SectorHandle::new(48),
             "a genuinely distinct adapted source must retain AppendMoveToSequence's leading AssertPosition"
+        );
+
+        let source_index = crate::fast_find_grid::SectorIndex::new(17).unwrap();
+        let target_index = crate::fast_find_grid::SectorIndex::new(18).unwrap();
+        let exact_source = target_sector.with_arena_index(source_index);
+        let exact_target = target_sector.with_arena_index(target_index);
+        assert_eq!(
+            target_interaction_assert_source_sector(exact_source, exact_target),
+            Some(exact_source),
+            "overlapping public sector numbers are distinct Original RHSector pointers"
         );
     }
 
