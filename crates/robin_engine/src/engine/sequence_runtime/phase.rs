@@ -3131,11 +3131,26 @@ impl EngineInner {
                                 Some((seq_id, elem_idx)),
                             );
                         }
+                        // C++ returns immediately when Translate completed the
+                        // element re-entrantly and changed mpSequenceElement;
+                        // that path deliberately does not overwrite the
+                        // actor's preceding motion latch with IN_PROGRESS.
+                        // Only an element that survived translation and was
+                        // promoted to INPROGRESS reaches the common write
+                        // below. Command-specific empty-order paths publish
+                        // their required edge at the dispatch site above.
                         if self
-                            .world
-                            .entities
-                            .get(owner)
-                            .is_some_and(|entity| entity.actor_data().is_some())
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .is_some_and(|element| {
+                                element.state == crate::sequence::SequenceState::InProgress
+                            })
+                            && self
+                                .world
+                                .entities
+                                .get(owner)
+                                .is_some_and(|entity| entity.actor_data().is_some())
                         {
                             accepted_instruct_owners.push(owner);
                         }
