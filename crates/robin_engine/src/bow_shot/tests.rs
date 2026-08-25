@@ -1,7 +1,7 @@
 //! Bow-shot unit and parity regression tests.
 
 use super::*;
-use crate::coordinates::{SpriteFrameOffset, SpriteLocalPoint};
+use crate::coordinates::{MapVec, SpriteFrameOffset, SpriteLocalPoint};
 use crate::element::{
     ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
 };
@@ -4134,6 +4134,93 @@ fn non_shield_arrow_ricochet_advances_immediately() {
             "falling refresh rotates the next tumble sector by -2"
         );
     });
+}
+
+#[test]
+fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
+    crate::sim_rng::with_seed(1, |sim| {
+        // Savegame_linux2/Profile_002/Savegame_017/replay-016, frame 566:
+        // the arrow reaches a ground endpoint a fraction below zero.  Its
+        // shield-deflection trajectory is empty, but Original's nested
+        // Hourglass still executes HitObstacle and publishes the ground snap.
+        let endpoint = WorldPoint3D::new(98.988_8, 861.410_2, -0.000_000_953_674_3);
+        let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+            bow_point: endpoint,
+            trajectory_origin: endpoint.to_map(),
+            target: EntityId::Pc(crate::entity_id::PcId(1)),
+            target_pos: endpoint.to_map(),
+            trajectory: vec![],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664),
+        }) else {
+            panic!("spawn_arrow returned a non-projectile entity");
+        };
+        arrow.element.set_position(endpoint);
+        arrow
+            .element
+            .set_position_map_preserving_3d(endpoint.to_map());
+        arrow.element.set_direction_instantly(10);
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.trajectory_frame_count = 0;
+        arrow.projectile.launch_segment_start = None;
+        arrow.projectile.flying = true;
+
+        make_arrow_falling_down(sim, &mut arrow, true, None);
+
+        let position = arrow.element.position();
+        assert_eq!(position.x.to_bits(), endpoint.x.to_bits());
+        assert_eq!(position.y.to_bits(), endpoint.y.to_bits());
+        assert_eq!(position.z.to_bits(), 0.001_f32.to_bits());
+        assert_eq!(arrow.element.sprite.position_iface.old_position(), endpoint);
+        assert_eq!(arrow.element.layer(), u16::MAX);
+        assert_eq!(arrow.element.sector(), None);
+        assert!(!arrow.projectile.flying);
+        assert_eq!(arrow.projectile.trajectory_frame_count, u16::MAX);
+        assert_eq!(arrow.projectile.velocity_increment, WorldVec3D::ZERO);
+        assert_eq!(
+            arrow.element.sprite.position_iface.map_position()
+                - arrow.element.sprite.position_iface.old_map_position(),
+            MapVec::new(0.0, -0.000_976_562_5)
+        );
+    });
+}
+
+#[test]
+fn ground_crossing_is_attributed_to_first_front_facing_shield() {
+    let mut holder = make_soldier(140.006_48, 588.663_45);
+    holder.element_data_mut().set_direction_instantly(15);
+    let actor = holder.actor_data_mut().expect("soldier actor data");
+    actor.action_state = ActionState::HoldingShield;
+    actor.shield_obstacle = Some(compute_shield_obstacle(
+        MapPoint::new(140.006_48, 588.663_45),
+        0.0,
+        15,
+        &shield_params_for_soldier(40, 50),
+    ));
+    let entities = entity_table(vec![Some(holder)]);
+    let holder_id = entities.get_at_index(0).expect("shield holder slot").0;
+
+    let old = WorldPoint3D::new(146.383_45, 814.959_1, 7.129_663_5);
+    let new = WorldPoint3D::new(98.988_8, 861.410_2, -0.000_000_953_674_3);
+    let increment = WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664);
+    let obstacle = entities
+        .get(holder_id)
+        .and_then(Entity::actor_data)
+        .and_then(|actor| actor.shield_obstacle.as_ref())
+        .expect("retained shield obstacle");
+    assert!(
+        !obstacle.is_blocking_ray_3d([new.x, new.y, new.z], [old.x, old.y, old.z]),
+        "fixture must prove the shield geometry itself is far from the arrow"
+    );
+
+    assert_eq!(
+        projectile_shield_holder(&entities, None, old, new, increment),
+        Some(holder_id),
+        "Original IsReachable tests the ground crossing before the shield obstacle list"
+    );
 }
 
 /// An arrow that runs out of trajectory without hitting anything
