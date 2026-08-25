@@ -4011,6 +4011,74 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
 }
 
 #[test]
+fn fighter_snapshot_recovers_exact_duplicate_pc_sector_for_combat_routes() {
+    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::sector::{SectorNumber, SectorType};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let square = |min: f32, max: f32| GridSector {
+        points: vec![
+            MapPoint::new(min, min),
+            MapPoint::new(max, min),
+            MapPoint::new(max, max),
+            MapPoint::new(min, max),
+        ],
+        bounding_box: MapBBox::from_coords(min, min, max, max),
+        sector_number: SectorNumber::new(88),
+        layer: 2,
+        sector_type: SectorType::MOTION,
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    };
+    engine.world.fast_grid_mut().level_mut().sectors =
+        vec![square(0.0, 100.0), square(600.0, 800.0)];
+
+    let Entity::Soldier(owner_entity) = engine.get_entity_mut(owner).unwrap() else {
+        panic!("fighter owner changed kind")
+    };
+    owner_entity.element.active = true;
+    owner_entity.npc.life_points = 100;
+    owner_entity
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("fighter owner has Enemy AI")
+        .base
+        .me = owner.index();
+
+    let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
+    target_element.active = true;
+    target_element.set_position_map(MapPoint::new(684.0, 745.0));
+    target_element.set_layer(2);
+    target_element.set_sector(crate::position_interface::SectorHandle::new(88));
+    assert_eq!(target_element.sector().unwrap().arena_index(), None);
+
+    let registry = engine.build_full_fighter_registry_for_test(owner, &assets);
+    let target_sector = registry
+        .iter()
+        .find(|fighter| fighter.handle == target.index())
+        .and_then(|fighter| fighter.position.sector)
+        .expect("target fighter snapshot has a sector");
+    assert_eq!(u16::from(target_sector), 88);
+    assert_eq!(target_sector.arena_index(), SectorIndex::new(1));
+}
+
+#[test]
 fn bow_interaction_accepts_a_target_that_died_while_aiming() {
     use crate::profiles::{BowProfile, BowShootMode, CharacterProfile, ProfileManager};
 
