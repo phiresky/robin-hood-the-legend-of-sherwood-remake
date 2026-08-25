@@ -204,7 +204,7 @@ impl EngineInner {
         let opponents: Vec<EntityId> = self
             .get_entity(entity_id)
             .and_then(|e| e.human_data())
-            .map(|h| h.opponents.clone())
+            .map(|h| h.opponents.ids())
             .unwrap_or_default();
 
         if transfer_smalltalk_initiative {

@@ -945,16 +945,9 @@ impl Engine {
             })
         });
         let human_structure = entity.human_data().map(|human| {
-            assert_eq!(
-                human.opponents.len(),
-                human.opponent_jump_lines.len(),
-                "parity human opponent and jump-line arrays differ in length"
-            );
             let opponents = human
                 .opponents
-                .iter()
-                .copied()
-                .zip(human.opponent_jump_lines.iter().copied())
+                .iter_with_jump_lines()
                 .map(|(opponent, line)| json!({
                     "entity": entity_ref(opponent), "jump_line": jump_line(line.map(u32::from)),
                 }))

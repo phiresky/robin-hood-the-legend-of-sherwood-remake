@@ -1170,7 +1170,7 @@ mod suite {
             element: opponent_element,
             actor: ActorData::default(),
             human: HumanData {
-                opponents: vec![owner],
+                opponents: vec![owner].into(),
                 ..HumanData::default()
             },
             pc: PcData {

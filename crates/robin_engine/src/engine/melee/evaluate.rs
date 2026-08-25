@@ -293,7 +293,7 @@ impl EngineInner {
     ) {
         let opponents: Vec<EntityId> = match self.get_entity(entity_id).and_then(|e| e.human_data())
         {
-            Some(h) => h.opponents.clone(),
+            Some(h) => h.opponents.ids(),
             None => return,
         };
 
@@ -378,7 +378,7 @@ impl EngineInner {
                 panic!("EvaluateSwordfight distance owner {entity_id:?} has no principal")
             });
             let last_step_back = human.last_motion_was_step_back_in_combat;
-            let opp_jump_line = human.opponent_jump_lines.first().copied().flatten();
+            let opp_jump_line = human.opponents.jump_line(0);
 
             // Selected PCs never reposition themselves during swordfighting.
             // Controlled soldiers use stance policy instead: Hold and
@@ -1454,7 +1454,7 @@ impl EngineInner {
                 panic!("EvaluateSwordfight step-back owner {entity_id:?} is not human")
             })
             .opponents
-            .clone();
+            .ids();
         if opponents.is_empty() {
             return None;
         }

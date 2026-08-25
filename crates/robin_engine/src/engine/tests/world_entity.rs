@@ -3040,7 +3040,7 @@ fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
             .get_entity_mut(opponent)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![initiator];
+        human.opponents = vec![initiator].into();
         human.relative_fighting_ability = 42;
     }
 
@@ -3094,20 +3094,20 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
             .get_entity_mut(owner)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![near, far];
+        human.opponents = vec![near, far].into();
         human.relative_fighting_ability = 17;
     }
     engine
         .get_entity_mut(near)
         .and_then(Entity::human_data_mut)
         .unwrap()
-        .opponents = vec![owner];
+        .opponents = vec![owner].into();
     {
         let human = engine
             .get_entity_mut(far)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![owner, far_partner];
+        human.opponents = vec![owner, far_partner].into();
         human.smalltalk_initiative = false;
         human.received_smalltalk_initiative = false;
     }
@@ -3116,7 +3116,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
             .get_entity_mut(far_partner)
             .and_then(Entity::human_data_mut)
             .unwrap();
-        human.opponents = vec![far];
+        human.opponents = vec![far].into();
         human.smalltalk_initiative = true;
     }
 
@@ -3186,14 +3186,14 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![old_principal, promoted];
+        .opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
         engine
             .get_entity_mut(opponent)
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![owner];
+            .opponents = vec![owner].into();
     }
 
     assert!(
@@ -3284,14 +3284,14 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
         .unwrap()
         .human_data_mut()
         .unwrap()
-        .opponents = vec![old_principal, promoted];
+        .opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
         engine
             .get_entity_mut(opponent)
             .unwrap()
             .human_data_mut()
             .unwrap()
-            .opponents = vec![owner];
+            .opponents = vec![owner].into();
     }
 
     engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);

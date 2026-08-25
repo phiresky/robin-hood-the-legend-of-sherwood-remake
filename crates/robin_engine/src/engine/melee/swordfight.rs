@@ -76,24 +76,7 @@ impl EngineInner {
         let Some(human) = entity.human_data_mut() else {
             return false;
         };
-        // Keep the parallel jump-line vector aligned (defensive against
-        // older saves predating its addition).
-        if human.opponent_jump_lines.len() < human.opponents.len() {
-            human
-                .opponent_jump_lines
-                .resize(human.opponents.len(), None);
-        }
-        if let Some(pos) = human.opponents.iter().position(|&id| id == opponent_id) {
-            if pos != 0 {
-                human.opponents.swap(0, pos);
-                human.opponent_jump_lines.swap(0, pos);
-                human.opponent_jump_lines[0] = jump_line;
-            }
-            return false;
-        }
-        human.opponents.insert(0, opponent_id);
-        human.opponent_jump_lines.insert(0, jump_line);
-        true
+        human.opponents.add_principal(opponent_id, jump_line)
     }
 
     /// Remove `opponent` from `entity`'s opponent list.
@@ -104,13 +87,8 @@ impl EngineInner {
     ) -> bool {
         if let Some(entity) = entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
-            && let Some(pos) = human.opponents.iter().position(|&id| id == opponent_id)
+            && human.opponents.remove(opponent_id)
         {
-            human.opponents.remove(pos);
-            // Keep the parallel jump-line vector aligned with `opponents`.
-            if pos < human.opponent_jump_lines.len() {
-                human.opponent_jump_lines.remove(pos);
-            }
             return true;
         }
         false
@@ -216,14 +194,7 @@ impl EngineInner {
         // second pass without holding a borrow on `self.world.entities`.
         let opponents: Vec<(EntityId, Option<crate::jump_line::JumpLineIndex>)> =
             match self.get_entity(entity_id).and_then(|e| e.human_data()) {
-                Some(h) => {
-                    let mut v = Vec::with_capacity(h.opponents.len());
-                    for (i, &opp_id) in h.opponents.iter().enumerate() {
-                        let jl = h.opponent_jump_lines.get(i).copied().flatten();
-                        v.push((opp_id, jl));
-                    }
-                    v
-                }
+                Some(h) => h.opponents.iter_with_jump_lines().collect(),
                 None => return,
             };
 
@@ -344,30 +315,15 @@ impl EngineInner {
             if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
-                if human.opponent_jump_lines.len() < human.opponents.len() {
-                    human
-                        .opponent_jump_lines
-                        .resize(human.opponents.len(), None);
-                }
-                if let Some(slot) = human.opponent_jump_lines.get_mut(i) {
-                    *slot = this_jl;
-                }
+                let _ = human.opponents.update_jump_line_at(i, this_jl);
             }
             // Mirror onto the opponent's slot for `entity_id`.
             // Use a soft path here — opponent's list may legitimately
             // have removed the entry between snapshot and write-back.
             if let Some(entity) = self.world.entities.get_mut(opp_id)
                 && let Some(human) = entity.human_data_mut()
-                && let Some(pos) = human.opponents.iter().position(|&id| id == entity_id)
             {
-                if human.opponent_jump_lines.len() < human.opponents.len() {
-                    human
-                        .opponent_jump_lines
-                        .resize(human.opponents.len(), None);
-                }
-                if let Some(slot) = human.opponent_jump_lines.get_mut(pos) {
-                    *slot = opp_jl;
-                }
+                let _ = human.opponents.update_jump_line(entity_id, opp_jl);
             }
         }
     }
@@ -571,11 +527,7 @@ impl EngineInner {
             if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
-                human.opponents.swap(0, new_principal);
-                // Keep the parallel jump-line vector in lockstep.
-                if new_principal < human.opponent_jump_lines.len() {
-                    human.opponent_jump_lines.swap(0, new_principal);
-                }
+                assert!(human.opponents.promote(new_principal));
             }
             self.take_smalltalk_initiative(entity_id);
         }
@@ -621,10 +573,7 @@ impl EngineInner {
             if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
-                human.opponents.swap(0, idx);
-                if idx < human.opponent_jump_lines.len() {
-                    human.opponent_jump_lines.swap(0, idx);
-                }
+                assert!(human.opponents.promote(idx));
             }
             self.take_smalltalk_initiative(entity_id);
         } else {
@@ -1326,7 +1275,7 @@ impl EngineInner {
             .human_data()
             .unwrap_or_else(|| panic!("QuitSwordFight owner {entity_id:?} is not human"))
             .opponents
-            .clone();
+            .ids();
 
         // Route every reciprocal unlink through the authoritative
         // DeleteOpponent translation. It owns strength recomputation, the
@@ -1355,7 +1304,6 @@ impl EngineInner {
             let entity = self.expect_entity_mut(entity_id, "quit_swordfight quitter");
             if let Some(human) = entity.human_data_mut() {
                 human.opponents.clear();
-                human.opponent_jump_lines.clear();
             }
             if !entity_is_dead && let Some(pc) = entity.pc_data_mut() {
                 pc.melee_target = None;
@@ -1417,7 +1365,7 @@ impl EngineInner {
                 .unwrap_or(70.0);
             let opps = entity
                 .human_data()
-                .map(|h| h.opponents.clone())
+                .map(|h| h.opponents.ids())
                 .unwrap_or_default();
             (opps, range)
         };

@@ -984,7 +984,7 @@ fn choose_opponent(
 ) -> Option<engine_element::EntityId> {
     let pc_entity = engine.get_entity(pc_id)?;
     let pc_pos = pc_entity.element_data().position_map();
-    let opponents = pc_entity.human_data().map(|h| h.opponents.clone())?;
+    let opponents = pc_entity.human_data().map(|h| h.opponents.ids())?;
     if opponents.len() < 2 {
         return None;
     }
