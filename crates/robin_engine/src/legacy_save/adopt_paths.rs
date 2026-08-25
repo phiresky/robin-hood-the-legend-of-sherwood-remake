@@ -97,8 +97,8 @@ pub(crate) struct LegacyPathAdoptionPlan {
     failed: Vec<FailedPathRequest>,
     pending: PendingPathRequestQueue,
     pathfinder_states: Vec<Vec<u32>>,
-    line_active: Vec<bool>,
-    sector_active: Vec<bool>,
+    line_updates: Vec<(usize, bool)>,
+    sector_updates: Vec<(usize, bool)>,
 }
 
 impl LegacyPathAdoptionPlan {
@@ -107,8 +107,12 @@ impl LegacyPathAdoptionPlan {
             .orders
             .install_legacy_path_schedule(self.pending, self.failed);
         engine.world.pathfinder.states = self.pathfinder_states;
-        engine.world.fast_grid_mut().line_active = self.line_active;
-        engine.world.fast_grid_mut().sector_active = self.sector_active;
+        for (index, active) in self.line_updates {
+            engine.world.fast_grid_mut().line_active[index] = active;
+        }
+        for (index, active) in self.sector_updates {
+            engine.world.fast_grid_mut().sector_active[index] = active;
+        }
     }
 }
 
@@ -175,15 +179,15 @@ pub(crate) fn preflight_v48_paths(
         converted_pending.push(request);
     }
 
-    let (pathfinder_states, line_active, sector_active) =
+    let (pathfinder_states, line_updates, sector_updates) =
         preflight_graph_states(engine, assets, &pathfinder.layer_area_states)?;
 
     Ok(LegacyPathAdoptionPlan {
         failed: converted_failed,
         pending: PendingPathRequestQueue::restore_v48_waiting(converted_pending),
         pathfinder_states,
-        line_active,
-        sector_active,
+        line_updates,
+        sector_updates,
     })
 }
 
@@ -475,7 +479,7 @@ fn preflight_graph_states(
     engine: &EngineInner,
     assets: &LevelAssets,
     saved: &[Vec<u32>],
-) -> Result<(Vec<Vec<u32>>, Vec<bool>, Vec<bool>), LegacyPathAdoptError> {
+) -> Result<(Vec<Vec<u32>>, Vec<(usize, bool)>, Vec<(usize, bool)>), LegacyPathAdoptError> {
     let graph = assets.pathfinder_graph.as_ref();
     if saved.len() != graph.states.len() || saved.len() != engine.world.pathfinder.states.len() {
         return Err(LegacyPathAdoptError::StateShape {
@@ -506,8 +510,8 @@ fn preflight_graph_states(
         });
     }
 
-    let mut line_active = engine.world.fast_grid.line_active.clone();
-    let mut sector_active = engine.world.fast_grid.sector_active.clone();
+    let mut line_updates = Vec::new();
+    let mut sector_updates = Vec::new();
     for (layer, states) in saved.iter().enumerate() {
         let move_areas = &graph.static_data.move_layers[layer];
         if move_areas.len() != states.len() {
@@ -526,29 +530,29 @@ fn preflight_graph_states(
                     .ok_or(LegacyPathAdoptError::MissingGridSectorBinding)?;
                 let index =
                     usize::try_from(sector.get()).expect("u32 sector index does not fit usize");
-                let sector_count = sector_active.len();
-                let Some(slot) = sector_active.get_mut(index) else {
+                let sector_count = engine.world.fast_grid.sector_active.len();
+                if index >= sector_count {
                     return Err(LegacyPathAdoptError::MissingGridSector {
                         sector: index,
                         sector_count,
                     });
-                };
-                *slot = active;
+                }
+                sector_updates.push((index, active));
                 for &line in &obstacle.grid_line_indices {
                     let index = usize::from(line);
-                    let Some(slot) = line_active.get_mut(index) else {
+                    if index >= engine.world.fast_grid.line_active.len() {
                         return Err(LegacyPathAdoptError::MissingGridLine {
                             line: index,
-                            line_count: line_active.len(),
+                            line_count: engine.world.fast_grid.line_active.len(),
                         });
-                    };
-                    *slot = active;
+                    }
+                    line_updates.push((index, active));
                 }
             }
         }
     }
 
-    Ok((saved.to_vec(), line_active, sector_active))
+    Ok((saved.to_vec(), line_updates, sector_updates))
 }
 
 fn validate_point(
@@ -650,8 +654,8 @@ mod tests {
     fn graph_state_preflight_synchronizes_motion_grid_without_mutating_engine() {
         let mut engine = EngineInner::new();
         engine.world.pathfinder.states = vec![vec![0x5555_5555]];
-        engine.world.fast_grid_mut().line_active = vec![false, true];
-        engine.world.fast_grid_mut().sector_active = vec![false, true];
+        engine.world.fast_grid_mut().line_active = vec![false, true, false];
+        engine.world.fast_grid_mut().sector_active = vec![false, true, false];
 
         let mut graph = PathGraph::new();
         graph.states = vec![vec![0]];
@@ -682,14 +686,36 @@ mod tests {
         let mut assets = LevelAssets::new();
         assets.pathfinder_graph = std::sync::Arc::new(graph);
 
-        let (states, lines, sectors) =
+        let (states, line_updates, sector_updates) =
             preflight_graph_states(&engine, &assets, &[vec![1]]).expect("valid graph state");
         assert_eq!(states, vec![vec![1]]);
-        assert_eq!(lines, vec![true, false]);
-        assert_eq!(sectors, vec![true, false]);
+        assert_eq!(line_updates, vec![(0, true), (1, false)]);
+        assert_eq!(sector_updates, vec![(0, true), (1, false)]);
         assert_eq!(engine.world.pathfinder.states, vec![vec![0x5555_5555]]);
-        assert_eq!(engine.world.fast_grid.line_active, vec![false, true]);
-        assert_eq!(engine.world.fast_grid.sector_active, vec![false, true]);
+        assert_eq!(engine.world.fast_grid.line_active, vec![false, true, false]);
+        assert_eq!(
+            engine.world.fast_grid.sector_active,
+            vec![false, true, false]
+        );
+
+        // Full legacy adoption applies the independently preflighted grid plan
+        // before this path plan. Preserve its unrelated patch/door flags and
+        // overwrite only the motion-obstacle slots represented above.
+        engine.world.fast_grid_mut().line_active = vec![false, false, true];
+        engine.world.fast_grid_mut().sector_active = vec![false, false, true];
+        LegacyPathAdoptionPlan {
+            failed: Vec::new(),
+            pending: PendingPathRequestQueue::default(),
+            pathfinder_states: states,
+            line_updates,
+            sector_updates,
+        }
+        .apply(&mut engine);
+        assert_eq!(engine.world.fast_grid.line_active, vec![true, false, true]);
+        assert_eq!(
+            engine.world.fast_grid.sector_active,
+            vec![true, false, true]
+        );
     }
 
     #[test]

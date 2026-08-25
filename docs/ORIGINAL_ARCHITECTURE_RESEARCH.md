@@ -1,8 +1,8 @@
 # Original architecture research for domain isolation
 
-Status: prerequisite research for architecture item 4. This document is a
-source audit and implementation recommendation; it does not implement the
-refactoring.
+Status: source audit and implementation record for architecture item 4. The
+path-scheduling pilot described below is implemented; later slices remain
+recommendations.
 
 ## Executive finding
 
@@ -15,38 +15,41 @@ continuations**:
 - the engine performs mission/script work, advances the frame clock, and may
   stop before the simulation body;
 - path completion and collision run at fixed barriers;
-- live elements run in Original creation/insertion order, with derived and
+- live elements run in Original publication/insertion order, with derived and
   base `Hourglass` work interleaved inside each owner slot;
 - the sequence manager drains a FIFO after the element walk, but many
   sequence, actor, AI, messenger, and script transitions execute immediately
   and re-entrantly before that FIFO or during its drain;
 - selection cleanup and anonymous timers run after sequences; and
-- widgets, rendering, and external sound advance outside the engine tick.
+- widgets, rendering/director work, external sound, and one-time script
+  post-initialization advance outside the engine tick. Director and sound
+  phases can synchronously re-enter gameplay even when the engine tick is
+  gated.
 
 The Original's singleton pointers, raw back-pointers, static scratch state,
 manual subtype arrays, inheritance hierarchy, and direct UI calls are mostly
 C++ implementation accidents. They should not be reproduced as Rust
-ownership. Creation order, FIFO order, callback-stack closure, stable script
-handles, timer edge behavior, and the host/tick boundary are observable and
-must be retained.
+ownership. Creation identity, insertion/FIFO order, callback-stack closure,
+ordinary-lifecycle script handles, timer edge behavior, and the host/tick
+boundary are observable and must be retained.
 
 The current nine-owner `EngineInner` is therefore the right **persistent
 snapshot root**, not a mistake that should be replaced by independently
 ticking services or an ECS. The remaining problem is enforcement: most domain
 and subdomain fields are `pub(crate)`, most orchestration methods receive
-`&mut EngineInner`, and at least one nominally narrow context still receives
-whole `WorldState` and `OrderRuntime` values. Item 4 should introduce exact,
-ephemeral capability contexts around proven scheduling barriers. It should not
-physically split the deterministic root or alter the tick schedule.
+`&mut EngineInner`, and the now-fixed path context was one example of a
+nominally narrow API receiving whole owners. Item 4 should continue introducing
+exact, ephemeral capability contexts around proven scheduling barriers. It
+should not physically split the deterministic root or alter the tick schedule.
 
-The recommended first slice is the existing path-scheduling barrier. Replace
-the broad `MovementContext { world: &mut WorldState, orders: &mut
+The implemented first slice is the existing path-scheduling barrier. It
+replaces the broad `MovementContext { world: &mut WorldState, orders: &mut
 OrderRuntime }` with an exact `PathScheduleContext` borrowing only the entity
 query, spatial grid, pathfinder, pending/failed path queues, and a read-only
-sequence view. Leave result application, hero speech, sequence termination,
-and condolation dispatch in the root coordinator at their current positions.
-This makes the architectural rule compile-visible without entering the much
-riskier entity/AI/sequence re-entrancy graph.
+sequence view. Result application, hero speech, sequence termination, and
+condolation dispatch remain in the root coordinator. This makes the
+architectural rule compile-visible without entering the much riskier
+entity/AI/sequence re-entrancy graph.
 
 ## Scope and source convention
 
@@ -61,15 +64,15 @@ Principal sources:
 | Area | Source anchors | What they establish |
 | --- | --- | --- |
 | Engine ownership | `original-code/RHEngine.h:145-311`, `RHengine.cpp:328-383` | One object owns simulation, presentation, hardware links, spatial state, sequences, entities, and registries; it also installs global access paths. |
-| Engine schedule | `RHengine.cpp:3466-3813` | Exact top-level order, early returns, creation-order element walk, sequence barrier, selection cleanup, and timers. |
+| Engine schedule | `RHengine.cpp:3466-3813` | Exact engine-tick order, early returns, insertion-order element walk, sequence barrier, selection cleanup, and timers. |
 | Entity publication | `RHengine.cpp:10285-10369`, `RHengine.cpp:10387-10583` | Canonical append order, derived registries, deactivation-before-removal, and intentionally retained object lifetime. |
 | Element owner slots | `RHelement.cpp:28-87`, `RHelementactor.cpp:1034-1232`, `RHelementactorhuman.cpp:461-527`, `RHelementactornpc.cpp:4331-4501`, `RHelementactorsoldier.cpp:2578-2610`, `RHelementactorpc.cpp:1915-1958` | Creation identity, cached service locators, inheritance-call order, inline completion/script callbacks, staggered work, and per-NPC queue order. |
 | Sequence scheduling | `RHsequencemanager.h:22-79`, `RHsequencemanager.cpp:64-77`, `RHsequencemanager.cpp:1022-1075`, `RHsequence.cpp:236-315`, `RHsequenceelement.cpp:370-478`, `RHsequenceelement.cpp:622-635`, `RHsequenceelement.cpp:918-960` | Manager ownership, FIFO rules, WAIT and immediate dispatch, owner instruction, and terminal callback ordering. |
 | Engine sequence commands | `RHengine.cpp:5073-5265` | One sequence command may synchronously touch user state, camera, UI, timers, script, and the next sequence level. |
-| Script bridge | `RHscript.h:30-76`, `RHScript.cpp:50-61`, `RHScript.cpp:340-379`, `RHScript.cpp:885-973`, `Profile/GEngineScript.cpp:31-146` | Static facade, stable script element table, one active sequence builder, and synchronous VM calls. |
+| Script bridge | `RHscript.h:30-76`, `RHScript.cpp:50-61`, `RHScript.cpp:340-379`, `RHScript.cpp:885-973`, `Profile/GEngineScript.cpp:31-146` | Static facade, append-based script element table with a compacting physical-removal path, one active sequence builder, and synchronous VM calls. |
 | AI | `RHelementactornpc.h:100`, `rhelementactorcivilian.h:15`, `rhelementactorsoldier.h:17`, `RHartificialintelligence.h:927-1133`, `RHartificialintelligence.cpp:126-165`, `RHartificialintelligence.cpp:3529-3595`, `RHartificialmalignity.cpp:501-620`, `RHartificialbonhomie.cpp:140-229` | Per-NPC durable controller state is mixed with global durable state and process-local scratch; hostile/friendly controllers are part of the entity hierarchy; initialization scans the engine's ordered NPC registry. |
 | Spatial state | `RHfastfindgrid.h:142-227`, `RHpathfinder.cpp:712-911` | Static topology, mutable overlays, indexes, A* scratch, and path queue/status are mixed in C++; path completion has a distinct scheduling barrier. |
-| Host and messages | `RHGame.h:73-177`, `RHgame.cpp:1871-1915`, `RHMessenger.cpp:162-174`, `RHMessenger.cpp:650-774`, `RHengine.cpp:12478-12633` | Host tick gating, post-tick presentation order, subscribed delivery order, and recursive synchronous messages. |
+| Host and messages | `RHGame.h:73-177`, `RHgame.cpp:1871-1926`, `RHengine.cpp:4172-4188`, `RHengine.cpp:6945-7086`, `RHsound.cpp:2140-2240`, `RHMessenger.cpp:162-174`, `RHMessenger.cpp:650-774`, `RHengine.cpp:12478-12633` | Host tick gating, post-tick director/render/sound/script order, gameplay callbacks outside the engine tick, subscribed delivery order, and recursive synchronous messages. |
 
 ## What the Original actually owns
 
@@ -96,18 +99,23 @@ temporary borrows it actually needs.
 
 ### The element array is an ordered world journal
 
-`AddElement` appends first to `marrayElements`, optionally publishes the object
-to the script table, and then appends it to subtype indexes
-(`RHengine.cpp:10285-10369`). Normal removal first marks the element inactive
-and often returns without removing or destroying it because other objects may
-still refer to it (`RHengine.cpp:10387-10395`). Physical removal manually
-updates all parallel registries (`RHengine.cpp:10397-10583`).
+When requested by its `bAddToElements` argument, `AddElement` appends first to
+`marrayElements`; it may then publish the object to the script table and append
+it to subtype indexes (`RHengine.cpp:10285-10369`). Normal removal first marks
+the element inactive and often returns without removing or destroying it
+because other objects may still refer to it (`RHengine.cpp:10387-10395`).
+Physical removal attempts to repair the parallel registries manually
+(`RHengine.cpp:10397-10583`), but the non-background FX branch demonstrates
+that this repair is not complete for every subtype.
 
 The manual parallel-array maintenance is incidental. These invariants are not:
 
 - canonical element order is insertion order;
 - subtype registries have their own stable insertion order;
-- script-visible indices are stable handles while the relevant slot exists;
+- script-visible indices remain stable under the ordinary deactivate/replace
+  lifecycle; physical `RHScript::RemoveElement` compacts its array without
+  repairing shifted elements' cached indices (`RHScript.cpp:355-364`,
+  `sblibng/SBArray.cpp:317-324`);
 - deactivation and destruction are different lifecycle events; and
 - constructor identity may be consumed before publication.
 
@@ -238,8 +246,9 @@ inherits the common AI base, while Civilian and Soldier add the friendly
 `rhelementactorsoldier.h:17`). Both concrete `Think` implementations wrap work
 with common `StartThink`/`EndThink` behavior and can call another NPC's `Think`
 synchronously (`RHartificialbonhomie.cpp:140-229`,
-`RHartificialmalignity.cpp:501-620`; representative cross-owner calls occur at
-`RHartificialmalignity.cpp:1151` and `RHartificialmalignity.cpp:1578`). Rust
+`RHartificialmalignity.cpp:501-620`; representative active cross-owner calls
+occur at `RHartificialmalignity.cpp:1001` and
+`RHartificialmalignity.cpp:1578`). Rust
 composition is preferable to this virtual-inheritance diamond, but separating
 the controller from its owner must not turn those calls into an unordered
 manager broadcast.
@@ -266,10 +275,24 @@ at the same boundary.
 `RHGame` owns the input, device, engine, sound, draw manager, UI, portraits,
 widgets, and mission operation (`RHGame.h:73-177`). It gates
 `PerformHourglass` on console, UI transition, pause, and mission-operation
-state; then simulates widgets, refreshes the screen, and advances external
-sound (`RHgame.cpp:1871-1915`). Conversely, `RHEngine::PerformHourglass`
-directly disables widgets and blinks portraits (`RHengine.cpp:3507-3519`), and
-PC methods directly add/remove portrait widgets (`RHelementactorpc.cpp:1882-1893`).
+state. Regardless of whether that tick ran, it then simulates widgets,
+refreshes the screen, advances external sound, and may call the script VM's
+one-time `PostInitialize` (`RHgame.cpp:1871-1926`). Conversely,
+`RHEngine::PerformHourglass` directly disables widgets and blinks portraits
+(`RHengine.cpp:3507-3519`), and PC methods directly add/remove portrait widgets
+(`RHelementactorpc.cpp:1882-1893`).
+
+Those host phases are not presentation-only. `RHEngine::Draw` runs
+`PerformDirectorWork` before pixels (`RHengine.cpp:4172-4188`), and director
+completion terminates camera sequence elements or forwards zoom messages on
+the current stack (`RHengine.cpp:6945-7001`, `RHengine.cpp:7045-7086`).
+`RHSound::Hourglass` likewise calls an actor's `SoundIsFinished`
+(`RHsound.cpp:2225-2240`); NPC remark completion can immediately call AI
+`Think` (`RHelementactornpc.cpp:7469-7507`,
+`RHartificialintelligence.cpp:6315-6332`). Retail sound completion uses SDL
+wall time, whereas parity instrumentation substitutes the universal frame
+clock (`RHsound.cpp:2140-2223`). That is an explicit determinism policy, not
+evidence that sound completion is an output-only concern.
 
 `RHMessenger` is similarly over-broad, mixing input latches and ordered
 synchronous delivery. Its own comment explicitly calls out recursive
@@ -279,10 +302,11 @@ example, engine user-lock handling recursively sends action and unselect
 messages on the current call stack (`RHengine.cpp:12513-12527`).
 
 Rust should remove host/UI object borrows from deterministic system contexts.
-It must retain the semantic command order, host tick gate, deterministic
-director/camera state that gameplay or rollback observes, and ordered outputs.
-The boundary is `resolved commands/external facts -> EngineInner -> ordered
-semantic side effects`, not `simulation -> UI widget`.
+It must retain the semantic command order, host tick gate, the ordered
+post-tick director/sound/script continuation barriers, and deterministic
+director/camera/sound facts that gameplay or rollback observes. The boundary
+is `resolved commands/external facts -> EngineInner -> ordered semantic side
+effects and named host continuation inputs`, not `simulation -> UI widget`.
 
 ## Behaviorally observable schedule
 
@@ -291,17 +315,19 @@ function:
 
 | Boundary | Original evidence | Required Rust property |
 | --- | --- | --- |
-| Host admits a frame | `RHgame.cpp:1871-1879` | Pause/console/transition/load gates decide whether the deterministic tick runs. Local presentation may continue separately only when it cannot affect simulation. |
+| Host admits a frame | `RHgame.cpp:1871-1879` | Pause/console/transition/load gates decide whether the engine tick runs. Later director, sound, and post-initialization callbacks still need their own gates because the Original may run them when this tick is skipped. |
 | Mission scripts precede clock increment | `RHengine.cpp:3604-3648` | The 25-frame script cadence and 3-second/forced victory check observe the pre-increment frame; the frame counter increments even when the later simulation body is locked. |
 | Body early return | `RHengine.cpp:3650-3654` | Zoom/engine locks stop later phases without undoing earlier script/clock work. |
 | Loss/reinforcement/cleanup/path/collision order | `RHengine.cpp:3657-3726` | Do not move path completion or collision across the entity walk. Registry scans retain their own stored orders. |
-| One live mutable-size element walk | `RHengine.cpp:3738-3756` | Owner slots follow Original creation/insertion order; deactivation does not compact the schedule; eligible appended children can run this frame. |
+| One live mutable-size element walk | `RHengine.cpp:3738-3756` | Owner slots follow Original publication/insertion order; deactivation does not compact the schedule; eligible appended children can run this frame. Creation identity separately affects staggered owner logic. |
 | Per-owner virtual chain | Actor/Human/NPC/Soldier/PC anchors above | Composition must preserve before/base/after work and inline callbacks for each owner, rather than batching by component type. |
 | Sequence manager follows elements | `RHengine.cpp:3762-3763` | Ordinary registered actions run after owner slots, in FIFO order. Immediate and WAIT work may already have run inline. |
-| Tail order | `RHengine.cpp:3765-3810` | Swordfight drag edge, titbits, reverse selected-dead scan, and timers remain after the manager. A timer terminates only at exactly `1`; `0` decrements negative indefinitely. |
+| Tail order | `RHengine.cpp:3765-3810` | Swordfight drag edge, titbits, reverse selected-dead scan, and timers remain after the manager. A timer terminates only at exactly `1`; unsigned `0` wraps to `ULONG_MAX`. The scan captures its length, so a timer registered re-entrantly while another terminates waits for a later frame. |
 | Terminal sequence stack | `RHsequenceelement.cpp:451-478` | Owner condolation precedes sequence `Ready`, which precedes postponed start. Immediate successors close at the matching stack/barrier. |
 | Script/message recursion | `RHengine.cpp:5243-5259`, `RHMessenger.cpp:162-174` | Earlier synchronous mutations are visible to nested/later work. Event queues require named same-call drains, not eventual delivery. |
-| Presentation follows tick | `RHgame.cpp:1896-1915` | Renderer/UI/external audio do not become ambient inputs to a deterministic phase. Deterministic sound/director state remains snapshotted when future gameplay observes it. |
+| Director/render continuation | `RHgame.cpp:1896-1903`, `RHengine.cpp:4172-4188`, `RHengine.cpp:6945-7086` | Director work precedes drawing and may synchronously complete sequences or send messages, including when the main tick was gated. Rendering details must not become ambient inputs, but director gameplay state and callback order are authoritative. |
+| Sound continuation | `RHgame.cpp:1914-1915`, `RHsound.cpp:2140-2240` | Sound completion is an ordered gameplay input that may synchronously enter actor AI. Retail wall-clock timing and parity frame timing are distinct policies and must be modeled explicitly. |
+| One-time post-initialization | `RHgame.cpp:1918-1926` | The script VM callback follows widget, render/director, and sound work and may run even when the tick gate was skipped. Its native effects close at this host barrier. |
 
 ## Incidental C++ coupling to discard
 
@@ -375,23 +401,27 @@ engine helper can therefore bypass domain invariants. Grouping improved
 serialization and comprehension, but it did not yet make the dependency map a
 compiler-checked API.
 
-The clearest pilot issue is `MovementContext` at
-`engine/movement.rs:3084-3237`. Its documentation says it cannot reach scripts,
-campaign, player state, or feedback, which is true, but it receives whole
-`&mut WorldState` and `&mut OrderRuntime`. It can technically mutate weather,
-shield, mobile elements, messenger messages, reinforcement queues, timers, or
-the sequence manager even though path scheduling needs only a few leaves.
+Before the pilot, the clearest issue was `MovementContext`: its documentation
+said it could not reach scripts, campaign, player state, or feedback, but it
+received whole `&mut WorldState` and `&mut OrderRuntime` values and could
+technically mutate weather, shield, mobile elements, messenger messages,
+reinforcement queues, timers, or the sequence manager. The implemented
+`PathScheduleContext` now receives only the exact leaves listed below
+(`engine/movement.rs`).
 
 The root path phase already has the correct architectural split:
 
-1. the path context takes or starts queue work;
-2. `EngineInner` applies a result and its ordered cross-domain effects;
+1. the path context completes the entire pathfinder scheduling operation,
+   including starting the successor before returning a completed head as the
+   Original does;
+2. only after that scheduler boundary closes, `EngineInner` applies the result
+   and its ordered cross-domain effects;
 3. failure timeout speech precedes `element_impossible` and the owner
    condolation barrier; and
 4. collision follows path work (`engine/tick.rs:3627-3890`).
 
-The implementation should make that existing split exact. It should not move
-the cross-domain consequences into a larger context.
+The pilot now makes that split exact. Follow-on isolation must not move the
+cross-domain consequences into a larger context.
 
 ## Proposed dependency and ownership map
 
@@ -499,21 +529,23 @@ still expose operations rather than every domain field, and it must be
 designed around the live Original owner slot. Merely renaming `&mut
 EngineInner` to `OwnerContext` provides no isolation.
 
-## Recommended first implementation slice
+## Implemented first slice
 
 ### Path-scheduling capability isolation
 
-Scope the first item 4 change to `engine/movement.rs`, the path portion of
+The first item 4 change is scoped to `engine/movement.rs`, the path portion of
 `engine/tick.rs`, and the minimal state-owner APIs required to split those
 borrows.
 
-1. Rename the current `MovementContext` to `PathScheduleContext`; it does not
-   represent general actor movement.
-2. Replace its two aggregate borrows with the exact leaf borrows shown above.
-3. Add split-borrow constructors/accessors on `WorldState` and `OrderRuntime`
-   only where needed. Make the path scheduler's pending/failed queue fields
-   private once all their legitimate call sites use the focused API. Avoid
-   changing the serialized field layout in this pilot.
+1. `MovementContext` is renamed to `PathScheduleContext`; it does not represent
+   general actor movement.
+2. Its two aggregate borrows are replaced by the exact leaf borrows shown
+   above.
+3. `WorldState` and `OrderRuntime` expose split-borrow methods only where
+   needed. The pending/failed fields are narrowed to `pub(in crate::engine)`;
+   making them fully private remains follow-on work because legitimate engine
+   cancellation, posture, swordfight, parity, and teardown sites still mutate
+   them directly. The serialized field layout is unchanged.
 4. Keep `apply_completed_path_work`, hero speech, mutation of the sequence
    command, `element_impossible`, owner condolation dispatch, and collision in
    the frame coordinator at their present relative positions. They are
@@ -554,7 +586,9 @@ isolation.
 
 1. Isolate anonymous timer scanning behind an exact timer/sequence context,
    while retaining the two condolation/immediate drains around it and the
-   `remaining == 1` rule (`engine/tick.rs:6326-6387`).
+   `remaining == 1` rule (`engine/tick.rs:6326-6387`). Preserve the Original's
+   captured scan length: a timer registered re-entrantly by a terminating
+   timer is not decremented in the same scan.
 2. Continue command-family sequence contexts and privatize the fields each one
    no longer needs to expose. Preserve `SequencePhase` FIFO and depth-first
    action barriers.
@@ -567,6 +601,11 @@ isolation.
 5. Remove remaining `HostDisplayState` borrows from deterministic command
    contexts by producing/consuming semantic presentation state, coordinated
    with the dedicated host-boundary work rather than mixed into item 4.
+6. Model the post-tick director/render, sound-completion, and one-time
+   `PostInitialize` callbacks as named host continuation barriers. Preserve
+   their order and their ability to run when the engine tick is gated; record
+   the chosen sound-timing fact explicitly instead of reading ambient wall
+   time inside deterministic replay.
 
 ## Explicit anti-recommendations
 
