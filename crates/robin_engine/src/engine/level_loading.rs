@@ -871,8 +871,8 @@ fn append_door_constructor(
 mod legacy_grid_topology_tests {
     use super::*;
     use crate::level_data::{
-        ProtoGridChunk, RawBuildingEntry, RawDoor, RawJumpLine, RawJumpLinePair, RawJumpZone,
-        RawLift, RawSeekPoint, RawTacticData, SectorPolygon,
+        ProtoGridChunk, RawArcheryPoint, RawArcherySector, RawBuildingEntry, RawDoor, RawJumpLine,
+        RawJumpLinePair, RawJumpZone, RawLift, RawSeekPoint, RawTacticData, SectorPolygon,
     };
 
     fn door(has_click_sector: bool) -> RawDoor {
@@ -1206,6 +1206,67 @@ mod legacy_grid_topology_tests {
         let installed = &engine.ai.global.seek_points[0].position;
         assert_eq!((installed.x, installed.y), (658.0, 2905.0));
         assert_eq!(installed.sector, Some(tactic_position));
+    }
+
+    #[test]
+    fn archery_waypoint_resolves_to_exact_motion_sector_after_loading() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.mission.tactic_data = Some(RawTacticData {
+            reinforcement_points: Vec::new(),
+            ambush_points: Vec::new(),
+            seek_points: Vec::new(),
+            archery_sectors: vec![RawArcherySector {
+                sector_ref: 25,
+                polygon: SectorPolygon::default(),
+                points: vec![RawArcheryPoint {
+                    x: 983,
+                    y: 1518,
+                    sector: 25,
+                    is_shooting_point: false,
+                    direction: 0,
+                }],
+            }],
+        });
+        let mut engine = EngineInner::new();
+        engine.ai.global.archery_sectors = vec![crate::ai::SectorArchery {
+            points: vec![crate::ai::PointArchery {
+                position: crate::ai::Position {
+                    x: 983.0,
+                    y: 1518.0,
+                    sector: crate::position_interface::SectorHandle::new(25),
+                    level: 0,
+                },
+                direction: 0,
+                is_shooting_point: false,
+                sector_index: crate::sector::SectorNumber::new(25),
+                owner: None,
+            }],
+            polygon: Vec::new(),
+            layer: 0,
+            index_first_shooting_point: None,
+            index_last_shooting_point: None,
+            num_shooting_points: 0,
+            num_owners: 0,
+        }];
+        let mut motion_sector = runtime_position_sector(
+            25,
+            crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+        );
+        motion_sector.layer = 2;
+        let arena = engine.world.fast_grid_mut().add_sector(motion_sector, 2);
+
+        engine
+            .resolve_archery_topology_after_motion(&loaded)
+            .expect("authored archery topology resolves after motion loading");
+
+        let point = &engine.ai.global.archery_sectors[0].points[0].position;
+        assert_eq!(point.level, 2);
+        assert_eq!(point.sector.expect("archery point sector").get(), 25);
+        assert_eq!(
+            point.sector.and_then(|sector| sector.arena_index()),
+            crate::fast_find_grid::SectorIndex::new(arena),
+            "AI GoTo must not mix an exact actor source with a number-only archery destination"
+        );
     }
 
     #[test]
