@@ -112,6 +112,92 @@ fn script_sector_identities_match(
         (Some(_), None) | (None, Some(_)) => false,
     }
 }
+
+/// Recover the exact arena identity carried by Original's `RHposition` before
+/// script-recorded movement compares its source and destination sectors.
+///
+/// Compatibility-loaded actors can retain only the public sector number.  A
+/// public number is not an identity: several arena sectors may share it.  Use
+/// the position and layer to recover the pointer-equivalent arena slot, with
+/// the same gate-endpoint fallback needed for positions just outside sector
+/// polygons.
+fn resolve_script_position_sector(
+    level: &crate::fast_find_grid::LevelGrid,
+    doors: &[crate::gate::Door],
+    sector: crate::position_interface::SectorHandle,
+    point: crate::coordinates::MapPoint,
+    layer: u16,
+) -> crate::position_interface::SectorHandle {
+    if sector.arena_index().is_some() || level.sectors.is_empty() {
+        return sector;
+    }
+
+    let public = crate::sector::SectorNumber::new(i16::from(sector));
+    let candidates = level
+        .sectors
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.sector_number == public && candidate.layer == layer)
+        .collect::<Vec<_>>();
+    let matches = candidates
+        .iter()
+        .copied()
+        .filter(|(_, candidate)| candidate.contains_point(point))
+        .collect::<Vec<_>>();
+
+    let index = match matches.as_slice() {
+        [(index, _)] => *index,
+        [] => match candidates.as_slice() {
+            [(index, _)] => *index,
+            [] => panic!(
+                "script movement sector {public} layer {layer} is absent from the loaded exact arena"
+            ),
+            _ => {
+                let mut unique = None;
+                for door in doors {
+                    for (endpoint_public, endpoint_layer, endpoint_index) in [
+                        (door.sector_out, door.layer_out, door.sector_out_index),
+                        (door.sector_in, door.layer_in, door.sector_in_index),
+                    ] {
+                        if endpoint_public != public || endpoint_layer != layer {
+                            continue;
+                        }
+                        let Some(endpoint_index) = endpoint_index else {
+                            continue;
+                        };
+                        let endpoint_index = usize::from(endpoint_index);
+                        if !candidates
+                            .iter()
+                            .any(|(candidate_index, _)| *candidate_index == endpoint_index)
+                        {
+                            panic!(
+                                "script movement gate endpoint sector {endpoint_index} disagrees with public sector {public} layer {layer}"
+                            );
+                        }
+                        match unique {
+                            None => unique = Some(endpoint_index),
+                            Some(previous) if previous == endpoint_index => {}
+                            Some(_) => {
+                                panic!(
+                                    "script movement sector {public} at {point:?} has no containing sector and ambiguous gate endpoints"
+                                )
+                            }
+                        }
+                    }
+                }
+                unique.unwrap_or_else(|| {
+                    panic!(
+                        "script movement sector {public} at {point:?} has no containing sector and is ambiguous in the exact arena"
+                    )
+                })
+            }
+        },
+        _ => panic!("script movement sector {public} at {point:?} is ambiguous in the exact arena"),
+    };
+    let index = crate::fast_find_grid::SectorIndex::new(index as u32)
+        .expect("script movement exact sector index exceeds the arena range");
+    sector.with_arena_index(index)
+}
 use crate::sequence::{Field, FieldValue, MoveFlags, RecordingSession, Sequence, SequenceElement};
 
 /// Convert a raw script-supplied animation ordinal to an
@@ -960,6 +1046,14 @@ impl NativeContext<'_, '_> {
             source_sector = adapted_sector;
             _source_layer = adapted_layer;
         }
+
+        source_sector = resolve_script_position_sector(
+            &self.fast_grid.level,
+            &self.script_domains.interactables.doors,
+            source_sector,
+            to_pt(source),
+            _source_layer,
+        );
 
         // Counter for `record_seq_step`: the very first emission stays
         // at the caller-provided recording level; every subsequent
