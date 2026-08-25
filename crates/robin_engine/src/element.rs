@@ -1027,6 +1027,17 @@ pub struct SwordfightOpponent {
 }
 
 impl SwordfightOpponent {
+    /// Build one paired opponent record.
+    ///
+    /// The jump line is the line on this human's side of the fight, matching
+    /// Original `RHSwordfightOpponent::pJumpLine`.
+    pub fn new(opponent: EntityId, jump_line: Option<JumpLineIndex>) -> Self {
+        Self {
+            opponent,
+            jump_line,
+        }
+    }
+
     pub fn opponent(self) -> EntityId {
         self.opponent
     }
@@ -1045,6 +1056,7 @@ impl SwordfightOpponent {
 /// order while the live representation enforces the Original's one-record
 /// invariant.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct SwordfightOpponents {
     entries: Vec<SwordfightOpponent>,
 }
@@ -1056,26 +1068,26 @@ impl SwordfightOpponents {
         Self {
             entries: ids
                 .into_iter()
-                .map(|opponent| SwordfightOpponent {
-                    opponent,
-                    jump_line: None,
-                })
+                .map(|opponent| SwordfightOpponent::new(opponent, None))
                 .collect(),
+        }
+    }
+
+    /// Construct an ordered list from already-paired records.
+    pub fn from_entries(entries: impl IntoIterator<Item = SwordfightOpponent>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
         }
     }
 
     pub(crate) fn from_pairs(
         pairs: impl IntoIterator<Item = (EntityId, Option<JumpLineIndex>)>,
     ) -> Self {
-        Self {
-            entries: pairs
+        Self::from_entries(
+            pairs
                 .into_iter()
-                .map(|(opponent, jump_line)| SwordfightOpponent {
-                    opponent,
-                    jump_line,
-                })
-                .collect(),
-        }
+                .map(|(opponent, jump_line)| SwordfightOpponent::new(opponent, jump_line)),
+        )
     }
 
     fn try_from_parts(
@@ -1166,13 +1178,8 @@ impl SwordfightOpponents {
             return false;
         }
 
-        self.entries.insert(
-            0,
-            SwordfightOpponent {
-                opponent,
-                jump_line,
-            },
-        );
+        self.entries
+            .insert(0, SwordfightOpponent::new(opponent, jump_line));
         true
     }
 
@@ -1230,19 +1237,16 @@ impl SwordfightOpponents {
 
     #[cfg(test)]
     pub(crate) fn push(&mut self, opponent: EntityId) {
-        self.entries.push(SwordfightOpponent {
-            opponent,
-            jump_line: None,
-        });
+        self.entries.push(SwordfightOpponent::new(opponent, None));
     }
 
     #[cfg(test)]
     pub(crate) fn extend(&mut self, opponents: impl IntoIterator<Item = EntityId>) {
-        self.entries
-            .extend(opponents.into_iter().map(|opponent| SwordfightOpponent {
-                opponent,
-                jump_line: None,
-            }));
+        self.entries.extend(
+            opponents
+                .into_iter()
+                .map(|opponent| SwordfightOpponent::new(opponent, None)),
+        );
     }
 }
 
@@ -1389,6 +1393,7 @@ struct HumanDataWire {
     stuck_under_nets_counter: u16,
     hollow_man: bool,
     opponents: Vec<EntityId>,
+    #[serde(default)]
     opponent_jump_lines: Vec<Option<JumpLineIndex>>,
     smalltalk_initiative: bool,
     received_smalltalk_initiative: bool,
@@ -5936,6 +5941,38 @@ mod tests {
     }
 
     #[test]
+    fn swordfight_opponents_standalone_serde_is_an_ordered_record_sequence() {
+        let first = SwordfightOpponent::new(
+            EntityId::Pc(crate::entity_id::PcId(25)),
+            Some(JumpLineIndex::new(35).unwrap()),
+        );
+        let second =
+            SwordfightOpponent::new(EntityId::Soldier(crate::entity_id::SoldierId(26)), None);
+        let entries = vec![first, second];
+        let opponents = SwordfightOpponents::from_entries(entries.clone());
+
+        let json = serde_json::to_value(&opponents).unwrap();
+        assert!(json.is_array(), "private aggregate storage must not leak");
+        assert_eq!(json, serde_json::to_value(&entries).unwrap());
+        assert_eq!(
+            serde_json::from_value::<SwordfightOpponents>(json).unwrap(),
+            opponents
+        );
+
+        let config = bincode::config::standard();
+        let binary = bincode::serde::encode_to_vec(&opponents, config).unwrap();
+        assert_eq!(
+            binary,
+            bincode::serde::encode_to_vec(&entries, config).unwrap(),
+            "transparent aggregate must keep standalone record-sequence bytes"
+        );
+        let (decoded, consumed): (SwordfightOpponents, usize) =
+            bincode::serde::decode_from_slice(&binary, config).unwrap();
+        assert_eq!(consumed, binary.len());
+        assert_eq!(decoded, opponents);
+    }
+
+    #[test]
     fn human_opponents_serde_retains_legacy_fields_and_normalizes_short_lines() {
         let first = EntityId::Pc(crate::entity_id::PcId(31));
         let second = EntityId::Soldier(crate::entity_id::SoldierId(32));
@@ -5966,6 +6003,21 @@ mod tests {
         let round_trip: HumanData = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(round_trip.opponents, human.opponents);
 
+        let mut predating_jump_lines = value.clone();
+        predating_jump_lines
+            .as_object_mut()
+            .unwrap()
+            .remove("opponent_jump_lines");
+        let normalized: HumanData = serde_json::from_value(predating_jump_lines).unwrap();
+        assert_eq!(normalized.opponents.ids(), vec![first, second]);
+        assert_eq!(
+            normalized
+                .opponents
+                .iter_with_jump_lines()
+                .collect::<Vec<_>>(),
+            vec![(first, None), (second, None)]
+        );
+
         let config = bincode::config::standard();
         let binary = bincode::serde::encode_to_vec(&human, config).unwrap();
         let legacy_binary =
@@ -5975,6 +6027,20 @@ mod tests {
             bincode::serde::decode_from_slice(&binary, config).unwrap();
         assert_eq!(consumed, binary.len());
         assert_eq!(binary_round_trip.opponents, human.opponents);
+
+        let mut short_binary_wire = HumanDataWire::from(human.clone());
+        short_binary_wire.opponent_jump_lines.truncate(1);
+        let short_binary = bincode::serde::encode_to_vec(short_binary_wire, config).unwrap();
+        let (normalized, consumed): (HumanData, usize) =
+            bincode::serde::decode_from_slice(&short_binary, config).unwrap();
+        assert_eq!(consumed, short_binary.len());
+        assert_eq!(
+            normalized
+                .opponents
+                .iter_with_jump_lines()
+                .collect::<Vec<_>>(),
+            vec![(first, Some(line)), (second, None)]
+        );
 
         value["opponent_jump_lines"] = serde_json::json!([]);
         let normalized: HumanData = serde_json::from_value(value.clone()).unwrap();
