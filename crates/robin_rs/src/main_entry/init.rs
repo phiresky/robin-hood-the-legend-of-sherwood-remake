@@ -1,7 +1,8 @@
 //! Data-directory, locale, profile, and key-config initialization.
 
+use std::path::Path;
 #[cfg(any(not(target_arch = "wasm32"), target_os = "android"))]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::host::ApplicationContext;
 use crate::key_config_store::KeyConfigStore;
@@ -21,7 +22,7 @@ use thiserror::Error;
 pub enum InitErrorCategory {
     DataDirectory,
     Content,
-    Profile,
+    PlayerProfile,
     Platform,
 }
 
@@ -29,7 +30,8 @@ pub enum InitErrorCategory {
 ///
 /// The variants deliberately retain the startup stage. Launchers still show
 /// the same messages as before, while diagnostics and tests can distinguish a
-/// bad installation from corrupt content, profile data, or host integration.
+/// bad installation from corrupt content, player-profile state, or host
+/// integration.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum InitError {
@@ -65,20 +67,23 @@ pub enum InitError {
     },
 
     #[error("{message}")]
-    ProfileJson { message: String },
+    ContentProfilesJson { path: &'static str, message: String },
 
     #[error("Failed to open {path}: error {status}")]
-    ProfileOpen { path: &'static str, status: i32 },
+    ContentProfilesOpen { path: &'static str, status: i32 },
 
     #[error("Failed to read profiles from {path}: error {source}")]
-    ProfileRead {
+    ContentProfilesRead {
         path: &'static str,
         #[source]
         source: robin_engine::legacy_io::LegacyIoError,
     },
 
     #[error("{message}")]
-    ProfileApplicationContext { message: String },
+    PlayerProfileState {
+        save_directory: std::path::PathBuf,
+        message: String,
+    },
 
     #[error("install shipping datadir: {source:#}")]
     PlatformShippingDatadirInstall {
@@ -97,11 +102,11 @@ impl InitError {
             Self::DataDirectoryChange { .. } | Self::DataDirectoryAndroidAssetsMissing { .. } => {
                 InitErrorCategory::DataDirectory
             }
-            Self::ContentShippingDatadir { .. } => InitErrorCategory::Content,
-            Self::ProfileJson { .. }
-            | Self::ProfileOpen { .. }
-            | Self::ProfileRead { .. }
-            | Self::ProfileApplicationContext { .. } => InitErrorCategory::Profile,
+            Self::ContentShippingDatadir { .. }
+            | Self::ContentProfilesJson { .. }
+            | Self::ContentProfilesOpen { .. }
+            | Self::ContentProfilesRead { .. } => InitErrorCategory::Content,
+            Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
             Self::PlatformShippingDatadirInstall { .. } => InitErrorCategory::Platform,
         }
     }
@@ -430,12 +435,18 @@ fn rust_init_finish(
         profiles.missions.len(),
         profiles.hth_weapons.len()
     );
-    let player_profiles = load_player_profile_manager();
-    let key_configs = load_key_config_store();
+    let player_profile_directory = crate::save_file::default_save_directory();
+    let (player_profiles, player_profiles_regenerated) =
+        load_player_profile_manager(&player_profile_directory);
+    let key_configs = load_key_config_store(&player_profile_directory, player_profiles_regenerated);
 
     let application_context =
-        ApplicationContext::complete(options, player_profiles, key_configs, shipping)
-            .map_err(|message| InitError::ProfileApplicationContext { message })?;
+        ApplicationContext::complete(options, player_profiles, key_configs, shipping).map_err(
+            |message| InitError::PlayerProfileState {
+                save_directory: player_profile_directory,
+                message,
+            },
+        )?;
 
     let campaign = Campaign::create(&profiles, application_context.sim_config().difficulty);
 
@@ -450,6 +461,12 @@ fn rust_init_finish(
 ///      the `cpf_to_json` example).
 ///   3. Binary `.cpf` at `Data/Configuration/profile.cpf` parsed via the
 ///      legacy CPF reader.
+///
+/// TODO(content-loading): `RHProfileManager::RHProfileManager(char*)` in the
+/// Original imports the authored CSV directory and writes `profile.cpf` when
+/// the compiled file is absent. The Rust runtime does not yet implement that
+/// development fallback, so absence of all three supported representations
+/// remains a fatal required-content error.
 fn load_profiles(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     options: &engine_api::GlobalOptions,
@@ -476,8 +493,15 @@ fn load_profiles(
     let json_path = "Data/Configuration/profile.cpf.json";
     if engine_sbfile::SbFile::exists(json_path) {
         tracing::info!("Profiles: loading JSON dump {json_path}");
-        let mut mgr = ProfileManager::load_json(json_path)
-            .map_err(|message| InitError::ProfileJson { message })?;
+        // TODO(typed-errors): make `ProfileManager::load_json` return a typed
+        // error. Its current String boundary has already discarded the
+        // underlying UTF-8 / serde_json source before startup sees it.
+        let mut mgr = ProfileManager::load_json(json_path).map_err(|message| {
+            InitError::ContentProfilesJson {
+                path: json_path,
+                message,
+            }
+        })?;
         mgr.import_beam_mes(level_dir);
         return Ok(mgr);
     }
@@ -485,14 +509,14 @@ fn load_profiles(
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
     let mut file =
         engine_sbfile::SbFile::open(cpf_path, engine_sbfile::SB_FILE_READ).map_err(|status| {
-            InitError::ProfileOpen {
+            InitError::ContentProfilesOpen {
                 path: cpf_path,
                 status,
             }
         })?;
     let mut mgr = ProfileManager::new();
     mgr.load_all_legacy_cpf(&mut file)
-        .map_err(|source| InitError::ProfileRead {
+        .map_err(|source| InitError::ContentProfilesRead {
             path: cpf_path,
             source,
         })?;
@@ -501,8 +525,10 @@ fn load_profiles(
 }
 
 /// Load the player-profile service owned by [`ApplicationContext`].
-fn load_player_profile_manager() -> PlayerProfileManager {
-    let save_dir = crate::save_file::default_save_directory();
+///
+/// The boolean reports regeneration so the parallel Rust key-config store can
+/// be reset with the profile-owned key bindings that the Original recreated.
+fn load_player_profile_manager(save_dir: &Path) -> (PlayerProfileManager, bool) {
     let save_dir_str = save_dir.to_string_lossy().into_owned();
 
     // Original behavior: `RHPlayerProfileManager::Load` in
@@ -510,25 +536,79 @@ fn load_player_profile_manager() -> PlayerProfileManager {
     // profile when the player archive is absent or invalid. This recovery is
     // player-state compatibility, not a fallback for required game content.
     match PlayerProfileManager::load(&save_dir_str) {
-        Ok(mgr) => mgr,
-        Err(err) => {
-            tracing::warn!(
-                "Failed to load player profiles from {save_dir_str} ({err}); creating defaults"
-            );
-            let mut mgr = PlayerProfileManager::new(save_dir_str);
-            let idx = mgr.create_profile("Robin".to_owned(), DifficultyLevel::Medium);
-            mgr.set_active(idx);
-            mgr
+        Ok(mgr)
+            if mgr
+                .active_index
+                .and_then(|index| mgr.profiles.get(index))
+                .is_some() =>
+        {
+            (mgr, false)
         }
+        Ok(mgr) => (
+            regenerate_default_player_profiles(
+                save_dir_str,
+                format!(
+                    "archive has {} profiles and active index {:?}",
+                    mgr.profiles.len(),
+                    mgr.active_index
+                ),
+            ),
+            true,
+        ),
+        Err(error) => (
+            regenerate_default_player_profiles(save_dir_str, error.to_string()),
+            true,
+        ),
     }
+}
+
+/// Recreate the Original's first-launch profile after an absent or invalid
+/// archive. `RHPlayerProfileManager::CreateDefaultProfiles` marks the manager
+/// as default-backed and immediately saves it; keeping both details here
+/// prevents a corrupt archive from failing on every launch or skipping the
+/// new-player prompt.
+fn regenerate_default_player_profiles(
+    save_directory: String,
+    reason: String,
+) -> PlayerProfileManager {
+    tracing::warn!(
+        "Failed to load player profiles from {save_directory} ({reason}); creating defaults"
+    );
+    let mut manager = PlayerProfileManager::new(save_directory);
+    let index = manager.create_profile("Robin".to_owned(), DifficultyLevel::Medium);
+    manager.set_active(index);
+    manager.default_profiles = true;
+    if let Err(error) = manager.save() {
+        // The Original launcher also keeps running after CreateDefaultProfiles
+        // reports a save failure. Retain the usable in-memory profile, but do
+        // not hide that persistence is unavailable.
+        tracing::warn!(
+            "Failed to persist regenerated player profiles to {}: {error}",
+            manager.save_directory
+        );
+    }
+    manager
 }
 
 /// Load the key-config service owned by [`ApplicationContext`]. First-run
 /// stores are intentionally empty; `ApplicationContext::complete` creates
 /// the active profile's original-compatible default entry.
-fn load_key_config_store() -> KeyConfigStore {
-    let save_dir = crate::save_file::default_save_directory();
+fn load_key_config_store(save_dir: &Path, player_profiles_regenerated: bool) -> KeyConfigStore {
     let save_dir_str = save_dir.to_string_lossy().into_owned();
+
+    if player_profiles_regenerated {
+        tracing::warn!(
+            "Ignoring key configs in {save_dir_str} because player profiles were regenerated"
+        );
+        let store = KeyConfigStore::new(save_dir_str);
+        if let Err(error) = store.save() {
+            tracing::warn!(
+                "Failed to persist reset key configs to {}: {error}",
+                store.save_directory
+            );
+        }
+        return store;
+    }
 
     KeyConfigStore::load(&save_dir_str).unwrap_or_else(|err| {
         tracing::warn!(
@@ -561,11 +641,18 @@ mod tests {
                 InitErrorCategory::Content,
             ),
             (
-                InitError::ProfileOpen {
+                InitError::ContentProfilesOpen {
                     path: "Data/Configuration/profile.cpf",
                     status: -2,
                 },
-                InitErrorCategory::Profile,
+                InitErrorCategory::Content,
+            ),
+            (
+                InitError::PlayerProfileState {
+                    save_directory: "/saves".into(),
+                    message: "no active player profile".to_owned(),
+                },
+                InitErrorCategory::PlayerProfile,
             ),
             (
                 InitError::PlatformShippingDatadirInstall {
@@ -595,7 +682,7 @@ mod tests {
              https://example.invalid/game"
         );
 
-        let profile = InitError::ProfileOpen {
+        let profile = InitError::ContentProfilesOpen {
             path: "Data/Configuration/profile.cpf",
             status: -7,
         };
@@ -618,6 +705,49 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "shipping datadir: invalid shipping payload"
+        );
+    }
+
+    #[test]
+    fn semantically_invalid_player_archive_is_regenerated_and_persisted() {
+        let directory = tempfile::tempdir().expect("temporary player-profile directory");
+        let directory_string = directory.path().to_string_lossy().into_owned();
+        let mut invalid = PlayerProfileManager::new(directory_string.clone());
+        invalid.create_profile("orphan".to_owned(), DifficultyLevel::Hard);
+        invalid.active_index = Some(99);
+        invalid
+            .save()
+            .expect("write invalid player-profile fixture");
+        let mut stale_key_configs = KeyConfigStore::new(directory_string.clone());
+        stale_key_configs.entry_or_default(0);
+        stale_key_configs
+            .save()
+            .expect("write stale key-config fixture");
+
+        let (recovered, regenerated) = load_player_profile_manager(directory.path());
+        assert!(regenerated);
+        assert_eq!(recovered.profiles.len(), 1);
+        assert_eq!(
+            recovered.get_active().map(|profile| profile.name.as_str()),
+            Some("Robin")
+        );
+        assert!(recovered.default_profiles);
+
+        let persisted = PlayerProfileManager::load(&directory_string)
+            .expect("reload regenerated player-profile archive");
+        assert_eq!(
+            persisted.get_active().map(|profile| profile.name.as_str()),
+            Some("Robin")
+        );
+        assert!(persisted.default_profiles);
+
+        let key_configs = load_key_config_store(directory.path(), regenerated);
+        assert!(key_configs.configs.is_empty());
+        assert!(
+            KeyConfigStore::load(&directory_string)
+                .expect("reload reset key configs")
+                .configs
+                .is_empty()
         );
     }
 }
