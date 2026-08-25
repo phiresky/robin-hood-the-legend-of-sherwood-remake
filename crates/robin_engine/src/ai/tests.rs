@@ -1448,6 +1448,87 @@ fn face_sectorless_noise_origin_uses_recorded_elevation() {
     assert_eq!(ground_level_orders[0].explicit_direction, Some(1));
 }
 
+/// Seed3 QuickSave replay-027 frame 36857/36866: an impact noise carried an
+/// actually null Original `RHposition` (`pSector == NULL`, layer `0xffff`).
+/// `Face(noise.posOrigin)` therefore takes the ground-level branch in
+/// `RHArtificialIntelligence::PositionToPoint3D`; `RHnoise::fElevation` is
+/// used for hearing distance but is not passed to `Face`.
+#[test]
+fn face_null_sentinel_noise_origin_preserves_original_ground_projection() {
+    let mut ctx = face_to_ctx(crate::element::ActionState::Moving);
+    ctx.position = Position {
+        x: 317.799_99,
+        y: 716.0,
+        sector: None,
+        level: 8,
+    };
+    ctx.elevation = 480.001_04;
+    ctx.self_body_position_world = crate::coordinates::WorldPoint3D {
+        x: 317.799_99,
+        y: 1196.001,
+        z: 480.001_04,
+    };
+    let noise = Noise {
+        origin: Position {
+            x: 341.819_34,
+            y: 716.628_85,
+            sector: None,
+            level: u16::MAX,
+        },
+        noise_type: NoiseType::Zonk,
+        volume: 1,
+        elevation: 480,
+        element_id: 0,
+    };
+
+    let mut ai = AiController::new(1);
+    ai.face_noise_origin_with_ctx(&noise, &ctx);
+    let orders = ai.take_pending_orders();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].explicit_direction, Some(0));
+}
+
+/// Seed3 Savegame_013 replay-003 frame 1764/1781 is a second observed instance
+/// of the projectile-impact null sentinel. The recorded elevation would turn
+/// Soldier 71 toward direction 1, while Original's null-sector projection
+/// turns toward direction 0.
+#[test]
+fn face_null_sentinel_noise_origin_ignores_separate_impact_elevation() {
+    let mut ctx = face_to_ctx(crate::element::ActionState::Moving);
+    ctx.position = Position {
+        x: 1079.0,
+        y: 2150.0,
+        sector: None,
+        level: 2,
+    };
+    ctx.elevation = 150.001_01;
+    ctx.self_body_position_world = crate::coordinates::WorldPoint3D {
+        x: 1079.0,
+        y: 2300.001,
+        z: 150.001_01,
+    };
+    let noise = Noise {
+        origin: Position {
+            x: 1092.945_9,
+            y: 2107.296_1,
+            sector: None,
+            level: u16::MAX,
+        },
+        noise_type: NoiseType::Zonk,
+        volume: 7,
+        elevation: 175,
+        element_id: 0,
+    };
+
+    let mut ai = AiController::new(1);
+    ai.face_noise_origin_with_ctx(&noise, &ctx);
+    let orders = ai.take_pending_orders();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].explicit_direction, Some(0));
+}
+
 #[test]
 fn fast_face_marks_the_turn_intent_without_changing_geometry() {
     let ctx = face_to_ctx(crate::element::ActionState::Moving);
