@@ -1742,11 +1742,7 @@ impl TraceCommand {
                 let (already_authorized, goal_override, goal_sector_index_override) =
                     drop_ale_resolution
                         .map(|resolution| {
-                            (
-                                true,
-                                Some(resolution.goal),
-                                Some(resolution.goal_sector_index),
-                            )
+                            (true, Some(resolution.goal), resolution.goal_sector_index)
                         })
                         .unwrap_or((false, None, None));
                 PlayerCommand::DropAleAt {
@@ -2524,7 +2520,7 @@ struct TraceRouteGate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReplayDropAleResolution {
     goal: (SectorNumber, u16),
-    goal_sector_index: robin_engine::fast_find_grid::SectorIndex,
+    goal_sector_index: Option<robin_engine::fast_find_grid::SectorIndex>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2729,16 +2725,17 @@ fn resolve_schema_sixteen_group_move_route(
 /// cross-sector Seek records it in the same frame's route-construction stream.
 /// Match by route ordinal plus stable actor/point identity; projected point
 /// containment is intentionally not consulted because overlapping floors can
-/// select a different layer.
+/// select a different layer. Same-sector seeks publish no route event, so the
+/// caller also supplies the actor's exact current sector identity as a fallback.
 // TODO(parity-schema): record DropAle's pre-authorization goal sector/layer on
-// the command itself. Same-sector moves do not publish a route event, so this
-// schema-16 recovery is intentionally limited to cross-sector seeks.
+// the command itself so replay does not have to infer same-sector destinations.
 fn resolve_schema_sixteen_drop_ale(
     schema: u32,
     command: &TraceCommand,
     route_events: Option<&[TraceRouteConstructionEvent]>,
     consumed_route_ordinals: &mut BTreeSet<u64>,
     entity_map: &EntityMap,
+    same_sector_goal: Option<ReplayDropAleResolution>,
 ) -> Option<ReplayDropAleResolution> {
     if schema != 16 {
         return None;
@@ -2772,7 +2769,16 @@ fn resolve_schema_sixteen_drop_ale(
             Some((ordinal, event))
         })
         .min_by_key(|(ordinal, _)| *ordinal);
-    let (ordinal, event) = matching_event?;
+    let Some((ordinal, event)) = matching_event else {
+        // A cross-sector DropAle must have an authoritative route event. Do
+        // not disguise a mismatched/corrupt event as a same-sector command.
+        let has_actor_route = route_events.unwrap_or_default().iter().any(|event| {
+            event.kind == "move"
+                && entity_map.translate(event.actor) == actor
+                && event.source_sector != event.goal_sector
+        });
+        return (!has_actor_route).then_some(same_sector_goal).flatten();
+    };
     assert!(
         consumed_route_ordinals.insert(ordinal),
         "schema-16 route ordinal {ordinal} matched twice"
@@ -2782,7 +2788,42 @@ fn resolve_schema_sixteen_drop_ale(
         entity_map.translate_required_drop_ale_goal_sector(event.goal_sector);
     Some(ReplayDropAleResolution {
         goal: (goal_sector, event.goal_level),
-        goal_sector_index,
+        goal_sector_index: Some(goal_sector_index),
+    })
+}
+
+fn schema_sixteen_drop_ale_actor_goal(
+    schema: u32,
+    command: &TraceCommand,
+    entity_map: &EntityMap,
+    engine: &Engine,
+) -> Option<ReplayDropAleResolution> {
+    if schema != 16 {
+        return None;
+    }
+    let TraceCommand::DropAleAt { actor, .. } = command else {
+        return None;
+    };
+    let actor = entity_map.translate(*actor);
+    let entity = engine
+        .get_entity(actor)
+        .unwrap_or_else(|| panic!("schema-16 DropAle actor {actor:?} is missing"));
+    let element = entity.element_data();
+    let sector = element
+        .sector()
+        .unwrap_or_else(|| panic!("schema-16 DropAle actor {actor:?} has no current sector"));
+    let public = i16::try_from(sector.get()).unwrap_or_else(|_| {
+        panic!(
+            "schema-16 DropAle actor {actor:?} sector {} exceeds its signed identity domain",
+            sector.get()
+        )
+    });
+    Some(ReplayDropAleResolution {
+        goal: (SectorNumber::new(public), element.layer()),
+        // Same-sector DropAle has no route event with which to recover a
+        // stronger identity. Preserve the actor's current representation so
+        // the seek compares equal whether it is exact or number-only.
+        goal_sector_index: sector.arena_index(),
     })
 }
 
@@ -4865,6 +4906,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.route_construction_events.as_deref(),
                 &mut consumed_drop_ale_route_ordinals,
                 map,
+                schema_sixteen_drop_ale_actor_goal(header.schema, &command, map, &engine),
             );
             let group_move_resolution = resolve_schema_sixteen_group_move_route(
                 header.schema,
@@ -4921,6 +4963,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     frame.route_construction_events.as_deref(),
                     &mut consumed_drop_ale_route_ordinals,
                     map,
+                    schema_sixteen_drop_ale_actor_goal(header.schema, &command, map, &engine),
                 );
                 let group_move_resolution = resolve_schema_sixteen_group_move_route(
                     header.schema,
@@ -14928,10 +14971,11 @@ mod tests {
                 Some(&routes),
                 &mut consumed,
                 &drop_ale_route_map(actor),
+                None,
             ),
             Some(ReplayDropAleResolution {
                 goal: (SectorNumber::new(55), 4),
-                goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(37).unwrap(),
+                goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(37),
             })
         );
         assert_eq!(consumed, BTreeSet::from([7]));
@@ -14959,7 +15003,7 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_drop_ale(16, &command, Some(&routes), &mut consumed, &map,),
+            resolve_schema_sixteen_drop_ale(16, &command, Some(&routes), &mut consumed, &map, None,),
             None
         );
         assert_eq!(
@@ -14969,6 +15013,7 @@ mod tests {
                 Some(&[drop_ale_route_fixture(actor, target)]),
                 &mut consumed,
                 &map,
+                None,
             ),
             None
         );
@@ -15000,7 +15045,42 @@ mod tests {
             Some(&[drop_ale_route_fixture(actor, target)]),
             &mut BTreeSet::new(),
             &map,
+            None,
         );
+    }
+
+    #[test]
+    fn schema_sixteen_drop_ale_recovers_same_sector_actor_goal_without_route() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let command = TraceCommand::DropAleAt {
+            actor,
+            target: TracePoint {
+                x: TraceFloat { bits: 0x44d7_a800 },
+                y: TraceFloat { bits: 0x4447_8000 },
+            },
+            running: false,
+        };
+        let expected = ReplayDropAleResolution {
+            goal: (SectorNumber::new(0), 0),
+            goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(0),
+        };
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_drop_ale(
+                16,
+                &command,
+                None,
+                &mut consumed,
+                &drop_ale_route_map(actor),
+                Some(expected),
+            ),
+            Some(expected)
+        );
+        assert!(consumed.is_empty());
     }
 
     #[test]
