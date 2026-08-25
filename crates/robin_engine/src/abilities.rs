@@ -2875,10 +2875,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
                                 AbilityKind::ClimbOnShoulders | AbilityKind::ClimbDownFromShoulders
                             )
                         )
-                    }) || (matches!(
-                        s.last_action,
-                        OrderType::ClimbingUpOnShoulders | OrderType::ClimbingDownFromShoulders
-                    ) && s.last_motion_state.is_some());
+                    });
                     (
                         s.last_action,
                         s.current_frame,
@@ -3111,6 +3108,50 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
                 sprite.synchronize_anim(snap.carrier_frame, snap.carrier_frame_count);
             }
         }
+    }
+}
+
+/// Preserve the final `SynchronizeAnim` performed by a shoulder-climb
+/// `Execute` before order completion clears the climber's motion latch.
+///
+/// This deliberately updates only the helper sprite. The general carried
+/// transform pass remains after order propagation: moving that whole pass
+/// earlier changes the rider's movement result on the terminal tick.
+pub fn sync_terminal_shoulder_animations(entities: &mut Entities) {
+    let terminal_syncs: Vec<(EntityId, OrderType, u16, u16)> = entities
+        .pcs()
+        .filter_map(|(helper_pc_id, helper)| {
+            let target_id = helper.pc.carried?;
+            if helper.pc.live_carried_posture() != Posture::OnShoulders {
+                return None;
+            }
+            let target = entities.get(target_id)?;
+            let sprite = &target.element_data().sprite;
+            if sprite.last_motion_state != Some(crate::sprite::MotionState::Terminated) {
+                return None;
+            }
+            let helper_anim = match sprite.last_action {
+                OrderType::ClimbingUpOnShoulders => OrderType::TransitionHelpingClimbingUp,
+                OrderType::ClimbingDownFromShoulders => OrderType::TransitionHelpingClimbingDown,
+                _ => return None,
+            };
+            Some((
+                EntityId::Pc(helper_pc_id),
+                helper_anim,
+                sprite.current_frame,
+                sprite.frame_count,
+            ))
+        })
+        .collect();
+
+    for (helper_id, helper_anim, frame, frame_count) in terminal_syncs {
+        let Some(helper) = entities.get_mut(helper_id) else {
+            continue;
+        };
+        let helper_dir = u16::try_from(helper.element_data().direction()).unwrap_or(0);
+        let sprite = &mut helper.element_data_mut().sprite;
+        sprite.force_sprite_row(helper_anim, helper_dir);
+        sprite.synchronize_anim(frame, frame_count);
     }
 }
 
@@ -4816,7 +4857,7 @@ mod tests {
             climber.element_data_mut().sprite.last_motion_state =
                 Some(crate::sprite::MotionState::Terminated);
         }
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_terminal_shoulder_animations(&mut entities);
         let helper = entities.get(helper_id).unwrap().element_data();
         assert_eq!(
             (

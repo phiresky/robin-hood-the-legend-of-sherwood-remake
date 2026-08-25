@@ -1069,6 +1069,11 @@ pub struct AiPerTickData {
 pub struct PhalanxEnemySnapshot {
     pub handle: HumanHandle,
     pub position: Position,
+    /// Exact stored 3D position used by `ComputeDetectionPoint`. Rebuilding
+    /// world Y from `position.y + elevation` is not bit-identical after a
+    /// preceding 3D-to-map projection.
+    #[serde(default)]
+    pub world_position: crate::coordinates::WorldPoint3D,
     pub direction: u16,
     pub posture: crate::element::Posture,
     pub elevation: f32,
@@ -1099,6 +1104,9 @@ pub struct PhalanxMemberThemList {
     pub detectable_enemies: Vec<PhalanxEnemySnapshot>,
     /// Member viewer state used by both detection variants.
     pub position: Position,
+    /// Exact stored 3D position used as the base of `ComputeEyesPoint`.
+    #[serde(default)]
+    pub world_position: crate::coordinates::WorldPoint3D,
     pub direction: u16,
     pub posture: crate::element::Posture,
     pub elevation: f32,
