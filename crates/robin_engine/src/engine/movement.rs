@@ -699,7 +699,7 @@ mod group_move_authorization_tests {
         let exact = crate::fast_find_grid::SectorIndex::new(12);
 
         assert!(group_move_uses_simple_route(
-            true, true, sector, exact, 0, 50, exact, 0,
+            false, true, true, sector, exact, 0, 50, exact, 0,
         ));
         assert_eq!(
             group_move_door_selection(Some(86), true, None),
@@ -711,6 +711,7 @@ mod group_move_authorization_tests {
     #[test]
     fn distinct_goal_door_overlay_keeps_gate_route() {
         assert!(!group_move_uses_simple_route(
+            false,
             true,
             true,
             Some(crate::sector::SectorNumber::new(51)),
@@ -725,6 +726,7 @@ mod group_move_authorization_tests {
     #[test]
     fn duplicate_public_sector_with_distinct_exact_identity_keeps_gate_route() {
         assert!(!group_move_uses_simple_route(
+            false,
             true,
             true,
             Some(crate::sector::SectorNumber::new(50)),
@@ -733,6 +735,16 @@ mod group_move_authorization_tests {
             50,
             crate::fast_find_grid::SectorIndex::new(12),
             0,
+        ));
+    }
+
+    #[test]
+    fn recorded_gate_route_overrides_reconstructed_same_topology() {
+        let sector = Some(crate::sector::SectorNumber::new(319));
+        let exact = crate::fast_find_grid::SectorIndex::new(153);
+
+        assert!(!group_move_uses_simple_route(
+            true, false, true, sector, exact, 0, 319, exact, 0,
         ));
     }
 
@@ -3717,6 +3729,7 @@ fn group_move_door_selection(
 
 #[inline]
 fn group_move_uses_simple_route(
+    has_recorded_route_outcome: bool,
     is_door_click: bool,
     is_valid: bool,
     goal_sector: Option<crate::sector::SectorNumber>,
@@ -3726,6 +3739,14 @@ fn group_move_uses_simple_route(
     source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     source_layer: u16,
 ) -> bool {
+    // A schema-16 route-construction event proves that Original entered
+    // AppendMoveToSequence's cross-sector branch. Reconstructed source/goal
+    // handles can nevertheless compare equal when overlapping Original
+    // sectors collapse onto one Rust identity. The recorded outcome wins over
+    // that apparent same-sector result, for both success and failure.
+    if has_recorded_route_outcome {
+        return false;
+    }
     // PerformMove passes the patch-aware pSectorGoal to AppendMoveToSequence.
     // A coincident mpSelectedSector door only controls formation authorization;
     // it cannot turn an equal source/goal sector into a door traversal.

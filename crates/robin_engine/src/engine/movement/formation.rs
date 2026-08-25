@@ -594,6 +594,10 @@ impl EngineInner {
 
             // Same-sector or unknown goal sector: simple move
             if group_move_uses_simple_route(
+                recorded_gate_routes.iter().any(|(actor, _)| actor == pc_id)
+                    || recorded_failed_gate_routes
+                        .iter()
+                        .any(|actor| actor == pc_id),
                 is_door_click,
                 is_valid,
                 pc_goal_sector,
@@ -809,10 +813,6 @@ impl EngineInner {
                 assert!(
                     recorded_routes_for_actor.next().is_none(),
                     "recorded group move contains duplicate gate routes for {pc_id:?}"
-                );
-                assert!(
-                    door_goal.is_none(),
-                    "ordinary recorded gate route was attached to door-target move for {pc_id:?}"
                 );
                 assert!(
                     !gates.is_empty(),

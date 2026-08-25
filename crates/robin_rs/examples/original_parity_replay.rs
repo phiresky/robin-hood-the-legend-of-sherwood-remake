@@ -2534,7 +2534,7 @@ struct ReplayGroupMoveResolution {
     /// standalone Rust position-sector number. For a successful recorded
     /// gate route, its terminal gate exit is the equivalent Rust graph goal.
     unmapped_goal_search_sector: Option<u16>,
-    /// Successful ordinary `AppendMoveToSequence` gate paths are already
+    /// Successful `AppendMoveToSequence` gate paths are already
     /// authoritative at this boundary. Replaying them avoids a second A*
     /// search choosing a different valid path and changing the emitted
     /// building waits (including their RNG draws).
@@ -2667,29 +2667,25 @@ fn resolve_schema_sixteen_group_move_route(
         "one group move produced routes ending in different sectors: {matching:?}"
     );
     let unmapped_goal_search_sector = terminal_exit_sectors.pop_first();
-    let recorded_gate_routes = if door_route {
-        Vec::new()
-    } else {
-        matching
-            .iter()
-            .filter(|(_, event)| {
-                matches!(
-                    event.draft_diagnostics.get("result").map(TraceJsonValue::tree),
-                    Some(TraceJsonTree::String(result)) if result == "success"
-                ) && !event.gates.is_empty()
-            })
-            .map(|(_, event)| {
-                (
-                    event.actor,
-                    event
-                        .gates
-                        .iter()
-                        .map(|gate| (gate.gate_id, gate.direct))
-                        .collect(),
-                )
-            })
-            .collect()
-    };
+    let recorded_gate_routes = matching
+        .iter()
+        .filter(|(_, event)| {
+            matches!(
+                event.draft_diagnostics.get("result").map(TraceJsonValue::tree),
+                Some(TraceJsonTree::String(result)) if result == "success"
+            ) && !event.gates.is_empty()
+        })
+        .map(|(_, event)| {
+            (
+                event.actor,
+                event
+                    .gates
+                    .iter()
+                    .map(|gate| (gate.gate_id, gate.direct))
+                    .collect(),
+            )
+        })
+        .collect();
     let recorded_failed_gate_routes = matching
         .iter()
         .filter(|(_, event)| {
@@ -14673,7 +14669,7 @@ mod tests {
             Some(ReplayGroupMoveResolution {
                 door_route: true,
                 unmapped_goal_search_sector: Some(64),
-                recorded_gate_routes: Vec::new(),
+                recorded_gate_routes: vec![(actor, vec![(53, false)])],
                 recorded_failed_gate_routes: Vec::new(),
             })
         );
