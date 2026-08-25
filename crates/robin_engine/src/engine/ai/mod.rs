@@ -776,6 +776,48 @@ mod panic_boundary_tests {
         assert!(ai.outbox.reentrant.owner_work.is_empty());
         assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     }
+
+    #[test]
+    fn synchronous_panic_boundary_consumes_recursive_reach_point_rng() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let npc_id = engine.add_entity(enemy_soldier());
+        let mut assets = LevelAssets::default();
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
+        let request = crate::ai::PanicRequest {
+            center: Some(AiContext::default().position),
+            runs: crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+            alert: crate::ai::AlertLevel::Red,
+            is_new_panic: true,
+        };
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            engine.begin_panic_no_door_branch(
+                &sim,
+                &assets,
+                npc_id,
+                &request,
+                &AiContext::default(),
+                false,
+            );
+        });
+
+        assert!(
+            draws.len() >= 2
+                && draws
+                    .iter()
+                    .all(|site| *site == crate::sim_rng::RngSite::AiPanic),
+            "the deferred boundary must retain Panic's direction/distance draws: {draws:?}"
+        );
+        let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
+        assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
+    }
 }
 
 fn append_detectable(

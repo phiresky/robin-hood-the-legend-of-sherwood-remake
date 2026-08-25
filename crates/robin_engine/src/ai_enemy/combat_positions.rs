@@ -3962,14 +3962,16 @@ impl EnemyAi {
             }
         }
 
-        // (10) Repositioning + fallback stay-in-place.
-        self.observe_and_step(sim, ctx, tick, grid);
-        if self.base.current_state == AiState::Fleeing
-            && self.base.current_substate == Substate::FleeingPanic
-            && let Some(request) = deferred_defensive_panic
-        {
+        // (10) Repositioning + fallback stay-in-place. Original's Panic call
+        // above is synchronous, including its recursive reach-point Think and
+        // actor commands. When that engine-facing half is deferred, resume
+        // this source tail only after the Panic boundary has closed.
+        if let Some(request) = deferred_defensive_panic {
             debug_assert!(self.base.outbox.actor.begin_panic.is_none());
             self.base.outbox.actor.begin_panic = Some(request);
+            self.base.outbox.actor.observe_after_panic = true;
+        } else {
+            self.observe_and_step(sim, ctx, tick, grid);
         }
     }
 
@@ -4110,6 +4112,16 @@ impl EnemyAi {
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
             self.base.launch_timer(20, ctx.frame);
         }
+    }
+
+    pub(crate) fn observe_after_synchronous_panic(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) {
+        self.observe_and_step(sim, ctx, tick, grid);
     }
 
     // -----------------------------------------------------------------------

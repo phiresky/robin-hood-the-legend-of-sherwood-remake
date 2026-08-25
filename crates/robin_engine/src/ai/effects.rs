@@ -526,6 +526,11 @@ pub struct AiActorOutbox {
     pub look_sidewards: Option<LookDirection>,
     pub posture: Option<crate::element::Posture>,
     pub begin_panic: Option<PanicRequest>,
+    /// Resume `ReconsiderSwordfightObservation` after the synchronous Panic
+    /// boundary has closed. The AI-side caller cannot run this continuation
+    /// before the engine has applied Panic's commands and recursive Think.
+    #[serde(default)]
+    pub observe_after_panic: bool,
     pub panic_seek_fallback: bool,
     pub script_seek_area: Option<ScriptSeekAreaRequest>,
     pub archery_reservation_release: ArcheryReservationRelease,
@@ -722,6 +727,7 @@ impl AiActorOutbox {
             || self.look_sidewards.is_some()
             || self.posture.is_some()
             || self.begin_panic.is_some()
+            || self.observe_after_panic
             || self.panic_seek_fallback
             || self.script_seek_area.is_some()
             || self.archery_reservation_release != ArcheryReservationRelease::default()
