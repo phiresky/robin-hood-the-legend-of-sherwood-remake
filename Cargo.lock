@@ -5868,7 +5868,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
- "winit",
  "zstd",
 ]
 

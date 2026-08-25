@@ -7,7 +7,6 @@
 //! state only through input parameters and `SideEffects` outputs.
 
 use robin_assets::frame_holder::FrameHolder;
-use robin_assets::keyconfig::KeyConfig;
 use robin_assets::shipping_datadir::ShippingDatadir;
 use robin_engine::allied_control::AlliedFormation;
 use robin_engine::coordinates::{
@@ -30,6 +29,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::bg_cache::BackgroundDecal;
 use crate::draw_manager::DrawManager;
+use crate::key_config::KeyConfig;
 use crate::key_config_store::{KeyConfigStore, ProfileKeyConfig};
 use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
@@ -113,7 +113,7 @@ impl ApplicationContext {
         // active and custom key configs on each player profile, and
         // `original-code/RHgameinputtranslator.cpp:326` snapshots the active
         // profile's bindings into the mission input translator. The Rust port
-        // keeps the asset-layer key type in a parallel store keyed by the same
+        // keeps the host-side key type in a parallel store keyed by the same
         // profile id.
         for profile in &player_profiles.profiles {
             key_configs.entry_or_default(profile.id);

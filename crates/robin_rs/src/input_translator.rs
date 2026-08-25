@@ -3,7 +3,6 @@
 //! Translates raw keyboard state and mouse position/wheel into high-level
 //! [`GameAction`]s, returning the actions for the caller to dispatch.
 
-use robin_assets::keyconfig as assets_keyconfig;
 use robin_engine::coordinates::ScreenPoint;
 use std::collections::BTreeSet;
 
@@ -12,6 +11,8 @@ use enum_map::{Enum, EnumMap};
 use geo::Rect;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
+
+use crate::key_config::{KeyConfig, REAL_KEY_COUNT};
 
 // ---------------------------------------------------------------------------
 // GameKey — bindable action slots
@@ -120,8 +121,7 @@ impl GameKey {
         Self::AiInfo,
     ];
 
-    /// The action name string used in [`KeyConfig`](robin_assets::keyconfig::KeyConfig)
-    /// bindings.
+    /// The action name string used in [`KeyConfig`] bindings.
     pub fn action_name(self) -> &'static str {
         match self {
             Self::ZoomIn => "ZoomIn",
@@ -418,12 +418,12 @@ impl InputTranslator {
         self.bindings[key]
     }
 
-    /// Load rebindable keys from a [`KeyConfig`](robin_assets::keyconfig::KeyConfig).
+    /// Load rebindable keys from a [`KeyConfig`].
     ///
     /// Uses index-based loading — a raw copy from the key config's
     /// flat array.
-    pub fn load_bindings_from_keyconfig(&mut self, cfg: &assets_keyconfig::KeyConfig) {
-        for i in 0..assets_keyconfig::REAL_KEY_COUNT as usize {
+    pub fn load_bindings_from_keyconfig(&mut self, cfg: &KeyConfig) {
+        for i in 0..REAL_KEY_COUNT as usize {
             if let Some(game_key) = GameKey::ALL.get(i).copied() {
                 self.bindings[game_key] = cfg.get_key_by_index(i as u16);
             }
@@ -1008,7 +1008,7 @@ mod tests {
     #[test]
     fn load_bindings_from_keyconfig() {
         let mut t = InputTranslator::new(1024.0, 768.0);
-        let mut cfg = assets_keyconfig::KeyConfig::default();
+        let mut cfg = KeyConfig::default();
         cfg.set_binding("ZoomIn", Some(KeyCode::PageUp), None);
         cfg.set_binding("ScrollUp", Some(KeyCode::ArrowUp), None);
 
