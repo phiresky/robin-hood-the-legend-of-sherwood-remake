@@ -4562,6 +4562,29 @@ impl EnemyAi {
         let incoming_state = self.base.current_state;
         let incoming_substate = self.base.current_substate;
 
+        // The shared common routine assigns Default directly instead of
+        // entering through RHArtificialMalignity::SetState. Preserve the
+        // shield-bearer half of that virtual override too: leaving the three
+        // protection substates clears both mpArcherBehindMe and the archer's
+        // reciprocal mpShieldBearerBeforeMe before the next NPC owner runs.
+        if self.archer_behind_me != 0
+            && !matches!(
+                incoming_substate,
+                Substate::AttackingProtectingWithShield
+                    | Substate::AttackingPhalanx
+                    | Substate::AttackingRunningToPhalanx
+            )
+        {
+            let old_archer = self.archer_behind_me;
+            self.archer_behind_me = 0;
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::SetShieldBearerBeforeMe {
+                    target: old_archer,
+                    shield_bearer: 0,
+                },
+            );
+        }
+
         // ReturnToDutyCommonStuff calls the virtual Enemy SetState in Original.
         // When an archer leaves the bow substates, that override clears
         // mpShieldBearerBeforeMe and the shield bearer's reciprocal
@@ -7044,6 +7067,32 @@ mod tests {
             bearer.base.outbox.actor.look_sidewards,
             Some(crate::ai::LookDirection::Left)
         );
+    }
+
+    #[test]
+    fn return_to_duty_clears_archer_pair_when_bearer_leaves_protection() {
+        let sim = crate::sim_rng::test_context();
+        let mut bearer = EnemyAi::new(58);
+        bearer.base.current_state = AiState::Attacking;
+        bearer.base.current_substate = Substate::AttackingProtectingWithShield;
+        bearer.archer_behind_me = 64;
+
+        bearer.resume_return_to_duty_after_patrol_init(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext::default(),
+            false,
+        );
+
+        assert_eq!(bearer.base.current_state, AiState::Default);
+        assert_eq!(bearer.archer_behind_me, 0);
+        assert!(matches!(
+            bearer.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [CrossNpcAction::SetShieldBearerBeforeMe {
+                target: 64,
+                shield_bearer: 0,
+            }]
+        ));
     }
 
     #[test]
