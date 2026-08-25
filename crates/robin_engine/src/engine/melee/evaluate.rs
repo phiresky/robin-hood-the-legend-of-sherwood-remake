@@ -1477,7 +1477,7 @@ impl EngineInner {
                 )
             })
             .opponents
-            .clone();
+            .ids();
         let friends_ability: u16 = friends
             .iter()
             .map(|id| {

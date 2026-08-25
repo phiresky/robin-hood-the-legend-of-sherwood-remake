@@ -70,12 +70,20 @@ impl EngineInner {
         opponent_id: EntityId,
         jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
-        let Some(entity) = entities.get_mut(entity_id) else {
-            return false;
-        };
-        let Some(human) = entity.human_data_mut() else {
-            return false;
-        };
+        // Original's method receives typed human pointers. Preserve that
+        // precondition instead of conflating an invalid owner/opponent with
+        // the legitimate `false` result for an already-present opponent.
+        entities
+            .get(opponent_id)
+            .unwrap_or_else(|| panic!("AddOpponent opponent {opponent_id:?} is missing"))
+            .human_data()
+            .unwrap_or_else(|| panic!("AddOpponent opponent {opponent_id:?} is not human"));
+
+        let human = entities
+            .get_mut(entity_id)
+            .unwrap_or_else(|| panic!("AddOpponent owner {entity_id:?} is missing"))
+            .human_data_mut()
+            .unwrap_or_else(|| panic!("AddOpponent owner {entity_id:?} is not human"));
         human.opponents.add_principal(opponent_id, jump_line)
     }
 
@@ -85,13 +93,13 @@ impl EngineInner {
         entity_id: EntityId,
         opponent_id: EntityId,
     ) -> bool {
-        if let Some(entity) = entities.get_mut(entity_id)
-            && let Some(human) = entity.human_data_mut()
-            && human.opponents.remove(opponent_id)
-        {
-            return true;
-        }
-        false
+        entities
+            .get_mut(entity_id)
+            .unwrap_or_else(|| panic!("DeleteOpponent owner {entity_id:?} is missing"))
+            .human_data_mut()
+            .unwrap_or_else(|| panic!("DeleteOpponent owner {entity_id:?} is not human"))
+            .opponents
+            .remove(opponent_id)
     }
 
     /// Remove one opponent with the authoritative side effects of C++
@@ -312,19 +320,39 @@ impl EngineInner {
 
         // Phase 2: write back.
         for (i, this_jl, opp_id, opp_jl) in updates {
-            if let Some(entity) = self.world.entities.get_mut(entity_id)
-                && let Some(human) = entity.human_data_mut()
-            {
-                let _ = human.opponents.update_jump_line_at(i, this_jl);
-            }
+            let owner_human = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .unwrap_or_else(|| {
+                    panic!("opponent jump-line owner {entity_id:?} disappeared during refresh")
+                })
+                .human_data_mut()
+                .unwrap_or_else(|| {
+                    panic!("opponent jump-line owner {entity_id:?} stopped being human")
+                });
+            assert!(
+                owner_human.opponents.update_jump_line_at(i, this_jl),
+                "opponent slot {i} disappeared from {entity_id:?} during jump-line refresh"
+            );
+
             // Mirror onto the opponent's slot for `entity_id`.
-            // Use a soft path here — opponent's list may legitimately
-            // have removed the entry between snapshot and write-back.
-            if let Some(entity) = self.world.entities.get_mut(opp_id)
-                && let Some(human) = entity.human_data_mut()
-            {
-                let _ = human.opponents.update_jump_line(entity_id, opp_jl);
-            }
+            // Original `UpdateOpponentJumpLine` asserts if the reciprocal
+            // relationship is absent. The analysis phase above is read-only,
+            // so a missing record here is malformed state, not a race to hide.
+            let opponent_human = self
+                .world
+                .entities
+                .get_mut(opp_id)
+                .unwrap_or_else(|| {
+                    panic!("opponent {opp_id:?} disappeared during jump-line refresh")
+                })
+                .human_data_mut()
+                .unwrap_or_else(|| panic!("opponent {opp_id:?} is not human"));
+            assert!(
+                opponent_human.opponents.update_jump_line(entity_id, opp_jl),
+                "opponent {opp_id:?} has no reciprocal record for {entity_id:?}"
+            );
         }
     }
 
@@ -461,11 +489,7 @@ impl EngineInner {
                 return;
             }
             let elem = entity.element_data();
-            (
-                elem.position_map(),
-                elem.direction(),
-                human.opponents.clone(),
-            )
+            (elem.position_map(), elem.direction(), human.opponents.ids())
         };
 
         // Face-cone candidates: relative sector within ±2 of 0.
@@ -537,7 +561,7 @@ impl EngineInner {
                 .entities
                 .get(entity_id)
                 .and_then(Entity::human_data)
-                .map(|human| human.opponents.clone());
+                .map(|human| human.opponents.ids());
             eprintln!(
                 "PARITY_OPPONENT_ORDER frame={} phase=choose_done owner={} chosen_index={} after={after:?}",
                 self.control.frame_counter,
@@ -1103,14 +1127,14 @@ impl EngineInner {
                 .entities
                 .get(opponent)
                 .and_then(Entity::human_data)
-                .map(|human| human.opponents.clone())
+                .map(|human| human.opponents.ids())
         });
         let initiator_before = debug_initiator.then(|| {
             self.world
                 .entities
                 .get(initiator)
                 .and_then(Entity::human_data)
-                .map(|human| human.opponents.clone())
+                .map(|human| human.opponents.ids())
         });
         let opponent_added = Self::add_opponent(
             &mut self.world.entities,
@@ -1124,7 +1148,7 @@ impl EngineInner {
                 .entities
                 .get(opponent)
                 .and_then(Entity::human_data)
-                .map(|human| human.opponents.clone());
+                .map(|human| human.opponents.ids());
             eprintln!(
                 "PARITY_OPPONENT_ORDER frame={} phase=enter_opponent owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
                 self.control.frame_counter,
@@ -1156,7 +1180,7 @@ impl EngineInner {
                 .entities
                 .get(initiator)
                 .and_then(Entity::human_data)
-                .map(|human| human.opponents.clone());
+                .map(|human| human.opponents.ids());
             eprintln!(
                 "PARITY_OPPONENT_ORDER frame={} phase=enter_initiator owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
                 self.control.frame_counter,
