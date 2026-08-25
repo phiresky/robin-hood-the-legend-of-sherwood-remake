@@ -4035,6 +4035,72 @@ fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
 }
 
 #[test]
+fn saved_empty_true_circle_sweep_is_rehydrated_and_rotates() {
+    let mut engine = make_engine();
+    let attacker = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 0.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+    let target = engine.add_entity(make_soldier(
+        WorldPoint3D {
+            x: 10.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+    let mut assets = assets_with_nonstraight_profile(
+        SwordStrike::H,
+        crate::profiles::WeaponThrustKind::TrueCircle,
+    );
+    std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+        [SwordStrike::H as usize]
+        .direction = crate::profiles::WeaponThrustDirection::RightToLeft;
+    install_test_melee_order(&mut engine, attacker, target, SwordStrike::H, true);
+
+    let current_angle = sector_to_angle(3);
+    {
+        let entity = engine.get_entity_mut(attacker).unwrap();
+        entity.element_data_mut().set_direction_instantly(10);
+        entity.human_data_mut().unwrap().sword_sweep = crate::element::HumanSwordSweepState {
+            victims: Vec::new(),
+            initial_angle: current_angle + std::f32::consts::FRAC_PI_2,
+            current_angle,
+            final_angle: current_angle - std::f32::consts::PI,
+        };
+        assert!(entity.actor_data().unwrap().sweep_state.is_none());
+    }
+
+    engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+
+    let sweep = engine
+        .get_entity(attacker)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .sweep_state
+        .as_ref()
+        .expect("an empty loaded true-circle still owns executable angle state");
+    assert!(sweep.pending_victims.is_empty());
+    assert_eq!(sweep.current_angle.to_bits(), current_angle.to_bits());
+
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    assert_eq!(
+        engine
+            .get_entity(attacker)
+            .unwrap()
+            .element_data()
+            .direction(),
+        3,
+        "ExecuteTrueCircleSwordStrikeAction presents its saved angle even with no victims"
+    );
+}
+
+#[test]
 fn lateral_start_rebases_retained_serialized_human_victims() {
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_pc(

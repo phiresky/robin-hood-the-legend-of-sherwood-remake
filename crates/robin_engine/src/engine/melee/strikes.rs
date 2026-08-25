@@ -1359,11 +1359,13 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        let Some(strike) = self
+        let Some((strike, active_order_id)) = self
             .orders
             .sequence_manager
             .current_order_for_actor(attacker_id)
-            .and_then(|(_, _, order)| sword_strike_from_animation(order.order_type))
+            .and_then(|(_, _, order)| {
+                sword_strike_from_animation(order.order_type).map(|strike| (strike, order.order_id))
+            })
         else {
             return;
         };
@@ -1373,12 +1375,7 @@ impl EngineInner {
         // The legacy save owns these fields on RHElementActorHuman itself.
         // Rust's SweepState is only the executable mirror, so reconstruct it
         // lazily when a loaded strike resumes in the middle of its sweep.
-        // Fresh strikes have an empty HumanSwordSweepState until their DONE
-        // action point initializes the effect and therefore cannot enter this
-        // path accidentally.
-        let saved_sweep = entity.human_data().and_then(|human| {
-            (!human.sword_sweep.victims.is_empty()).then(|| human.sword_sweep.clone())
-        });
+        let serialized_sweep = entity.human_data().map(|human| human.sword_sweep.clone());
         let Some(profile_idx) = get_hth_weapon_id_full(entity, &assets.profile_manager) else {
             return;
         };
@@ -1401,6 +1398,33 @@ impl EngineInner {
         ) {
             return;
         }
+        // Original serializes the victim FIFO and the three sweep angles as
+        // independent RHElementActorHuman fields.  The angles remain live
+        // for a true-circle rotation even when its victim scan found nobody:
+        // ExecuteTrueCircleSwordStrikeAction unconditionally presents
+        // mfCurrentStrikeAngle once the sprite reaches its action point.
+        //
+        // A fresh strike's untouched serialized mirror is all zeroes.  Keep
+        // that sentinel from fabricating a pre-action sweep, while accepting
+        // non-default true-circle geometry without requiring a victim.
+        let saved_sweep = serialized_sweep.filter(|saved| {
+            let sprite = &entity.element_data().sprite;
+            // This hook runs after the action executor, so the DONE call may
+            // already have incremented the frame counter.  It must still be
+            // on the action-done frame: accepting later animation frames
+            // would resurrect the same serialized sweep on the next tick.
+            let on_action_point_frame = sprite.last_processed_order_id == active_order_id.get()
+                && sprite.current_frame == sprite.action_done_frame
+                && sprite.frame_count >= sprite.action_done_counter;
+            !saved.victims.is_empty()
+                || (matches!(
+                    thrust.kind,
+                    WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::TrueCircle
+                ) && on_action_point_frame
+                    && (saved.initial_angle.to_bits() != 0
+                        || saved.current_angle.to_bits() != 0
+                        || saved.final_angle.to_bits() != 0))
+        });
         let signed_rotation = strike_profile_angle(thrust.rotation_angle)
             * if thrust.direction == crate::profiles::WeaponThrustDirection::RightToLeft {
                 -1.0
