@@ -840,6 +840,41 @@ fn hit_translation_defers_flight_facing_until_first_execute() {
     );
 }
 
+#[test]
+fn hit_translation_without_animation_terminates_despite_retained_transition_order() {
+    let mut engine = make_engine();
+    let victim = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+    engine
+        .get_entity_mut(victim)
+        .expect("hit victim exists")
+        .set_posture(Posture::Flying);
+
+    let mut damage =
+        crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
+    damage.orders.push_back(crate::order::Order::new(
+        OrderType::NonanimationEnd,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    damage.initialize_transition_orders();
+    let sequence = engine.launch_element(damage);
+
+    engine.dispatch_hit_fall_animation(&LevelAssets::default(), victim, None, false, (sequence, 0));
+
+    let damage = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("terminated hit element remains inspectable");
+    assert_eq!(damage.state, crate::sequence::SequenceState::Terminated);
+    assert_eq!(
+        damage.orders.len(),
+        1,
+        "termination retains the pre-translation order for diagnostics"
+    );
+}
+
 fn initialized_hit_flight_delta(
     engine: &EngineInner,
     victim: EntityId,

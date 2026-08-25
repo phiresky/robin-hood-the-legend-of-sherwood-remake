@@ -2123,7 +2123,17 @@ impl EngineInner {
         // nothing to animate.
         let anim = match select_hit_fall_animation(victim_posture, victim_action, is_harder_hit) {
             Some(a) => a,
-            None => return,
+            None => {
+                // TranslateHitDamage calls SetState(TERMINATED) for these
+                // postures. Transition orders may already have been authored
+                // before command translation; leaving the element live would
+                // mistake one of those stale orders for a hit reaction and
+                // run Actor::Instruct's IN_PROGRESS epilogue.
+                self.orders
+                    .sequence_manager
+                    .element_terminated(damage_element.0, damage_element.1);
+                return;
+            }
         };
 
         self.push_translated_damage_order(damage_element, anim);
