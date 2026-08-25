@@ -272,7 +272,7 @@ recover_local_results() {
         import_result "$remote_result" >/dev/null || return 1
         if [[ "$result" == "$local_audit/results/"* ]]; then
             status=$(<"$result/status")
-            if [[ "$status" != 0 ]]; then
+            if [[ "$status" == integrity-* ]]; then
                 identity=${result##*/}
                 finished=$(sed -n 's/^FINISHED_UTC=//p' "$result/attestation.env")
                 remote_exec "$remote_script" --publish-stop "$remote_audit" \
@@ -354,9 +354,9 @@ worker_exit() {
     local status=$?
     trap - EXIT
     stop_heartbeat
-    if (( status == 3 )); then
-        publish_infrastructure_stop infrastructure-transport-or-lease-loss
-    fi
+    # A transport failure or lost lease is scoped to this worker. The claimed
+    # replay becomes reclaimable when its lease expires; publishing STOP.env
+    # here would incorrectly halt every independent worker in the audit.
     exit "$status"
 }
 trap worker_exit EXIT

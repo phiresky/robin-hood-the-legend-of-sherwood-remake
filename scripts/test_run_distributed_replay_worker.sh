@@ -219,13 +219,14 @@ assert c.execute("select outcome from replay_runs").fetchone()[0] == "integrity_
 PY
 
 setup_case lease_loss
+add_second_replay
 renew_failure="$case_root/fail-renew"
 : >"$renew_failure"
 set +e
 FAKE_RUNNER_MODE=sleep FAKE_SSH_FAIL_RENEW="$renew_failure" run_worker lease
 status=$?
 set -e
-[[ $status == 3 && -f "$remote_audit/STOP.env" ]]
+[[ $status == 3 && ! -e "$remote_audit/STOP.env" ]]
 python3 - "$database" <<'PY'
 import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
@@ -233,6 +234,16 @@ assert c.execute("select count(*) from work_completions").fetchone()[0] == 0
 assert c.execute("select outcome from replay_runs").fetchone()[0] == "aborted"
 PY
 [[ $(find "$remote_audit/attempts" -mindepth 1 -maxdepth 1 -type d | wc -l) == 1 ]]
+# The isolated lease loss must not close the global start gate: another worker
+# can immediately claim and finish the other independent replay.
+FAKE_RUNNER_MODE=exact run_worker lease-peer
+[[ ! -e "$remote_audit/STOP.env" ]]
+python3 - "$database" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+assert c.execute("select count(*) from work_completions").fetchone()[0] == 1
+assert c.execute("select outcome,count(*) from replay_runs group by outcome order by outcome").fetchall() == [("aborted",1),("exact_eof",1)]
+PY
 
 setup_case ssh_recovery
 import_failure="$case_root/fail-import"
@@ -253,7 +264,7 @@ set +e
 FAKE_RUNNER_MODE=fail run_worker recovery
 status=$?
 set -e
-[[ $status == 1 ]]
+[[ $status == 0 ]]
 python3 - "$database" <<'PY'
 import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
@@ -261,6 +272,6 @@ assert c.execute("select count(*) from work_completions").fetchone()[0] == 0
 assert c.execute("select count(*) from replay_runs").fetchone()[0] == 1
 assert c.execute("select outcome from replay_runs").fetchone()[0] == "exact_eof"
 PY
-[[ -e "$remote_audit/STOP.env" ]]
+[[ ! -e "$remote_audit/STOP.env" ]]
 
 printf 'distributed replay worker tests passed\n'
