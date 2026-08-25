@@ -1718,17 +1718,7 @@ impl EnemyAi {
                             tick,
                         );
                         self.base.primary_target = target;
-                        // Use live target position when available; fall
-                        // back to seek_position only if the snapshot is
-                        // empty.
-                        let threat = self
-                            .find_fighter(target, tick)
-                            .map(|f| f.position)
-                            .unwrap_or(self.base.seek_position);
-                        self.panic_from_position(
-                            threat,
-                            parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                        );
+                        self.begin_cassos_panic(target, ctx, tick);
                     }
                 }
 
@@ -1737,12 +1727,13 @@ impl EnemyAi {
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
                     self.base.friends_are_alerted = true;
-                    // Center is the live target position, not
-                    // seek_position.
-                    let center = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.position)
-                        .unwrap_or(self.base.seek_position);
+                    // Original immediately evaluates Position(mpPrimaryTarget)
+                    // for AlertOfficer. The selected pointer must still
+                    // resolve in the live entity view; neither cached fighter
+                    // geometry nor an older seek point can substitute for it.
+                    let center = ctx
+                        .expect_entity_view(target, "LookForHelp primary target")
+                        .position;
                     // Original derives this while building `mlistUs`; reuse
                     // that admission result rather than issuing a second set
                     // of 360-degree visibility queries.
@@ -2392,6 +2383,41 @@ impl EnemyAi {
         true
     }
 
+    /// Execute the two Original CASSOS Panic overloads after primary-target
+    /// selection. A non-null `RHElementActorHuman*` is read through
+    /// `Point(target)` at this call site; retaining an older seek point is not
+    /// a valid substitute if the selected actor cannot be resolved. A null
+    /// target deliberately calls the undirected `Panic(runs)` overload.
+    fn begin_cassos_panic(&mut self, target: HumanHandle, ctx: &AiContext, _tick: &AiPerTickData) {
+        let runs = parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
+        if target == 0 {
+            tracing::warn!(
+                me = self.base.me,
+                "Cassos decision lost its primary target; panicking without a direction"
+            );
+            let was_already_fleeing = matches!(
+                self.base.current_substate,
+                Substate::FleeingPanic | Substate::FleeingRunToDoor
+            );
+            self.base.directed_panic = false;
+            if !was_already_fleeing {
+                self.set_state(AiState::Fleeing, Substate::FleeingPanic);
+            }
+            self.base.outbox.actor.begin_panic = Some(PanicRequest {
+                center: None,
+                runs,
+                alert: AlertLevel::Red,
+                is_new_panic: !was_already_fleeing,
+            });
+            return;
+        }
+
+        let threat = ctx
+            .expect_entity_view(target, "Cassos selected primary target")
+            .position;
+        self.panic_from_position(threat, runs);
+    }
+
     /// Resume the statement immediately following `AlertOfficer`'s
     /// synchronous `GoNear` in `DECISION_LOOK_4_HELP`.
     ///
@@ -2428,16 +2454,7 @@ impl EnemyAi {
             }
             let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
             self.base.primary_target = target;
-            let threat = self
-                .find_fighter(target, tick)
-                .map(|fighter| fighter.position)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "failed LookForHelp owner {} selected required Cassos target {} absent from the live fighter view",
-                        self.base.me, target
-                    )
-                });
-            self.panic_from_position(threat, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
+            self.begin_cassos_panic(target, ctx, tick);
         }
         self.base
             .register_log_line(LogLineType::BattleDecision, Decision::Cassos as u16);
@@ -4685,10 +4702,15 @@ mod tests {
             y: 1780.0,
             ..Position::default()
         };
+        let stale_threat = Position {
+            x: 2145.0,
+            y: 1976.0,
+            ..Position::default()
+        };
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry = vec![FighterSnapshot {
             handle: 252,
-            position: threat,
+            position: stale_threat,
             is_pc: true,
             is_able_to_fight: true,
             ..FighterSnapshot::default()
@@ -4712,9 +4734,112 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
         assert!(ai.my_seek_points.is_empty());
+        let panic = ai
+            .base
+            .outbox
+            .actor
+            .begin_panic
+            .expect("failed LookForHelp must continue through Cassos Panic");
+        assert_eq!(panic.center, Some(threat));
         let log = ai.base.ai_log.last().expect("Cassos decision log");
         assert_eq!(log.line_type, LogLineType::BattleDecision);
         assert_eq!(log.info, Decision::Cassos as u16);
+    }
+
+    #[test]
+    fn cassos_uses_live_target_position_instead_of_stale_fighter_or_seek_position() {
+        let mut ai = EnemyAi::new(117);
+        ai.base.seek_position = Position {
+            x: 2145.0,
+            y: 1976.0,
+            ..Position::default()
+        };
+        let live = Position {
+            x: 873.0,
+            y: 1717.0,
+            sector: crate::position_interface::SectorHandle::new(309),
+            level: 8,
+        };
+        let stale = Position {
+            x: 900.0,
+            y: 1800.0,
+            ..Position::default()
+        };
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(252, pc_view_at(live));
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters.push(FighterSnapshot {
+            handle: 252,
+            position: stale,
+            ..FighterSnapshot::default()
+        });
+
+        ai.begin_cassos_panic(252, &ctx, &tick);
+
+        let panic = ai
+            .base
+            .outbox
+            .actor
+            .begin_panic
+            .expect("directed Cassos must stage Panic");
+        assert_eq!(panic.center, Some(live));
+        assert!(ai.base.directed_panic);
+    }
+
+    #[test]
+    fn cassos_without_a_selected_target_uses_undirected_panic() {
+        let mut ai = EnemyAi::new(117);
+        ai.base.current_state = AiState::Fleeing;
+        ai.base.current_substate = Substate::FleeingPanic;
+        ai.base.lasting_panic_runs = 11;
+        ai.base.seek_position = Position {
+            x: 2145.0,
+            y: 1976.0,
+            ..Position::default()
+        };
+
+        ai.begin_cassos_panic(0, &AiContext::default(), &AiPerTickData::stub());
+
+        let panic = ai
+            .base
+            .outbox
+            .actor
+            .begin_panic
+            .expect("undirected Cassos must stage Panic");
+        assert_eq!(panic.center, None);
+        assert!(!ai.base.directed_panic);
+        assert_eq!(panic.runs, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
+        assert_eq!(
+            ai.base.lasting_panic_runs, 11,
+            "the engine drain owns repeated-panic upgrade semantics"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "required entity view for handle 252 missing")]
+    fn cassos_does_not_replace_a_missing_live_target_with_fighter_or_seek_position() {
+        let mut ai = EnemyAi::new(117);
+        ai.base.seek_position = Position {
+            x: 2145.0,
+            y: 1976.0,
+            ..Position::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters.push(FighterSnapshot {
+            handle: 252,
+            position: Position {
+                x: 900.0,
+                y: 1800.0,
+                ..Position::default()
+            },
+            ..FighterSnapshot::default()
+        });
+
+        ai.begin_cassos_panic(252, &AiContext::default(), &tick);
     }
 
     #[test]
