@@ -105,6 +105,56 @@ class ReplayStateDatabaseTests(unittest.TestCase):
         self.assertEqual(corpus["current_aborted"], 1)
         self.assertEqual(corpus["current_untested"], 1)
 
+    def test_resource_signal_is_aborted_even_for_legacy_numeric_status(self) -> None:
+        result = self.evidence("oom", "137", "")
+        with self.connection:
+            DB.import_result(self.connection, result, self.root / "audit", None, "host-a")
+        row = self.connection.execute(
+            "SELECT outcome,result_status,command_status FROM replay_runs"
+        ).fetchone()
+        self.assertEqual(
+            (row["outcome"], row["result_status"], row["command_status"]),
+            ("aborted", "137", 137),
+        )
+
+    def test_legacy_resource_crash_is_corrected_and_requeued_append_only(self) -> None:
+        result = self.evidence("legacy-oom", "137", "")
+        original_classify = DB.classify
+        DB.classify = lambda status, command_status, marker_count, log: "crash"
+        try:
+            with self.connection:
+                DB.import_result(
+                    self.connection, result, self.root / "audit", None, "host-a"
+                )
+        finally:
+            DB.classify = original_classify
+        logical = "parity-save-replays/corpus/traces/save/replay-001-session-0001.jsonl.zst"
+        with self.connection:
+            work_id = DB.add_work(
+                self.connection, logical, "replay", "2" * 64,
+                None, None, "3" * 64, 100,
+            )
+        claim = DB.claim_work(self.connection, "replay", "host-a:1", 60)
+        evidence_key = self.connection.execute(
+            "SELECT evidence_key FROM replay_runs"
+        ).fetchone()[0]
+        DB.complete_work(self.connection, claim["claim_token"], "crash", evidence_key)
+
+        result_counts = DB.retry_resource_aborts(
+            self.connection, "2" * 64, str((self.root / "audit").resolve())
+        )
+        self.assertEqual(result_counts, {"corrected": 1, "requeued": 1})
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM replay_runs").fetchone()[0], 1
+        )
+        correction = self.connection.execute(
+            "SELECT corrected_outcome FROM replay_run_corrections"
+        ).fetchone()[0]
+        self.assertEqual(correction, "aborted")
+        retry = DB.claim_work(self.connection, "replay", "host-a:2", 60)
+        self.assertIsNotNone(retry)
+        self.assertNotEqual(retry["work_id"], work_id)
+
     def test_run_evidence_is_append_only(self) -> None:
         result = self.evidence("exact", "0", f"{DB.EOF_MARKER}\n")
         with self.connection:

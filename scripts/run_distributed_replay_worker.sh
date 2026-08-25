@@ -464,6 +464,14 @@ for key in ("work_id","claim_token","logical_path","completion_marker","source_s
     if [[ -e "$lost_flag" ]]; then result_status=aborted-lease-loss
     elif [[ -e "$peer_flag" ]]; then result_status=aborted-peer-failure
     elif [[ "$native_post" != "$native_pre" ]]; then result_status=integrity-native-changed
+    # SIGKILL/SIGTERM say that the attempt was interrupted by the host or
+    # controller, not that the deterministic replay disagreed with Original.
+    # Preserve and import the evidence as an aborted attempt, but do not close
+    # the work item: its renewable lease will expire and make it claimable
+    # again.  This is especially important when the Linux OOM killer returns
+    # 137 for several independent high-RSS traces at once.
+    elif (( command_status == 137 || command_status == 143 )); then
+        result_status=aborted-resource-signal-$command_status
     elif (( command_status != 0 )); then result_status=$command_status
     elif (( marker_count != 1 )); then result_status=integrity-eof-marker
     else result_status=0

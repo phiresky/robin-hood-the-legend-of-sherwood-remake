@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 EOF_MARKER = "parity trace matched every recorded frame"
 DIVERGENCE_RE = re.compile(r"first parity divergence after frame (\d+)")
 HALTED_RE = re.compile(r"parity replay halted at frame (\d+)")
@@ -169,6 +169,25 @@ BEFORE DELETE ON replay_runs BEGIN
     SELECT RAISE(ABORT, 'replay_runs is append-only');
 END;
 
+-- Corrections preserve immutable evidence while repairing a derived outcome
+-- assigned by an older importer. The original replay_runs row, status, log,
+-- and checksummed evidence directory remain untouched.
+CREATE TABLE IF NOT EXISTS replay_run_corrections (
+    evidence_key TEXT PRIMARY KEY REFERENCES replay_runs(evidence_key),
+    corrected_outcome TEXT NOT NULL CHECK (corrected_outcome IN
+        ('exact_eof','mismatch','crash','timeout','aborted','integrity_error','unknown')),
+    reason TEXT NOT NULL,
+    corrected_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS replay_run_corrections_no_update
+BEFORE UPDATE ON replay_run_corrections BEGIN
+    SELECT RAISE(ABORT, 'replay run corrections are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS replay_run_corrections_no_delete
+BEFORE DELETE ON replay_run_corrections BEGIN
+    SELECT RAISE(ABORT, 'replay run corrections are append-only');
+END;
+
 CREATE TABLE IF NOT EXISTS work_items (
     work_id INTEGER PRIMARY KEY,
     work_key TEXT NOT NULL UNIQUE CHECK (length(work_key) = 64),
@@ -275,7 +294,7 @@ def connect(path: Path) -> sqlite3.Connection:
             "UPDATE schema_meta SET value='3' WHERE key='schema_version'"
         )
         version = "3"
-    if version == "3":
+    if version in ("3", "4"):
         connection.execute(
             "UPDATE schema_meta SET value=? WHERE key='schema_version'",
             (str(SCHEMA_VERSION),),
@@ -474,7 +493,7 @@ def classify(status: str, command_status: int | None, marker_count: int, log: st
         return "exact_eof"
     if DIVERGENCE_RE.search(log) or "divergent frames" in log:
         return "mismatch"
-    if status.startswith("aborted-"):
+    if status.startswith("aborted-") or command_status in (137, 143):
         return "aborted"
     if status.startswith("integrity-") or (command_status == 0 and marker_count != 1):
         return "integrity_error"
@@ -1339,9 +1358,18 @@ def summary(connection: sqlite3.Connection) -> dict[str, object]:
     inventory = connection.execute("SELECT count(*) FROM replays").fetchone()[0]
     runs = connection.execute("SELECT count(*) FROM replay_runs").fetchone()[0]
     latest = {
-        row["outcome"]: row["amount"]
+        row["effective_outcome"]: row["amount"]
         for row in connection.execute(
-            "SELECT outcome,count(*) AS amount FROM latest_replay_runs GROUP BY outcome"
+            """SELECT coalesce(c.corrected_outcome,ranked.outcome) AS effective_outcome,
+                      count(*) AS amount
+               FROM (
+                 SELECT rr.*,row_number() OVER (
+                   PARTITION BY replay_id
+                   ORDER BY finished_utc DESC NULLS LAST,run_id DESC
+                 ) AS rank
+                 FROM replay_runs rr
+               ) ranked LEFT JOIN replay_run_corrections c USING(evidence_key)
+               WHERE rank=1 GROUP BY effective_outcome"""
         )
     }
     runners = [
@@ -1499,11 +1527,13 @@ def overview(connection: sqlite3.Connection) -> dict[str, object]:
             outcomes = {
                 row["outcome"]: row["amount"] for row in connection.execute(
                     """SELECT outcome,count(*) AS amount FROM (
-                         SELECT rr.outcome,row_number() OVER (
+                         SELECT coalesce(c.corrected_outcome,rr.outcome) AS outcome,
+                                row_number() OVER (
                            PARTITION BY rr.replay_id
                            ORDER BY rr.finished_utc DESC NULLS LAST,rr.run_id DESC
                          ) AS rank
                          FROM replay_runs rr JOIN replays r USING(replay_id)
+                         LEFT JOIN replay_run_corrections c USING(evidence_key)
                          WHERE r.corpus_id=? AND rr.runner_id=?
                            AND (?=0 OR EXISTS(
                              SELECT 1 FROM final_corpus_members f
@@ -1788,6 +1818,67 @@ def add_work(
     return int(connection.execute(
         "SELECT work_id FROM work_items WHERE work_key=?", (work_key,)
     ).fetchone()[0])
+
+
+def retry_resource_aborts(
+    connection: sqlite3.Connection,
+    runner_trust: str,
+    audit_path: str,
+) -> dict[str, int]:
+    """Correct legacy SIGKILL/SIGTERM crashes and append retry work.
+
+    Older distributed workers classified numeric 137/143 statuses as game
+    crashes and completed their work items. Resource/controller signals are
+    not parity evidence. Keep every immutable run and completion row, append
+    an explicit outcome correction, and create a new digest-bound retry item.
+    """
+    rows = connection.execute(
+        """SELECT rr.evidence_key,rr.command_status,wc.work_id,
+                  wi.work_key,wi.operation,wi.replay_id,wi.runner_id,
+                  wi.conversion_protocol,wi.target_encoding,wi.source_sha256,
+                  wi.priority
+           FROM replay_runs rr JOIN runners ru USING(runner_id)
+           LEFT JOIN replay_run_corrections correction USING(evidence_key)
+           LEFT JOIN work_completions wc USING(evidence_key)
+           LEFT JOIN work_items wi USING(work_id)
+           WHERE ru.bundle_trust_sha256=? AND rr.audit_path=?
+             AND rr.outcome='crash' AND rr.command_status IN (137,143)
+             AND rr.divergence_frame IS NULL AND rr.exact_eof=0
+             AND correction.evidence_key IS NULL
+           ORDER BY rr.run_id""",
+        (runner_trust.lower(), str(Path(audit_path).resolve())),
+    ).fetchall()
+    corrected = requeued = 0
+    with connection:
+        for row in rows:
+            reason = f"resource/controller signal {row['command_status']}; no parity divergence"
+            connection.execute(
+                """INSERT INTO replay_run_corrections(
+                     evidence_key,corrected_outcome,reason) VALUES(?,?,?)""",
+                (row["evidence_key"], "aborted", reason),
+            )
+            corrected += 1
+            if row["work_id"] is None:
+                continue
+            retry_key = sha256_bytes(
+                (
+                    "replay-work-retry-v1\n"
+                    f"PREVIOUS_WORK={row['work_key']}\n"
+                    f"ABORTED_EVIDENCE={row['evidence_key']}\n"
+                ).encode()
+            )
+            requeued += connection.execute(
+                """INSERT OR IGNORE INTO work_items(
+                     work_key,operation,replay_id,runner_id,conversion_protocol,
+                     target_encoding,source_sha256,priority)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    retry_key,row["operation"],row["replay_id"],row["runner_id"],
+                    row["conversion_protocol"],row["target_encoding"],
+                    row["source_sha256"],max(row["priority"], 1000),
+                ),
+            ).rowcount
+    return {"corrected": corrected, "requeued": requeued}
 
 
 def enqueue_corpus_replay_work(
@@ -2247,6 +2338,10 @@ def parser() -> argparse.ArgumentParser:
     complete.add_argument("claim_token")
     complete.add_argument("outcome")
     complete.add_argument("--evidence-key")
+    retry_aborts = commands.add_parser("retry-resource-aborts")
+    retry_aborts.add_argument("database", type=Path)
+    retry_aborts.add_argument("--runner-trust", required=True)
+    retry_aborts.add_argument("--audit-path", required=True)
     corpus_claim = commands.add_parser("claim-corpus-work")
     corpus_claim.add_argument("database", type=Path)
     corpus_claim.add_argument("logical_root")
@@ -2420,6 +2515,10 @@ def main() -> None:
     elif args.command == "complete-work":
         work_id = complete_work(connection, args.claim_token, args.outcome, args.evidence_key)
         print(json.dumps({"work_id": work_id, "completed": True}))
+    elif args.command == "retry-resource-aborts":
+        print(json.dumps(retry_resource_aborts(
+            connection, args.runner_trust, args.audit_path,
+        ), sort_keys=True))
     elif args.command == "claim-corpus-work":
         print(json.dumps(claim_corpus_work(
             connection, args.logical_root, args.operation, args.worker_id, args.host,

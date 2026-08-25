@@ -15,12 +15,14 @@ mkdir -p -- "$remote_bundle/lib"
 printf '%s\n' \
     '#include <stdio.h>' \
     '#include <stdlib.h>' \
+    '#include <signal.h>' \
     '#include <string.h>' \
     '#include <unistd.h>' \
     'int main(int argc, char **argv) {' \
     '  const char *mode=getenv("FAKE_RUNNER_MODE");' \
     '  if (mode && strcmp(mode,"sleep")==0) sleep(30);' \
     '  if (mode && strcmp(mode,"nomarker")==0) return 0;' \
+    '  if (mode && strcmp(mode,"sigkill")==0) raise(SIGKILL);' \
     '  if (mode && (strcmp(mode,"fail")==0 ||' \
     '      (strcmp(mode,"fail-first")==0 && argc > 1 && strstr(argv[argc-1],"replay-001")))) {' \
     '    fputs("first parity divergence after frame 42 (1 difference):\n", stderr);' \
@@ -243,6 +245,21 @@ import sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
 assert c.execute("select count(*) from work_completions").fetchone()[0] == 1
 assert c.execute("select outcome,count(*) from replay_runs group by outcome order by outcome").fetchall() == [("aborted",1),("exact_eof",1)]
+PY
+
+setup_case resource_kill
+set +e
+FAKE_RUNNER_MODE=sigkill run_worker resource-kill
+status=$?
+set -e
+[[ $status == 3 && ! -e "$remote_audit/STOP.env" ]]
+python3 - "$database" <<'PY'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+assert c.execute("select count(*) from work_completions").fetchone()[0] == 0
+assert c.execute("select outcome,result_status,command_status from replay_runs").fetchone() == (
+    "aborted", "aborted-resource-signal-137", 137
+)
 PY
 
 setup_case ssh_recovery
