@@ -677,7 +677,7 @@ mod group_move_authorization_tests {
     fn recorded_ordinary_route_keeps_door_placement_but_uses_ordinary_path() {
         assert_eq!(
             group_move_door_selection(Some(86), true, Some(false)),
-            (None, false, true)
+            (None, false, false)
         );
         assert_eq!(
             group_move_door_selection(Some(86), true, None),
@@ -3700,13 +3700,19 @@ fn group_move_door_selection(
         None => (spatial_clicked_door_index, spatial_is_door_click),
     };
 
-    // Original keeps two independent identities in PerformGroupMove:
-    // `mpSelectedSector` supplies `bDoor`, which bypasses formation-point
-    // authorization, while the patch-aware `pSectorGoal` selects ordinary
-    // FindPathGates versus FindPathIntoDoor. A schema-16 replay can therefore
-    // author an ordinary route over a coincident door overlay without losing
-    // the overlay's placement semantics (RHengine.cpp:5322-5337, 5447-5468).
-    (route_door_index, route_is_door, spatial_is_door_click)
+    // Schema-16's reconstructed route kind is authoritative for the selected
+    // door identity too. Rust's spatial query can land on a coincident door
+    // polygon even when Original selected the ordinary area underneath; using
+    // that reconstructed hit would incorrectly skip FindAutorizedPosition.
+    // Live commands have no override and continue to use the spatial result.
+    let bypass_formation_authorization = recorded_door_route
+        .map(|_| route_is_door)
+        .unwrap_or(spatial_is_door_click);
+    (
+        route_door_index,
+        route_is_door,
+        bypass_formation_authorization,
+    )
 }
 
 #[inline]

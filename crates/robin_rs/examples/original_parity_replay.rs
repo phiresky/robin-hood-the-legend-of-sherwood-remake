@@ -2575,6 +2575,19 @@ fn resolve_schema_sixteen_group_move_route(
     };
     let goal_sector = u16::try_from(*goal_sector)
         .unwrap_or_else(|_| panic!("schema-16 group-move goal sector is negative: {goal_sector}"));
+    let goal_kind = retained_sector_kinds
+        .get(usize::from(goal_sector))
+        .unwrap_or_else(|| {
+            panic!(
+                "schema-16 group-move goal sector {goal_sector} is absent from retained Original topology"
+            )
+        });
+    let goal_door = match goal_kind {
+        LegacyGridSectorAsset::Door { gate_index } => Some(entity_map.translate_gate(*gate_index)),
+        LegacyGridSectorAsset::NullOrOrdinary
+        | LegacyGridSectorAsset::Building
+        | LegacyGridSectorAsset::Lift => None,
+    };
 
     let mut matching = route_events
         .unwrap_or_default()
@@ -2598,8 +2611,17 @@ fn resolve_schema_sixteen_group_move_route(
             Some((ordinal, event))
         })
         .collect::<Vec<_>>();
+    // Same-sector moves do not construct a gate route, but retained Original
+    // topology still authoritatively identifies whether PerformGroupMove's
+    // selected goal was a door. Do not fall back to Rust's overlapping-polygon
+    // hit in that case.
     if matching.is_empty() {
-        return None;
+        return Some(ReplayGroupMoveResolution {
+            door_route: goal_door.is_some(),
+            unmapped_goal_search_sector: None,
+            recorded_gate_routes: Vec::new(),
+            recorded_failed_gate_routes: Vec::new(),
+        });
     }
     matching.sort_unstable_by_key(|(ordinal, _)| *ordinal);
     // `PerformGroupMove` calls `PerformMove` once for each selected actor, and
@@ -2613,19 +2635,6 @@ fn resolve_schema_sixteen_group_move_route(
     // command in frame order.
     let mut actors_with_route = BTreeSet::new();
     matching.retain(|(_, event)| actors_with_route.insert(event.actor));
-    let goal_kind = retained_sector_kinds
-        .get(usize::from(goal_sector))
-        .unwrap_or_else(|| {
-            panic!(
-                "schema-16 group-move goal sector {goal_sector} is absent from retained Original topology"
-            )
-        });
-    let goal_door = match goal_kind {
-        LegacyGridSectorAsset::Door { gate_index } => Some(entity_map.translate_gate(*gate_index)),
-        LegacyGridSectorAsset::NullOrOrdinary
-        | LegacyGridSectorAsset::Building
-        | LegacyGridSectorAsset::Lift => None,
-    };
     if let Some(goal_door) = goal_door {
         assert!(
             matching.iter().all(|(_, event)| {
@@ -14502,6 +14511,48 @@ mod tests {
             })
         );
         assert_eq!(consumed, BTreeSet::from([0]));
+    }
+
+    #[test]
+    fn schema_sixteen_same_sector_group_move_retains_ordinary_goal_kind() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let command = TraceCommand::GroupMove {
+            actors: vec![actor],
+            destination: TracePoint {
+                x: TraceFloat {
+                    bits: 2533.968_f32.to_bits(),
+                },
+                y: TraceFloat {
+                    bits: 580.920_04_f32.to_bits(),
+                },
+            },
+            running: false,
+            show_marker: true,
+            goal_sector: 150,
+            goal_layer: 4,
+        };
+        let mut consumed = BTreeSet::new();
+
+        assert_eq!(
+            resolve_schema_sixteen_group_move_route(
+                16,
+                &command,
+                None,
+                &mut consumed,
+                &group_move_route_map(0),
+                &group_move_sector_kinds(150, None),
+            ),
+            Some(ReplayGroupMoveResolution {
+                door_route: false,
+                unmapped_goal_search_sector: None,
+                recorded_gate_routes: Vec::new(),
+                recorded_failed_gate_routes: Vec::new(),
+            })
+        );
+        assert!(consumed.is_empty());
     }
 
     #[test]
