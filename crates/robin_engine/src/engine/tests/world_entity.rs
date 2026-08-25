@@ -6703,7 +6703,11 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
     entity
         .element_data_mut()
         .set_position_map(MapPoint::new(100.0, 100.0));
-    entity.element_data_mut().set_sector(Some(source));
+    entity
+        .element_data_mut()
+        .sprite
+        .position_iface
+        .set_sector_topology(Some(source), source.arena_index());
     let ai = entity.enemy_ai_mut().unwrap();
     ai.base.me = owner.index();
     ai.base.current_state = AiState::Seeking;

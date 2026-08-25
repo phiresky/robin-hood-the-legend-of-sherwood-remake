@@ -5688,9 +5688,18 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
         },
     ];
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
-    for (index, sector_number) in [building_sector, SectorNumber::new(7), SectorNumber::new(9)]
-        .into_iter()
-        .enumerate()
+    // Include the probe owner's ordinary sector as well. Once this helper
+    // installs an exact arena, every live public sector used by the fixture
+    // must remain resolvable; otherwise building the owner view correctly
+    // rejects the synthetic arena as incomplete.
+    for (index, sector_number) in [
+        building_sector,
+        SectorNumber::new(7),
+        SectorNumber::new(9),
+        SectorNumber::new(1),
+    ]
+    .into_iter()
+    .enumerate()
     {
         level.sector_number_map.insert(sector_number, index);
         level.sectors.push(GridSector {
