@@ -303,6 +303,16 @@ fn actor_action_row(
     }
 }
 
+fn is_custom_animation_order(order_type: OrderType) -> bool {
+    matches!(
+        order_type,
+        OrderType::PlayCustom
+            | OrderType::PlayCustomLooped
+            | OrderType::PlayCustomFreeze
+            | OrderType::PlayCustomFrozen
+    )
+}
+
 /// Complete the human `STANDING_UP_SWORD` arm after sprite playback.
 ///
 /// Original refreshes the goal from the live principal opponent only while
@@ -5379,25 +5389,37 @@ impl EngineInner {
                         .get_element(s, e)
                         .is_some_and(|element| element.legacy_v48.is_some())
                 });
-                let requested_custom_animation = order_seq_elem.and_then(|(s, e)| {
-                    let element = self.orders.sequence_manager.get_element(s, e)?;
-                    if !matches!(
-                        element.command,
-                        Command::PlayAnim
-                            | Command::PlayAnimLoop
-                            | Command::PlayAnimFreeze
-                            | Command::PlayAnimFrozen
-                    ) {
-                        return None;
-                    }
-                    match element.get_property(crate::sequence::Field::AnimationId) {
-                        Some(crate::sequence::FieldValue::Animation(animation)) => Some(*animation),
-                        Some(crate::sequence::FieldValue::Integer(value)) => {
-                            OrderType::try_from(*value).ok()
+                // The sequence element keeps its PlayAnim* command while
+                // GenerateTransition temporarily puts ordinary posture/action
+                // transition orders at its front.  Original consults
+                // AnimationId only in the RHNONANIMATION_PLAY_CUSTOM* Execute
+                // arms; applying it to those transition orders replaces their
+                // authored sprite row with the eventual custom animation.
+                let selected_order_is_custom_animation = is_custom_animation_order(anim_type);
+                let requested_custom_animation = selected_order_is_custom_animation
+                    .then(|| order_seq_elem)
+                    .flatten()
+                    .and_then(|(s, e)| {
+                        let element = self.orders.sequence_manager.get_element(s, e)?;
+                        if !matches!(
+                            element.command,
+                            Command::PlayAnim
+                                | Command::PlayAnimLoop
+                                | Command::PlayAnimFreeze
+                                | Command::PlayAnimFrozen
+                        ) {
+                            return None;
                         }
-                        _ => None,
-                    }
-                });
+                        match element.get_property(crate::sequence::Field::AnimationId) {
+                            Some(crate::sequence::FieldValue::Animation(animation)) => {
+                                Some(*animation)
+                            }
+                            Some(crate::sequence::FieldValue::Integer(value)) => {
+                                OrderType::try_from(*value).ok()
+                            }
+                            _ => None,
+                        }
+                    });
                 let pointing_direction_goal = if cur_command == Some(Command::Point) {
                     let direction = order_seq_elem
                         .and_then(|(s, e)| {
@@ -5967,12 +5989,16 @@ impl EngineInner {
                                     _ => FrameProgression::Default,
                                 };
                                 (animation, progression)
-                            } else if matches!(cur_command, Some(Command::PlayAnimLoop)) {
+                            } else if selected_order_is_custom_animation
+                                && matches!(cur_command, Some(Command::PlayAnimLoop))
+                            {
                                 (
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
                                     FrameProgression::Cyclically,
                                 )
-                            } else if matches!(cur_command, Some(Command::PlayAnimFrozen)) {
+                            } else if selected_order_is_custom_animation
+                                && matches!(cur_command, Some(Command::PlayAnimFrozen))
+                            {
                                 (
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
                                     FrameProgression::FrozenLastFrame,
@@ -6588,6 +6614,23 @@ impl EngineInner {
 #[cfg(test)]
 mod soldier_take_drink_parity_tests {
     use super::*;
+
+    #[test]
+    fn play_anim_property_only_applies_to_the_custom_wrapper_order() {
+        for wrapper in [
+            OrderType::PlayCustom,
+            OrderType::PlayCustomLooped,
+            OrderType::PlayCustomFreeze,
+            OrderType::PlayCustomFrozen,
+        ] {
+            assert!(is_custom_animation_order(wrapper));
+        }
+        assert!(
+            !is_custom_animation_order(OrderType::TransitionParryingSwordWaitingSword),
+            "a PlayAnim sequence can retain its command while a prerequisite transition is selected"
+        );
+        assert!(!is_custom_animation_order(OrderType::WaitingUpright));
+    }
 
     #[test]
     fn attentive_movement_uses_the_original_alerted_animation_family() {

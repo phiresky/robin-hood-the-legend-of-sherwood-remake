@@ -2811,8 +2811,10 @@ struct CarrierSnapshot {
     target_frame: u16,
     target_frame_count: u16,
     /// The climber is still executing the animation that owns helper-side
-    /// synchronization. A stale sprite row is not enough: Original performs
-    /// SynchronizeAnim only from the live climbing Execute arm.
+    /// synchronization, including the terminal Execute edge before its
+    /// per-tick sprite motion latch is cleared. A stale sprite row alone is
+    /// not enough: Original performs SynchronizeAnim only from the live
+    /// climbing Execute arm.
     target_live_shoulder_ability: bool,
 }
 
@@ -2873,7 +2875,10 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
                                 AbilityKind::ClimbOnShoulders | AbilityKind::ClimbDownFromShoulders
                             )
                         )
-                    });
+                    }) || (matches!(
+                        s.last_action,
+                        OrderType::ClimbingUpOnShoulders | OrderType::ClimbingDownFromShoulders
+                    ) && s.last_motion_state.is_some());
                     (
                         s.last_action,
                         s.current_frame,
@@ -4807,10 +4812,28 @@ mod tests {
         );
 
         {
+            let climber = entities.get_mut(climber_id).unwrap();
+            climber.element_data_mut().sprite.last_motion_state =
+                Some(crate::sprite::MotionState::Terminated);
+        }
+        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        let helper = entities.get(helper_id).unwrap().element_data();
+        assert_eq!(
+            (
+                helper.sprite.current_row,
+                helper.sprite.current_frame,
+                helper.sprite.frame_count,
+            ),
+            (100, 5, 1),
+            "the terminal climb Execute must synchronize the helper once before its motion latch clears"
+        );
+
+        {
             let rider = entities.get_mut(climber_id).unwrap().element_data_mut();
             rider.sprite.last_action = OrderType::WaitingOnShoulders;
             rider.sprite.current_frame = 2;
             rider.sprite.frame_count = u16::MAX;
+            rider.sprite.last_motion_state = None;
         }
         sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
         let rider = entities.get(climber_id).unwrap().element_data();

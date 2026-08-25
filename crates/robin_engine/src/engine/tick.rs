@@ -6286,6 +6286,18 @@ impl EngineInner {
         // cleared at their owning actor slots above and are skipped here.
         self.tick_melee_combat(sim, assets);
 
+        // ── Carried entity position sync ───────────────────────
+        // Keep bodies carried by Little John positioned on the carrier
+        // and drive their sprite animation (BeingLifted/BeingCarried/
+        // BeingDropped) synchronized with the carrier.  Needs the
+        // campaign profile manager to look up LittleJohnCarry contextual
+        // actions on the carrier. This precedes motion-latch clearing so a
+        // shoulder climb's terminal Execute still synchronizes its helper on
+        // that final frame, exactly where the Original calls SynchronizeAnim.
+        if true {
+            abilities::sync_carried_positions(&mut self.world.entities, &assets.profile_manager);
+        }
+
         // ── Per-actor `Order::done` propagation ────────────────
         // Runs after every per-system sprite-advance tick this frame
         // (movement, jumps, animations, bow shots, melee, abilities),
@@ -6296,16 +6308,6 @@ impl EngineInner {
         // next tick starts fresh.  Read by the postpone-race guard in
         // `EngineInner::engine_postpone`.
         self.propagate_done_to_current_orders();
-
-        // ── Carried entity position sync ───────────────────────
-        // Keep bodies carried by Little John positioned on the carrier
-        // and drive their sprite animation (BeingLifted/BeingCarried/
-        // BeingDropped) synchronized with the carrier.  Needs the
-        // campaign profile manager to look up LittleJohnCarry contextual
-        // actions on the carrier.
-        if true {
-            abilities::sync_carried_positions(&mut self.world.entities, &assets.profile_manager);
-        }
 
         // TODO(original-parity): move further gameplay maintenance into the
         // ordered pass only when a concrete observable discrepancy is proven.
