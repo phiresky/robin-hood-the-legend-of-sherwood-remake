@@ -134,6 +134,120 @@ pub enum RestoreError {
     },
 }
 
+/// Chronological journal of the deterministic commands applied at each
+/// simulation frame.
+///
+/// Rewind and rollback verification intentionally retain different amounts of
+/// history, but they must agree on frame addressing, late-input edits, and
+/// branch truncation.  Keeping those rules here prevents each consumer from
+/// maintaining its own `oldest_frame + VecDeque` arithmetic.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CommandJournal {
+    commands: VecDeque<Vec<PlayerInput>>,
+    /// Frame represented by `commands[0]`. When truncation empties a journal,
+    /// this remains the frame at which its next branch must begin.
+    oldest_frame: u32,
+    /// Required frame for the next record. `None` only for a fresh or fully
+    /// cleared journal whose first record establishes a new timeline anchor.
+    next_frame: Option<u32>,
+}
+
+impl CommandJournal {
+    /// Record one complete frame. Non-empty journals are strictly contiguous:
+    /// a gap or duplicate means a caller crossed a timeline discontinuity
+    /// without first clearing or truncating the journal.
+    pub fn record(&mut self, frame: u32, commands: Vec<PlayerInput>) {
+        if let Some(expected) = self.next_frame {
+            assert_eq!(
+                frame, expected,
+                "timeline commands must be recorded contiguously"
+            );
+        }
+        if self.commands.is_empty() && self.next_frame.is_none() {
+            self.oldest_frame = frame;
+        }
+        self.commands.push_back(commands);
+        self.next_frame = Some(
+            frame
+                .checked_add(1)
+                .expect("simulation frame counter overflowed command journal"),
+        );
+    }
+
+    pub fn commands_for(&self, frame: u32) -> Option<&[PlayerInput]> {
+        let index = frame.checked_sub(self.oldest_frame)? as usize;
+        self.commands.get(index).map(Vec::as_slice)
+    }
+
+    pub fn oldest_frame(&self) -> Option<u32> {
+        (!self.commands.is_empty()).then_some(self.oldest_frame)
+    }
+
+    pub fn newest_frame(&self) -> Option<u32> {
+        (!self.commands.is_empty()).then(|| {
+            self.next_frame
+                .expect("non-empty command journal has a next frame")
+                - 1
+        })
+    }
+
+    pub fn next_frame(&self) -> u32 {
+        self.next_frame.unwrap_or(0)
+    }
+
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    /// Add an input to an already-recorded frame. Returns `false` when the
+    /// requested frame is outside the retained journal.
+    pub fn append_input(&mut self, frame: u32, input: PlayerInput) -> bool {
+        let Some(index) = frame.checked_sub(self.oldest_frame) else {
+            return false;
+        };
+        let Some(commands) = self.commands.get_mut(index as usize) else {
+            return false;
+        };
+        commands.push(input);
+        true
+    }
+
+    /// Discard commands for `frame` and its future, retaining the prefix that
+    /// remains valid on a newly-created branch.
+    pub fn truncate_from(&mut self, frame: u32) {
+        let Some(index) = frame.checked_sub(self.oldest_frame) else {
+            return;
+        };
+        let index = index as usize;
+        if index < self.commands.len() {
+            self.commands.truncate(index);
+            self.next_frame = Some(frame);
+            if self.commands.is_empty() {
+                self.oldest_frame = frame;
+            }
+        }
+    }
+
+    /// Drop commands older than the earliest checkpoint that can still be
+    /// restored.
+    pub fn discard_before(&mut self, frame: u32) {
+        while !self.commands.is_empty() && self.oldest_frame < frame {
+            self.commands.pop_front();
+            self.oldest_frame += 1;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.commands.clear();
+        self.oldest_frame = 0;
+        self.next_frame = None;
+    }
+}
+
 /// Policy-driven collection of pre-tick simulation checkpoints.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SnapshotHistory {
@@ -235,6 +349,116 @@ impl SnapshotHistory {
 
     pub fn clear(&mut self) {
         self.snapshots.clear();
+    }
+}
+
+/// A checkpoint store and its command journal with one pre-tick frame
+/// lifecycle.
+///
+/// `begin_frame` captures the optional pre-tick checkpoint. `commit_frame`
+/// publishes that checkpoint and the commands together only after the tick
+/// completes. An abandoned host iteration may call `begin_frame` again; the
+/// previous pending capture was never authoritative and is replaced.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TimelineHistory {
+    checkpoints: SnapshotHistory,
+    commands: CommandJournal,
+    pending: Option<PendingFrame>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PendingFrame {
+    frame: u32,
+    checkpoint: Option<SimSnapshot>,
+}
+
+impl TimelineHistory {
+    pub fn new(checkpoint_policy: CheckpointPolicy, retention_policy: RetentionPolicy) -> Self {
+        Self {
+            checkpoints: SnapshotHistory::new(checkpoint_policy, retention_policy),
+            commands: CommandJournal::default(),
+            pending: None,
+        }
+    }
+
+    pub fn begin_frame(&mut self, frame: u32, engine: &Engine) {
+        let checkpoint = self
+            .checkpoints
+            .should_checkpoint(frame)
+            .then(|| SimSnapshot::new(frame, engine));
+        self.pending = Some(PendingFrame { frame, checkpoint });
+    }
+
+    /// Commit the open frame. Returns `false` only while the history has no
+    /// checkpoint anchor yet; commands before that first checkpoint cannot be
+    /// replayed and are deliberately not journaled.
+    pub fn commit_frame(&mut self, commands: Vec<PlayerInput>) -> bool {
+        let pending = self
+            .pending
+            .take()
+            .expect("timeline frame committed without a matching begin_frame");
+
+        if self.checkpoints.oldest_frame().is_none() && pending.checkpoint.is_none() {
+            return false;
+        }
+        if let Some(checkpoint) = pending.checkpoint {
+            self.checkpoints.remember(checkpoint);
+        }
+        self.commands.record(pending.frame, commands);
+        if let Some(oldest_checkpoint) = self.checkpoints.oldest_frame() {
+            self.commands.discard_before(oldest_checkpoint);
+        }
+        true
+    }
+
+    pub fn restore(
+        &self,
+        target_frame: u32,
+        policy: RestorePolicy,
+    ) -> Result<SimSnapshot, RestoreError> {
+        self.checkpoints.restore(target_frame, policy)
+    }
+
+    pub fn commands_for(&self, frame: u32) -> Option<&[PlayerInput]> {
+        self.commands.commands_for(frame)
+    }
+
+    pub fn append_input(&mut self, frame: u32, input: PlayerInput) -> bool {
+        self.commands.append_input(frame, input)
+    }
+
+    pub fn oldest_checkpoint_frame(&self) -> Option<u32> {
+        self.checkpoints.oldest_frame()
+    }
+
+    pub fn oldest_command_frame(&self) -> Option<u32> {
+        self.commands.oldest_frame()
+    }
+
+    pub fn next_record_frame(&self) -> u32 {
+        self.commands.next_frame()
+    }
+
+    pub fn truncate_future(&mut self, frame: u32) {
+        // Preserve the old rewind contract: a target before the command
+        // horizon cannot create a valid branch, so neither journal nor
+        // checkpoints are changed.
+        if self
+            .commands
+            .oldest_frame()
+            .is_some_and(|oldest| frame < oldest)
+        {
+            return;
+        }
+        self.commands.truncate_from(frame);
+        self.checkpoints.truncate_after(frame);
+        self.pending = None;
+    }
+
+    pub fn clear(&mut self) {
+        self.checkpoints.clear();
+        self.commands.clear();
+        self.pending = None;
     }
 }
 
@@ -542,5 +766,77 @@ mod tests {
         );
         assert_eq!(validate_replay_boundary(10, 10), Ok(()));
         assert_eq!(validate_replay_boundary(10, 11), Ok(()));
+    }
+
+    #[test]
+    fn command_journal_addresses_edits_and_branches_by_absolute_frame() {
+        use robin_engine::player_command::{PlayerCommand, PlayerId};
+
+        let mut journal = CommandJournal::default();
+        journal.record(40, Vec::new());
+        journal.record(41, Vec::new());
+        journal.record(42, Vec::new());
+
+        let late = PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown);
+        assert!(journal.append_input(41, late));
+        assert_eq!(journal.commands_for(41).map(<[_]>::len), Some(1));
+        assert!(
+            !journal.append_input(39, PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown))
+        );
+
+        journal.truncate_from(42);
+        assert_eq!(journal.newest_frame(), Some(41));
+        assert_eq!(journal.next_frame(), 42);
+        assert!(journal.commands_for(42).is_none());
+
+        journal.record(42, Vec::new());
+        journal.discard_before(41);
+        assert_eq!(journal.oldest_frame(), Some(41));
+        assert_eq!(journal.commands_for(41).map(<[_]>::len), Some(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "timeline commands must be recorded contiguously")]
+    fn command_journal_rejects_unannounced_discontinuity() {
+        let mut journal = CommandJournal::default();
+        journal.record(7, Vec::new());
+        journal.record(9, Vec::new());
+    }
+
+    #[test]
+    fn timeline_history_commits_checkpoint_and_commands_at_one_boundary() {
+        use robin_engine::campaign::Campaign;
+        use robin_engine::player_command::{PlayerCommand, PlayerId};
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 2 },
+        );
+        let command = PlayerInput::new(PlayerId(1), PlayerCommand::CrouchDown);
+
+        history.begin_frame(12, &engine);
+        assert!(history.commit_frame(vec![command.clone()]));
+        assert_eq!(history.oldest_checkpoint_frame(), Some(12));
+        assert_eq!(history.oldest_command_frame(), Some(12));
+        let recorded = history.commands_for(12).expect("frame-12 commands");
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].player_id, command.player_id);
+        assert_eq!(
+            history
+                .restore(12, RestorePolicy::Exact)
+                .expect("frame-12 checkpoint")
+                .frame,
+            12
+        );
+
+        // Opening a replacement host iteration before either commits is safe:
+        // neither pending capture was published into the timeline yet.
+        history.begin_frame(13, &engine);
+        history.begin_frame(13, &engine);
+        assert!(history.commit_frame(Vec::new()));
+        assert_eq!(history.next_record_frame(), 14);
     }
 }

@@ -16,7 +16,6 @@
 //! is available.
 
 use crate::host::Host;
-use std::collections::VecDeque;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -24,7 +23,7 @@ use std::sync::{
 use std::thread::JoinHandle;
 use web_time::Instant;
 
-use crate::sim_timeline::{SimSnapshot as Snapshot, replay_to_frame};
+use crate::sim_timeline::{CommandJournal, SimSnapshot as Snapshot, replay_to_frame};
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerInput;
 
@@ -43,17 +42,9 @@ pub const ROLLBACK_CHECK_INTERVAL: u32 = ROLLBACK_WINDOW as u32;
 
 const PERF_LOG_INTERVAL: u32 = 25;
 
-/// One frame's command list inside a rollback-check window.
-struct FrameEntry {
-    /// Commands applied this frame (fed into `apply_commands`).
-    cmds: Vec<PlayerInput>,
-    /// Absolute frame number, for diagnostics / debug-file naming.
-    frame: u32,
-}
-
 /// Ring buffer of frame commands used to replay and verify one window.
 pub struct RollbackChecker {
-    history: VecDeque<FrameEntry>,
+    history: CommandJournal,
     window_start: Option<Snapshot>,
     assets: Arc<LevelAssets>,
     /// Pending pre-tick snapshot for the frame currently in progress.
@@ -76,7 +67,7 @@ pub struct RollbackChecker {
 impl RollbackChecker {
     pub fn new(assets: Arc<LevelAssets>, replay_path: Option<String>) -> Self {
         Self {
-            history: VecDeque::with_capacity(ROLLBACK_WINDOW + 1),
+            history: CommandJournal::default(),
             window_start: None,
             assets,
             pending_start: None,
@@ -130,13 +121,9 @@ impl RollbackChecker {
             self.window_start = Some(snapshot);
             frame
         } else {
-            self.window_start
-                .as_ref()
-                .expect("rollback command window has start snapshot")
-                .frame
-                + self.history.len() as u32
+            self.history.next_frame()
         };
-        self.history.push_back(FrameEntry { cmds, frame });
+        self.history.record(frame, cmds);
         self.frames_since_check += 1;
         self.perf.end_bookkeeping_us += end_start.elapsed().as_micros();
 
@@ -144,7 +131,11 @@ impl RollbackChecker {
         // checks, cap history growth so the buffer doesn't bloat —
         // oldest entries are dropped unverified.
         while self.history.len() > ROLLBACK_WINDOW {
-            self.history.pop_front();
+            let oldest = self
+                .history
+                .oldest_frame()
+                .expect("non-empty rollback command history");
+            self.history.discard_before(oldest + 1);
         }
         if self.history.len() >= ROLLBACK_WINDOW
             && self.frames_since_check >= ROLLBACK_CHECK_INTERVAL
@@ -187,7 +178,7 @@ impl RollbackChecker {
                 .window_start
                 .take()
                 .expect("rollback window has start snapshot"),
-            history: self.history.drain(..).collect(),
+            history: std::mem::take(&mut self.history),
             assets: Arc::clone(&self.assets),
             current_engine: current_engine.clone(),
             desync_dumped: Arc::clone(&self.desync_dumped),
@@ -229,7 +220,7 @@ impl Drop for RollbackChecker {
 
 struct RollbackCheckJob {
     start: Snapshot,
-    history: Vec<FrameEntry>,
+    history: CommandJournal,
     assets: Arc<LevelAssets>,
     current_engine: Engine,
     desync_dumped: Arc<AtomicBool>,
@@ -240,7 +231,10 @@ impl RollbackCheckJob {
     fn run(self) {
         let check_start = Instant::now();
         let start_frame = self.start.frame;
-        let end_frame = self.history.last().expect("history non-empty").frame;
+        let end_frame = self
+            .history
+            .newest_frame()
+            .expect("rollback command history is non-empty");
 
         // Swap in a no-op tracing subscriber for the duration of the
         // replay so every `info!` / `warn!` inside `perform_hourglass`
@@ -252,8 +246,7 @@ impl RollbackCheckJob {
         let replay_start = Instant::now();
         let replayed = tracing::dispatcher::with_default(&silent, || {
             replay_to_frame(start, &self.assets, end_frame.saturating_add(1), |frame| {
-                let idx = frame.checked_sub(start_frame)? as usize;
-                self.history.get(idx).map(|entry| entry.cmds.as_slice())
+                self.history.commands_for(frame)
             })
         });
         let (sim_snapshot, _timing) = match replayed {

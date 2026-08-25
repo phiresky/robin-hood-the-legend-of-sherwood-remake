@@ -566,6 +566,21 @@ impl TimelineRuntime {
         self.start_paused
     }
 
+    /// Reset every in-memory reconstruction of the current deterministic
+    /// future after a whole-state discontinuity such as save-load adoption.
+    ///
+    /// Original `RHGame::Serialize` follows a load with
+    /// `ResynchronizeAfterLoad`; the original has no command journal. The Rust
+    /// equivalent must additionally invalidate all journals and checkpoints
+    /// whose future was derived from the replaced state.
+    fn reset_reconstruction_history(&mut self) {
+        self.rewind_buffer = RewindBuffer::new();
+        self.recent_timeline_history.clear();
+        if let Some(checker) = self.rollback_checker.as_mut() {
+            checker.reset();
+        }
+    }
+
     pub(super) fn apply_multiplayer_admission_events(
         &mut self,
         events: &[MultiplayerAdmissionEvent],
@@ -837,7 +852,7 @@ impl TimelineRuntime {
             } => {
                 // The engine state jumped; buffered rewind history no longer
                 // describes this timeline's future.
-                self.rewind_buffer = RewindBuffer::new();
+                self.reset_reconstruction_history();
                 if !frame.commands.commands.is_empty() {
                     tracing::debug!(
                         dropped = frame.commands.commands.len(),
@@ -916,7 +931,7 @@ impl TimelineRuntime {
         if player.is_finished() {
             return Ok(());
         }
-        apply_replay_timeline_events_at_boundary(
+        let load_applied = apply_replay_timeline_events_at_boundary(
             player,
             &mut self.playback_pinned_saves,
             &mut self.rewind_buffer,
@@ -924,7 +939,17 @@ impl TimelineRuntime {
             game,
             manager,
             assets,
-        )
+        )?;
+        if load_applied {
+            // The boundary helper resets rewind itself because debugger-step
+            // callers use it directly. TimelineRuntime owns the remaining
+            // reconstruction consumers.
+            self.recent_timeline_history.clear();
+            if let Some(checker) = self.rollback_checker.as_mut() {
+                checker.reset();
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn record_commands(&mut self, frame: &mut MissionFrame, enabled: bool) {
@@ -980,8 +1005,9 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
     game: &mut Game,
     manager: &mut EngineManager,
     assets: &LevelAssets,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let frame = player.current_frame();
+    let mut load_applied = false;
     if let Some(expected) = player.save_marker_for_frame(frame) {
         let actual = robin_engine::replay::state_hash(&manager.engine);
         if actual != expected {
@@ -1019,13 +1045,14 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
         game.apply_post_load_sync(load_back.is_continue);
         game.post_load_resolution_resync();
         *rewind_buffer = RewindBuffer::new();
+        load_applied = true;
         tracing::info!(
             frame,
             to_frame = load_back.to_frame,
             "replay playback: jumped back to saved state"
         );
     }
-    Ok(())
+    Ok(load_applied)
 }
 
 fn transition_phase(phase: &mut MissionPhase, expected: MissionPhase, next: MissionPhase) {
