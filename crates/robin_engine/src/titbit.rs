@@ -759,17 +759,14 @@ impl TitbitManager {
         }
 
         // Sort by display order (stable sort preserves insertion order for ties).
-        // Original delegates to `std::list::sort` with
-        // `RHtitbitInfo::operator<`, whose float comparison simply returns
-        // false for an unordered (NaN) pair.  NaN display orders are reachable
-        // through Original's unchecked zero-vector normalization, so treat
-        // those comparisons as equivalent rather than assuming a total float
-        // order and panicking.
-        self.titbits.sort_by(|a, b| {
-            a.display_order
-                .partial_cmp(&b.display_order)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Original's `RHtitbitInfo::operator<` compares only `fDisplayOrder`,
+        // so preserve ordinary float ordering and do not add an ID tie-breaker.
+        // Original can nevertheless produce NaN through unchecked zero-vector
+        // normalization.  A NaN cannot simply compare Equal to every number:
+        // that relation is non-transitive and Rust's sort correctly rejects it.
+        // Put all NaNs after numeric orders as one stable equivalence class.
+        self.titbits
+            .sort_by(|a, b| display_order_cmp(a.display_order, b.display_order));
     }
 
     /// Per-frame update: advance animations, expire finished titbits.
@@ -993,6 +990,23 @@ impl TitbitManager {
             | TitbitKind::QuickAction
             | TitbitKind::QuickActionRun => UpdateAction::Keep,
         }
+    }
+}
+
+/// Total preorder extending Original's `fDisplayOrder < other.fDisplayOrder`.
+///
+/// Numeric values retain the C++ comparison behavior, including equivalent
+/// signed zeroes. NaNs form a final equivalence class so stable sorting keeps
+/// their list order without violating transitivity.
+fn display_order_cmp(a: f32, b: f32) -> std::cmp::Ordering {
+    match a.partial_cmp(&b) {
+        Some(ordering) => ordering,
+        None => match (a.is_nan(), b.is_nan()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => unreachable!("only NaN floats are unordered"),
+        },
     }
 }
 
@@ -1553,9 +1567,9 @@ mod tests {
     }
 
     #[test]
-    fn prepare_refresh_accepts_original_nan_display_order() {
+    fn prepare_refresh_totally_orders_legacy_nan_display_orders() {
         let mut mgr = TitbitManager::new();
-        for display_order in [20.0, f32::NAN, 10.0] {
+        let mut add = |display_order| {
             mgr.add_titbit(
                 pt3(0.0, 0.0, 0.0),
                 0,
@@ -1569,15 +1583,37 @@ mod tests {
                 Some(display_order),
                 Some(0),
             );
+        };
+
+        // Savegame_035/replay-020 reaches this topology: a long, already
+        // ordered numeric prefix, two legacy NaNs, then newly appended finite
+        // titbits whose orders precede the prefix. Mapping every unordered
+        // comparison to Equal is non-transitive here and makes slice::sort
+        // reject the comparator.
+        for order in 0..48 {
+            add(1_000.0 + order as f32);
+        }
+        add(f32::NAN);
+        add(f32::NAN);
+        for order in 0..8 {
+            add(order as f32);
         }
 
         mgr.prepare_refresh(|_| None);
 
-        assert_eq!(mgr.titbits().len(), 3);
-        assert!(
-            mgr.titbits()
+        assert_eq!(mgr.titbits().len(), 58);
+        assert_eq!(
+            mgr.titbits()[..8]
                 .iter()
-                .any(|titbit| titbit.display_order.is_nan())
+                .map(|titbit| titbit.display_order)
+                .collect::<Vec<_>>(),
+            (0..8).map(|order| order as f32 + 0.01).collect::<Vec<_>>()
         );
+        assert!(
+            mgr.titbits()[56..]
+                .iter()
+                .all(|titbit| titbit.display_order.is_nan())
+        );
+        assert_eq!(display_order_cmp(-0.0, 0.0), std::cmp::Ordering::Equal);
     }
 }
