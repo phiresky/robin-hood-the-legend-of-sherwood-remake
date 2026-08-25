@@ -167,6 +167,43 @@ mod tests {
     }
 
     #[test]
+    fn loads_keyconfigs_written_before_type_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = r#"{
+            "configs": {
+                "41": {
+                    "active": {
+                        "bindings": [{
+                            "action": "Crouch",
+                            "primary_key": "ShiftLeft",
+                            "secondary_key": "ShiftRight"
+                        }],
+                        "key_type": 1
+                    },
+                    "custom": {
+                        "bindings": [],
+                        "key_type": 2
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(dir.path().join("keyconfigs.json"), json).unwrap();
+
+        let loaded = KeyConfigStore::load(dir.path().to_str().unwrap()).unwrap();
+        let entry = loaded.get(41).expect("legacy profile should load");
+        assert_eq!(entry.active.key_type, 1);
+        assert_eq!(
+            entry.active.get_binding("Crouch").unwrap().primary_key,
+            Some(KeyCode::ShiftLeft)
+        );
+        assert_eq!(
+            entry.active.get_binding("Crouch").unwrap().secondary_key,
+            Some(KeyCode::ShiftRight)
+        );
+        assert_eq!(entry.custom.key_type, 2);
+    }
+
+    #[test]
     fn load_missing_file_returns_empty_store() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyConfigStore::load(dir.path().to_str().unwrap()).unwrap();
