@@ -514,6 +514,128 @@ chmod +x "$pinned_bundle/lib/ld-linux-x86-64.so.2"
 run_bundle_validation "$test_root/audit-bundle" "$bundle" "$bundle_sha" "$bundle_campaign"
 [[ "$(wc -l <"$invocations")" == "$before" ]]
 
+# A later shard can publish the real trigger while an earlier trace is still
+# waiting for its claim. Failure classification must authenticate that
+# published nonzero proof instead of blaming the intentionally unstarted entry.
+sparse_campaign=$(make_campaign schema16-seed2960000-sparse-failure-test 2960000 2)
+add_trace "$sparse_campaign" 01-pass
+add_trace "$sparse_campaign" 02-fail
+sparse_before=$(wc -l <"$invocations")
+if SCHEMA16_FINAL_SWEEP_CONCURRENCY=1 \
+    run_validation unused "$runner" "$runner_sha" "$sparse_campaign"
+then
+    printf 'test failure: sparse fixture setup accepted its failure\n' >&2
+    exit 1
+fi
+sparse_audit=$(audit_for unused "$sparse_campaign" "$runner_sha")
+sparse_pass="$sparse_campaign/traces/save/01-pass-session-0001.jsonl.zst"
+sparse_fail="$sparse_campaign/traces/save/02-fail-session-0001.jsonl.zst"
+rm -f -- \
+    "$(status_for "$sparse_audit" "$sparse_pass")" \
+    "$(log_for "$sparse_audit" "$sparse_pass")" \
+    "$(status_for "$sparse_audit" "$sparse_fail")" \
+    "$(log_for "$sparse_audit" "$sparse_fail")"
+sparse_full_key=${sparse_pass//\//__}
+exec {sparse_lock_fd}>"$sparse_audit/.trace-locks/$sparse_full_key.lock"
+flock "$sparse_lock_fd"
+env \
+    FAKE_RUNNER_INVOCATIONS="$invocations" \
+    SCHEMA16_FINAL_SWEEP_CONCURRENCY=2 \
+    SCHEMA16_FINAL_RUNNER_MODE=direct \
+    SCHEMA16_FINAL_OUTER_LOCK="$test_root/final-validation.lock" \
+    "$validator" "$workspace" "$runner" "$runner_sha" "$sparse_campaign" \
+        >"$test_root/sparse-validation.log" 2>&1 &
+locked_pid=$!
+sparse_failure_published=0
+for _attempt in {1..200}; do
+    if [[ -f "$(status_for "$sparse_audit" "$sparse_fail")" ]]; then
+        sparse_failure_published=1
+        break
+    fi
+    sleep 0.01
+done
+[[ "$sparse_failure_published" == 1 ]]
+flock -u "$sparse_lock_fd"
+exec {sparse_lock_fd}>&-
+if wait "$locked_pid"; then
+    printf 'test failure: sparse parallel failure was accepted\n' >&2
+    exit 1
+fi
+locked_pid=
+[[ "$(wc -l <"$invocations")" == "$((sparse_before + 3))" ]]
+[[ ! -e "$(status_for "$sparse_audit" "$sparse_pass")" ]]
+grep -Fxq 'CLASSIFICATION=nonzero-or-malformed-status' \
+    "$sparse_audit/parity-last-failure.env"
+grep -Fxq 'STATUS=23' "$sparse_audit/parity-last-failure.env"
+grep -Fxq "TRACE=$sparse_fail" "$sparse_audit/parity-last-failure.env"
+cp "$sparse_audit/.parallel-fail-fast-stop" "$test_root/sparse-stop.saved"
+cp "$sparse_audit/sweep-launch.env" "$test_root/sparse-launch.saved"
+cp "$(log_for "$sparse_audit" "$sparse_fail")" "$test_root/sparse-fail-log.saved"
+
+# Without a canonical shared-stop artifact, the later nonzero proof has no
+# authenticated fail-fast precedence over the earlier missing proof.
+printf 'not-a-canonical-stop\n' >"$sparse_audit/.parallel-fail-fast-stop"
+sparse_invocations=$(wc -l <"$invocations")
+if SCHEMA16_FINAL_SWEEP_CONCURRENCY=2 \
+    run_validation unused "$runner" "$runner_sha" "$sparse_campaign"
+then
+    printf 'test failure: invalid sparse stop admitted a resume\n' >&2
+    exit 1
+fi
+[[ "$(wc -l <"$invocations")" == "$sparse_invocations" ]]
+grep -Fxq 'CLASSIFICATION=missing-status' \
+    "$sparse_audit/parity-last-failure.env"
+grep -Fxq "TRACE=$sparse_pass" "$sparse_audit/parity-last-failure.env"
+
+cp "$test_root/sparse-stop.saved" "$sparse_audit/.parallel-fail-fast-stop"
+sed 's/^FAIL_FAST_BATCH_TOKEN=.*/FAIL_FAST_BATCH_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/' \
+    "$test_root/sparse-launch.saved" >"$sparse_audit/sweep-launch.env"
+if SCHEMA16_FINAL_SWEEP_CONCURRENCY=2 \
+    run_validation unused "$runner" "$runner_sha" "$sparse_campaign"
+then
+    printf 'test failure: mismatched sparse launch token was authenticated\n' >&2
+    exit 1
+fi
+grep -Fxq 'CLASSIFICATION=missing-status' \
+    "$sparse_audit/parity-last-failure.env"
+grep -Fxq "TRACE=$sparse_pass" "$sparse_audit/parity-last-failure.env"
+cp "$test_root/sparse-launch.saved" "$sparse_audit/sweep-launch.env"
+
+# A valid stop token cannot elevate malformed or half-published evidence.
+cp "$test_root/sparse-stop.saved" "$sparse_audit/.parallel-fail-fast-stop"
+printf '23\njunk\n' >"$(status_for "$sparse_audit" "$sparse_fail")"
+if SCHEMA16_FINAL_SWEEP_CONCURRENCY=2 \
+    run_validation unused "$runner" "$runner_sha" "$sparse_campaign"
+then
+    printf 'test failure: malformed sparse trigger was authenticated\n' >&2
+    exit 1
+fi
+grep -Fxq 'CLASSIFICATION=missing-status' \
+    "$sparse_audit/parity-last-failure.env"
+grep -Fxq "TRACE=$sparse_pass" "$sparse_audit/parity-last-failure.env"
+printf '999\n' >"$(status_for "$sparse_audit" "$sparse_fail")"
+if SCHEMA16_FINAL_SWEEP_CONCURRENCY=2 \
+    run_validation unused "$runner" "$runner_sha" "$sparse_campaign"
+then
+    printf 'test failure: out-of-range sparse trigger was authenticated\n' >&2
+    exit 1
+fi
+grep -Fxq 'CLASSIFICATION=missing-status' \
+    "$sparse_audit/parity-last-failure.env"
+grep -Fxq "TRACE=$sparse_pass" "$sparse_audit/parity-last-failure.env"
+printf '23\n' >"$(status_for "$sparse_audit" "$sparse_fail")"
+rm -f -- "$(log_for "$sparse_audit" "$sparse_fail")"
+if SCHEMA16_FINAL_SWEEP_CONCURRENCY=2 \
+    run_validation unused "$runner" "$runner_sha" "$sparse_campaign"
+then
+    printf 'test failure: half-published sparse trigger was authenticated\n' >&2
+    exit 1
+fi
+grep -Fxq 'CLASSIFICATION=missing-status' \
+    "$sparse_audit/parity-last-failure.env"
+grep -Fxq "TRACE=$sparse_pass" "$sparse_audit/parity-last-failure.env"
+cp "$test_root/sparse-fail-log.saved" "$(log_for "$sparse_audit" "$sparse_fail")"
+
 # Parallel fail-fast permits already-running work to publish, but starts no
 # later shard item after the first failure. Resume rejects the preserved
 # failure without launching anything; after explicit repair it skips the prior

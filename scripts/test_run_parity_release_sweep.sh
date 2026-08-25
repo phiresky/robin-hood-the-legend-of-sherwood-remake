@@ -229,12 +229,14 @@ run_sweep_shape "$parallel_audit" 0 2 \
     PARITY_SWEEP_FAIL_FAST=1 \
     PARITY_SWEEP_GLOBAL_CONCURRENCY=2 \
     PARITY_SWEEP_FAIL_FAST_STOP="$parallel_stop" \
+    PARITY_SWEEP_FAIL_FAST_TOKEN=0123456789abcdef0123456789abcdef \
     FAKE_PARALLEL_BARRIER="$parallel_barrier" &
 parallel_pid0=$!
 run_sweep_shape "$parallel_audit" 1 2 \
     PARITY_SWEEP_FAIL_FAST=1 \
     PARITY_SWEEP_GLOBAL_CONCURRENCY=2 \
     PARITY_SWEEP_FAIL_FAST_STOP="$parallel_stop" \
+    PARITY_SWEEP_FAIL_FAST_TOKEN=0123456789abcdef0123456789abcdef \
     FAKE_PARALLEL_BARRIER="$parallel_barrier" &
 parallel_pid1=$!
 parallel_status0=0

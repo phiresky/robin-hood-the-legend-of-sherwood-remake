@@ -351,35 +351,99 @@ initialize_or_verify_audit() {
 
 classify_failure() {
     local audit=$1 fallback=${2:-audit-proof-set-mismatch}
-    local trace key status log value marker_count classification=missing-status
+    local trace key status log value marker_count classification= provenance_valid=0
+    local fail_fast_stop="$audit/.parallel-fail-fast-stop"
+    local launch="$audit/sweep-launch.env" batch_token launch_utc failed_utc
+    local -a stop_lines=() launch_lines=()
     local temporary="$audit/parity-last-failure.env.tmp"
 
     trace=
     value=
-    while IFS= read -r trace; do
-        key=$(trace_key "$trace") || continue
-        status="$audit/status/$key.status"
-        log="$audit/logs/$key.log"
-        if [[ ! -f "$status" ]]; then
-            classification=missing-status
-            break
+    # In a parallel fail-fast audit, an earlier manifest entry may correctly
+    # remain unstarted while a later shard has already published the trigger.
+    # A trigger may outrank an earlier unstarted entry only when the shared
+    # stop is a canonical protocol artifact and the trigger itself has the
+    # proof shape the sweep publishes. A stray/malformed status cannot invent
+    # fail-fast provenance and hide a missing earlier proof.
+    if [[ -f "$fail_fast_stop" && ! -L "$fail_fast_stop" \
+        && -f "$launch" && ! -L "$launch" ]]
+    then
+        mapfile -t stop_lines <"$fail_fast_stop"
+        mapfile -t launch_lines <"$launch"
+        if (( ${#stop_lines[@]} == 2 && ${#launch_lines[@]} == 6 )) \
+            && [[ "${stop_lines[0]}" =~ ^FAIL_FAST_BATCH_TOKEN=([0-9a-f]{32,64})$ ]]
+        then
+            batch_token=${BASH_REMATCH[1]}
+            if [[ "${stop_lines[1]}" =~ ^FAILED_UTC=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$ ]]; then
+                failed_utc=${BASH_REMATCH[1]}
+            fi
+            if [[ "${launch_lines[0]}" =~ ^LAUNCHED_UTC=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$ ]]; then
+                launch_utc=${BASH_REMATCH[1]}
+            fi
+            if [[ -n "${failed_utc:-}" && -n "${launch_utc:-}" \
+                && ! "$failed_utc" < "$launch_utc" \
+                && "${launch_lines[1]}" =~ ^SWEEP_CONCURRENCY=[1-9][0-9]*$ \
+                && "${launch_lines[2]}" == PARITY_SWEEP_FAIL_FAST=1 \
+                && "${launch_lines[3]}" == "PARITY_SWEEP_FAIL_FAST_STOP=$fail_fast_stop" \
+                && "${launch_lines[4]}" == "FAIL_FAST_BATCH_TOKEN=$batch_token" \
+                && "${launch_lines[5]}" == FAIL_FAST_SEMANTICS=in_flight_complete_no_new_start_after_stop ]]
+            then
+                provenance_valid=1
+            fi
         fi
-        if ! cmp -s -- "$status" <(printf '0\n'); then
-            value=$(<"$status") || value=unreadable
-            classification=nonzero-or-malformed-status
-            break
-        fi
-        if [[ ! -f "$log" ]]; then
-            classification=missing-log
-            break
-        fi
-        marker_count=$(grep -Fxc -- "$exact_eof_marker" "$log" || true)
-        if [[ "$marker_count" != 1 ]]; then
-            classification="eof-marker-count-$marker_count"
-            break
-        fi
-        trace=
-    done <"$audit/traces.snapshot"
+    fi
+    if (( provenance_valid == 1 )); then
+        while IFS= read -r trace; do
+            key=$(trace_key "$trace") || continue
+            status="$audit/status/$key.status"
+            log="$audit/logs/$key.log"
+            [[ -f "$status" ]] || { trace=; continue; }
+            value=$(<"$status") || { trace=; continue; }
+            if cmp -s -- "$status" <(printf 'integrity-eof-marker\n') \
+                && [[ -f "$log" ]]
+            then
+                marker_count=$(grep -Fxc -- "$exact_eof_marker" "$log" || true)
+                if [[ "$marker_count" != 1 ]]; then
+                    classification=nonzero-or-malformed-status
+                    break
+                fi
+            elif [[ "$value" =~ ^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ \
+                && -f "$log" ]] \
+                && cmp -s -- "$status" <(printf '%s\n' "$value")
+            then
+                classification=nonzero-or-malformed-status
+                break
+            fi
+            trace=
+        done <"$audit/traces.snapshot"
+    fi
+    if [[ -z "$trace" ]]; then
+        value=
+        while IFS= read -r trace; do
+            key=$(trace_key "$trace") || continue
+            status="$audit/status/$key.status"
+            log="$audit/logs/$key.log"
+            if [[ ! -f "$status" ]]; then
+                classification=missing-status
+                break
+            fi
+            if [[ ! -f "$log" ]]; then
+                classification=missing-log
+                break
+            fi
+            if ! cmp -s -- "$status" <(printf '0\n'); then
+                value=$(<"$status") || value=unreadable
+                classification=nonzero-or-malformed-status
+                break
+            fi
+            marker_count=$(grep -Fxc -- "$exact_eof_marker" "$log" || true)
+            if [[ "$marker_count" != 1 ]]; then
+                classification="eof-marker-count-$marker_count"
+                break
+            fi
+            trace=
+        done <"$audit/traces.snapshot"
+    fi
     if [[ -z "$trace" ]]; then
         classification=$fallback
     fi
@@ -683,10 +747,16 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
     fail_fast_stop="$audit/.parallel-fail-fast-stop"
     active_audit=$audit
     rm -f -- "$fail_fast_stop"
+    batch_token=$(tr -d -- '-' </proc/sys/kernel/random/uuid)
+    [[ "$batch_token" =~ ^[0-9a-f]{32}$ ]] \
+        || fail 'unable to generate a final-validation batch token'
     launch_tmp=$(mktemp "$audit/sweep-launch.env.tmp.XXXXXX") || exit 2
     {
         printf 'LAUNCHED_UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         printf 'SWEEP_CONCURRENCY=%s\n' "$sweep_concurrency"
+        printf 'PARITY_SWEEP_FAIL_FAST=1\n'
+        printf 'PARITY_SWEEP_FAIL_FAST_STOP=%s\n' "$fail_fast_stop"
+        printf 'FAIL_FAST_BATCH_TOKEN=%s\n' "$batch_token"
         printf 'FAIL_FAST_SEMANTICS=in_flight_complete_no_new_start_after_stop\n'
     } >"$launch_tmp"
     mv -f -- "$launch_tmp" "$audit/sweep-launch.env"
@@ -699,6 +769,7 @@ for campaign_index in "${!normalized_campaigns[@]}"; do
             exec setsid env \
                 PARITY_SWEEP_FAIL_FAST=1 \
                 PARITY_SWEEP_FAIL_FAST_STOP="$fail_fast_stop" \
+                PARITY_SWEEP_FAIL_FAST_TOKEN="$batch_token" \
                 PARITY_SWEEP_GLOBAL_CONCURRENCY="$sweep_concurrency" \
                 PARITY_SWEEP_SLOT_DIR="$workspace/.git/parity-runner-slots" \
                 scripts/run_parity_release_sweep.sh \
