@@ -2602,6 +2602,17 @@ fn resolve_schema_sixteen_group_move_route(
         return None;
     }
     matching.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+    // `PerformGroupMove` calls `PerformMove` once for each selected actor, and
+    // that reaches at most one `AppendMoveToSequence` route construction
+    // (`original-code/RHengine.cpp:5441-5484`, `RHsequence.cpp:339-452`). A
+    // frame can nevertheless contain several group-move commands with the
+    // same actor and goal sector. Their route events share the only identities
+    // schema 16 recorded for this join, so greedily taking every match assigns
+    // later commands' routes to the first command. Consume the earliest
+    // unclaimed route per actor and leave later ordinals for the following
+    // command in frame order.
+    let mut actors_with_route = BTreeSet::new();
+    matching.retain(|(_, event)| actors_with_route.insert(event.actor));
     let goal_kind = retained_sector_kinds
         .get(usize::from(goal_sector))
         .unwrap_or_else(|| {
@@ -14491,6 +14502,79 @@ mod tests {
             })
         );
         assert_eq!(consumed, BTreeSet::from([0]));
+    }
+
+    #[test]
+    fn schema_sixteen_group_moves_share_frame_routes_in_command_order() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 345,
+        };
+        let command = TraceCommand::GroupMove {
+            actors: vec![actor],
+            destination: TracePoint {
+                x: TraceFloat { bits: 0 },
+                y: TraceFloat { bits: 0 },
+            },
+            running: false,
+            show_marker: true,
+            goal_sector: 117,
+            goal_layer: 8,
+        };
+        let mut first = group_move_route_fixture(actor, "move", 40);
+        first.gates.push(TraceRouteGate {
+            gate_id: 53,
+            direct: false,
+            sector_out: 64,
+            level_out: 4,
+            sector_in: 290,
+            level_in: 13,
+            draft_diagnostics: BTreeMap::new(),
+        });
+        let mut second = group_move_route_fixture(actor, "move", 41);
+        second.gates.push(TraceRouteGate {
+            gate_id: 54,
+            direct: true,
+            sector_out: 63,
+            level_out: 3,
+            sector_in: 65,
+            level_in: 4,
+            draft_diagnostics: BTreeMap::new(),
+        });
+        let routes = [second, first];
+        let mut consumed = BTreeSet::new();
+        let map = group_move_route_map(54);
+        let sectors = group_move_sector_kinds(117, None);
+
+        let first_resolution = resolve_schema_sixteen_group_move_route(
+            16,
+            &command,
+            Some(&routes),
+            &mut consumed,
+            &map,
+            &sectors,
+        )
+        .unwrap();
+        assert_eq!(
+            first_resolution.recorded_gate_routes,
+            vec![(actor, vec![(53, false)])]
+        );
+        assert_eq!(consumed, BTreeSet::from([40]));
+
+        let second_resolution = resolve_schema_sixteen_group_move_route(
+            16,
+            &command,
+            Some(&routes),
+            &mut consumed,
+            &map,
+            &sectors,
+        )
+        .unwrap();
+        assert_eq!(
+            second_resolution.recorded_gate_routes,
+            vec![(actor, vec![(54, true)])]
+        );
+        assert_eq!(consumed, BTreeSet::from([40, 41]));
     }
 
     #[test]
