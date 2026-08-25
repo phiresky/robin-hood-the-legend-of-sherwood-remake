@@ -1848,9 +1848,8 @@ const HOURGLASS_LOG_INTERVAL: u32 = 100;
 ///
 /// Keep these deliberately broader than individual systems: the phase trace is
 /// an ordering contract for the tick spine, not a second scheduler.  In
-/// particular, `Paths` names the Rust port's prior-tick retry maintenance;
-/// path construction itself is synchronous during `Sequences` (see the parity
-/// audit).
+/// particular, `Paths` names the fixed completion/start barrier and failed-path
+/// deadlines; movement dispatch only queues the requests resolved there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HourglassPhase {
     DeferredEffectsStart,
@@ -3631,44 +3630,25 @@ impl EngineInner {
     ) {
         // Rust computes A* synchronously, but the queue retains the original
         // one-call latency and one-completion-per-frame observation order.
-        let had_in_flight = self.orders.pending_path_requests.has_in_flight();
+        // Original starts its successor before returning the completed head
+        // to RHEngine, so the scheduler closes that operation before the
+        // coordinator applies cross-owner consequences.
         self.trace_path_barrier("enter");
-        let completed = self.path_schedule_context().take_completed();
-        self.trace_path_barrier_completed("take1", &completed);
+        let completed = self
+            .path_schedule_context()
+            .process_requests(assets, sim.config().synchronous_pathfinding);
+        self.trace_path_barrier("after_schedule");
+        self.trace_path_barrier_completed("completed", &completed);
         self.apply_completed_path_work(sim, assets, completed);
 
-        self.path_schedule_context().start_next(assets);
-        self.trace_path_barrier("after_start1");
-
-        // Synchronous mode may deliver the request started above at this same
-        // barrier, but ProcessPathRequests returns at most one result per
-        // call. If an older result (including a stale one) occupied that slot,
-        // the newly computed result remains in-flight until the next frame.
-        if sim.config().synchronous_pathfinding && !had_in_flight {
-            let completed = self.path_schedule_context().take_completed();
-            self.trace_path_barrier_completed("take2", &completed);
-            self.apply_completed_path_work(sim, assets, completed);
-
-            // In Original's synchronous WAITING arm, starting the first
-            // request recursively enters the READY arm.  That arm delivers
-            // the result and immediately computes the next queued request
-            // before returning.  Keep that successor parked in-flight: it
-            // must not be delivered at this barrier, but a later cancellation
-            // observes its already-computed raw path.
-            self.path_schedule_context().start_next(assets);
-            self.trace_path_barrier("after_start2");
-        }
-
-        // ── Failed-path retry ────────────────────────────────────
-        // Move / Seek elements whose pathfind failed on a previous
-        // tick stay in `InProgress` with empty orders for up to 100
-        // frames while the engine retries.  Successful retries
-        // populate orders; timeouts mark the element `Impossible` and
-        // fire `HERO_UNABLE_TO_DO_SOMETHING` for PCs.  Runs before the
-        // hourglass dispatch so same-tick failures & retries both age
-        // correctly.
-        let expired = self.path_schedule_context().take_expired_failures();
-        for expired in expired {
+        // ── Failed-path timeout ───────────────────────────────────
+        // Move / Seek elements whose pathfind failed stay in `InProgress`
+        // with empty orders for up to 100 frames without redispatch. Timeouts
+        // mark the element `Impossible` and fire
+        // `HERO_UNABLE_TO_DO_SOMETHING` for PCs. Classify one entry at a time
+        // because each owner's condolation is synchronous and may invalidate
+        // a later failed request before Original inspects it.
+        while let Some(expired) = self.path_schedule_context().take_next_expired_failure() {
             let request = expired.request;
             if expired.owner_is_pc {
                 self.hero_speaking(
@@ -3692,7 +3672,7 @@ impl EngineInner {
             // owner's SendCondolationCard synchronously inside
             // RHEngine::ProcessPathRequests. Close only this timeout's owner
             // boundary here, before collision and every element Hourglass;
-            // leaving the card queued until the actor's creation-order slot
+            // leaving the card queued until the actor's insertion-order slot
             // lets earlier actors consume RNG before EVENT_COULDNT_REACHPOINT.
             self.dispatch_condolations_for_owner_boundary(sim, request.owner, assets);
             tracing::debug!(
@@ -3809,6 +3789,16 @@ impl EngineInner {
         assets: &LevelAssets,
         completed: Option<CompletedPathWork>,
     ) {
+        if let Some(owner) = completed.as_ref().map(|work| match work {
+            CompletedPathWork::Ready { request, .. } | CompletedPathWork::Failed(request) => {
+                request.owner
+            }
+        }) {
+            assert!(
+                self.world.entities.get(owner).is_some(),
+                "completed path request for {owner:?} retains a live sequence element but its owner entity is missing"
+            );
+        }
         match completed {
             Some(CompletedPathWork::Ready { request, waypoints }) => {
                 if let Some(element) = self

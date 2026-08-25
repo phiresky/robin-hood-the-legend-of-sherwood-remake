@@ -2627,11 +2627,10 @@ fn ai_move_goal_door(
 /// 100 frames the element transitions to `Impossible` (and, for PCs,
 /// the "unable to do something" speech line fires).
 ///
-/// This is **not** a retry queue — the path is not re-dispatched during
-/// the 100-frame window.  The element sits waiting (no orders, so the
-/// actor's idle animation drives) until either the pathfinder produces
-/// a result via external state changes, the element is cancelled (halt /
-/// postpone), or the timeout elapses.
+/// This is **not** a retry queue: the path is not re-dispatched during the
+/// 100-frame window. The element sits waiting (no orders, so the actor's idle
+/// animation drives) until it is cancelled (halt / postpone) or the timeout
+/// elapses.
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
@@ -2882,24 +2881,32 @@ impl PendingPathRequestQueue {
     }
 
     pub(super) fn retain_not_owned_by(&mut self, owner: EntityId) {
-        let removed_ignored_head = self.ignore_next_path
-            && self
-                .in_flight
-                .as_ref()
-                .map(|processed| processed.request.owner)
-                .or_else(|| self.waiting.first().map(|request| request.owner))
-                == Some(owner);
-        self.waiting.retain(|request| request.owner != owner);
-        if self
+        let in_flight_is_owner = self
             .in_flight
             .as_ref()
-            .is_some_and(|processed| processed.request.owner == owner)
-        {
-            self.in_flight = None;
+            .is_some_and(|processed| processed.request.owner == owner);
+        let waiting_head_is_owner = self.in_flight.is_none()
+            && self
+                .waiting
+                .first()
+                .is_some_and(|request| request.owner == owner);
+
+        // Entity teardown follows the same path cancellation timing as an
+        // interrupted movement element: the logical head stays in the queue,
+        // is delivered invalid, and consumes this barrier's result slot.
+        // Only later requests for the removed owner disappear immediately.
+        if in_flight_is_owner || waiting_head_is_owner {
+            self.ignore_next_path = true;
         }
-        if removed_ignored_head {
-            self.ignore_next_path = false;
-        }
+        let first_waiting = usize::from(waiting_head_is_owner);
+        self.waiting = self
+            .waiting
+            .drain(..)
+            .enumerate()
+            .filter_map(|(index, request)| {
+                (index < first_waiting || request.owner != owner).then_some(request)
+            })
+            .collect();
     }
 
     /// Mirror `RHPathFinder::CancelPathRequest`: cancelling the list head
@@ -3126,10 +3133,42 @@ impl<'a> PathScheduleContext<'a> {
         }
     }
 
-    /// Take the one result made ready by the previous scheduling call.
-    /// Stale results are discarded exactly where the old root helper discarded
-    /// them; no later request is completed at this barrier.
-    pub(super) fn take_completed(&mut self) -> Option<CompletedPathWork> {
+    /// Execute one Original `RHPathFinder::ProcessPathRequests` barrier.
+    ///
+    /// The pathfinder starts its successor before returning a completed head
+    /// to `RHEngine`, including from the recursive synchronous `WAITING` arm
+    /// (`original-code/RHpathfinder.cpp:724-910`). Keep completion
+    /// classification and successor start inside one context borrow so result
+    /// application cannot enqueue, cancel, or otherwise change which request
+    /// becomes in-flight first.
+    pub(super) fn process_requests(
+        &mut self,
+        assets: &LevelAssets,
+        synchronous_pathfinding: bool,
+    ) -> Option<CompletedPathWork> {
+        if self.pending_path_requests.has_in_flight() {
+            let completed = self.take_completed();
+            self.start_next(assets);
+            return completed;
+        }
+
+        self.start_next(assets);
+        if !synchronous_pathfinding {
+            return None;
+        }
+
+        // Original's deterministic WAITING arm computes the first request,
+        // recursively enters READY, starts/computes one successor, and only
+        // then returns the first completion to RHEngine.
+        let completed = self.take_completed();
+        self.start_next(assets);
+        completed
+    }
+
+    /// Take the one result made ready by the previous scheduling operation.
+    /// Stale results are discarded without handing this barrier's completion
+    /// slot to a later request.
+    fn take_completed(&mut self) -> Option<CompletedPathWork> {
         let (processed, valid) = self.pending_path_requests.take_completed()?;
         let request = processed.request;
         if crate::pathfinder::parity_path_capture_is_active() {
@@ -3165,10 +3204,10 @@ impl<'a> PathScheduleContext<'a> {
         })
     }
 
-    /// Start at most one queued request after the previous result has been
-    /// applied by the root coordinator. Rust computes A* synchronously, but the
-    /// result remains parked until the next frame's scheduling barrier.
-    pub(super) fn start_next(&mut self, assets: &LevelAssets) {
+    /// Start at most one queued request. Rust computes A* synchronously, but
+    /// the result remains parked until the next scheduling operation consumes
+    /// it (or the recursive deterministic `WAITING` arm above consumes it).
+    fn start_next(&mut self, assets: &LevelAssets) {
         // `RHPathFinder::ProcessPathRequests` never inspects the requesting
         // sequence element (`original-code/RHpathfinder.cpp:806-820,891-901`).
         // Every entry that is still in `mListPathRequests` is started and,
@@ -3202,14 +3241,16 @@ impl<'a> PathScheduleContext<'a> {
         self.pending_path_requests.set_in_flight(request, waypoints);
     }
 
-    /// Remove stale failures and return expired live entries in their stored
-    /// order. Cross-owner effects are intentionally left to the tick
-    /// coordinator so hero speech still precedes `element_impossible` for each
-    /// request.
-    pub(super) fn take_expired_failures(&mut self) -> Vec<ExpiredPathWork> {
-        let mut still_waiting = Vec::new();
-        let mut expired = Vec::new();
-        for request in std::mem::take(self.failed_path_requests) {
+    /// Remove stale failures and return the next expired live entry.
+    ///
+    /// Returning one item at a time lets the root coordinator close hero
+    /// speech, `element_impossible`, and the owner's synchronous condolation
+    /// boundary before this method inspects the following entry, matching the
+    /// mutable Original list walk at `RHengine.cpp:8487-8509`.
+    pub(super) fn take_next_expired_failure(&mut self) -> Option<ExpiredPathWork> {
+        let mut index = 0;
+        while index < self.failed_path_requests.len() {
+            let request = &self.failed_path_requests[index];
             let still_live = self
                 .sequence_manager
                 .get_element(request.seq_id, request.elem_idx)
@@ -3219,24 +3260,33 @@ impl<'a> PathScheduleContext<'a> {
                         && element.command == crate::element::Command::MoveWaiting
                 });
             if !still_live {
+                self.failed_path_requests.remove(index);
                 continue;
             }
 
             let age = self.frame_counter.saturating_sub(request.first_fail_frame);
             if age <= 100 {
-                still_waiting.push(request);
+                index += 1;
                 continue;
             }
 
-            let owner_is_pc = self.entities.get(request.owner).is_some_and(Entity::is_pc);
-            expired.push(ExpiredPathWork {
+            let owner_id = request.owner;
+            let owner_is_pc = self
+                .entities
+                .get(owner_id)
+                .unwrap_or_else(|| panic!(
+                    "expired path request for {:?} retains a live sequence element but its owner entity is missing",
+                    owner_id
+                ))
+                .is_pc();
+            let request = self.failed_path_requests.remove(index);
+            return Some(ExpiredPathWork {
                 request,
                 owner_is_pc,
                 age,
             });
         }
-        *self.failed_path_requests = still_waiting;
-        expired
+        None
     }
 }
 
