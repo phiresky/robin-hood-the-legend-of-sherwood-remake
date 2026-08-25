@@ -1025,6 +1025,7 @@ impl EngineInner {
                     &self.orders.sequence_manager,
                     npc_id,
                     candidate_id,
+                    |element| super::ai_view_position_sector(self, element),
                     &|sector| self.building_sector_is_authorized(sector),
                     &|sector| self.get_sector_lift_type(sector),
                 ) {

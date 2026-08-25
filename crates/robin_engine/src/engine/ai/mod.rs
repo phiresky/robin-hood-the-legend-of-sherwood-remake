@@ -3340,6 +3340,9 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
     sequence_manager: &crate::sequence::SequenceManager,
     me_id: impl Into<crate::element::EntityId>,
     target_id: impl Into<crate::element::EntityId>,
+    position_sector: impl Fn(
+        &crate::element::ElementData,
+    ) -> Option<crate::position_interface::SectorHandle>,
     building_is_authorized: &impl Fn(crate::sector::SectorNumber) -> bool,
     sector_lift_type: &impl Fn(crate::sector::SectorNumber) -> Option<crate::sector::LiftType>,
 ) -> Option<crate::ai::Position> {
@@ -3365,7 +3368,12 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
             crate::ai::Position {
                 x: element.position_map().x,
                 y: element.position_map().y,
-                sector: element.sector(),
+                // Original's Position(element) retains the exact RHSector*.
+                // Restored actors may still carry only its public number, so
+                // recover the arena identity before entering the exact gate
+                // graph instead of silently mixing number-only and exact
+                // endpoint keys.
+                sector: position_sector(element),
                 level: element.layer(),
             }
         })

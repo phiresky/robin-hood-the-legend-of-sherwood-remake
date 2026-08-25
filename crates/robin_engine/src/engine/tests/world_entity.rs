@@ -4371,7 +4371,6 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let me_sector = crate::position_interface::SectorHandle::new(1);
-    let me_sector_index = crate::fast_find_grid::SectorIndex::new(1);
 
     for (id, position) in [
         (owner_id, MapPoint::new(100.0, 0.0)),
@@ -4380,9 +4379,12 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         let entity = engine.get_entity_mut(id).expect("roof-wait actor exists");
         entity.element_data_mut().active = true;
         entity.element_data_mut().set_position_map(position);
-        entity
-            .position_iface_mut()
-            .set_sector_topology(me_sector, me_sector_index);
+        // Schema-12 actors can retain only the public sector number even
+        // though the loaded gate graph has exact arena identities. Original
+        // Position(actor) still supplies the exact RHSector* to the roof
+        // fallback lookup, so exercise the runtime recovery path here.
+        entity.element_data_mut().set_sector(me_sector);
+        assert_eq!(entity.element_data().sector().unwrap().arena_index(), None);
     }
     let owner = engine
         .get_entity_mut(owner_id)
@@ -4431,6 +4433,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         &engine.orders.sequence_manager,
         owner_id,
         target_id,
+        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
         &|_| true,
         &|_| None,
     )
@@ -4492,13 +4495,48 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         "an ordinary route failure registers before this frame's manager boundary"
     );
 
-    // Without the selected PassDoor, both ordinary live positions are in the
-    // same sector. The roof special case must remain absent so the caller can
-    // retain couldn't-reachpoint and take its normal emergency fallback.
     engine
         .orders
         .sequence_manager
         .element_terminated(sequence_id, 0);
+
+    // Result616 reaches the same lookup without a selected PassDoor: both
+    // ordinary actor positions came from the legacy save as number-only
+    // handles while every loaded gate endpoint was exact. Recover both
+    // pointers before starting the identity-aware path walk.
+    {
+        let target = engine
+            .get_entity_mut(target_id)
+            .expect("roof-wait target remains live");
+        target
+            .element_data_mut()
+            .set_position_map(MapPoint::new(100.0, 200.0));
+        target
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(2));
+        assert_eq!(target.element_data().sector().unwrap().arena_index(), None);
+    }
+    let ordinary_wait = crate::engine::ai::precompute_avenger_on_roof_wait_position(
+        &engine.world.entities,
+        &engine.script_domains.interactables.doors,
+        &engine.orders.sequence_manager,
+        owner_id,
+        target_id,
+        |element| crate::engine::ai::ai_view_position_sector(&engine, element),
+        &|_| true,
+        &|_| None,
+    )
+    .expect("ordinary restored positions recover their exact gate sectors");
+    assert_eq!(ordinary_wait, wait);
+
+    // Without the selected PassDoor, both ordinary live positions are in the
+    // same sector. The roof special case must remain absent so the caller can
+    // retain couldn't-reachpoint and take its normal emergency fallback.
+    engine
+        .get_entity_mut(target_id)
+        .expect("roof-wait target remains live")
+        .element_data_mut()
+        .set_sector(me_sector);
     assert!(
         crate::engine::ai::precompute_avenger_on_roof_wait_position(
             &engine.world.entities,
@@ -4506,6 +4544,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
             &engine.orders.sequence_manager,
             owner_id,
             target_id,
+            |element| crate::engine::ai::ai_view_position_sector(&engine, element),
             &|_| true,
             &|_| None,
         )
