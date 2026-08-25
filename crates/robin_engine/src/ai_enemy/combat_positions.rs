@@ -228,32 +228,29 @@ fn phalanx_member_detects_360(
         return false;
     }
 
-    let viewer_eye_z = member.elevation
+    let viewer_eye_z = member.world_position.z
         + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, member.is_rider);
-    let target_xy = crate::stealth::detection_point_xy(
-        crate::coordinates::MapPoint::new(target.position.x, target.position.y),
+    let target_detection = crate::stealth::detection_point_world(
+        target.world_position,
         target.posture,
         target.direction as i16,
+        target.is_rider,
     );
-    let target_z =
-        target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
-    let viewer_ground = crate::coordinates::GroundPoint::from_map_and_z(
-        crate::coordinates::MapPoint::new(member.position.x, member.position.y),
-        member.elevation,
-    );
-    let target_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(target_xy, target.elevation);
-    let dx = target_ground.x - viewer_ground.x;
-    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
-    let dz = target_z - viewer_eye_z;
+    let dx = target_detection.x - member.world_position.x;
+    let dy = (target_detection.y - member.world_position.y) * INVERSE_ASPECT_RATIO;
+    let dz = target_detection.z - viewer_eye_z;
     if dx * dx + dy * dy + dz * dz > member.sq_view_radius {
         return false;
     }
 
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [viewer_ground.x, viewer_ground.y, viewer_eye_z],
-        [target_ground.x, target_ground.y, target_z],
+        [
+            member.world_position.x,
+            member.world_position.y,
+            viewer_eye_z,
+        ],
+        [target_detection.x, target_detection.y, target_detection.z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }
@@ -268,27 +265,27 @@ fn phalanx_member_detects_180(
         return false;
     }
 
+    let viewer_anchor = crate::coordinates::MapPoint::new(member.position.x, member.position.y);
     let viewer_xy = crate::stealth::eye_point_xy(
-        crate::coordinates::MapPoint::new(member.position.x, member.position.y),
+        viewer_anchor,
         member.posture,
         member.direction as i16,
         false,
     );
-    let viewer_z =
-        member.elevation + crate::stealth::eye_z_for_posture(member.posture, member.is_rider);
-    let target_xy = crate::stealth::detection_point_xy(
-        crate::coordinates::MapPoint::new(target.position.x, target.position.y),
+    let viewer_world = crate::coordinates::WorldPoint3D::new(
+        member.world_position.x + (viewer_xy.x - viewer_anchor.x),
+        member.world_position.y + (viewer_xy.y - viewer_anchor.y),
+        member.world_position.z
+            + crate::stealth::eye_z_for_posture(member.posture, member.is_rider),
+    );
+    let target_world = crate::stealth::detection_point_world(
+        target.world_position,
         target.posture,
         target.direction as i16,
+        target.is_rider,
     );
-    let target_z =
-        target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
-    let viewer_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(viewer_xy, member.elevation);
-    let target_ground =
-        crate::coordinates::GroundPoint::from_map_and_z(target_xy, target.elevation);
-    let dx = target_ground.x - viewer_ground.x;
-    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
+    let dx = target_world.x - viewer_world.x;
+    let dy = (target_world.y - viewer_world.y) * INVERSE_ASPECT_RATIO;
     let sq_distance = dx * dx + dy * dy;
     if sq_distance > member.sq_view_radius {
         return false;
@@ -334,7 +331,7 @@ fn phalanx_member_detects_180(
     let effective_view_radius =
         ctx.compute_view_radius_cached(member.entity, target.obstacle, || {
             crate::ai_vision::compute_view_radius(
-                crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
+                viewer_world,
                 member.view_radius,
                 (member.view_direction[0], member.view_direction[1]),
                 member.real_half_aperture,
@@ -350,8 +347,8 @@ fn phalanx_member_detects_180(
 
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [viewer_ground.x, viewer_ground.y, viewer_z],
-        [target_ground.x, target_ground.y, target_z],
+        [viewer_world.x, viewer_world.y, viewer_world.z],
+        [target_world.x, target_world.y, target_world.z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }
@@ -4943,6 +4940,7 @@ mod tests {
         PhalanxEnemySnapshot {
             handle,
             position: position(x, 0.0),
+            world_position: crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0),
             direction: 4,
             posture: Posture::Upright,
             elevation: 0.0,
@@ -4969,6 +4967,7 @@ mod tests {
             current_them_list,
             detectable_enemies,
             position: position(0.0, 0.0),
+            world_position: crate::coordinates::WorldPoint3D::ZERO,
             direction: 4,
             posture: Posture::Upright,
             elevation: 0.0,
@@ -5034,6 +5033,35 @@ mod tests {
         append_phalanx_member_enemies(&mut merged, &right, &right_kept, &ctx);
 
         assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn phalanx_los_uses_stored_3d_target_before_detection_offset() {
+        // Seed3 Savegame_024 replay-032: this leaning target's stored world Y
+        // differs by one ULP from `map_y + elevation`. Original
+        // ComputeDetectionPoint starts from the stored 3D point.
+        let mut target = enemy(30, 1029.8252);
+        target.position.y = 1846.1154;
+        target.world_position =
+            crate::coordinates::WorldPoint3D::new(1029.8252, 1982.2124, 136.09698);
+        target.elevation = 136.09698;
+        target.posture = Posture::LeaningOut;
+        target.direction = 11;
+
+        let mut viewer = member(2, 1000.0, Vec::new(), Vec::new());
+        viewer.position = position(931.252, 1726.3948);
+        viewer.world_position = crate::coordinates::WorldPoint3D::new(931.252, 1726.3948, 0.0);
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(phalanx_member_detects_360(
+            &viewer,
+            &target,
+            crate::sight_obstacle::ObstacleList::empty(),
+        ));
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].destination[1].to_bits(), 1_157_160_897);
     }
 
     #[test]
