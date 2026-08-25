@@ -642,9 +642,9 @@ pub struct HostFrontend {
     /// the resource manager can resolve relative lookups.
     pub shipping: Option<Arc<ShippingDatadir>>,
 
-    /// Active key bindings for the current player profile. Host-only —
-    /// `KeyConfig` lives in `robin_assets` (depends on `robin_engine`),
-    /// so it can't be a field on `PlayerProfile` itself.
+    /// Active key bindings for the current player profile. Host-only because
+    /// physical `winit` key codes and local input policy do not belong in the
+    /// deterministic, platform-neutral engine `PlayerProfile`.
     pub key_config: KeyConfig,
 
     /// User's custom key bindings (the "User Defined" slot in the

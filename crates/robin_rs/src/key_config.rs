@@ -1,9 +1,20 @@
 //! Host-side keyboard binding configuration.
 //!
 //! Stores named action strings with primary and secondary key slots, and
-//! provides hardcoded default presets. The original game owns these bindings
-//! as part of each player profile and copies the active profile's bindings into
-//! its input translator; they are application input state, not game assets.
+//! provides hardcoded default presets. The original game owns the active and
+//! custom bindings as part of each player profile and copies the active
+//! profile's bindings into its input translator, so those live values are host
+//! application state rather than deterministic engine state.
+//!
+//! The original preset definitions came from
+//! `Data/Configuration/keyset1.cfg` and `keyset2.cfg`; the Rust port currently
+//! preserves its existing hardcoded tables here.
+//! TODO(architecture): load preset definitions through the asset layer while
+//! keeping physical [`KeyCode`] values and per-profile selections host-owned.
+//!
+//! This unpublished workspace API previously lived at
+//! `robin_assets::keyconfig`; consumers must now import
+//! `robin_rs::key_config`.
 
 use winit::keyboard::KeyCode;
 
