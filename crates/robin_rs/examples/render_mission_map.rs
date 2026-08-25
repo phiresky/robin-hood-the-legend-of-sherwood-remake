@@ -118,7 +118,8 @@ fn run() -> Result<i32, String> {
     game_args.fast_forward = true;
 
     let (campaign, profiles, application_context) =
-        robin_rs::main_entry::rust_init_with_data_dir(data_dir.as_deref())?;
+        robin_rs::main_entry::rust_init_with_data_dir(data_dir.as_deref())
+            .map_err(|error| error.to_string())?;
     if let Some(enabled) = fog_tint_all_sprites {
         let mut profile_manager = robin_engine::player_profile::PlayerProfileManager::global();
         let active = profile_manager
