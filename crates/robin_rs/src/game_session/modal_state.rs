@@ -66,6 +66,7 @@ pub(super) trait ModalScreen: Sized {
 
     fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind;
     fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult>;
+    fn replay_outcome(result: engine_player_command::DialogResult) -> Self::Outcome;
 
     /// Open the screen for `item`.  Only called after the driver has
     /// verified `ctx.menu_resources` is populated.
@@ -110,7 +111,24 @@ impl<S: ModalScreen> ModalBatch<S> {
         self.pending.is_empty() && self.current.is_none()
     }
 
-    fn tick(&mut self, host: &mut Host, ctx: &mut ModalContext<'_>) {
+    fn apply_replay_result(
+        &mut self,
+        kind: engine_player_command::ModalKind,
+        result: engine_player_command::DialogResult,
+        ctx: &mut ModalContext<'_>,
+    ) {
+        let outcome = S::replay_outcome(result);
+        ctx.modal_dismissals
+            .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
+        S::on_dismiss(&outcome, &mut self.pending);
+    }
+
+    fn tick(
+        &mut self,
+        host: &mut Host,
+        ctx: &mut ModalContext<'_>,
+        replay_modal_dismissals: &mut ReplayModalDismissals,
+    ) {
         if ctx.menu_resources.is_none() {
             tracing::warn!("{}", S::MISSING_RESOURCES_WARN);
             self.pending.clear();
@@ -122,16 +140,26 @@ impl<S: ModalScreen> ModalBatch<S> {
             && let Some(item) = self.pending.pop_front()
         {
             if let Some(result) = S::item_replay_result(&item) {
-                ctx.modal_dismissals
-                    .push(engine_player_command::PlayerCommand::ModalDismiss {
-                        kind: S::item_kind(&item),
-                        result,
-                    });
+                self.apply_replay_result(S::item_kind(&item), result, ctx);
+                return;
             } else {
                 let kind = S::item_kind(&item);
                 let screen = S::begin(host, ctx, item);
                 self.current = Some((kind, screen));
             }
+        }
+
+        let replay_result = self
+            .current
+            .as_ref()
+            .and_then(|(kind, _)| pop_matching_dismissal(replay_modal_dismissals, kind));
+        if let Some(result) = replay_result {
+            let (kind, _) = self
+                .current
+                .take()
+                .expect("active modal disappeared while applying replay dismissal");
+            self.apply_replay_result(kind, result, ctx);
+            return;
         }
 
         let Some((kind, screen)) = self.current.as_mut() else {
@@ -169,6 +197,12 @@ impl ModalScreen for DialogueModalState {
 
     fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult> {
         item.replay_result
+    }
+
+    fn replay_outcome(
+        result: engine_player_command::DialogResult,
+    ) -> engine_player_command::DialogResult {
+        result
     }
 
     fn begin(_host: &mut Host, ctx: &mut ModalContext<'_>, item: Self::Item) -> Self {
@@ -242,6 +276,12 @@ impl ModalScreen for PopupScrollModalState {
 
     fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult> {
         item.replay_result
+    }
+
+    fn replay_outcome(
+        result: engine_player_command::DialogResult,
+    ) -> engine_player_command::DialogResult {
+        result
     }
 
     fn begin(_host: &mut Host, ctx: &mut ModalContext<'_>, item: Self::Item) -> Self {
@@ -332,6 +372,10 @@ impl ModalScreen for DebriefingModalState {
         item.replay_result
     }
 
+    fn replay_outcome(result: engine_player_command::DialogResult) -> DebriefingOutcome {
+        debriefing_replay_result(result)
+    }
+
     fn begin(_host: &mut Host, ctx: &mut ModalContext<'_>, item: Self::Item) -> Self {
         let resources = ctx
             .menu_resources
@@ -409,40 +453,25 @@ pub(super) enum ActiveModalOutcome {
     QuitMissionRequested,
 }
 
-/// Run a game session: mission selection loop -> game -> repeat.
+/// Per-frame queue of typed replay modal results.
 ///
-/// Build the auto-assigned replay recording path used when the user
-/// starts the game without `--record`: `<data_dir>/robin_hood/replays/`
-/// joined with a local-time ISO-8601 stamp including the timezone
-/// offset (colons replaced with `-` so the filename works on every
-/// filesystem — Windows in particular rejects `:`).  The directory
-/// is created lazily on first write.
-/// Per-frame queue of recorded modal dismissals during replay playback.
-///
-/// Serializes transparently as the plain command queue so snapshot and
-/// save formats are unchanged. `strict_replay` is stamped on frames fed
-/// from a replay so missing modal facts fail immediately instead of fabricating
-/// a result and hiding a replay desynchronization.
+/// `strict_replay` distinguishes a replay-fed frame from ordinary live/modal
+/// state. A missing matching result is valid: the modal remains open until a
+/// later replay host frame supplies the dismissal. A supplied result which is
+/// still present at frame finalization is instead a precise replay mismatch.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub(super) struct ReplayModalDismissals {
-    queue: std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    queue: VecDeque<engine_player_command::PlayerCommand>,
     #[serde(skip)]
-    pub(super) strict_replay: bool,
-}
-
-impl From<std::collections::VecDeque<engine_player_command::PlayerCommand>>
-    for ReplayModalDismissals
-{
-    fn from(queue: std::collections::VecDeque<engine_player_command::PlayerCommand>) -> Self {
-        Self {
-            queue,
-            strict_replay: false,
-        }
-    }
+    strict_replay: bool,
 }
 
 impl ReplayModalDismissals {
+    pub(super) fn begin_replay_frame(&mut self) {
+        self.strict_replay = true;
+    }
+
     pub(super) fn push_back(&mut self, command: engine_player_command::PlayerCommand) {
         self.queue.push_back(command);
     }
@@ -455,8 +484,23 @@ impl ReplayModalDismissals {
         self.queue.len()
     }
 
-    pub(super) fn is_strict_replay(&self) -> bool {
-        self.strict_replay
+    pub(super) fn assert_consumed(&self) {
+        if self.strict_replay && !self.queue.is_empty() {
+            panic!(
+                "replay desync: {} recorded modal dismissal(s) were unused in their host frame: {:?}",
+                self.queue.len(),
+                self.queue
+            );
+        }
+    }
+}
+
+impl From<VecDeque<engine_player_command::PlayerCommand>> for ReplayModalDismissals {
+    fn from(queue: VecDeque<engine_player_command::PlayerCommand>) -> Self {
+        Self {
+            queue,
+            strict_replay: false,
+        }
     }
 }
 
@@ -466,9 +510,9 @@ impl ReplayModalDismissals {
 /// Matching by kind keeps the queue stable even if the engine queues
 /// modals in a slightly different order within a frame (e.g. a dialog
 /// and a popup both fired), and lets an unrelated modal without a
-/// recording fall through to interactive handling. Playback-fed frames are
-/// strict: an unrecorded modal is a replay mismatch and cannot be assigned a
-/// fabricated result.
+/// recording fall through to interactive handling. On playback, absence is
+/// valid because a modal may stay open until a later host frame supplies its
+/// recorded result.
 pub(super) fn pop_matching_dismissal(
     queue: &mut ReplayModalDismissals,
     target: &engine_player_command::ModalKind,
@@ -479,13 +523,7 @@ pub(super) fn pop_matching_dismissal(
             engine_player_command::PlayerCommand::ModalDismiss { kind, .. }
                 if kind == target
         )
-    });
-    let Some(pos) = pos else {
-        if queue.strict_replay {
-            panic!("replay desync: modal {target:?} has no recorded dismissal");
-        }
-        return None;
-    };
+    })?;
     match queue.queue.remove(pos)? {
         engine_player_command::PlayerCommand::ModalDismiss { result, .. } => Some(result),
         _ => None,
@@ -863,6 +901,7 @@ pub(super) fn tick_active_modal(
     active_modal: &mut Option<ActiveModal>,
     host: &mut Host,
     ctx: &mut ModalContext<'_>,
+    replay_modal_dismissals: &mut ReplayModalDismissals,
 ) -> ActiveModalOutcome {
     let Some(modal) = active_modal.as_mut() else {
         return ActiveModalOutcome::None;
@@ -870,21 +909,21 @@ pub(super) fn tick_active_modal(
 
     match modal {
         ActiveModal::Dialogue(batch) => {
-            batch.tick(host, ctx);
+            batch.tick(host, ctx, replay_modal_dismissals);
             if batch.is_empty() {
                 *active_modal = None;
             }
             ActiveModalOutcome::None
         }
         ActiveModal::PopupScroll(batch) => {
-            batch.tick(host, ctx);
+            batch.tick(host, ctx, replay_modal_dismissals);
             if batch.is_empty() {
                 *active_modal = None;
             }
             ActiveModalOutcome::None
         }
         ActiveModal::Debriefing(batch) => {
-            batch.tick(host, ctx);
+            batch.tick(host, ctx, replay_modal_dismissals);
             if batch.is_empty() {
                 *active_modal = None;
             }
@@ -895,6 +934,9 @@ pub(super) fn tick_active_modal(
             state,
             replay_result,
         } => {
+            if replay_result.is_none() {
+                *replay_result = pop_matching_dismissal(replay_modal_dismissals, kind);
+            }
             if let Some(result) = replay_result.take() {
                 ctx.modal_dismissals
                     .push(engine_player_command::PlayerCommand::ModalDismiss {
@@ -1415,26 +1457,39 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "replay desync: modal")]
-    fn unrecorded_modal_is_rejected_on_playback_frames() {
-        let mut queue = ReplayModalDismissals::default();
-        queue.strict_replay = true;
+    fn missing_control_keeps_modal_open_until_later_replay_frame() {
+        let kind = ModalKind::Dialog { dialog_id: 3 };
+        let mut creation_frame = ReplayModalDismissals::default();
+        creation_frame.begin_replay_frame();
 
-        let _ = pop_matching_dismissal(&mut queue, &ModalKind::Dialog { dialog_id: 3 });
+        assert_eq!(pop_matching_dismissal(&mut creation_frame, &kind), None);
+        creation_frame.assert_consumed();
+
+        let mut dismissal_frame: ReplayModalDismissals =
+            VecDeque::from([PlayerCommand::ModalDismiss {
+                kind: kind.clone(),
+                result: DialogResult::Aborted,
+            }])
+            .into();
+        dismissal_frame.begin_replay_frame();
+
+        assert_eq!(
+            pop_matching_dismissal(&mut dismissal_frame, &kind),
+            Some(DialogResult::Aborted)
+        );
+        dismissal_frame.assert_consumed();
     }
 
     #[test]
-    fn recorded_dismissal_is_consumed_on_strict_playback() {
+    #[should_panic(expected = "recorded modal dismissal(s) were unused in their host frame")]
+    fn supplied_but_unmatched_control_is_a_replay_desync() {
         let mut queue: ReplayModalDismissals = VecDeque::from([PlayerCommand::ModalDismiss {
-            kind: ModalKind::Dialog { dialog_id: 3 },
-            result: DialogResult::Aborted,
+            kind: ModalKind::Dialog { dialog_id: 4 },
+            result: DialogResult::Completed,
         }])
         .into();
-        queue.strict_replay = true;
+        queue.begin_replay_frame();
 
-        let result = pop_matching_dismissal(&mut queue, &ModalKind::Dialog { dialog_id: 3 });
-
-        assert_eq!(result, Some(DialogResult::Aborted));
-        assert!(queue.is_empty());
+        queue.assert_consumed();
     }
 }

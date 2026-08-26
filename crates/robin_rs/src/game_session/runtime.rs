@@ -514,7 +514,7 @@ impl MissionFrame {
                 .expect("recorded replay transition was just installed")
                 .before,
         );
-        self.replay_modal_dismissals.strict_replay = true;
+        self.replay_modal_dismissals.begin_replay_frame();
         for control in recorded.host_controls {
             match control {
                 robin_engine::replay::ReplayHostControl::ModalDismiss { modal, result } => self

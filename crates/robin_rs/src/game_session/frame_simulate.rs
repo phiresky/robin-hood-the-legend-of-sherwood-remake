@@ -193,7 +193,12 @@ async fn drive_scripted_modal_lanes(
             ui.active_modal = Some(ActiveModal::Dialogue(Box::new(batch)));
         }
         if ui.active_modal.is_some() {
-            let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
+            let outcome = tick_active_modal(
+                &mut ui.active_modal,
+                host,
+                &mut modal_ctx,
+                &mut frame.replay_modal_dismissals,
+            );
             debug_assert_eq!(outcome, ActiveModalOutcome::None);
             rendered = true;
         }
@@ -242,7 +247,12 @@ async fn drive_scripted_modal_lanes(
             ui.active_modal = Some(ActiveModal::PopupScroll(Box::new(batch)));
         }
         if ui.active_modal.is_some() {
-            let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
+            let outcome = tick_active_modal(
+                &mut ui.active_modal,
+                host,
+                &mut modal_ctx,
+                &mut frame.replay_modal_dismissals,
+            );
             debug_assert_eq!(outcome, ActiveModalOutcome::None);
             rendered = true;
         }
@@ -270,7 +280,12 @@ async fn drive_scripted_modal_lanes(
             ui.active_modal = Some(ActiveModal::Debriefing(Box::new(batch)));
         }
         if ui.active_modal.is_some() {
-            let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
+            let outcome = tick_active_modal(
+                &mut ui.active_modal,
+                host,
+                &mut modal_ctx,
+                &mut frame.replay_modal_dismissals,
+            );
             debug_assert_eq!(outcome, ActiveModalOutcome::None);
             rendered = true;
         }
@@ -347,7 +362,12 @@ fn drive_leave_mission_prompt(
         menu_resources: &mut resources.menu,
         modal_dismissals: &mut frame.modal_dismissals,
     };
-    let outcome = tick_active_modal(&mut ui.active_modal, host, &mut modal_ctx);
+    let outcome = tick_active_modal(
+        &mut ui.active_modal,
+        host,
+        &mut modal_ctx,
+        &mut frame.replay_modal_dismissals,
+    );
     if outcome == ActiveModalOutcome::QuitMissionRequested {
         let cmd = PlayerCommand::QuitMissionRequested;
         dispatch_local_command(

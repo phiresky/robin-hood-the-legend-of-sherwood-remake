@@ -278,6 +278,7 @@ impl HeadlessMission {
         if dismissed > 0 {
             tracing::debug!(dismissed, "headless: auto-dismissed pending modal(s)");
         }
+        frame.replay_modal_dismissals.assert_consumed();
         if !frame.replay_modal_dismissals.is_empty() {
             tracing::debug!(
                 "Replay headless: {} recorded ModalDismiss command(s) unused this frame",

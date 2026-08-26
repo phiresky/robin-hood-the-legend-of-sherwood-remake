@@ -308,6 +308,14 @@ fn pre_tick_is_paused(sources: PreTickPauseSources) -> bool {
     sources.pause_menu || sources.manual || sources.multiplayer_clock || sources.modal
 }
 
+/// A modal freezes the authoritative timeline but not the dense replay host
+/// record cursor. Recording emits stationary records while the modal remains
+/// open, including the later record carrying its dismissal. Explicit user or
+/// network pauses still freeze playback entirely.
+fn replay_cursor_is_paused(sources: PreTickPauseSources) -> bool {
+    sources.pause_menu || sources.manual || sources.multiplayer_clock
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PreTickTimelineOutput {
     paused: bool,
@@ -350,14 +358,15 @@ fn prepare_pre_tick_timeline(
     manual_pause: &mut bool,
     rewind_active: bool,
     mut paused: bool,
+    replay_cursor_paused: bool,
 ) -> Result<PreTickTimelineOutput, String> {
-    if runtime.replay_player.is_some() && !paused {
+    if runtime.replay_player.is_some() && !replay_cursor_paused {
         // Recorded save markers pin the boundary state and load-back
         // records swap a pinned state in, before this frame's commands.
         runtime.apply_playback_timeline_events(host, game, manager, assets)?;
     }
     if let Some(ref mut player) = runtime.replay_player
-        && !paused
+        && !replay_cursor_paused
     {
         if player.is_finished() {
             if !runtime.replay_finished_logged {
@@ -982,12 +991,14 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // input that just arrived.
         process_pre_tick_state_hash(runtime, host, manager);
 
-        let paused = pre_tick_is_paused(PreTickPauseSources {
+        let pause_sources = PreTickPauseSources {
             pause_menu: ui.pause_menu.is_some(),
             manual: *manual_pause,
             multiplayer_clock: mp_clock_pause,
             modal: modal_pause,
-        });
+        };
+        let paused = pre_tick_is_paused(pause_sources);
+        let replay_cursor_paused = replay_cursor_is_paused(pause_sources);
         let PreTickTimelineOutput {
             paused,
             consumed_buffered,
@@ -1001,6 +1012,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             manual_pause,
             rewind_active,
             paused,
+            replay_cursor_paused,
         )?;
 
         dispatch_pre_tick_pointer_commands(
@@ -1033,7 +1045,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
 #[cfg(test)]
 mod tests {
-    use super::{PreTickPauseSources, pre_tick_is_paused};
+    use super::{PreTickPauseSources, pre_tick_is_paused, replay_cursor_is_paused};
 
     #[test]
     fn pre_tick_pause_combines_all_graphical_pause_sources() {
@@ -1064,6 +1076,35 @@ mod tests {
             },
         ] {
             assert!(pre_tick_is_paused(paused));
+        }
+    }
+
+    #[test]
+    fn modal_pause_keeps_replay_host_records_moving() {
+        let modal_only = PreTickPauseSources {
+            pause_menu: false,
+            manual: false,
+            multiplayer_clock: false,
+            modal: true,
+        };
+        assert!(pre_tick_is_paused(modal_only));
+        assert!(!replay_cursor_is_paused(modal_only));
+
+        for explicit_pause in [
+            PreTickPauseSources {
+                pause_menu: true,
+                ..modal_only
+            },
+            PreTickPauseSources {
+                manual: true,
+                ..modal_only
+            },
+            PreTickPauseSources {
+                multiplayer_clock: true,
+                ..modal_only
+            },
+        ] {
+            assert!(replay_cursor_is_paused(explicit_pause));
         }
     }
 }
