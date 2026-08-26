@@ -1476,6 +1476,31 @@ fn split_late_refresh_orientations(
     (before_hourglass, after_hourglass)
 }
 
+fn advance_trace_qa_recording_state(recording: &mut bool, command: &TraceCommand) {
+    if matches!(command, TraceCommand::StartRecordingMacro { .. }) {
+        *recording = true;
+        return;
+    }
+    if *recording
+        && matches!(
+            command,
+            TraceCommand::GroupMove { .. }
+                | TraceCommand::LaunchInteraction { .. }
+                | TraceCommand::LaunchGroundTarget { .. }
+                | TraceCommand::DropAleAt { .. }
+                | TraceCommand::LaunchSelfAbility { .. }
+                | TraceCommand::LaunchScrollRead { .. }
+                | TraceCommand::SwordStrike { .. }
+                | TraceCommand::CrouchDown
+                | TraceCommand::StandUp
+        )
+    {
+        // These are the command shapes stored by the engine's QA hook. Their
+        // successful Original handlers send STOP_RECORDING_MACRO globally.
+        *recording = false;
+    }
+}
+
 impl From<TraceAction> for Action {
     fn from(value: TraceAction) -> Self {
         match value {
@@ -2747,6 +2772,7 @@ fn resolve_schema_sixteen_drop_ale(
     consumed_route_ordinals: &mut BTreeSet<u64>,
     entity_map: &EntityMap,
     same_sector_goal: Option<ReplayDropAleResolution>,
+    qa_recording: bool,
 ) -> Option<ReplayDropAleResolution> {
     if schema != 16 {
         return None;
@@ -2786,6 +2812,19 @@ fn resolve_schema_sixteen_drop_ale(
         matching_events.len()
     );
     let Some((ordinal, event)) = matching_events.into_iter().next() else {
+        if qa_recording {
+            // Original stores the selected target-sector pointer in the QA's
+            // Seek without launching it, so there is intentionally no route
+            // event from which schema 16 can recover that pointer. The actor
+            // sector is not a valid substitute: the selected target may be a
+            // different (or duplicate-number) sector.
+            //
+            // TODO(parity-schema): record DropAle's selected target sector,
+            // exact arena identity, and layer directly on the command.
+            panic!(
+                "schema-16 DropAle recorded as a quick action has no authoritative target-sector identity"
+            );
+        }
         // A cross-sector DropAle must have an authoritative route event. Do
         // not disguise a mismatched/corrupt event as a same-sector command.
         let has_actor_route = route_events.unwrap_or_default().iter().any(|event| {
@@ -5077,6 +5116,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         );
         let mut consumed_drop_ale_route_ordinals = BTreeSet::new();
         let mut consumed_group_move_route_ordinals = BTreeSet::new();
+        let mut trace_qa_recording = engine.is_recording_macro();
         let mut commands_before_hourglass_resolved = Vec::new();
         for command in commands_before_hourglass {
             if debug_stage_timing {
@@ -5092,6 +5132,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &mut consumed_drop_ale_route_ordinals,
                 map,
                 schema_sixteen_drop_ale_actor_goal(header.schema, &command, map, &engine),
+                trace_qa_recording,
             );
             let group_move_resolution = resolve_schema_sixteen_group_move_route(
                 header.schema,
@@ -5105,12 +5146,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     .expect("parity replay requires retained Original fast-grid topology")
                     .sectors,
             );
-            if let Some(command) = command.into_player_command(
+            advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
+            let converted = command.into_player_command(
                 map,
                 &engine,
                 drop_ale_resolution,
                 group_move_resolution,
-            ) {
+            );
+            if let Some(command) = converted {
                 commands_before_hourglass_resolved.push(command);
             }
         }
@@ -5134,6 +5177,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     &mut consumed_drop_ale_route_ordinals,
                     map,
                     schema_sixteen_drop_ale_actor_goal(header.schema, &command, map, &engine),
+                    trace_qa_recording,
                 );
                 let group_move_resolution = resolve_schema_sixteen_group_move_route(
                     header.schema,
@@ -5147,12 +5191,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         .expect("parity replay requires retained Original fast-grid topology")
                         .sectors,
                 );
-                command.into_player_command(
+                advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
+                let converted = command.into_player_command(
                     map,
                     &engine,
                     drop_ale_resolution,
                     group_move_resolution,
-                )
+                );
+                converted
             })
             .collect::<Vec<_>>();
         inject_schema_sixteen_delayed_drop_ale_routes(
@@ -16351,6 +16397,7 @@ mod tests {
                 &mut consumed,
                 &drop_ale_route_map(actor),
                 None,
+                false,
             ),
             Some(ReplayDropAleResolution {
                 goal: (SectorNumber::new(55), 4),
@@ -16417,6 +16464,7 @@ mod tests {
             &mut BTreeSet::new(),
             &drop_ale_route_map(actor),
             None,
+            false,
         );
     }
 
@@ -16442,7 +16490,15 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_schema_sixteen_drop_ale(16, &command, Some(&routes), &mut consumed, &map, None,),
+            resolve_schema_sixteen_drop_ale(
+                16,
+                &command,
+                Some(&routes),
+                &mut consumed,
+                &map,
+                None,
+                false,
+            ),
             None
         );
         assert_eq!(
@@ -16453,6 +16509,7 @@ mod tests {
                 &mut consumed,
                 &map,
                 None,
+                false,
             ),
             None
         );
@@ -16485,6 +16542,7 @@ mod tests {
             &mut BTreeSet::new(),
             &map,
             None,
+            false,
         );
     }
 
@@ -16517,10 +16575,45 @@ mod tests {
                 &mut consumed,
                 &drop_ale_route_map(actor),
                 Some(expected.clone()),
+                false,
             ),
             Some(expected)
         );
         assert!(consumed.is_empty());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "schema-16 DropAle recorded as a quick action has no authoritative target-sector identity"
+    )]
+    fn schema_sixteen_drop_ale_qa_rejects_actor_sector_as_a_fake_target_fallback() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let command = TraceCommand::DropAleAt {
+            actor,
+            target: TracePoint {
+                x: TraceFloat { bits: 0x44d7_a800 },
+                y: TraceFloat { bits: 0x4447_8000 },
+            },
+            running: false,
+        };
+        let fake_actor_goal = ReplayDropAleResolution {
+            goal: (SectorNumber::new(0), 0),
+            goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(0),
+            recorded_gate_path: None,
+        };
+
+        let _ = resolve_schema_sixteen_drop_ale(
+            16,
+            &command,
+            None,
+            &mut BTreeSet::new(),
+            &drop_ale_route_map(actor),
+            Some(fake_actor_goal),
+            true,
+        );
     }
 
     #[test]

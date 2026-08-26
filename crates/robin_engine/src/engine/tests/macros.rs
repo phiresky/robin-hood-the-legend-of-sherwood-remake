@@ -322,7 +322,7 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
         .get(pc)
         .and_then(|state| state.slot(0))
         .and_then(|slot| slot.steps.first())
-        .copied()
+        .cloned()
         .expect("one recorded group-move step");
     let QaReplayCommand::Move {
         destination,

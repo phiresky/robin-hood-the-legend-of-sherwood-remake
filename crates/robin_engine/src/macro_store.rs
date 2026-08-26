@@ -104,9 +104,7 @@ pub struct RecordedQaMoveRoute {
 /// rebuild a [`PlayerCommand`](crate::player_command::PlayerCommand) at
 /// playback time.  Replay clones each recorded sequence element and
 /// relaunches it as a fresh command.
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
 pub enum QaReplayCommand {
     /// Group-move to a destination — relayed as `PlayerCommand::GroupMove`
     /// with a single-element `actors` vec (the replay target PC).
@@ -169,10 +167,23 @@ pub enum QaReplayCommand {
     },
     /// Self ability (whistle, eat, parry, …).
     SelfAbility { command: Command },
-    /// Drop-ale seek-then-drop sequence.  Replayed as
-    /// `PlayerCommand::DropAleAt` so the engine rebuilds the Seek→DropAle
-    /// pair from the captured destination point.
-    DropAle { target_pos: MapPoint, running: bool },
+    /// Drop-ale seek-then-drop sequence. Replayed as
+    /// `PlayerCommand::DropAleAt` with the complete route resolution captured
+    /// at the input boundary. Re-querying an already-authorized point can
+    /// select a different overlapping floor, so none of this metadata may be
+    /// reconstructed during playback.
+    DropAle {
+        target_pos: MapPoint,
+        running: bool,
+        #[serde(default)]
+        already_authorized: bool,
+        #[serde(default)]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        #[serde(default)]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        #[serde(default)]
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    },
     /// Enter-swordfight engagement on a target.
     Swordfight { target: EntityId, running: bool },
     /// Direct sword strike on a target (mid-swordfight).
@@ -209,9 +220,7 @@ pub enum QaReplayCommand {
 /// can re-dispatch each step.  **There is no per-step titbit id**:
 /// titbits are registered once per *slot* via `maul_titbits[level]`,
 /// not once per step.
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
 pub struct QuickActionStep {
     pub action: Action,
     /// Captured world position of the interaction target (the titbit's
@@ -782,7 +791,7 @@ mod tests {
             },
         };
 
-        let json = serde_json::to_value(step).expect("serialize shield macro as JSON");
+        let json = serde_json::to_value(&step).expect("serialize shield macro as JSON");
         let from_json: QuickActionStep =
             serde_json::from_value(json).expect("roundtrip shield macro JSON");
         assert_eq!(from_json, step);
@@ -797,7 +806,7 @@ mod tests {
         );
 
         let bincode_config = bincode::config::standard();
-        let encoded = bincode::serde::encode_to_vec(step, bincode_config)
+        let encoded = bincode::serde::encode_to_vec(&step, bincode_config)
             .expect("serialize shield macro as bincode");
         let (from_bincode, consumed): (QuickActionStep, usize) =
             bincode::serde::decode_from_slice(&encoded, bincode_config)
@@ -857,7 +866,7 @@ mod tests {
                 danger_point: crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0),
                 danger_point_layer: 7,
             },
-            ..step
+            ..step.clone()
         };
         let changed_height = QuickActionStep {
             replay: QaReplayCommand::ShieldRaise {
@@ -865,7 +874,7 @@ mod tests {
                 danger_point: crate::coordinates::WorldPoint3D::new(120.0, 206.0, 26.0),
                 danger_point_layer: 6,
             },
-            ..step
+            ..step.clone()
         };
         let baseline_hash = robin_util::state_hash::compute(&step);
         assert_ne!(
@@ -902,7 +911,7 @@ mod tests {
             }),
         };
 
-        let json = serde_json::to_value(replay).expect("serialize recorded group move");
+        let json = serde_json::to_value(&replay).expect("serialize recorded group move");
         assert_eq!(
             serde_json::from_value::<QaReplayCommand>(json.clone())
                 .expect("roundtrip recorded group move JSON"),
@@ -915,7 +924,7 @@ mod tests {
             replay
         );
         let config = bincode::config::standard();
-        let bincode = bincode::serde::encode_to_vec(replay, config)
+        let bincode = bincode::serde::encode_to_vec(&replay, config)
             .expect("serialize recorded group move bincode");
         let (decoded, consumed): (QaReplayCommand, usize) =
             bincode::serde::decode_from_slice(&bincode, config)
@@ -933,6 +942,112 @@ mod tests {
             serde_json::from_value::<QaReplayCommand>(legacy)
                 .expect("deserialize legacy group move"),
             QaReplayCommand::Move { route: None, .. }
+        ));
+    }
+
+    #[test]
+    fn drop_ale_macro_serialization_preserves_route_and_defaults_legacy_metadata() {
+        let source_index = crate::fast_find_grid::SectorIndex::new(17).unwrap();
+        let goal_index = crate::fast_find_grid::SectorIndex::new(23).unwrap();
+        let replay = QaReplayCommand::DropAle {
+            target_pos: MapPoint::new(50.0, 75.0),
+            running: true,
+            already_authorized: true,
+            goal_override: Some((crate::sector::SectorNumber::new(42), 3)),
+            goal_sector_index_override: Some(goal_index),
+            recorded_gate_path: Some(crate::gate::RecordedGatePath {
+                source_sector: crate::sector::SectorNumber::new(7),
+                source_sector_index: Some(source_index),
+                source_layer: 2,
+                outcome: crate::gate::RecordedGateOutcome::Success(vec![
+                    crate::gate::GatePathStep {
+                        door_index: crate::gate::DoorIndex(11),
+                        direct: false,
+                    },
+                ]),
+            }),
+        };
+
+        let json = serde_json::to_value(&replay).expect("serialize resolved DropAle macro");
+        let decoded_json: QaReplayCommand =
+            serde_json::from_value(json.clone()).expect("roundtrip resolved DropAle macro JSON");
+        assert_eq!(decoded_json, replay);
+        let bytes = bitcode::serialize(&replay).expect("serialize resolved DropAle macro bitcode");
+        let decoded_bitcode: QaReplayCommand =
+            bitcode::deserialize(&bytes).expect("roundtrip resolved DropAle macro bitcode");
+        assert_eq!(decoded_bitcode, replay);
+        assert_eq!(
+            bitcode::serialize(&decoded_bitcode).expect("re-encode resolved DropAle macro bitcode"),
+            bytes
+        );
+
+        let bincode_config = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&replay, bincode_config)
+            .expect("serialize resolved DropAle macro bincode");
+        let (decoded_bincode, consumed): (QaReplayCommand, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode_config)
+                .expect("roundtrip resolved DropAle macro bincode");
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(decoded_bincode, replay);
+        assert_eq!(
+            bincode::serde::encode_to_vec(&decoded_bincode, bincode_config)
+                .expect("re-encode resolved DropAle macro bincode"),
+            bytes
+        );
+
+        let mut changed_route = replay.clone();
+        let QaReplayCommand::DropAle {
+            recorded_gate_path: Some(route),
+            ..
+        } = &mut changed_route
+        else {
+            panic!("resolved DropAle fixture lost its gate route")
+        };
+        let crate::gate::RecordedGateOutcome::Success(gates) = &mut route.outcome else {
+            panic!("resolved DropAle fixture route must succeed")
+        };
+        gates[0].direct = true;
+        assert_ne!(
+            robin_util::state_hash::compute(&changed_route),
+            robin_util::state_hash::compute(&replay),
+            "recorded gate direction must participate in StateHash"
+        );
+
+        let mut changed_goal = replay.clone();
+        let QaReplayCommand::DropAle {
+            goal_sector_index_override,
+            ..
+        } = &mut changed_goal
+        else {
+            panic!("resolved DropAle fixture changed variant")
+        };
+        *goal_sector_index_override = crate::fast_find_grid::SectorIndex::new(24);
+        assert_ne!(
+            robin_util::state_hash::compute(&changed_goal),
+            robin_util::state_hash::compute(&replay),
+            "exact goal arena must participate in StateHash"
+        );
+
+        let mut legacy = json;
+        let fields = legacy
+            .get_mut("DropAle")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged DropAle macro");
+        fields.remove("already_authorized");
+        fields.remove("goal_override");
+        fields.remove("goal_sector_index_override");
+        fields.remove("recorded_gate_path");
+        let decoded_legacy: QaReplayCommand =
+            serde_json::from_value(legacy).expect("deserialize legacy DropAle macro JSON");
+        assert!(matches!(
+            decoded_legacy,
+            QaReplayCommand::DropAle {
+                already_authorized: false,
+                goal_override: None,
+                goal_sector_index_override: None,
+                recorded_gate_path: None,
+                ..
+            }
         ));
     }
 

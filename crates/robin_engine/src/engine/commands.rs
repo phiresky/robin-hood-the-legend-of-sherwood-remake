@@ -314,6 +314,33 @@ impl EngineInner {
             }
         }
 
+        // Original resolves and authorizes the complete Ale Seek before
+        // deciding whether to store it as a QA. A forbidden sector or failed
+        // move-box authorization therefore stores nothing and leaves macro
+        // recording armed; do not let the shared hook append a fake step or
+        // the dispatch arm send STOP_RECORDING_MACRO in that case.
+        if let DropAleAt {
+            actor,
+            target_pos,
+            already_authorized,
+            goal_override,
+            goal_sector_index_override,
+            ..
+        } = cmd
+            && self.players.qa_recording_for.contains(actor)
+            && self
+                .resolve_drop_ale_target(
+                    *actor,
+                    *target_pos,
+                    *already_authorized,
+                    *goal_override,
+                    *goal_sector_index_override,
+                )
+                .is_none()
+        {
+            return;
+        }
+
         // Append-while-recording hook.  Records one `QuickActionStep`
         // per sim-affecting player command addressed at the currently
         // recording PC, keyed by the resolved Action (portrait bar)
@@ -825,6 +852,15 @@ impl EngineInner {
                 goal_sector_index_override,
                 recorded_gate_path,
             } => {
+                if self.players.qa_recording_for.contains(actor) {
+                    // Original ManageInputActionAle gives the constructed
+                    // Seek→DropAle sequence to SetQuickActionSequence, sends
+                    // STOP_RECORDING_MACRO, and does not launch it live. The
+                    // shared recording hook above has already retained the
+                    // complete resolved route and installed its titbit.
+                    self.stop_recording_macro();
+                    return;
+                }
                 self.apply_drop_ale_at(
                     *actor,
                     *target_pos,
@@ -1667,23 +1703,58 @@ impl EngineInner {
                 actor,
                 target_pos,
                 running,
-                already_authorized: _,
-                goal_override: _,
-                goal_sector_index_override: _,
-                recorded_gate_path: _,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
             } => {
                 if *actor != recording_pc {
                     return;
                 }
                 running_move = *running;
-                let pos = *target_pos;
+                // `ManageInputActionAle` authorizes the actor's translated
+                // move box and constructs the concrete Seek before handing
+                // that sequence to `SetQuickActionSequence`. A live input
+                // command still carries the raw cursor here, so resolve it at
+                // recording time and retain the exact sparse goal identity.
+                // Re-authorizing or spatially re-querying during playback can
+                // select a different point/floor in overlapping geometry.
+                let Some((destination, goal_sector, goal_layer)) = self.resolve_drop_ale_target(
+                    *actor,
+                    *target_pos,
+                    *already_authorized,
+                    *goal_override,
+                    *goal_sector_index_override,
+                ) else {
+                    return;
+                };
+                let goal_sector = goal_sector.unwrap_or_else(|| {
+                    panic!(
+                        "recorded DropAle target ({}, {}) has no authoritative sector",
+                        target_pos.x, target_pos.y
+                    )
+                });
+                let resolved_goal = Some((
+                    crate::sector::SectorNumber::new(
+                        i16::try_from(u16::from(goal_sector)).unwrap_or_else(|_| {
+                            panic!("DropAle goal sector {goal_sector:?} exceeds i16")
+                        }),
+                    ),
+                    goal_layer,
+                ));
                 (
                     *actor,
                     crate::profiles::Action::Ale,
-                    pos,
+                    // Original's QA titbit stays at the click projection;
+                    // only the stored Seek uses the authorized box center.
+                    *target_pos,
                     QaReplayCommand::DropAle {
-                        target_pos: *target_pos,
+                        target_pos: destination,
                         running: *running,
+                        already_authorized: true,
+                        goal_override: resolved_goal,
+                        goal_sector_index_override: goal_sector.arena_index(),
+                        recorded_gate_path: recorded_gate_path.clone(),
                     },
                 )
             }
@@ -1836,7 +1907,7 @@ impl EngineInner {
         let step = QuickActionStep {
             action,
             position,
-            replay,
+            replay: replay.clone(),
         };
         let slot_idx =
             match recording_store {
@@ -1883,7 +1954,7 @@ impl EngineInner {
         {
             return;
         }
-        let phase = match (phase_override, replay) {
+        let phase = match (phase_override, &replay) {
             (Some(q), _) => q as u16,
             (
                 None,
@@ -1894,10 +1965,10 @@ impl EngineInner {
                     target, command, ..
                 },
             ) => {
-                let target_entity = self.get_entity(target).unwrap_or_else(|| {
+                let target_entity = self.get_entity(*target).unwrap_or_else(|| {
                     panic!("quick-action interaction target {target:?} disappeared")
                 });
-                if command == Command::Take
+                if *command == Command::Take
                     && matches!(
                         target_entity,
                         crate::element::Entity::Bonus(_)
@@ -1932,7 +2003,7 @@ impl EngineInner {
         // stores movement/ground QAs as fixed 3D points. The distinction is
         // also a rendering contract: supplier icons float above the entity;
         // fixed-point crosshairs are centered directly on the destination.
-        let supplier = match replay {
+        let supplier = match &replay {
             QaReplayCommand::Interaction { target, .. }
             | QaReplayCommand::TargetInteraction { target, .. }
             | QaReplayCommand::ScrollRead { target, .. }
@@ -1941,7 +2012,7 @@ impl EngineInner {
             | QaReplayCommand::ShieldRaise {
                 protected_pc: target,
                 ..
-            } => Some(target),
+            } => Some(*target),
             QaReplayCommand::SelfAbility { .. } | QaReplayCommand::PostureToggle { .. } => {
                 Some(actor)
             }
@@ -1953,28 +2024,34 @@ impl EngineInner {
             .get_entity(recording_pc)
             .map(|entity| entity.element_data().layer())
             .unwrap_or_else(|| panic!("quick-action recording PC {recording_pc:?} disappeared"));
-        let (pos3d, layer) = match replay {
+        let (pos3d, layer) = match &replay {
             QaReplayCommand::GroundTarget {
                 target_pos,
                 titbit_layer,
                 ..
-            } => (target_pos, titbit_layer),
+            } => (*target_pos, *titbit_layer),
             QaReplayCommand::ShieldRaise {
                 danger_point,
                 danger_point_layer,
                 ..
-            } => (danger_point, danger_point_layer),
-            QaReplayCommand::Move { destination, .. }
-            | QaReplayCommand::DropAle {
-                target_pos: destination,
-                ..
-            } => (
+            } => (*danger_point, *danger_point_layer),
+            QaReplayCommand::Move { destination, .. } => (
                 self.world.fast_grid.convert_2d_to_3d(
-                    destination,
+                    *destination,
                     crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
                     self.sight_obstacles(assets),
                 ),
                 actor_layer,
+            ),
+            QaReplayCommand::DropAle { goal_override, .. } => (
+                self.world.fast_grid.convert_2d_to_3d(
+                    position,
+                    crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+                    self.sight_obstacles(assets),
+                ),
+                goal_override
+                    .map(|(_, layer)| layer)
+                    .unwrap_or_else(|| panic!("recorded DropAle has no authoritative goal layer")),
             ),
             _ => (
                 crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0),
@@ -2555,14 +2632,18 @@ impl EngineInner {
                 crate::macro_store::QaReplayCommand::DropAle {
                     target_pos,
                     running,
+                    already_authorized,
+                    goal_override,
+                    goal_sector_index_override,
+                    recorded_gate_path,
                 } => PlayerCommand::DropAleAt {
                     actor: pc,
                     target_pos,
                     running,
-                    already_authorized: false,
-                    goal_override: None,
-                    goal_sector_index_override: None,
-                    recorded_gate_path: None,
+                    already_authorized,
+                    goal_override,
+                    goal_sector_index_override,
+                    recorded_gate_path,
                 },
                 crate::macro_store::QaReplayCommand::Swordfight { target, running } => {
                     // See Interaction arm — whole-sequence abort on
@@ -4700,90 +4781,33 @@ impl EngineInner {
         self.launch_sequence(sequence);
     }
 
-    /// Build a `Seek(dest) → DropAle` compound sequence and launch
-    /// it.
+    /// Resolve the concrete point/sector retained by Original's DropAle
+    /// movement element.
     ///
-    fn apply_drop_ale_at(
-        &mut self,
+    /// This is deliberately shared by live launch and quick-action recording:
+    /// Original constructs the same movement element in both cases and only
+    /// then chooses between `SetQuickActionSequence` and `LaunchSequence`.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_drop_ale_target(
+        &self,
         actor: EntityId,
         target_pos: crate::coordinates::MapPoint,
-        running: bool,
         already_authorized: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
-        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
-    ) {
-        self.apply_drop_ale_at_with_recovery(
-            actor,
-            target_pos,
-            running,
-            false,
-            already_authorized,
-            goal_override,
-            goal_sector_index_override,
-            recorded_gate_path,
-        );
-    }
-
-    /// Build the ordinary DropAle route, optionally retaining quick-action
-    /// posture recovery in its post-seek sequence.
-    fn apply_drop_ale_at_with_recovery(
-        &mut self,
-        actor: EntityId,
-        target_pos: crate::coordinates::MapPoint,
-        running: bool,
-        append_posture_recovery: bool,
-        already_authorized: bool,
-        goal_override: Option<(crate::sector::SectorNumber, u16)>,
-        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
-        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
-    ) {
-        use crate::order::OrderType;
-
-        let (posture, layer, move_box, action_distance) = match self.get_entity(actor) {
-            Some(e) => {
-                let action_distance = match e.sprite().action_distance(OrderType::DroppingAle) {
-                    Ok(distance) => distance,
-                    Err(err) => {
-                        tracing::warn!(
-                            ?actor,
-                            error = %err,
-                            "apply_drop_ale_at: missing DroppingAle action distance"
-                        );
-                        return;
-                    }
-                };
-                (
-                    e.element_data().posture,
-                    e.element_data().layer(),
-                    e.position_iface().get_move_box(),
-                    action_distance,
-                )
-            }
-            None => return,
-        };
-
-        // running → RunningUpright, else crouched → WalkingCrouched,
-        // else WalkingUpright.
-        let action_style = if running {
-            OrderType::RunningUpright
-        } else if posture == crate::element::Posture::Crouched {
-            OrderType::WalkingCrouched
-        } else {
-            OrderType::WalkingUpright
-        };
+    ) -> Option<(
+        crate::coordinates::MapPoint,
+        Option<crate::position_interface::SectorHandle>,
+        u16,
+    )> {
+        let move_box = self.get_entity(actor)?.position_iface().get_move_box();
 
         // The drop point's sector and layer come from the cursor, not from
         // the actor: take the topmost sector under the point, resolve a patch
         // overlay to the sector it covers, and resolve a jump sector to the
         // sector it sits in. Jump sectors carry no sector number of their own,
-        // so reading the number off the raw hit loses the goal entirely and
-        // the seek never learns that it has to cross a gate.
+        // so reading the number off the raw hit loses the goal entirely.
         //
-        // TODO: the original also refuses the whole action when the resolved
-        // sector is a door, or a lift that is a wall or ladder. Not ported
-        // yet — a mis-resolution here would silently drop a replayed command,
-        // so the guard needs its own validation pass.
         assert_eq!(
             already_authorized,
             goal_override.is_some(),
@@ -4837,10 +4861,6 @@ impl EngineInner {
                     .get(usize::from(idx))
                     .unwrap_or_else(|| panic!("DropAle sector hit references missing arena {idx}"));
                 if sector.sector_type.is_patch() || sector.sector_type.is_jump() {
-                    // Original immediately dereferences RHSectorJump::GetSector
-                    // here (`RHEngine::ManageInputActionAle`); an overlay
-                    // without its authored underlying sector is corrupt
-                    // topology, not a number-only compatibility case.
                     let under_idx = sector.underlying_sector.unwrap_or_else(|| {
                         panic!("DropAle overlay sector arena {idx} has no underlying sector")
                     });
@@ -4881,8 +4901,28 @@ impl EngineInner {
             }
         };
 
-        // The move box is authorised on the cursor's layer, the same one the
-        // seek element is stamped with.
+        if let Some(index) = goal_sector.and_then(|sector| sector.arena_index()) {
+            let sector = self
+                .world
+                .fast_grid
+                .level
+                .sectors
+                .get(usize::from(index))
+                .unwrap_or_else(|| panic!("DropAle goal arena {index} disappeared"));
+            if sector.sector_type.is_door()
+                || (sector.sector_type.is_lift()
+                    && sector
+                        .lift_type
+                        .is_some_and(crate::sector::LiftType::is_wall_or_ladder))
+            {
+                return None;
+            }
+        } else if goal_sector.is_some() {
+            // TODO(parity-schema): legacy number-only DropAle commands cannot
+            // identify which duplicate sector object supplied the target, so
+            // they cannot authoritatively reproduce this rejection guard.
+        }
+
         let mut destination_pos = target_pos;
         if !already_authorized && move_box.is_somewhere() {
             let mut box_at_target = move_box.translated(target_pos);
@@ -4891,22 +4931,103 @@ impl EngineInner {
                 .fast_grid
                 .find_authorized_position(&mut box_at_target, goal_layer)
             {
-                let center = box_at_target.center();
-                destination_pos = crate::coordinates::MapPoint {
-                    x: center.x,
-                    y: center.y,
-                };
+                destination_pos = box_at_target.center();
             } else {
                 tracing::warn!(
                     ?actor,
                     goal_layer,
                     target_x = target_pos.x,
                     target_y = target_pos.y,
-                    "apply_drop_ale_at: target move box has no authorized position"
+                    "resolve_drop_ale_target: target move box has no authorized position"
                 );
-                return;
+                return None;
             }
         }
+
+        Some((destination_pos, goal_sector, goal_layer))
+    }
+
+    /// Build a `Seek(dest) → DropAle` compound sequence and launch
+    /// it.
+    ///
+    fn apply_drop_ale_at(
+        &mut self,
+        actor: EntityId,
+        target_pos: crate::coordinates::MapPoint,
+        running: bool,
+        already_authorized: bool,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    ) {
+        self.apply_drop_ale_at_with_recovery(
+            actor,
+            target_pos,
+            running,
+            false,
+            already_authorized,
+            goal_override,
+            goal_sector_index_override,
+            recorded_gate_path,
+        );
+    }
+
+    /// Build the ordinary DropAle route, optionally retaining quick-action
+    /// posture recovery in its post-seek sequence.
+    fn apply_drop_ale_at_with_recovery(
+        &mut self,
+        actor: EntityId,
+        target_pos: crate::coordinates::MapPoint,
+        running: bool,
+        append_posture_recovery: bool,
+        already_authorized: bool,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    ) {
+        use crate::order::OrderType;
+
+        let (posture, layer, action_distance) = match self.get_entity(actor) {
+            Some(e) => {
+                let action_distance = match e.sprite().action_distance(OrderType::DroppingAle) {
+                    Ok(distance) => distance,
+                    Err(err) => {
+                        tracing::warn!(
+                            ?actor,
+                            error = %err,
+                            "apply_drop_ale_at: missing DroppingAle action distance"
+                        );
+                        return;
+                    }
+                };
+                (
+                    e.element_data().posture,
+                    e.element_data().layer(),
+                    action_distance,
+                )
+            }
+            None => return,
+        };
+
+        // running → RunningUpright, else crouched → WalkingCrouched,
+        // else WalkingUpright.
+        let action_style = if running {
+            OrderType::RunningUpright
+        } else if posture == crate::element::Posture::Crouched {
+            OrderType::WalkingCrouched
+        } else {
+            OrderType::WalkingUpright
+        };
+
+        let Some((destination_pos, goal_sector, goal_layer)) = self.resolve_drop_ale_target(
+            actor,
+            target_pos,
+            already_authorized,
+            goal_override,
+            goal_sector_index_override,
+        ) else {
+            return;
+        };
 
         tracing::trace!(
             ?actor,
@@ -7222,6 +7343,10 @@ mod tests {
             replay: QaReplayCommand::DropAle {
                 target_pos,
                 running: false,
+                already_authorized: false,
+                goal_override: None,
+                goal_sector_index_override: None,
+                recorded_gate_path: None,
             },
         });
         state.stop_recording();
@@ -7558,6 +7683,362 @@ mod tests {
             Some(&recorded_gate_path),
             "the authoritative route must survive until cross-sector Seek expansion"
         );
+    }
+
+    #[test]
+    fn recording_live_drop_ale_resolves_same_and_cross_sector_goals_before_storage() {
+        for (label, target, expected_goal) in [
+            (
+                "same-sector",
+                crate::coordinates::MapPoint::new(80.0, 90.0),
+                false,
+            ),
+            (
+                "cross-sector duplicate-public-number",
+                crate::coordinates::MapPoint::new(180.0, 90.0),
+                true,
+            ),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let (mut engine, assets, pc_id, source_index, goal_index) =
+                setup_drop_ale_sector_identity_scene();
+            let mut display = HostDisplayState::default();
+            let mut input = InputState::default();
+
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::StartRecordingMacro {
+                    pc: Some(pc_id),
+                    slot: 0,
+                },
+            );
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::DropAleAt {
+                    actor: pc_id,
+                    target_pos: target,
+                    running: false,
+                    already_authorized: false,
+                    goal_override: None,
+                    goal_sector_index_override: None,
+                    recorded_gate_path: None,
+                },
+            );
+
+            assert!(!engine.is_recording_macro(), "{label}");
+            assert_eq!(
+                engine.orders.sequence_manager.sequence_count(),
+                0,
+                "{label}"
+            );
+            let step = &engine
+                .players
+                .macro_store
+                .get(pc_id)
+                .and_then(|state| state.slot(0))
+                .unwrap_or_else(|| panic!("{label} DropAle recording occupies slot zero"))
+                .steps[0];
+            let QaReplayCommand::DropAle {
+                target_pos,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+                ..
+            } = &step.replay
+            else {
+                panic!("{label} recording stored a non-DropAle step")
+            };
+            assert_eq!(*target_pos, target, "{label}");
+            assert!(*already_authorized, "{label}");
+            assert_eq!(
+                *goal_override,
+                Some((crate::sector::SectorNumber::new(0), 0)),
+                "{label}"
+            );
+            assert_eq!(
+                *goal_sector_index_override,
+                Some(if expected_goal {
+                    goal_index
+                } else {
+                    source_index
+                }),
+                "{label}"
+            );
+            let recorded_goal_index = *goal_sector_index_override;
+            assert_eq!(*recorded_gate_path, None, "{label}");
+
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::StartMacro {
+                    pc: Some(pc_id),
+                    slot: 0,
+                },
+            );
+            let (_, replayed_goal, replayed_layer) = drop_ale_seek_goal(&engine);
+            assert_eq!(
+                replayed_goal.and_then(|sector| sector.arena_index()),
+                recorded_goal_index,
+                "{label}"
+            );
+            assert_eq!(replayed_layer, 0, "{label}");
+        }
+    }
+
+    #[test]
+    fn recording_drop_ale_keeps_click_titbit_distinct_from_authorized_seek_center() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        let click = crate::coordinates::MapPoint::new(80.0, 92.0);
+        engine.world.fast_grid_mut().add_line(
+            crate::fast_find_grid::GridLine::new(
+                crate::coordinates::MapPoint::new(0.0, 90.0),
+                crate::coordinates::MapPoint::new(127.0, 90.0),
+                true,
+            ),
+            0,
+        );
+        let expected_titbit_position = engine.world.fast_grid.convert_2d_to_3d(
+            click,
+            crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+            engine.sight_obstacles(&assets),
+        );
+        let (expected_seek_center, _, _) = engine
+            .resolve_drop_ale_target(pc_id, click, false, None, None)
+            .expect("motion-line fixture must authorize a shifted Ale move box");
+        assert_ne!(expected_seek_center, click);
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::DropAleAt {
+                actor: pc_id,
+                target_pos: click,
+                running: false,
+                already_authorized: false,
+                goal_override: None,
+                goal_sector_index_override: None,
+                recorded_gate_path: None,
+            },
+        );
+
+        let slot = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| state.slot(0))
+            .expect("DropAle recording occupies slot zero");
+        assert_eq!(slot.steps[0].position, click);
+        let QaReplayCommand::DropAle { target_pos, .. } = &slot.steps[0].replay else {
+            panic!("recorded step must be DropAle")
+        };
+        assert_eq!(*target_pos, expected_seek_center);
+        let titbit = engine
+            .feedback
+            .titbit_manager
+            .titbits()
+            .iter()
+            .find(|titbit| titbit.kind == crate::titbit::TitbitKind::QuickAction)
+            .expect("DropAle recording installs its QA titbit");
+        assert_eq!(titbit.position, expected_titbit_position);
+        assert_eq!(titbit.layer, 0);
+    }
+
+    #[test]
+    fn recording_drop_ale_rejects_original_forbidden_target_sectors_without_stopping() {
+        use crate::sector::{LiftType, SectorType};
+
+        for (label, sector_type, lift_type) in [
+            (
+                "door",
+                SectorType::MOTION | SectorType::AREA | SectorType::MOUSE | SectorType::DOOR,
+                None,
+            ),
+            (
+                "wall-ladder lift",
+                SectorType::MOTION | SectorType::AREA | SectorType::MOUSE | SectorType::LIFT,
+                Some(LiftType::Ladder),
+            ),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let (mut engine, assets, pc_id, source_index, _) =
+                setup_drop_ale_sector_identity_scene();
+            let sector = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level)
+                .sectors
+                .get_mut(usize::from(source_index))
+                .expect("source sector");
+            sector.sector_type = sector_type;
+            sector.lift_type = lift_type;
+            let mut display = HostDisplayState::default();
+            let mut input = InputState::default();
+
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::StartRecordingMacro {
+                    pc: Some(pc_id),
+                    slot: 0,
+                },
+            );
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::DropAleAt {
+                    actor: pc_id,
+                    target_pos: crate::coordinates::MapPoint::new(80.0, 90.0),
+                    running: false,
+                    already_authorized: false,
+                    goal_override: None,
+                    goal_sector_index_override: None,
+                    recorded_gate_path: None,
+                },
+            );
+
+            assert!(engine.is_recording_macro(), "{label}");
+            assert!(
+                engine
+                    .players
+                    .macro_store
+                    .get(pc_id)
+                    .and_then(|state| state.slot(0))
+                    .is_none_or(|slot| slot.steps.is_empty()),
+                "{label}"
+            );
+            assert_eq!(
+                engine.orders.sequence_manager.sequence_count(),
+                0,
+                "{label}"
+            );
+            assert!(
+                engine.feedback.titbit_manager.titbits().is_empty(),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn recording_resolved_drop_ale_is_not_launched_live_and_replays_exact_route() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, source_index, goal_index) =
+            setup_drop_ale_sector_identity_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        let authorized = crate::coordinates::MapPoint::new(180.0, 90.0);
+        let goal = Some((crate::sector::SectorNumber::new(0), 0));
+        let route = crate::gate::RecordedGatePath {
+            source_sector: crate::sector::SectorNumber::new(0),
+            source_sector_index: Some(source_index),
+            source_layer: 0,
+            outcome: crate::gate::RecordedGateOutcome::Failure,
+        };
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::DropAleAt {
+                actor: pc_id,
+                target_pos: authorized,
+                running: true,
+                already_authorized: true,
+                goal_override: goal,
+                goal_sector_index_override: Some(goal_index),
+                recorded_gate_path: Some(route.clone()),
+            },
+        );
+
+        assert!(!engine.is_recording_macro());
+        assert_eq!(
+            engine.orders.sequence_manager.sequence_count(),
+            0,
+            "ManageInputActionAle stores the sequence while recording instead of launching it"
+        );
+        let slot = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| state.slot(0))
+            .expect("DropAle recording occupies slot zero");
+        assert_eq!(slot.steps.len(), 1);
+        assert_eq!(
+            slot.steps[0].replay,
+            QaReplayCommand::DropAle {
+                target_pos: authorized,
+                running: true,
+                already_authorized: true,
+                goal_override: goal,
+                goal_sector_index_override: Some(goal_index),
+                recorded_gate_path: Some(route.clone()),
+            }
+        );
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+
+        assert_eq!(
+            drop_ale_seek_goal(&engine),
+            (
+                authorized,
+                crate::position_interface::SectorHandle::new(0)
+                    .map(|sector| sector.with_arena_index(goal_index)),
+                0,
+            ),
+            "macro replay must retain the exact sparse goal-sector identity"
+        );
+        let replayed_route = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .and_then(|sequence| sequence.elements.first())
+            .and_then(|element| element.recorded_gate_path.as_ref());
+        assert_eq!(replayed_route, Some(&route));
     }
 
     #[test]
