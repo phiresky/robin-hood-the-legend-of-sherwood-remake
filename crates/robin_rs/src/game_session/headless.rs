@@ -204,7 +204,7 @@ impl HeadlessMission {
         {
             host_scheduled_frame_deadline_ms(
                 self.runtime.timeline.mp_host_frame_schedule,
-                self.runtime.world.manager.sim_frame,
+                self.runtime.timeline.frame_number(),
             )
         } else {
             None
@@ -226,11 +226,11 @@ impl HeadlessMission {
             && self.runtime.world.host.transport.local_seat
                 == robin_engine::player_command::PlayerId::HOST
         {
-            net.publish_frame(self.runtime.world.manager.sim_frame);
+            net.publish_frame(self.runtime.timeline.frame_number());
             net.send_state_hash(
                 hash_frame,
                 hash,
-                self.runtime.world.manager.sim_frame,
+                self.runtime.timeline.frame_number(),
                 sleep_ms,
             );
         }
@@ -304,11 +304,11 @@ impl HeadlessMission {
                 store_rewind_commands: true,
             },
         );
-        world.manager.sim_frame += 1;
+        let next_frame = timeline.advance_frame().number();
         if let Some(net) = world.host.transport.net.as_ref()
             && world.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
         {
-            net.set_initial_snapshot(world.manager.sim_frame, &world.manager.engine);
+            net.set_initial_snapshot(next_frame, &world.manager.engine);
         }
     }
 
@@ -328,10 +328,7 @@ impl HeadlessMission {
             &world.assets,
             &mut world.dev,
             &mut world.game,
-            &mut timeline.rewind_buffer,
-            &mut timeline.rollback_checker,
-            &mut timeline.replay_player,
-            &mut timeline.playback_pinned_saves,
+            timeline,
             &mut control.manual_pause,
             &mut active_modal,
         );
@@ -396,7 +393,7 @@ mod tests {
                 ),
             })
             .expect("queue current-frame network command");
-        let manager = EngineManager::new(engine, PlayerId::HOST);
+        let manager = EngineManager::new(engine);
         let timeline = TimelineRuntime::new(
             ReplayAndRollback {
                 recorder: None,
@@ -453,7 +450,7 @@ mod tests {
             .expect("fixture engine");
         let assets = Arc::new(level_assets);
         let host = Host::scratch(640.0, 480.0);
-        let manager = EngineManager::new(engine, PlayerId::HOST);
+        let manager = EngineManager::new(engine);
         let timeline = TimelineRuntime::new(
             ReplayAndRollback {
                 recorder: None,
@@ -504,10 +501,7 @@ mod tests {
                 &world.assets,
                 &mut world.dev,
                 &mut world.game,
-                &mut timeline.rewind_buffer,
-                &mut timeline.rollback_checker,
-                &mut timeline.replay_player,
-                &mut timeline.playback_pinned_saves,
+                timeline,
                 1,
             )
             .expect("forward step after outer commit")
@@ -515,7 +509,7 @@ mod tests {
         };
 
         assert_eq!(advanced, 1);
-        assert_eq!(mission.runtime.world.manager.sim_frame, 2);
+        assert_eq!(mission.runtime.timeline.frame_number(), 2);
         assert!(
             mission
                 .runtime

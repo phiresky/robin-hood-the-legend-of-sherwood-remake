@@ -7,8 +7,6 @@ use crate::gfx_types::GameEvent;
 use crate::host::Host;
 use crate::input::ThreadedInput;
 use crate::input_translator::{GameAction, InputTranslator};
-use crate::rewind::RewindBuffer;
-use crate::rollback_checker::RollbackChecker;
 use crate::save_file::GameSaveFile;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
@@ -16,7 +14,6 @@ use robin_engine::engine::Engine;
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::messenger as engine_messenger;
 use robin_engine::player_command::{FrameCommands, PlayerCommand};
-use robin_engine::replay::ReplayPlayer;
 
 /// Translate per-frame gilrs controller events into joystick
 /// state, then dispatch. The gamepad's in-flight state persists
@@ -156,12 +153,8 @@ pub(super) fn handle_hold_to_rewind(
     manager: &mut engine_manager_api::EngineManager,
     assets: &engine_api::LevelAssets,
     threaded_input: &ThreadedInput,
-    rewind_buffer: &mut RewindBuffer,
-    rollback_checker: &mut Option<RollbackChecker>,
-    replay_player: &mut Option<ReplayPlayer>,
+    timeline: &mut super::runtime::TimelineRuntime,
 ) -> bool {
-    let engine = &mut manager.engine;
-    let sim_frame = &mut manager.sim_frame;
     // ── Hold-to-rewind debug feature ──
     // Holding BACKSPACE swaps the live sim state with a
     // reconstruction of `sim_frame - 1` from the rewind buffer,
@@ -178,36 +171,25 @@ pub(super) fn handle_hold_to_rewind(
     // consecutive rewind steps reuse earlier replay work instead
     // of re-ticking from a snapshot each frame.
     if rewind_held {
-        rewind_buffer.begin_session();
+        timeline.rewind_buffer.begin_session();
     } else {
-        rewind_buffer.end_session();
+        timeline.rewind_buffer.end_session();
     }
     let mut rewind_active = false;
     if rewind_held
-        && *sim_frame > 0
-        && rewind_buffer
+        && timeline.current_frame().previous().is_some()
+        && timeline
+            .rewind_buffer
             .oldest_reachable_frame()
-            .is_some_and(|f| f < *sim_frame)
+            .is_some_and(|f| f < timeline.frame_number())
     {
-        let target = *sim_frame - 1;
-        if let Some(new_engine) = rewind_buffer.rewind_to(assets, target) {
-            *engine = new_engine;
-            *sim_frame = target;
-            // Keep the replay cursor in lockstep with the rewound
-            // sim frame so resuming playback re-applies the right
-            // recorded commands.
-            if let Some(player) = replay_player.as_mut() {
-                player.seek(target);
-            }
+        let target = timeline
+            .current_frame()
+            .previous()
+            .expect("frame zero was excluded above");
+        if timeline.restore_retained_frame(manager, assets, target) {
             rewind_active = true;
-            // The rollback checker's ring history is now "ahead"
-            // of the live engine and would false-positive on the
-            // first normal frame after rewind releases.  Clear it
-            // so it starts fresh.
-            if let Some(checker) = rollback_checker {
-                checker.reset();
-            }
-            tracing::trace!("Rewind → frame {target}");
+            tracing::trace!("Rewind → frame {}", target.number());
         }
     }
     rewind_active

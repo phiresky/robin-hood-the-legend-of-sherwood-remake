@@ -210,14 +210,7 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
     };
     input.threaded.feed_events(&events);
 
-    let rewind_active = handle_hold_to_rewind(
-        manager,
-        assets,
-        &input.threaded,
-        &mut runtime.rewind_buffer,
-        &mut runtime.rollback_checker,
-        &mut runtime.replay_player,
-    );
+    let rewind_active = handle_hold_to_rewind(manager, assets, &input.threaded, runtime);
 
     if runtime.replay_player.is_none() && !rewind_active {
         handle_gamepad_events(
