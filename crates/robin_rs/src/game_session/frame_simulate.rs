@@ -206,7 +206,7 @@ async fn drive_scripted_modal_lanes(
             &mut resources.text,
             &resources.level_descriptors,
             &mut frame.replay_modal_dismissals,
-            manager.engine.frame_counter(),
+            manager.engine.simulation_tick().number(),
         )
         .await;
         drain_pending_sherwood_stat(
@@ -225,7 +225,7 @@ async fn drive_scripted_modal_lanes(
                 &mut resources.text,
                 &resources.level_descriptors,
                 &mut frame.replay_modal_dismissals,
-                manager.engine.frame_counter(),
+                manager.engine.simulation_tick().number(),
             )
         {
             ui.active_modal = Some(ActiveModal::PopupScroll(Box::new(batch)));
@@ -756,11 +756,11 @@ impl InteractiveFrameSimulation {
         // rewind buffer also skips commits while consuming its own
         // log — the slot is already populated and would duplicate.
         if !paused && !rewind_active {
-            manager.sim_frame += 1;
+            let next_frame = runtime.advance_frame().number();
             if let Some(net) = host.transport.net.as_ref()
                 && host.transport.local_seat == engine_player_command::PlayerId::HOST
             {
-                net.set_initial_snapshot(manager.sim_frame, &manager.engine);
+                net.set_initial_snapshot(next_frame, &manager.engine);
             }
         }
 
@@ -797,10 +797,7 @@ impl InteractiveFrameSimulation {
             assets.as_ref(),
             dev,
             game,
-            &mut runtime.rewind_buffer,
-            &mut runtime.rollback_checker,
-            &mut runtime.replay_player,
-            &mut runtime.playback_pinned_saves,
+            runtime,
             manual_pause,
             active_modal,
         );
@@ -835,7 +832,7 @@ impl InteractiveFrameSimulation {
             runtime
                 .apply_playback_timeline_events(host, game, manager, assets)
                 .unwrap_or_else(|error| panic!("replay step boundary failed: {error}"));
-            let step_frame = manager.sim_frame;
+            let step_frame = runtime.frame_number();
             let buffered_frame = if step_frame < runtime.rewind_buffer.next_record_frame() {
                 runtime.rewind_buffer.frame_for(step_frame).cloned()
             } else {
@@ -859,7 +856,7 @@ impl InteractiveFrameSimulation {
                         if matches!(cmd.command, PlayerCommand::ModalDismiss { .. }) {
                             tracing::debug!(
                                 "step-forward: dropping recorded ModalDismiss at frame {}",
-                                manager.sim_frame
+                                step_frame
                             );
                             continue;
                         }
@@ -887,7 +884,7 @@ impl InteractiveFrameSimulation {
                 if !reusing_recorded_frame {
                     runtime.rewind_buffer.end_frame_input(simulation_frame);
                 }
-                manager.sim_frame += 1;
+                runtime.advance_frame();
                 // Stepping bypasses the checker's begin_frame/end_frame
                 // pairing, so its ring buffer is now stale relative to the
                 // advanced engine.  Clear it — the checker resumes
@@ -903,31 +900,15 @@ impl InteractiveFrameSimulation {
                 );
             }
         } else if step_back_pressed && !modal_state_pending(&host) {
-            if let Some(target) = manager.sim_frame.checked_sub(1)
+            if let Some(target) = runtime.current_frame().previous()
                 && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
-                && target >= oldest
+                && target.number() >= oldest
             {
                 runtime.rewind_buffer.begin_session();
-                let rewound = runtime.rewind_buffer.rewind_to(&assets, target);
+                let restored = runtime.restore_retained_frame(manager, assets, target);
                 runtime.rewind_buffer.end_session();
-                if let Some(new_engine) = rewound {
-                    manager.engine = new_engine;
-                    manager.sim_frame = target;
-                    // Keep the replay cursor in sync with the rewound
-                    // sim frame so resuming playback re-applies the
-                    // right commands.
-                    if let Some(ref mut player) = runtime.replay_player {
-                        player.seek(target);
-                    }
-                    // The rollback checker's ring now references a
-                    // timeline the live engine is no longer on; clear
-                    // it so the next normal frame starts a fresh
-                    // window.
-                    if let Some(ref mut checker) = runtime.rollback_checker {
-                        checker.reset();
-                    }
-                } else {
-                    tracing::warn!("step-back: rewind_to({target}) failed");
+                if !restored {
+                    tracing::warn!("step-back: rewind_to({}) failed", target.number());
                 }
             } else {
                 tracing::debug!("step-back: already at oldest retained frame");

@@ -7,15 +7,12 @@ use crate::audio_backend::KiraAudioBackend;
 use crate::game::Game;
 use crate::host::Host;
 use crate::host::{DeferredAudioRequest, HostSignal};
-use crate::rewind::RewindBuffer;
-use crate::rollback_checker::RollbackChecker;
 use crate::sound::AlertStatus;
 use robin_engine::ai::AlertLevel;
 use robin_engine::coordinates::MapBBox;
 use robin_engine::engine as engine_api;
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
-use robin_engine::replay::ReplayPlayer;
 use robin_engine::sound_cache::SampleLoader;
 
 /// Per-frame audio tick.
@@ -177,7 +174,7 @@ pub(super) fn post_render_engine_cleanup(
 ///
 /// Each forward step runs `n` full frame-equivalent ticks (the same
 /// bookkeeping the main loop does on a normal unpaused frame: rollback
-/// checker, rewind-buffer commit, `sim_frame += 1`).  Each back step
+/// checker, rewind-buffer commit, and timeline-cursor advance). Each back step
 /// rewinds `n` frames through the rewind buffer, swapping out the live
 /// rollback state with the reconstructed state.
 ///
@@ -201,13 +198,7 @@ pub(super) fn drain_steps(
     assets: &engine_api::LevelAssets,
     dev: &mut engine_api::DevState,
     game: &mut Game,
-    rewind_buffer: &mut RewindBuffer,
-    rollback_checker: &mut Option<RollbackChecker>,
-    replay_player: &mut Option<ReplayPlayer>,
-    playback_pinned_saves: &mut std::collections::BTreeMap<
-        u32,
-        crate::save_file::GameRuntimeSnapshot,
-    >,
+    timeline: &mut super::runtime::TimelineRuntime,
     manual_pause: &mut bool,
     active_modal: &mut Option<ActiveModal>,
 ) {
@@ -225,24 +216,13 @@ pub(super) fn drain_steps(
 
         match step.kind {
             crate::http_server::StepKind::Forward { n } => {
-                let start = manager.sim_frame;
-                let result = run_forward_ticks(
-                    manager,
-                    host,
-                    assets,
-                    dev,
-                    game,
-                    rewind_buffer,
-                    rollback_checker,
-                    replay_player,
-                    playback_pinned_saves,
-                    n,
-                );
+                let start = timeline.frame_number();
+                let result = run_forward_ticks(manager, host, assets, dev, game, timeline, n);
                 // Stepping bypasses the checker's begin_frame/end_frame
                 // pairing, so its ring buffer is now stale relative to
                 // the advanced engine.  Clear it — the checker resumes
                 // populating on the next normal frame.
-                if let Some(checker) = rollback_checker.as_mut() {
+                if let Some(checker) = timeline.rollback_checker.as_mut() {
                     checker.reset();
                 }
                 match result {
@@ -251,7 +231,7 @@ pub(super) fn drain_steps(
                         step.respond_ok(serde_json::json!({
                             "direction": "forward",
                             "from_frame": start,
-                            "frame": manager.sim_frame,
+                            "frame": timeline.frame_number(),
                             "advanced": advanced,
                             "modals_dismissed": modals_dismissed,
                         }));
@@ -260,14 +240,15 @@ pub(super) fn drain_steps(
                 }
             }
             crate::http_server::StepKind::Back { n } => {
-                let Some(target) = manager.sim_frame.checked_sub(n) else {
+                let Some(target) = timeline.frame_number().checked_sub(n) else {
                     step.respond_err(format!(
                         "n={} exceeds current frame {}",
-                        n, manager.sim_frame
+                        n,
+                        timeline.frame_number()
                     ));
                     continue;
                 };
-                match rewind_to_frame(manager, host, assets, rewind_buffer, replay_player, target) {
+                match rewind_to_frame(manager, host, assets, timeline, target) {
                     Ok(from) => step.respond_ok(serde_json::json!({
                         "direction": "back",
                         "from_frame": from,
@@ -278,24 +259,13 @@ pub(super) fn drain_steps(
                 }
             }
             crate::http_server::StepKind::GoToFrame { target } => {
-                let from = manager.sim_frame;
+                let from = timeline.frame_number();
                 use std::cmp::Ordering;
                 let result: Result<&'static str, String> = match target.cmp(&from) {
                     Ordering::Equal => Ok("noop"),
                     Ordering::Greater => {
                         let delta = target - from;
-                        match run_forward_ticks(
-                            manager,
-                            host,
-                            assets,
-                            dev,
-                            game,
-                            rewind_buffer,
-                            rollback_checker,
-                            replay_player,
-                            playback_pinned_saves,
-                            delta,
-                        ) {
+                        match run_forward_ticks(manager, host, assets, dev, game, timeline, delta) {
                             Ok((advanced, dismissed_during)) => {
                                 modals_dismissed += dismissed_during;
                                 if advanced < delta {
@@ -310,14 +280,13 @@ pub(super) fn drain_steps(
                         }
                     }
                     Ordering::Less => {
-                        rewind_to_frame(manager, host, assets, rewind_buffer, replay_player, target)
-                            .map(|_| "back")
+                        rewind_to_frame(manager, host, assets, timeline, target).map(|_| "back")
                     }
                 };
                 // The rollback checker's ring now references a timeline
                 // the live engine is no longer on; clear it so the next
                 // normal frame starts a fresh window.
-                if let Some(checker) = rollback_checker.as_mut() {
+                if let Some(checker) = timeline.rollback_checker.as_mut() {
                     checker.reset();
                 }
                 // Post-rewind / post-forward state may have its own
@@ -332,7 +301,7 @@ pub(super) fn drain_steps(
                     Ok(kind) => step.respond_ok(serde_json::json!({
                         "direction": "go-to-frame",
                         "from_frame": from,
-                        "frame": manager.sim_frame,
+                        "frame": timeline.frame_number(),
                         "applied": kind,
                         "modals_dismissed": modals_dismissed,
                     })),
@@ -343,7 +312,7 @@ pub(super) fn drain_steps(
                 *manual_pause = paused;
                 step.respond_ok(serde_json::json!({
                     "paused": paused,
-                    "frame": manager.sim_frame,
+                    "frame": timeline.frame_number(),
                 }));
             }
         }
@@ -369,39 +338,27 @@ pub(super) fn run_forward_ticks(
     assets: &engine_api::LevelAssets,
     dev: &mut engine_api::DevState,
     game: &mut Game,
-    rewind_buffer: &mut RewindBuffer,
-    rollback_checker: &mut Option<RollbackChecker>,
-    replay_player: &mut Option<ReplayPlayer>,
-    playback_pinned_saves: &mut std::collections::BTreeMap<
-        u32,
-        crate::save_file::GameRuntimeSnapshot,
-    >,
+    timeline: &mut super::runtime::TimelineRuntime,
     n: u32,
 ) -> Result<(u32, usize), String> {
-    let start = manager.sim_frame;
+    let start = timeline.frame_number();
     let mut dismissed = 0usize;
     for _ in 0..n {
-        let frame = manager.sim_frame;
+        let frame = timeline.frame_number();
         // Stepping into a save-marker / load-back frame must pin or swap
         // state exactly like the normal playback admission path.
-        if let Some(player) = replay_player.as_ref()
-            && !player.is_finished()
+        if timeline
+            .replay_player
+            .as_ref()
+            .is_some_and(|player| !player.is_finished())
         {
-            super::runtime::apply_replay_timeline_events_at_boundary(
-                player,
-                playback_pinned_saves,
-                rewind_buffer,
-                host,
-                game,
-                manager,
-                assets,
-            )?;
+            timeline.apply_playback_timeline_events(host, game, manager, assets)?;
         }
-        let buffered_frame = if frame < rewind_buffer.next_record_frame() {
-            let Some(recorded) = rewind_buffer.frame_for(frame).cloned() else {
+        let buffered_frame = if frame < timeline.rewind_buffer.next_record_frame() {
+            let Some(recorded) = timeline.rewind_buffer.frame_for(frame).cloned() else {
                 return Err(format!(
                     "cannot step frame {frame}: rewind command history starts at frame {}",
-                    rewind_buffer.oldest_cmd_frame()
+                    timeline.rewind_buffer.oldest_cmd_frame()
                 ));
             };
             Some(recorded)
@@ -413,13 +370,13 @@ pub(super) fn run_forward_ticks(
         // so each tick needs its own pre-tick checkpoints. The outer mission
         // frame only opened the first one.
         let engine = &mut manager.engine;
-        rewind_buffer.begin_frame(frame, engine, assets);
-        if let Some(checker) = rollback_checker.as_mut() {
+        timeline.rewind_buffer.begin_frame(frame, engine, assets);
+        if let Some(checker) = timeline.rollback_checker.as_mut() {
             checker.begin_frame(frame, engine);
         }
 
         let mut frame_cmds: Vec<PlayerInput> = Vec::new();
-        if let Some(player) = replay_player.as_mut()
+        if let Some(player) = timeline.replay_player.as_mut()
             && !player.is_finished()
         {
             for cmd in player.next_frame() {
@@ -453,13 +410,13 @@ pub(super) fn run_forward_ticks(
             false,
         );
         host.engine_display = display;
-        if let Some(checker) = rollback_checker.as_mut() {
+        if let Some(checker) = timeline.rollback_checker.as_mut() {
             checker.end_frame_input(host, simulation_frame.clone(), engine);
         }
         if buffered_frame.is_none() {
-            rewind_buffer.end_frame_input(simulation_frame);
+            timeline.rewind_buffer.end_frame_input(simulation_frame);
         }
-        manager.sim_frame += 1;
+        timeline.advance_frame();
 
         // If the tick queued any modal, drop it silently and keep
         // going.  Without this the caller's `step N` would stop at
@@ -470,7 +427,7 @@ pub(super) fn run_forward_ticks(
             dismissed += dismiss_pending_modals(host);
         }
     }
-    Ok((manager.sim_frame - start, dismissed))
+    Ok((timeline.frame_number() - start, dismissed))
 }
 
 /// Rewind to `target`, restoring rollback state from the rewind
@@ -481,12 +438,11 @@ pub(super) fn rewind_to_frame(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
-    rewind_buffer: &mut RewindBuffer,
-    replay_player: &mut Option<ReplayPlayer>,
+    timeline: &mut super::runtime::TimelineRuntime,
     target: u32,
 ) -> Result<u32, String> {
     let _ = host; // reserved for future hooks (e.g. cursor reset on scrub)
-    let Some(oldest) = rewind_buffer.oldest_reachable_frame() else {
+    let Some(oldest) = timeline.rewind_buffer.oldest_reachable_frame() else {
         return Err("rewind buffer empty".into());
     };
     if target < oldest {
@@ -494,19 +450,16 @@ pub(super) fn rewind_to_frame(
             "target frame {target} is older than the oldest retained snapshot ({oldest})"
         ));
     }
-    rewind_buffer.begin_session();
-    let rewound = rewind_buffer.rewind_to(assets, target);
-    rewind_buffer.end_session();
-    let Some(new_engine) = rewound else {
+    let from = timeline.frame_number();
+    timeline.rewind_buffer.begin_session();
+    let restored = timeline.restore_retained_frame(
+        manager,
+        assets,
+        super::runtime::TimelineFrame::from_wire(target),
+    );
+    timeline.rewind_buffer.end_session();
+    if !restored {
         return Err("rewind_to failed (no matching snapshot)".into());
-    };
-    manager.engine = new_engine;
-    let from = manager.sim_frame;
-    manager.sim_frame = target;
-    // Keep the replay cursor in sync with the rewound sim frame so
-    // resuming playback re-applies the right commands.
-    if let Some(player) = replay_player.as_mut() {
-        player.seek(target);
     }
     Ok(from)
 }
@@ -559,8 +512,8 @@ pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rewind::RewindBuffer;
     use robin_engine::campaign::Campaign;
-    use robin_engine::player_command::PlayerId;
 
     #[test]
     fn forward_scrub_reuses_recorded_span_without_appending_an_old_checkpoint() {
@@ -586,14 +539,23 @@ mod tests {
         }
         assert_eq!(rewind_buffer.next_record_frame(), 426);
 
-        let mut manager = engine_manager_api::EngineManager::new(engine, PlayerId::HOST);
-        manager.sim_frame = 250;
+        let mut manager = engine_manager_api::EngineManager::new(engine);
         let mut host = Host::default();
         let mut dev = engine_api::DevState::default();
         let mut game = Game::default();
-        let mut rollback_checker = None;
-        let mut replay_player = None;
-        let mut playback_pinned_saves = std::collections::BTreeMap::new();
+        let mut timeline = super::super::runtime::TimelineRuntime::new(
+            super::super::replay_init::ReplayAndRollback {
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer,
+                start_paused: false,
+            },
+            super::super::runtime::FrameContract::Graphical,
+            false,
+            true,
+        );
+        timeline.adopt_frame(super::super::runtime::TimelineFrame::from_wire(250));
 
         let (advanced, _) = run_forward_ticks(
             &mut manager,
@@ -601,16 +563,13 @@ mod tests {
             &assets,
             &mut dev,
             &mut game,
-            &mut rewind_buffer,
-            &mut rollback_checker,
-            &mut replay_player,
-            &mut playback_pinned_saves,
+            &mut timeline,
             1,
         )
         .expect("forward scrub should reuse frame 250");
 
         assert_eq!(advanced, 1);
-        assert_eq!(manager.sim_frame, 251);
-        assert_eq!(rewind_buffer.next_record_frame(), 426);
+        assert_eq!(timeline.frame_number(), 251);
+        assert_eq!(timeline.rewind_buffer.next_record_frame(), 426);
     }
 }

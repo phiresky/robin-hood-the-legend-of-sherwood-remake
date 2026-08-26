@@ -23,6 +23,70 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
+/// Identity of the next lockstep/history transaction to be admitted.
+///
+/// This is intentionally neither a replay record ordinal nor an engine
+/// simulation tick. Paused graphical host iterations can create replay records
+/// without advancing this cursor, and an admitted frame can leave
+/// `Engine::simulation_tick()` fixed when the Original hourglass gate freezes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(super) struct TimelineFrame(u32);
+
+impl TimelineFrame {
+    pub(super) const ZERO: Self = Self(0);
+
+    pub(super) const fn from_wire(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub(super) const fn number(self) -> u32 {
+        self.0
+    }
+
+    fn next(self) -> Self {
+        Self(
+            self.0
+                .checked_add(1)
+                .expect("authoritative timeline frame overflow"),
+        )
+    }
+
+    pub(super) fn previous(self) -> Option<Self> {
+        self.0.checked_sub(1).map(Self)
+    }
+}
+
+/// Dense ordinal of the next host-iteration record in a replay stream.
+/// Multiple ordinals may name the same [`TimelineFrame`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(super) struct ReplayFrameOrdinal(u32);
+
+impl ReplayFrameOrdinal {
+    pub(super) const ZERO: Self = Self(0);
+
+    pub(super) const fn number(self) -> u32 {
+        self.0
+    }
+
+    fn advance(&mut self) {
+        self.0 = self
+            .0
+            .checked_add(1)
+            .expect("replay host-frame ordinal overflow");
+    }
+}
+
+/// Explicit lockstep cursor transition carried by one persisted replay record.
+/// It cannot be derived from hourglass admission: host actions, multiplayer
+/// admission, debugger steps, and frozen engine ticks have distinct policies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct TimelineTransition {
+    pub(super) before: TimelineFrame,
+    pub(super) after: TimelineFrame,
+}
+
 /// Common owned state for one loaded mission.
 ///
 /// This deliberately stops at the simulation/host boundary. Renderer, input,
@@ -109,6 +173,8 @@ pub(super) struct MissionFrame {
     pub(super) modal_dismissals: Vec<PlayerCommand>,
     pub(super) replay_modal_dismissals: VecDeque<PlayerCommand>,
     pub(super) recorder_hash: Option<u64>,
+    timeline_before: Option<TimelineFrame>,
+    replay_record_consumed: bool,
     recorder_state: RecorderFrameState,
 }
 
@@ -141,6 +207,8 @@ impl MissionFrame {
             modal_dismissals: Vec::new(),
             replay_modal_dismissals: VecDeque::new(),
             recorder_hash: None,
+            timeline_before: None,
+            replay_record_consumed: false,
             recorder_state: RecorderFrameState::Inactive,
         }
     }
@@ -158,6 +226,22 @@ impl MissionFrame {
                     .collect(),
             )
             .with_post_initialize(self.run_post_initialize)
+    }
+
+    fn bind_timeline(&mut self, before: TimelineFrame) {
+        assert!(
+            self.timeline_before.replace(before).is_none(),
+            "mission frame bound to the timeline more than once"
+        );
+    }
+
+    pub(super) fn timeline_transition(&self, after: TimelineFrame) -> TimelineTransition {
+        TimelineTransition {
+            before: self
+                .timeline_before
+                .expect("unbound mission frame cannot become a replay record"),
+            after,
+        }
     }
 
     /// Authoritative input for the pre-refresh simulation phase. Late host
@@ -241,6 +325,7 @@ impl MissionFrame {
             "replay injection requested after the replay finished"
         );
         let replay_commands = player.next_frame();
+        self.replay_record_consumed = true;
         let mut simulation_commands = Vec::with_capacity(replay_commands.len());
         for command in replay_commands {
             if matches!(command.command, PlayerCommand::ModalDismiss { .. }) {
@@ -320,12 +405,8 @@ impl MissionRuntime {
     pub(super) fn begin_frame(&mut self, now_ms: u32) -> MissionFrame {
         self.timeline.reset_execution_trace();
         let mut frame = MissionFrame::new(now_ms);
-        self.timeline.open_frame(
-            &mut frame,
-            self.world.manager.sim_frame,
-            &self.world.manager.engine,
-            &self.world.assets,
-        );
+        self.timeline
+            .open_frame(&mut frame, &self.world.manager.engine, &self.world.assets);
         frame
     }
 
@@ -593,6 +674,13 @@ impl FrameClock {
 /// workers, and live network diagnostics are process resources, not game
 /// state. Persisting them would create a fake/default runtime on restore.
 pub(super) struct TimelineRuntime {
+    /// Single authority for history, network, and replay frame identity.
+    current_frame: TimelineFrame,
+    /// Dense host-record position, separate from the lockstep cursor.
+    replay_ordinal: ReplayFrameOrdinal,
+    /// Network inputs admitted for authoritative frames not reached yet.
+    pub(super) pending_inputs:
+        BTreeMap<TimelineFrame, Vec<robin_engine::player_command::PlayerInput>>,
     contract: FrameContract,
     phase: MissionPhase,
     clock: FrameClock,
@@ -652,6 +740,9 @@ impl TimelineRuntime {
         local_is_host: bool,
     ) -> Self {
         Self {
+            current_frame: TimelineFrame::ZERO,
+            replay_ordinal: ReplayFrameOrdinal::ZERO,
+            pending_inputs: BTreeMap::new(),
             contract,
             phase: MissionPhase::Presentation,
             clock: FrameClock::new(),
@@ -690,6 +781,59 @@ impl TimelineRuntime {
         self.start_paused
     }
 
+    pub(super) const fn current_frame(&self) -> TimelineFrame {
+        self.current_frame
+    }
+
+    pub(super) const fn frame_number(&self) -> u32 {
+        self.current_frame.number()
+    }
+
+    /// Advance after one authoritative transaction has committed. This says
+    /// nothing about whether that transaction executed an engine hourglass.
+    pub(super) fn advance_frame(&mut self) -> TimelineFrame {
+        self.current_frame = self.current_frame.next();
+        self.current_frame
+    }
+
+    /// Reposition the authoritative cursor after snapshot adoption, load-back,
+    /// or debugger rewind. Callers must have already replaced/restored Engine
+    /// state at precisely this pre-transaction boundary.
+    pub(super) fn adopt_frame(&mut self, frame: TimelineFrame) {
+        self.current_frame = frame;
+        self.pending_inputs.retain(|&queued, _| queued >= frame);
+    }
+
+    /// Restore the engine and every cursor/history consumer to a retained
+    /// pre-transaction boundary. Session caching is controlled by the caller
+    /// so hold-to-rewind can reuse reconstruction work across host frames.
+    pub(super) fn restore_retained_frame(
+        &mut self,
+        manager: &mut EngineManager,
+        assets: &LevelAssets,
+        target: TimelineFrame,
+    ) -> bool {
+        let Some(engine) = self.rewind_buffer.rewind_to(assets, target.number()) else {
+            return false;
+        };
+        manager.engine = engine;
+        self.adopt_frame(target);
+        if let Some(player) = self.replay_player.as_mut() {
+            // TODO(replay-schema): the full-frame recorder migration must
+            // replace this legacy ordinal seek with
+            // `seek_timeline_frame(target)`, returning the first matching
+            // host ordinal. Paused graphical records make the mapping
+            // non-identity.
+            player.seek(target.number());
+            self.replay_ordinal = ReplayFrameOrdinal(target.number());
+        }
+        if let Some(checker) = self.rollback_checker.as_mut() {
+            checker.reset();
+        }
+        self.recent_timeline_history.truncate_after(target.number());
+        true
+    }
+
     /// Reset every in-memory reconstruction of the current deterministic
     /// future after a whole-state discontinuity such as save-load adoption.
     ///
@@ -699,10 +843,11 @@ impl TimelineRuntime {
     /// whose future was derived from the replaced state.
     fn reset_reconstruction_history(
         &mut self,
-        sim_frame: u32,
+        target: TimelineFrame,
         engine: &Engine,
         assets: &LevelAssets,
     ) {
+        self.adopt_frame(target);
         self.rewind_buffer = RewindBuffer::new();
         self.recent_timeline_history.clear();
         if let Some(checker) = self.rollback_checker.as_mut() {
@@ -714,9 +859,11 @@ impl TimelineRuntime {
         // capture, so reopen the same pre-tick frame against the adopted
         // state. The Original likewise loads before this loop iteration's
         // `PerformHourglass` (`original-code/RHgame.cpp:1664-1880`).
-        self.rewind_buffer.begin_frame(sim_frame, engine, assets);
+        let current_frame = self.frame_number();
+        self.rewind_buffer
+            .begin_frame(current_frame, engine, assets);
         if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.begin_frame(sim_frame, engine);
+            checker.begin_frame(current_frame, engine);
         }
     }
 
@@ -817,16 +964,16 @@ impl TimelineRuntime {
     pub(super) fn open_frame(
         &mut self,
         frame: &mut MissionFrame,
-        sim_frame: u32,
         engine: &Engine,
         assets: &LevelAssets,
     ) {
+        frame.bind_timeline(self.current_frame());
         assert!(
             frame.external_facts.is_empty(),
             "timeline facts must be attached before replay/rewind input adoption",
         );
         frame.external_facts = std::mem::take(&mut self.pending_external_facts);
-        frame.recorder_hash = self.begin_frame(frame.started_at_ms, sim_frame, engine, assets);
+        frame.recorder_hash = self.begin_frame(frame.started_at_ms, engine, assets);
         self.trace(FrameContractStage::TimelineBegin);
     }
 
@@ -846,21 +993,22 @@ impl TimelineRuntime {
     pub(super) fn begin_frame(
         &mut self,
         now_ms: u32,
-        sim_frame: u32,
         engine: &Engine,
         assets: &LevelAssets,
     ) -> Option<u64> {
         self.phase = MissionPhase::Input;
         self.clock.begin(now_ms);
         self.pending_mp_state_hash = None;
-        self.rewind_buffer.begin_frame(sim_frame, engine, assets);
+        let current_frame = self.frame_number();
+        self.rewind_buffer
+            .begin_frame(current_frame, engine, assets);
         if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.begin_frame(sim_frame, engine);
+            checker.begin_frame(current_frame, engine);
         }
 
-        let recorder_hash = self.replay_recorder.as_ref().and_then(|recorder| {
-            recorder
-                .frame_number()
+        let recorder_hash = self.replay_recorder.as_ref().and_then(|_| {
+            self.replay_ordinal
+                .number()
                 .is_multiple_of(25)
                 .then(|| robin_engine::replay::state_hash(engine))
         });
@@ -868,6 +1016,11 @@ impl TimelineRuntime {
             && !player.is_finished()
         {
             let frame = player.current_frame();
+            assert_eq!(
+                frame,
+                self.replay_ordinal.number(),
+                "replay player cursor diverged from timeline-owned host ordinal"
+            );
             let is_terminal_frame = frame + 1 >= player.total_frames();
             if !is_terminal_frame && let Some(expected) = player.hash_for_frame(frame) {
                 let actual = robin_engine::replay::state_hash(engine);
@@ -897,13 +1050,13 @@ impl TimelineRuntime {
         result
     }
 
-    /// Commit rollback and rewind history for a frame which advanced.
+    /// Commit rollback and rewind history for a frame already admitted by its
+    /// driver.
     ///
     /// Pause/rewind admission and recorder ordering remain driver concerns.
-    /// Once admitted, rollback verification and rewind history are one
-    /// timeline step. Frame-number advancement intentionally stays in each
-    /// driver because headless advances after recorder commit while graphical
-    /// advances before modal/presentation work.
+    /// Once admitted, rollback verification and rewind history are one owner
+    /// boundary. Graphical cursor admission occurs before manual debugger
+    /// steps; headless admission occurs here immediately afterward.
     pub(super) fn commit_simulation_history(
         &mut self,
         host: &mut Host,
@@ -969,10 +1122,10 @@ impl TimelineRuntime {
         &mut self,
         event: crate::main_entry::SaveLoadEvent,
         frame: &mut MissionFrame,
-        sim_frame: u32,
         engine: &Engine,
         assets: &LevelAssets,
     ) {
+        let replay_ordinal = self.replay_ordinal.number();
         match event {
             crate::main_entry::SaveLoadEvent::SaveWritten { identity } => {
                 let Some(recorder) = self.replay_recorder.as_mut() else {
@@ -984,7 +1137,7 @@ impl TimelineRuntime {
                     // playback pins at this frame.  Loading this save later
                     // will be treated as a foreign save.
                     tracing::warn!(
-                        frame = recorder.frame_number(),
+                        replay_ordinal,
                         commands = frame.commands.commands.len(),
                         "replay: save captured mid-frame after commands; \
                          not recording a timeline save marker"
@@ -992,7 +1145,7 @@ impl TimelineRuntime {
                     return;
                 }
                 let hash = robin_engine::replay::state_hash(engine);
-                let marker_frame = recorder.frame_number();
+                let marker_frame = replay_ordinal;
                 recorder.write_save_marker(hash);
                 self.recorded_save_frames_by_identity
                     .insert(identity, marker_frame);
@@ -1008,7 +1161,7 @@ impl TimelineRuntime {
             } => {
                 // The engine state jumped; buffered rewind history no longer
                 // describes this timeline's future.
-                self.reset_reconstruction_history(sim_frame, engine, assets);
+                self.reset_reconstruction_history(self.current_frame(), engine, assets);
                 if !frame.commands.commands.is_empty() {
                     tracing::debug!(
                         dropped = frame.commands.commands.len(),
@@ -1023,7 +1176,7 @@ impl TimelineRuntime {
                 if let Some(&to_frame) = self.recorded_save_frames_by_identity.get(&identity) {
                     recorder.write_load_back(to_frame, is_continue);
                     tracing::info!(
-                        frame = recorder.frame_number(),
+                        replay_ordinal,
                         to_frame,
                         "replay: load recorded as linear load-back"
                     );
@@ -1034,7 +1187,7 @@ impl TimelineRuntime {
                     // needs the initial-state problem solved (e.g. an
                     // embedded starting save in the header).
                     tracing::warn!(
-                        frame = recorder.frame_number(),
+                        replay_ordinal,
                         "replay: loaded state does not match any save from this \
                          session; recording is not linearly replayable past this point"
                     );
@@ -1051,12 +1204,12 @@ impl TimelineRuntime {
     /// lets a later script-triggered restart record as a load-back to
     /// frame 0 instead of a timeline discontinuity.
     pub(super) fn register_bootstrap_save(&mut self, engine: &Engine, host: &Host, game: &Game) {
+        let replay_ordinal = self.replay_ordinal.number();
         let Some(recorder) = self.replay_recorder.as_mut() else {
             return;
         };
         assert_eq!(
-            recorder.frame_number(),
-            0,
+            replay_ordinal, 0,
             "bootstrap save must be registered before the first recorded frame"
         );
         let hash = robin_engine::replay::state_hash(engine);
@@ -1100,18 +1253,19 @@ impl TimelineRuntime {
             // The boundary helper resets rewind itself because debugger-step
             // callers use it directly. TimelineRuntime additionally rebases
             // every reconstruction consumer on the adopted pre-tick state.
-            self.reset_reconstruction_history(manager.sim_frame, &manager.engine, assets);
+            self.reset_reconstruction_history(self.current_frame(), &manager.engine, assets);
         }
         Ok(())
     }
 
     pub(super) fn record_commands(&mut self, frame: &mut MissionFrame, enabled: bool) {
+        let replay_ordinal = self.replay_ordinal.number();
         let Some(recorder) = self.replay_recorder.as_mut().filter(|_| enabled) else {
             return;
         };
         frame.open_recording();
         if let Some(hash) = frame.recorder_hash {
-            recorder.write_hash(recorder.frame_number(), hash);
+            recorder.write_hash(replay_ordinal, hash);
         }
         for command in &frame.commands.commands {
             recorder.push(command.clone());
@@ -1125,6 +1279,7 @@ impl TimelineRuntime {
     /// do not call `end_frame`, but they still cross this finalization boundary;
     /// closing an already-finished frame is a lifecycle bug.
     pub(super) fn finish_recording(&mut self, frame: &mut MissionFrame) {
+        let mut consumed_record = frame.replay_record_consumed;
         if frame.close_recording() {
             let recorder = self
                 .replay_recorder
@@ -1134,6 +1289,17 @@ impl TimelineRuntime {
                 recorder.push(command);
             }
             recorder.end_frame();
+            consumed_record = true;
+        }
+        if consumed_record {
+            let transition = frame.timeline_transition(self.current_frame());
+            tracing::trace!(
+                replay_ordinal = self.replay_ordinal.number(),
+                timeline_before = transition.before.number(),
+                timeline_after = transition.after.number(),
+                "replay host record committed"
+            );
+            self.replay_ordinal.advance();
         }
         self.trace(FrameContractStage::RecorderCommit);
     }
@@ -1325,12 +1491,12 @@ mod tests {
         live.note_save_load_event(
             crate::main_entry::SaveLoadEvent::SaveWritten { identity },
             &mut frame,
-            0,
             &engine,
             &assets,
         );
         for _ in 0..5 {
             live.replay_recorder.as_mut().unwrap().end_frame();
+            live.replay_ordinal.advance();
         }
         // Exercise the real restore path. Engine post-load fixups intentionally
         // normalize transient state, so its resulting hash differs from the raw
@@ -1363,7 +1529,6 @@ mod tests {
                 is_continue: true,
             },
             &mut frame,
-            5,
             &engine,
             &assets,
         );
@@ -1393,10 +1558,7 @@ mod tests {
             false,
             true,
         );
-        let mut manager = robin_engine::engine_manager::EngineManager::new(
-            marker_engine,
-            robin_engine::player_command::PlayerId::HOST,
-        );
+        let mut manager = robin_engine::engine_manager::EngineManager::new(marker_engine);
         let mut playback_host = Host::scratch(1024.0, 768.0);
         playback_host.input.draw_hidden = true;
         let mut playback_game = Game::default();
@@ -1489,7 +1651,7 @@ mod tests {
         let mut rewind_buffer = RewindBuffer::new();
         let mut host = Host::scratch(1024.0, 768.0);
         let mut game = Game::default();
-        let mut manager = EngineManager::new(engine, robin_engine::player_command::PlayerId::HOST);
+        let mut manager = EngineManager::new(engine);
 
         let error = apply_replay_timeline_events_at_boundary(
             &player,
@@ -1516,16 +1678,16 @@ mod tests {
             &mut assets,
         )
         .expect("fixture engine");
-        let mut manager = EngineManager::new(engine, robin_engine::player_command::PlayerId::HOST);
-        manager.set_sim_frame(crate::rewind::SNAPSHOT_INTERVAL);
+        let mut manager = EngineManager::new(engine);
         let mut host = Host::scratch(640.0, 480.0);
         let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+        timeline.adopt_frame(TimelineFrame::from_wire(crate::rewind::SNAPSHOT_INTERVAL));
         let mut frame = MissionFrame::new(0);
 
-        timeline.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
+        timeline.open_frame(&mut frame, &manager.engine, &assets);
         // Save-load/replay adoption replaces the state after open_frame but
         // before this loop iteration's tick and history commit.
-        timeline.reset_reconstruction_history(manager.sim_frame, &manager.engine, &assets);
+        timeline.reset_reconstruction_history(timeline.current_frame(), &manager.engine, &assets);
         timeline.begin_simulation();
         timeline.begin_bookkeeping();
         timeline.commit_simulation_history(
@@ -1546,6 +1708,57 @@ mod tests {
                 .rewind_buffer
                 .commands_for(crate::rewind::SNAPSHOT_INTERVAL)
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn lockstep_frame_and_engine_simulation_tick_are_independent_clocks() {
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(
+            640.0,
+            480.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .expect("fixture engine");
+        let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+
+        assert_eq!(timeline.frame_number(), 0);
+        assert_eq!(engine.simulation_tick().number(), 0);
+        timeline.advance_frame();
+
+        assert_eq!(timeline.frame_number(), 1);
+        assert_eq!(engine.simulation_tick().number(), 0);
+    }
+
+    #[test]
+    fn authoritative_frame_adoption_drops_only_stale_typed_inputs() {
+        let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+        timeline.pending_inputs.insert(
+            TimelineFrame::from_wire(3),
+            vec![robin_engine::player_command::PlayerInput::host(
+                PlayerCommand::QuitMissionRequested,
+            )],
+        );
+        timeline.pending_inputs.insert(
+            TimelineFrame::from_wire(7),
+            vec![robin_engine::player_command::PlayerInput::host(
+                PlayerCommand::QuitMissionRequested,
+            )],
+        );
+
+        timeline.adopt_frame(TimelineFrame::from_wire(5));
+
+        assert_eq!(timeline.frame_number(), 5);
+        assert!(
+            !timeline
+                .pending_inputs
+                .contains_key(&TimelineFrame::from_wire(3))
+        );
+        assert!(
+            timeline
+                .pending_inputs
+                .contains_key(&TimelineFrame::from_wire(7))
         );
     }
 
@@ -1697,7 +1910,6 @@ mod tests {
             FrameContractStage::Simulation,
             FrameContractStage::HostRpcAndTimelineCommit,
             FrameContractStage::ModalDrain,
-            FrameContractStage::RecorderCommit,
             FrameContractStage::AppEffects,
             FrameContractStage::Audio,
             FrameContractStage::Presentation,
@@ -1706,6 +1918,7 @@ mod tests {
         }
         let mut dispatched = false;
         timeline.cross_post_initialize(|| dispatched = true);
+        timeline.trace(FrameContractStage::RecorderCommit);
         timeline.trace(FrameContractStage::Pacing);
 
         assert!(dispatched);
@@ -1722,11 +1935,11 @@ mod tests {
                 FrameContractStage::Simulation,
                 FrameContractStage::HostRpcAndTimelineCommit,
                 FrameContractStage::ModalDrain,
-                FrameContractStage::RecorderCommit,
                 FrameContractStage::AppEffects,
                 FrameContractStage::Audio,
                 FrameContractStage::Presentation,
                 FrameContractStage::PostInitialize,
+                FrameContractStage::RecorderCommit,
                 FrameContractStage::Pacing,
             ]
         );

@@ -75,7 +75,7 @@ pub use console_dispatch::ConsoleResponse;
 pub use frame::{
     ExternalAction, ExternalActionResult, ExternalFacts, FrameAdvanceError, FrameConsoleResponse,
     SimCommand, SimEvents, SimulationFrameInput, SimulationFrameOutput, SoundBoundary,
-    SoundBoundaryPolicy,
+    SoundBoundaryPolicy, SimulationTick,
 };
 pub use global_options::*;
 pub(crate) use movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
@@ -5293,9 +5293,18 @@ impl EngineInner {
         &self.mission_domain.state.map_name
     }
 
-    /// Monotonically increasing frame counter (one per processed tick).
+    /// Original-compatible engine tick clock. Unlike host/network timeline
+    /// frames, this advances only when the hourglass completes a simulation
+    /// tick according to the Original's freeze rules.
+    pub fn simulation_tick(&self) -> SimulationTick {
+        SimulationTick::new(self.control.frame_counter)
+    }
+
+    /// Raw legacy accessor for the Original's universal frame counter.
+    /// New host/timeline code should use [`Self::simulation_tick`] so it cannot
+    /// be mistaken for a lockstep or replay frame identity.
     pub fn frame_counter(&self) -> u32 {
-        self.control.frame_counter
+        self.simulation_tick().number()
     }
 
     /// Sim-state portion of the sound system (source list + finished

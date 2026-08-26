@@ -26,11 +26,10 @@
 //! late command. The current replay file remains command-only; its adapter
 //! constructs the explicit defaults used by that legacy format.
 //!
-//! TODO(architecture): choose one timeline owner before production migration.
-//! This transaction advances `EngineInner::frame_counter`, but the current
-//! drivers separately own and increment `EngineManager::sim_frame`. A history
-//! commit must not infer one counter from the other until that split ownership
-//! is removed or represented explicitly.
+//! This transaction advances the engine's Original-compatible simulation tick
+//! counter only when the hourglass runs. The host's history/network/replay
+//! frame is owned separately by `TimelineRuntime`: a committed skipped-
+//! hourglass frame advances that cursor without pretending an engine tick ran.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +41,36 @@ use crate::game_operation::GameCode;
 use crate::messenger::SimpleMessage;
 use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use crate::sound::ResolvedExclamation;
+
+/// Original-compatible engine simulation clock.
+///
+/// This counts completed hourglass ticks inside deterministic engine state. It
+/// is not a network/history frame and not a replay host-record ordinal.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+#[serde(transparent)]
+pub struct SimulationTick(u32);
+
+impl SimulationTick {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn number(self) -> u32 {
+        self.0
+    }
+}
 
 /// A fully resolved, deterministic command admitted to a simulation frame.
 ///

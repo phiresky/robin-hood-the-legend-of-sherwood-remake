@@ -73,7 +73,7 @@ impl InteractiveMission {
                     if let Some(output) = services.args.mission_start_map_output.as_deref() {
                         return Err(format!(
                             "mission exited at simulation frame {} before screenshot frame {} could be written to {}",
-                            self.runtime.world.manager.sim_frame,
+                            self.runtime.timeline.frame_number(),
                             services.args.mission_start_map_frame,
                             output.display()
                         ));
@@ -95,6 +95,7 @@ impl InteractiveMission {
         // are disjoint borrows from the two mission-lifetime roots, not secondary
         // state copies.
         let InteractiveMission { runtime, frontend } = self;
+        let timeline_frame = runtime.timeline.frame_number();
         let MissionRuntime { world, .. } = runtime;
         let MissionWorld {
             host,
@@ -112,7 +113,7 @@ impl InteractiveMission {
             ..
         } = frontend;
 
-        if manager.sim_frame < args.mission_start_map_frame {
+        if timeline_frame < args.mission_start_map_frame {
             return Ok(None);
         }
 
@@ -197,7 +198,7 @@ impl InteractiveMission {
                 )
             })?;
             tracing::info!(
-                frame = manager.sim_frame,
+                frame = timeline_frame,
                 "Mission map screenshot → {}",
                 output_path.display()
             );
@@ -260,9 +261,6 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         } = runtime;
         let profiling = super::frame_perf::enabled();
         let phase_start = super::frame_perf::start(profiling);
-        finalize_interactive_recording(runtime, &mut frame);
-        super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
-        let phase_start = super::frame_perf::start(profiling);
         finish_interactive_audio(runtime, world, frontend, callbacks);
         super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
 
@@ -292,7 +290,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // not intermediate window presentation. Their requested full-map
         // screenshot is rendered once immediately after the target frame.
         let warming_up_map_export = args.mission_start_map_output.is_some()
-            && manager.sim_frame <= args.mission_start_map_frame;
+            && runtime.frame_number() <= args.mission_start_map_frame;
         let draw_result = if host.skip_render || modal_rendered_this_frame || warming_up_map_export
         {
             1
@@ -341,7 +339,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             // frame so `present()` still blits the real frame last.
             let display_snapshot = host.engine_display.clone();
             drain_screenshots(
-                manager.sim_frame,
+                runtime.frame_number(),
                 &manager.engine,
                 &display_snapshot,
                 host,
@@ -425,6 +423,13 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 },
             );
         }
+
+        // Finalize only after the authoritative history transition. Full-frame
+        // replay records can now persist the explicit cursor before/after
+        // pair instead of inferring it from hourglass admission.
+        let phase_start = super::frame_perf::start(profiling);
+        finalize_interactive_recording(runtime, &mut frame);
+        super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
 
         let phase_start = super::frame_perf::start(profiling);
         pace_interactive_frame(runtime, host, manager, &frame, args).await;
@@ -572,7 +577,7 @@ fn run_interactive_post_initialize(
         && let Some(net) = host.transport.net.as_ref()
         && host.transport.local_seat == engine_player_command::PlayerId::HOST
     {
-        net.set_initial_snapshot(manager.sim_frame, &manager.engine);
+        net.set_initial_snapshot(runtime.frame_number(), &manager.engine);
     }
 }
 
@@ -609,7 +614,7 @@ async fn pace_interactive_frame(
         && host.transport.local_seat != engine_player_command::PlayerId::HOST
         && !args.fast_forward
     {
-        host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, manager.sim_frame)
+        host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, runtime.frame_number())
     } else {
         None
     };
@@ -638,7 +643,7 @@ async fn pace_interactive_frame(
             runtime.last_mp_sleep_correction_log_ms = frame_end_ms;
             tracing::info!(
                 scheduled_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
-                local_frame = manager.sim_frame,
+                local_frame = runtime.frame_number(),
                 normal_sleep_ms,
                 adjusted_sleep_ms = remaining_sleep_ms,
                 correction_ms,
@@ -650,16 +655,16 @@ async fn pace_interactive_frame(
         && let Some(net) = host.transport.net.as_ref()
         && host.transport.local_seat == engine_player_command::PlayerId::HOST
     {
-        net.publish_frame(manager.sim_frame);
+        net.publish_frame(runtime.frame_number());
         tracing::info!(
             hash_frame,
-            clock_frame = manager.sim_frame,
+            clock_frame = runtime.frame_number(),
             elapsed_ms = elapsed,
             target_ms = target,
             remaining_sleep_ms,
             "multiplayer: host sending state hash timing sample"
         );
-        net.send_state_hash(hash_frame, hash, manager.sim_frame, remaining_sleep_ms);
+        net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms);
     }
     if remaining_sleep_ms > 0 {
         crate::window::sleep_ms(remaining_sleep_ms as u64).await;

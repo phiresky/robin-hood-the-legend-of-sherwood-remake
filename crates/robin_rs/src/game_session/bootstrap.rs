@@ -346,10 +346,7 @@ impl MissionBootstrap {
         if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             timeline.register_bootstrap_save(&self.loaded.engine, &self.host, &self.game);
         }
-        let manager = robin_engine::engine_manager::EngineManager::new(
-            self.loaded.engine,
-            self.host.transport.local_seat,
-        );
+        let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let control = MissionControl::new(
             timeline.initially_paused(),
             manager.engine.weather().night_color,

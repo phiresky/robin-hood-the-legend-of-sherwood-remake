@@ -101,7 +101,7 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     // captured; otherwise replay starts from a post-command checkpoint and
     // applies the journaled commands twice. The recorder hash samples this
     // same boundary so recording and playback remain in lockstep.
-    runtime.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
+    runtime.open_frame(&mut frame, &manager.engine, &assets);
     frame.commands.commands.extend(net_inputs);
 
     // Re-derive the corner HUD layout every frame so resolution
@@ -237,28 +237,28 @@ pub(super) fn process_pre_tick_state_hash(
     manager: &robin_engine::engine_manager::EngineManager,
 ) {
     if host.transport.net.is_none()
-        || !manager
-            .sim_frame
+        || !runtime
+            .frame_number()
             .is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL)
     {
         return;
     }
     if host.transport.local_seat == engine_player_command::PlayerId::HOST
-        && runtime.last_mp_state_hash_frame != Some(manager.sim_frame)
+        && runtime.last_mp_state_hash_frame != Some(runtime.frame_number())
     {
-        runtime.last_mp_state_hash_frame = Some(manager.sim_frame);
+        runtime.last_mp_state_hash_frame = Some(runtime.frame_number());
         let mp_hash_start = web_time::Instant::now();
         let live_hash_start = web_time::Instant::now();
         let local_hash = robin_engine::replay::state_hash(&manager.engine);
         let live_hash_us = live_hash_start.elapsed().as_micros();
-        runtime.pending_mp_state_hash = Some((manager.sim_frame, local_hash));
+        runtime.pending_mp_state_hash = Some((runtime.frame_number(), local_hash));
         tracing::debug!(
-            frame = manager.sim_frame,
+            frame = runtime.frame_number(),
             total_us = mp_hash_start.elapsed().as_micros(),
             live_hash_us,
             "multiplayer hash frame timing"
         );
-    } else if let Some(&host_hash) = runtime.peer_hashes.get(&manager.sim_frame) {
+    } else if let Some(&host_hash) = runtime.peer_hashes.get(&runtime.frame_number()) {
         let local_hash = robin_engine::replay::state_hash(&manager.engine);
         if local_hash != host_hash {
             let last_rollback_path = runtime.last_mp_rollback.as_ref().map_or("none", |r| r.path);
@@ -277,11 +277,11 @@ pub(super) fn process_pre_tick_state_hash(
             let last_rollback_total_us =
                 runtime.last_mp_rollback.as_ref().map_or(0, |r| r.total_us);
             tracing::warn!(
-                frame = manager.sim_frame,
+                frame = runtime.frame_number(),
                 local = format!("{local_hash:016x}"),
                 host = format!("{host_hash:016x}"),
                 host_schedule_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
-                pending_input_frames = manager.pending_inputs.len(),
+                pending_input_frames = runtime.pending_inputs.len(),
                 last_rollback_path,
                 last_rollback_earliest,
                 last_rollback_target,
@@ -290,10 +290,11 @@ pub(super) fn process_pre_tick_state_hash(
                 "multiplayer DESYNC: local engine hash differs from host's"
             );
         } else {
-            tracing::debug!(frame = manager.sim_frame, "multiplayer hash OK");
+            tracing::debug!(frame = runtime.frame_number(), "multiplayer hash OK");
         }
     }
-    runtime.peer_hashes.retain(|&f, _| f > manager.sim_frame);
+    let current_frame = runtime.frame_number();
+    runtime.peer_hashes.retain(|&f, _| f > current_frame);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -373,28 +374,29 @@ fn prepare_pre_tick_timeline(
     }
 
     let mut consumed_buffered = false;
-    if !rewind_active && !paused && manager.sim_frame < runtime.rewind_buffer.next_record_frame() {
-        let Some(recorded) = runtime.rewind_buffer.frame_for(manager.sim_frame).cloned() else {
+    let current_frame = runtime.frame_number();
+    if !rewind_active && !paused && current_frame < runtime.rewind_buffer.next_record_frame() {
+        let Some(recorded) = runtime.rewind_buffer.frame_for(current_frame).cloned() else {
             return Err(format!(
                 "cannot replay frame {}: rewind command history starts at frame {}",
-                manager.sim_frame,
+                current_frame,
                 runtime.rewind_buffer.oldest_cmd_frame()
             ));
         };
         if runtime.replay_player.is_some() && frame.external_actions.is_empty() {
             frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
-            tracing::trace!("Replay reused rewind-buffer frame {}", manager.sim_frame);
+            tracing::trace!("Replay reused rewind-buffer frame {}", current_frame);
         } else if frame.commands.commands.is_empty() && frame.external_actions.is_empty() {
             frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
-            tracing::trace!("Auto-replay -> frame {}", manager.sim_frame);
+            tracing::trace!("Auto-replay -> frame {}", current_frame);
         } else {
             tracing::trace!(
                 "Auto-replay interrupted by live input; truncating buffer at {}",
-                manager.sim_frame
+                current_frame
             );
-            runtime.rewind_buffer.truncate_future(manager.sim_frame);
+            runtime.rewind_buffer.truncate_future(current_frame);
         }
     }
     Ok(PreTickTimelineOutput {
@@ -820,13 +822,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 checker.reset();
             }
             if let Some(event) = save_load.event {
-                runtime.note_save_load_event(
-                    event,
-                    &mut frame,
-                    manager.sim_frame,
-                    &manager.engine,
-                    assets.as_ref(),
-                );
+                runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
             }
             if callbacks.pending_level_restart {
                 callbacks.pending_level_restart = false;
@@ -859,13 +855,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             checker.reset();
         }
         if let Some(event) = save_load.event {
-            runtime.note_save_load_event(
-                event,
-                &mut frame,
-                manager.sim_frame,
-                &manager.engine,
-                assets.as_ref(),
-            );
+            runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
         }
 
         // A rejected/missing/unappliable Restart payload must leave this
