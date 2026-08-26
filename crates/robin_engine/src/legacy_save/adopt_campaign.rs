@@ -72,7 +72,7 @@ impl LegacyCampaignAdoptionPlan {
         // The v48 stream predates Rust's explicit replay seed/config fields.
         // The campaign data itself is exact; the parity trace supplies the
         // deterministic RNG stream independently at the loaded-save boundary.
-        campaign.pre_mission_snapshot = Some(Box::new(backup));
+        campaign.pre_mission_snapshot = Some(backup.replace_snapshot(()));
         campaign.pre_mission_rng_seed = None;
         campaign.pre_mission_sim_config = None;
         campaign.pre_mission_was_preselected = true;

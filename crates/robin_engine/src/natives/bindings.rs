@@ -37,7 +37,9 @@ impl AttachedScriptBindings {
 }
 
 /// Spellforge Lua name tables. Vanilla missions leave these empty.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct ScriptNameBindings {
     pub actors: BTreeMap<String, i32>,
     pub items: BTreeMap<String, i32>,

@@ -14,7 +14,7 @@ use crate::{
     element::{Command, Entity, EntityId, InstalledActorOrder},
     engine::{EngineInner, LevelAssets},
     natives::ScriptHandleCodec,
-    sequence::{Sequence, SequenceElementRef},
+    sequence::{PostSeekSequence, SequenceElementRef},
 };
 
 use super::{
@@ -116,7 +116,7 @@ struct PlannedActorOwnership {
     /// Retained for diagnostics: the manager is the canonical owner.
     wait_element: Option<SequenceElementRef>,
     installed_order: Option<InstalledActorOrder>,
-    post_seek_sequence: Option<Box<Sequence>>,
+    post_seek_sequence: Option<PostSeekSequence>,
     vm_heap: Option<Vec<u8>>,
 }
 
@@ -246,8 +246,17 @@ impl LegacyActorOwnershipAdoptionPlan {
                 .post_seek_sequence
                 .as_ref()
                 .map(|sequence| {
-                    convert_owner_local_sequence(sequence, entities, sequence_topology)
-                        .map(Box::new)
+                    convert_owner_local_sequence(sequence, entities, sequence_topology).and_then(
+                        |sequence| {
+                            sequence.try_into_post_seek().map_err(|_| {
+                                LegacySequenceAdoptError::InvalidField {
+                                    field: "actor.post_seek_sequence",
+                                    value: "nested continuation".to_owned(),
+                                    expected: "at most one post-seek level",
+                                }
+                            })
+                        },
+                    )
                 })
                 .transpose()?;
             let location_prefix = saved

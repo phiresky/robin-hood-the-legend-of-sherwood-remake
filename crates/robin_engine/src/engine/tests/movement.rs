@@ -1551,7 +1551,7 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
         crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 100.0, 200.0);
     intent.stop_menace_before_move = true;
 
-    engine.orders.pending_move_requests.push((owner, intent));
+    engine.launch_ai_move(owner, &intent);
     let sequence_id = engine
         .drain_pending_move_requests_for_owner(&crate::sim_rng::test_context(), owner)
         .into_iter()

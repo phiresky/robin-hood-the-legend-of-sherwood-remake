@@ -610,7 +610,7 @@ mod tests {
                 sim_config: robin_engine::engine::SimConfig::default(),
                 version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
                 total_frames: 0,
-                campaign: bitcode::serialize(&Campaign::default()).unwrap(),
+                campaign: bitcode::encode(&Campaign::default()),
             },
             frames: BTreeMap::new(),
             hashes: BTreeMap::new(),

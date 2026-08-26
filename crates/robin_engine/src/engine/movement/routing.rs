@@ -318,7 +318,7 @@ impl EngineInner {
                 (Some(source), Some(goal)) => source != goal,
                 _ => false,
             };
-            intent.source_target_sector_identity_differs |= source_target_sector_identity_differs;
+            intent.source_target_sector_identity_differs = source_target_sector_identity_differs;
             let crosses_raw_topology = goal_layer != raw_layer
                 || goal_sector != raw_sector
                 || source_target_sector_identity_differs;
@@ -364,6 +364,9 @@ impl EngineInner {
             intent.target_sector_index = goal_sector_index;
             intent.source_layer = Some(layer);
         }
+        intent
+            .validate_queued_move_topology()
+            .unwrap_or_else(|detail| panic!("invalid queued AI move for {entity_id:?}: {detail}"));
         self.orders.pending_move_requests.push((entity_id, intent));
     }
 
@@ -463,54 +466,20 @@ impl EngineInner {
             x: intent.target_x,
             y: intent.target_y,
         };
-        let (raw_source, raw_source_layer, raw_source_sector, door_handle, door_direction) = {
-            let Some(entity) = self.get_entity(entity_id) else {
-                tracing::warn!("do_launch_ai_move: entity {:?} not found", entity_id);
-                return None;
-            };
-            let ed = entity.element_data();
-            let (door_handle, door_direction) = current_door_for_route_source(entity);
-            (
-                ed.position_map(),
-                ed.layer(),
-                ed.sector(),
-                door_handle,
-                door_direction,
-            )
-        };
-        // RHSequence::AppendMoveToSequence adapts a source that is currently
-        // crossing a gate to the committed far side before comparing sectors
-        // or searching the gate graph.
-        let (source, source_layer, source_sector) = if let Some(source) = intent.source_position {
-            (
-                source,
-                intent.source_layer.unwrap_or_else(|| {
-                    panic!("AI GoTo for {entity_id:?} captured a source position without a layer")
-                }),
-                intent.source_sector,
-            )
-        } else {
-            // Backward-compatible fallback for old serialized intents that
-            // predate the enqueue-time topology snapshot.
-            self.scripts
-                .mission
-                .as_ref()
-                .and_then(|_| {
-                    adapt_source_to_current_door(
-                        &self.script_domains.interactables.doors,
-                        door_handle,
-                        door_direction,
-                    )
-                })
-                .map(|(point, sector, layer)| {
-                    (
-                        point,
-                        layer,
-                        crate::position_interface::SectorHandle::new(sector),
-                    )
-                })
-                .unwrap_or((raw_source, raw_source_layer, raw_source_sector))
-        };
+        if self.get_entity(entity_id).is_none() {
+            tracing::warn!("do_launch_ai_move: entity {:?} not found", entity_id);
+            return None;
+        }
+        intent
+            .validate_queued_move_topology()
+            .unwrap_or_else(|detail| panic!("invalid queued AI move for {entity_id:?}: {detail}"));
+        let source = intent
+            .source_position
+            .expect("validated queued AI move lost its source position");
+        let source_layer = intent
+            .source_layer
+            .expect("validated queued AI move lost its source layer");
+        let source_sector = intent.source_sector;
         let goal_layer = intent.target_layer.unwrap_or(source_layer);
         let goal_sector = intent.target_sector.or(source_sector);
         let source_sector_index = intent

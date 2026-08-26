@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
 use base64::Engine as _;
+// Version 67 native parity traces are authoritative artifacts. Keep their
+// codec pinned independently of the game's intentionally evolving formats.
+use bitcode_parity as bitcode;
 use fs2::FileExt as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
@@ -53,15 +56,23 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
+#[serde(tag = "command", rename_all = "snake_case")]
+enum TraceDirectorCompletion {
+    CameraGoto,
+    ZoomLevel,
+}
+
+impl From<TraceDirectorCompletion> for robin_engine::engine::DirectorCompletion {
+    fn from(value: TraceDirectorCompletion) -> Self {
+        match value {
+            TraceDirectorCompletion::CameraGoto => Self::CameraGoto,
+            TraceDirectorCompletion::ZoomLevel => Self::ZoomLevel,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceHeader {
     #[serde(rename = "type")]
@@ -91,17 +102,7 @@ struct TraceHeader {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    PartialEq,
-    Eq,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
+    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, bitcode::Encode, bitcode::Decode,
 )]
 #[serde(deny_unknown_fields)]
 struct TraceInitialNpcTransient {
@@ -109,15 +110,7 @@ struct TraceInitialNpcTransient {
     maximal_visibility: u16,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceInitialSave {
     format: String,
     source_profile: TraceSaveSourceProfile,
@@ -132,17 +125,7 @@ struct TraceInitialSave {
 }
 
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    PartialEq,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
+    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, bitcode::Encode, bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceSaveSourceProfile {
@@ -254,15 +237,7 @@ impl TraceInitialSave {
     }
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSimConfig {
     difficulty: TraceDifficulty,
     script_enabled: bool,
@@ -292,17 +267,7 @@ impl TraceSimConfig {
     }
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(rename_all = "snake_case")]
 enum TraceDifficulty {
     Easy,
@@ -321,17 +286,7 @@ impl From<TraceDifficulty> for robin_engine::player_profile::DifficultyLevel {
 }
 
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    PartialEq,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
+    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, bitcode::Encode, bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceStartState {
@@ -458,15 +413,7 @@ fn validate_trace_start(start_state: TraceStartState, session_index: u32, initia
     }
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceCampaign {
     version: u32,
     values: Vec<i32>,
@@ -491,15 +438,7 @@ struct TraceCampaign {
     production_sectors: Vec<TraceProductionSector>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceCampaignMission {
     profile_index: u32,
     profile_id: u32,
@@ -511,15 +450,7 @@ struct TraceCampaignMission {
     ares_state_succeeded: i8,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceCampaignCharacter {
     profile_index: u32,
     profile_name: String,
@@ -527,15 +458,7 @@ struct TraceCampaignCharacter {
     status: TracePcStatus,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TracePcStatus {
     hand_to_hand: TraceSkill,
     bow: TraceSkill,
@@ -554,29 +477,13 @@ struct TracePcStatus {
     beam_me_index_in_sherwood: i16,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSkill {
     capacity: u32,
     experience: u32,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceProductionSector {
     r#type: u32,
     speed: u16,
@@ -586,15 +493,7 @@ struct TraceProductionSector {
     occupants: Vec<TraceProductionOccupant>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceProductionOccupant {
     character_index: usize,
     x: TraceFloat,
@@ -602,42 +501,18 @@ struct TraceProductionOccupant {
     obstacle: u16,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceMotionGrid {
     layers: Vec<TraceMotionLayer>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceMotionLayer {
     layer: u16,
     lines: Vec<TraceMotionLine>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceMotionLine {
     index: u16,
     a: TracePoint,
@@ -647,33 +522,14 @@ struct TraceMotionLine {
     active: bool,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceMotionLineChange {
     layer: u16,
     index: u16,
     active: bool,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Clone, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 enum TracePathEvent {
     Queued {
@@ -710,16 +566,7 @@ enum TracePathEvent {
     },
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Clone, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceRngBatch {
     first_index: usize,
@@ -783,17 +630,7 @@ impl TraceRngBatch {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    PartialEq,
-    Eq,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
+    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, bitcode::Encode, bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceRngDomain {
@@ -801,15 +638,7 @@ enum TraceRngDomain {
     Audio,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceRngPrefix {
     #[allow(dead_code)]
@@ -843,8 +672,6 @@ struct TraceRecordMarker {
     Eq,
     PartialOrd,
     Ord,
-    bincode::Encode,
-    bincode::Decode,
     bitcode::Encode,
     bitcode::Decode,
 )]
@@ -863,8 +690,6 @@ struct TraceEntityId {
     Eq,
     PartialOrd,
     Ord,
-    bincode::Encode,
-    bincode::Decode,
     bitcode::Encode,
     bitcode::Decode,
 )]
@@ -898,17 +723,7 @@ impl From<TraceEntityId> for EntityId {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceFloat {
     bits: u32,
 }
@@ -919,17 +734,7 @@ impl TraceFloat {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TracePoint {
     x: TraceFloat,
     y: TraceFloat,
@@ -941,17 +746,7 @@ impl From<TracePoint> for MapPoint {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TracePoint3 {
     x: TraceFloat,
     y: TraceFloat,
@@ -964,15 +759,7 @@ impl From<TracePoint3> for WorldPoint3D {
     }
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TraceCommand {
     BoxSelect {
@@ -1135,17 +922,7 @@ enum TraceCommand {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 enum TraceAction {
@@ -1253,6 +1030,31 @@ fn split_late_refresh_orientations(
     }
 
     (before_hourglass, after_hourglass)
+}
+
+fn advance_trace_qa_recording_state(recording: &mut bool, command: &TraceCommand) {
+    if matches!(command, TraceCommand::StartRecordingMacro { .. }) {
+        *recording = true;
+        return;
+    }
+    if *recording
+        && matches!(
+            command,
+            TraceCommand::GroupMove { .. }
+                | TraceCommand::LaunchInteraction { .. }
+                | TraceCommand::LaunchGroundTarget { .. }
+                | TraceCommand::DropAleAt { .. }
+                | TraceCommand::LaunchSelfAbility { .. }
+                | TraceCommand::LaunchScrollRead { .. }
+                | TraceCommand::SwordStrike { .. }
+                | TraceCommand::CrouchDown
+                | TraceCommand::StandUp
+        )
+    {
+        // These are the command shapes stored by the engine's QA hook. Their
+        // successful Original handlers send STOP_RECORDING_MACRO globally.
+        *recording = false;
+    }
 }
 
 impl From<TraceAction> for Action {
@@ -1692,15 +1494,7 @@ fn command_from_stable_name(name: &str) -> Command {
         .unwrap_or_else(|_| panic!("unsupported stable Original RHcommand name {name:?}"))
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceElement {
     entity_id: TraceEntityId,
     creation_order: u32,
@@ -1743,15 +1537,7 @@ struct TraceElement {
     runtime: TraceJsonValue,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceActor {
     action_state: u32,
     animation: u32,
@@ -1775,30 +1561,14 @@ struct TraceActor {
     position_interface: TraceJsonValue,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TracePassDoor {
     gate_id: u32,
     direct: bool,
     direction: i16,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSequenceElement {
     id: u32,
     #[serde(rename = "type")]
@@ -1844,15 +1614,7 @@ where
     Option::<TraceJsonValue>::deserialize(deserializer)
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSequenceMovement {
     /// Absent in current schema-16 traces when the movement-element
     /// constructor does not initialize `maction` (for example WAIT_FREE_LIFT).
@@ -1896,15 +1658,7 @@ fn active_pass_door_keys_match(
     expected.map(trace_pass_door_key) == actual
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceHuman {
     life_points: i16,
     dead: bool,
@@ -1917,15 +1671,7 @@ struct TraceHuman {
     opponent_jump_lines: Vec<Option<TraceJumpLine>>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceJumpLine {
     a: TracePoint,
@@ -1945,28 +1691,12 @@ fn runtime_jump_line_bits(line: &robin_engine::jump_line::JumpLine) -> [u32; 4] 
     ]
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceElementPc {
     ammo: TraceElementAmmo,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceElementAmmo {
     ales: u16,
     apples: u16,
@@ -1986,15 +1716,7 @@ where
     Option::<u16>::deserialize(deserializer)
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceAi {
     state: u32,
     substate: u32,
@@ -2026,15 +1748,7 @@ where
     Option::<TraceJumpLine>::deserialize(deserializer)
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceDetection {
     suspects: Vec<u16>,
     maximal_suspect: u16,
@@ -2044,15 +1758,7 @@ struct TraceDetection {
     detectables: Vec<TraceDetectable>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceDetectable {
     #[serde(rename = "type")]
     detectable_type: u32,
@@ -2065,16 +1771,7 @@ struct TraceDetectable {
     last_visibility: TraceFloat,
 }
 
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceVisibilityQuery {
     origin: TracePoint3,
     destination: TracePoint3,
@@ -2087,16 +1784,7 @@ struct TraceVisibilityQuery {
     blocking_obstacle: Option<TraceSightObstacle>,
 }
 
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSightObstacle {
     id: u32,
     index: i64,
@@ -2110,16 +1798,7 @@ struct TraceSightObstacle {
     points: Vec<TraceSightObstaclePoint>,
 }
 
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSightObstacleTypes {
     solid: bool,
     opaque: bool,
@@ -2129,31 +1808,13 @@ struct TraceSightObstacleTypes {
     show_shadow_polygon: bool,
 }
 
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSightObstacleBox {
     min: TracePoint,
     max: TracePoint,
 }
 
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceSightObstaclePoint {
     x: TraceFloat,
     y: TraceFloat,
@@ -2161,15 +1822,7 @@ struct TraceSightObstaclePoint {
     z_bottom: TraceFloat,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceResolvedExclamation {
     actor: TraceEntityId,
     identifier: u32,
@@ -2182,16 +1835,7 @@ struct TraceResolvedExclamation {
 /// One exact, ordered Original `RHSprite::PerformMotion` position commit.
 /// This additive diagnostic is absent unless the Original recorder was run
 /// with `RH_PARITY_MOVEMENT_STEPS` enabled.
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceMovementStep {
     entity: TraceEntityId,
     order_id: u32,
@@ -2216,16 +1860,7 @@ struct TraceMovementStep {
 }
 
 /// One exact, ordered Original `RHSprite::PerformFlight` execution.
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Clone, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceFlightStep {
     entity: TraceEntityId,
     order_id: u32,
@@ -2247,15 +1882,7 @@ struct TraceFlightStep {
     snapped_to_goal: bool,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceRouteConstructionEvent {
     kind: String,
     actor: TraceEntityId,
@@ -2273,15 +1900,7 @@ struct TraceRouteConstructionEvent {
     draft_diagnostics: BTreeMap<String, TraceJsonValue>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceRouteGate {
     gate_id: u32,
     direct: bool,
@@ -2508,6 +2127,7 @@ fn resolve_current_drop_ale(
     consumed_route_ordinals: &mut BTreeSet<u64>,
     entity_map: &EntityMap,
     same_sector_goal: Option<ReplayDropAleResolution>,
+    qa_recording: bool,
 ) -> Option<ReplayDropAleResolution> {
     let TraceCommand::DropAleAt { actor, target, .. } = command else {
         return None;
@@ -2543,6 +2163,19 @@ fn resolve_current_drop_ale(
         matching_events.len()
     );
     let Some((ordinal, event)) = matching_events.into_iter().next() else {
+        if qa_recording {
+            // Original stores the selected target-sector pointer in the QA's
+            // Seek without launching it, so there is intentionally no route
+            // event from which schema 16 can recover that pointer. The actor
+            // sector is not a valid substitute: the selected target may be a
+            // different (or duplicate-number) sector.
+            //
+            // TODO(parity-schema): record DropAle's selected target sector,
+            // exact arena identity, and layer directly on the command.
+            panic!(
+                "schema-16 DropAle recorded as a quick action has no authoritative target-sector identity"
+            );
+        }
         // A cross-sector DropAle must have an authoritative route event. Do
         // not disguise a mismatched/corrupt event as a same-sector command.
         let has_actor_route = route_events.iter().any(|event| {
@@ -2739,30 +2372,14 @@ fn current_drop_ale_actor_goal(
     })
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TracePointBox {
     top_left: TracePoint,
     bottom_right: TracePoint,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TracePopupEvent {
     #[serde(default)]
@@ -2790,15 +2407,7 @@ struct TracePopupEvent {
     remove_mouse: Option<bool>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceForecastGate {
     gate_id: u32,
@@ -2813,15 +2422,7 @@ struct TraceForecastGate {
     penalty: TraceFloat,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceAiForecastInput {
     position: TracePoint,
@@ -2836,15 +2437,7 @@ struct TraceAiForecastInput {
     door: Option<TraceForecastGate>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceAiForecastResolved {
     position: TracePoint,
@@ -2854,15 +2447,7 @@ struct TraceAiForecastResolved {
     direction: Option<u16>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceAiForecastEvent {
     ordinal: u64,
@@ -2877,15 +2462,7 @@ struct TraceAiForecastEvent {
     selected_building_exit: Option<TraceForecastGate>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceAlertEligibility {
     rank: bool,
@@ -2898,15 +2475,7 @@ struct TraceAlertEligibility {
     think: Option<bool>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceAlertFormationEvent {
     #[serde(default)]
@@ -2981,30 +2550,14 @@ struct TraceAlertFormationEvent {
     final_sector: Option<u16>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceGoToSource {
     point: TracePoint,
     layer: u16,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceGoToDestination {
     point: TracePoint,
@@ -3012,15 +2565,7 @@ struct TraceGoToDestination {
     layer: u16,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceGoToAuthorizationEvent {
     ordinal: u64,
@@ -3038,15 +2583,7 @@ struct TraceGoToAuthorizationEvent {
     path_authorized: Option<bool>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum TraceTargetLifecyclePayload {
     ActivateSword,
@@ -3062,15 +2599,7 @@ enum TraceTargetLifecyclePayload {
     },
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceTargetLifecycleEvent {
     ordinal: u64,
@@ -3095,15 +2624,7 @@ struct TraceTargetLifecycleEvent {
     class_instantiated: Option<bool>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceStrikeProposalEvent {
     invocation: u32,
@@ -3153,15 +2674,7 @@ struct TraceStrikeProposalEvent {
     parry_time_eligible: Option<bool>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceSequenceLifecycleEvent {
     ordinal: u64,
@@ -3189,15 +2702,7 @@ struct TraceSequenceLifecycleEvent {
     accepted: Option<bool>,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceFrame {
     #[serde(rename = "type")]
@@ -3207,7 +2712,7 @@ struct TraceFrame {
     game_code: i32,
     simulation_body_ran: bool,
     commands: Vec<TraceCommand>,
-    director_completions: Vec<robin_engine::engine::DirectorCompletion>,
+    director_completions: Vec<TraceDirectorCompletion>,
     selected_pcs: Vec<TraceEntityId>,
     elements: Vec<TraceElement>,
     visibility_queries: Vec<TraceVisibilityQuery>,
@@ -3327,9 +2832,7 @@ impl TraceJsonTree {
 
 /// One pre-order token of a flattened [`TraceJsonTree`]. `Array`/`Object`
 /// carry their child count; object entries are `Key` followed by a value.
-#[derive(
-    Clone, Debug, PartialEq, bincode::Decode, bincode::Encode, bitcode::Decode, bitcode::Encode,
-)]
+#[derive(Clone, Debug, PartialEq, bitcode::Decode, bitcode::Encode)]
 enum TraceJsonToken {
     Null,
     Bool(bool),
@@ -3346,9 +2849,7 @@ enum TraceJsonToken {
 /// token list. bitcode's derives cannot encode recursive types (the derived
 /// encoder would be infinitely sized), so the binary codecs see a plain
 /// `Vec<TraceJsonToken>` while serde still reads and writes the JSON shape.
-#[derive(
-    Clone, Debug, PartialEq, bincode::Decode, bincode::Encode, bitcode::Decode, bitcode::Encode,
-)]
+#[derive(Clone, Debug, PartialEq, bitcode::Decode, bitcode::Encode)]
 struct TraceJsonValue {
     tokens: Vec<TraceJsonToken>,
 }
@@ -3554,15 +3055,7 @@ const TRACE_NATIVE_BLOCK_RECORDS: usize = 16;
 /// artifact-size win and prevented one replay lane per CPU core.
 const TRACE_NATIVE_WINDOW_LOG: u32 = 25;
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct BinaryTraceHeader {
     version: u32,
     source_fingerprint: String,
@@ -3570,15 +3063,7 @@ struct BinaryTraceHeader {
     rng_prefix: TraceRngPrefix,
 }
 
-#[derive(
-    Debug,
-    Deserialize,
-    Serialize,
-    bincode::Encode,
-    bincode::Decode,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
+#[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 enum BinaryTraceRecord {
     Frame(TraceFrame),
     End {
@@ -4527,7 +4012,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         if debug_startup {
             print_startup_actors("before Rust frame 1", &engine, &frame, map);
         }
-        let director_completions = frame.director_completions.drain(..).collect::<Vec<_>>();
+        let director_completions = frame
+            .director_completions
+            .drain(..)
+            .map(robin_engine::engine::DirectorCompletion::from)
+            .collect::<Vec<_>>();
         // `RHGame` records the engine frame before running the host sound
         // manager (`original-code/RHgame.cpp:1879-1915`). Consequently these
         // resolutions belong chronologically before the input commands stored
@@ -4591,6 +4080,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         );
         let mut consumed_drop_ale_route_ordinals = BTreeSet::new();
         let mut consumed_group_move_route_ordinals = BTreeSet::new();
+        let mut trace_qa_recording = engine.is_recording_macro();
         let mut commands_before_hourglass_resolved = Vec::new();
         for command in commands_before_hourglass {
             if debug_stage_timing {
@@ -4605,6 +4095,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &mut consumed_drop_ale_route_ordinals,
                 map,
                 current_drop_ale_actor_goal(&command, map, &engine),
+                trace_qa_recording,
             );
             let group_move_resolution = resolve_current_group_move_route(
                 &command,
@@ -4617,12 +4108,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     .expect("parity replay requires retained Original fast-grid topology")
                     .sectors,
             );
-            if let Some(command) = command.into_player_command(
+            advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
+            let converted = command.into_player_command(
                 map,
                 &engine,
                 drop_ale_resolution,
                 group_move_resolution,
-            ) {
+            );
+            if let Some(command) = converted {
                 commands_before_hourglass_resolved.push(command);
             }
         }
@@ -4635,6 +4128,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     &mut consumed_drop_ale_route_ordinals,
                     map,
                     current_drop_ale_actor_goal(&command, map, &engine),
+                    trace_qa_recording,
                 );
                 let group_move_resolution = resolve_current_group_move_route(
                     &command,
@@ -4647,12 +4141,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         .expect("parity replay requires retained Original fast-grid topology")
                         .sectors,
                 );
-                command.into_player_command(
+                advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
+                let converted = command.into_player_command(
                     map,
                     &engine,
                     drop_ale_resolution,
                     group_move_resolution,
-                )
+                );
+                converted
             })
             .collect::<Vec<_>>();
         let delayed_drop_ale_route_engine = match delayed_drop_ale_fact_preview.as_mut() {
@@ -4698,6 +4194,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 )
                 .with_simulation_body_allowed(frame.simulation_body_ran);
             engine
+                // RHMessenger records raw-mouse depth-2 messages but omits
+                // SelectPc's depth-3 restitution. Preserve those independently
+                // recorded command boundaries in both admission phases.
+                .parity_replay_setup()
                 .advance_frame(&assets, frame_input)
                 .unwrap_or_else(|error| {
                     panic!("admit original frame {}: {error}", frame.frame_before)
@@ -7880,10 +7380,9 @@ fn read_binary_record<T: bitcode::DecodeOwned>(
     bitcode::decode(&encoded).map_err(|error| format!("decode {label}: {error}"))
 }
 
-/// Storage experiment for the canonical-trace-format decision: re-encode the
-/// cached records of one trace with bincode and bitcode in several layouts
-/// and report raw and zstd-compressed sizes. Layouts are compared on the same
-/// decoded records, so the only variable is the encoding.
+/// Storage experiment for the canonical trace layout: re-encode the cached
+/// records of one trace with bitcode in several layouts and report raw and
+/// zstd-compressed sizes.
 ///
 /// `PARITY_BENCH_ZSTD_LEVELS` (default `3,19`) and `PARITY_BENCH_BLOCKS`
 /// (default `16,64,256`) tune the sweep.
@@ -7912,13 +7411,6 @@ fn bench_trace_encodings(trace_path: &Path) {
             .finish()
             .unwrap_or_else(|error| panic!("finish zstd level {level}: {error}"));
         (compressed.len(), started.elapsed())
-    }
-
-    fn bincode_record<T: bincode::Encode>(out: &mut Vec<u8>, value: &T) {
-        let encoded = bincode::encode_to_vec(value, bincode::config::standard())
-            .unwrap_or_else(|error| panic!("bincode: {error}"));
-        out.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
-        out.extend_from_slice(&encoded);
     }
 
     fn bitcode_record<T: bitcode::Encode + ?Sized>(out: &mut Vec<u8>, value: &T) {
@@ -7976,18 +7468,6 @@ fn bench_trace_encodings(trace_path: &Path) {
 
     let started = Instant::now();
     let mut out = Vec::new();
-    bincode_record(&mut out, &header);
-    for record in &records {
-        bincode_record(&mut out, record);
-    }
-    rows.push((
-        "bincode per-record (former cache)".into(),
-        out,
-        started.elapsed(),
-    ));
-
-    let started = Instant::now();
-    let mut out = Vec::new();
     bitcode_record(&mut out, &header);
     for record in &records {
         bitcode_record(&mut out, record);
@@ -8013,26 +7493,10 @@ fn bench_trace_encodings(trace_path: &Path) {
         ));
     }
 
-    // bitcode has no `Encode` for references, so the whole-trace layouts
-    // encode an owned tuple; both whole-trace decodes are timed for the
-    // "one block" discussion (they must materialize every frame).
+    // bitcode has no `Encode` for references, so the whole-trace layout
+    // encodes an owned tuple and its decode is timed for the "one block"
+    // discussion (it must materialize every frame).
     let whole = (header, records);
-
-    let started = Instant::now();
-    let out =
-        bincode::encode_to_vec(&whole, bincode::config::standard()).expect("bincode whole trace");
-    let encode_time = started.elapsed();
-    let started = Instant::now();
-    let (decoded, _): ((BinaryTraceHeader, Vec<BinaryTraceRecord>), usize) =
-        bincode::decode_from_slice(&out, bincode::config::standard())
-            .expect("bincode decode whole trace");
-    eprintln!(
-        "bincode whole-trace decode: {} records in {:.2}s",
-        decoded.1.len(),
-        started.elapsed().as_secs_f64()
-    );
-    drop(decoded);
-    rows.push(("bincode whole-trace".into(), out, encode_time));
 
     let started = Instant::now();
     let out = bitcode::encode(&whole);
@@ -8105,7 +7569,7 @@ fn bench_trace_encodings(trace_path: &Path) {
     }
     println!();
     println!(
-        "percentages are relative to the current per-record bincode layout at the same zstd level"
+        "percentages are relative to the authoritative per-record bitcode layout at the same zstd level"
     );
 }
 
@@ -10754,6 +10218,7 @@ fn compare_float_indexed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitcode_parity as bitcode;
 
     #[test]
     fn native_suffix_appends_to_the_recording_identity() {
@@ -13025,14 +12490,56 @@ mod tests {
 
     #[test]
     fn alert_eligibility_accepts_only_the_current_post_key() {
+        #[derive(bitcode::Encode, bitcode::Decode)]
+        struct FrozenTraceAlertEligibilityV66 {
+            rank: bool,
+            able_to_help: Option<bool>,
+            allowed_to_leave_post: Option<bool>,
+            can_call: Option<bool>,
+            max_radius: Option<bool>,
+            squared_radius: Option<bool>,
+            capacity: Option<bool>,
+            think: Option<bool>,
+        }
+
         let current_json = serde_json::json!({
             "rank": true,
-            "allowed_to_leave_post": true,
+            // Current schema-16 recordings emit this spelling. Keep the
+            // false case explicit: stay-on-post rejections are exactly where
+            // the pre-fix converter used to fail its lossless round-trip
+            // audit by serializing this key under the legacy spelling.
+            "allowed_to_leave_post": false,
         });
         let current: TraceAlertEligibility = serde_json::from_value(current_json.clone()).unwrap();
-        assert_eq!(current.allowed_to_leave_post, Some(true));
+        assert_eq!(current.allowed_to_leave_post, Some(false));
+
+        let frozen_v66 = FrozenTraceAlertEligibilityV66 {
+            rank: true,
+            able_to_help: Some(false),
+            allowed_to_leave_post: Some(true),
+            can_call: None,
+            max_radius: Some(false),
+            squared_radius: Some(true),
+            capacity: None,
+            think: Some(true),
+        };
+        let frozen_v66_bytes = bitcode::encode(&frozen_v66);
+        let decoded: TraceAlertEligibility = bitcode::decode(&frozen_v66_bytes).unwrap();
+        assert!(decoded.rank);
+        assert_eq!(decoded.able_to_help, Some(false));
+        assert_eq!(decoded.allowed_to_leave_post, Some(true));
+        assert_eq!(decoded.can_call, None);
+        assert_eq!(decoded.max_radius, Some(false));
+        assert_eq!(decoded.squared_radius, Some(true));
+        assert_eq!(decoded.capacity, None);
+        assert_eq!(decoded.think, Some(true));
+        assert_eq!(bitcode::encode(&decoded), frozen_v66_bytes);
+
         let serialized = serde_json::to_value(&current).unwrap();
-        assert_eq!(serialized["allowed_to_leave_post"], serde_json::json!(true));
+        assert_eq!(
+            serialized["allowed_to_leave_post"],
+            serde_json::json!(false)
+        );
         assert!(serialized.get("stay_on_post").is_none());
 
         assert!(
@@ -14378,6 +13885,7 @@ mod tests {
                 &mut consumed,
                 &drop_ale_route_map(actor),
                 None,
+                false,
             ),
             Some(ReplayDropAleResolution {
                 goal: (SectorNumber::new(55), 4),
@@ -14510,6 +14018,7 @@ mod tests {
             &mut BTreeSet::new(),
             &drop_ale_route_map(actor),
             None,
+            false,
         );
     }
 
@@ -14535,7 +14044,7 @@ mod tests {
         let mut consumed = BTreeSet::new();
 
         assert_eq!(
-            resolve_current_drop_ale(&command, &routes, &mut consumed, &map, None,),
+            resolve_current_drop_ale(&command, &routes, &mut consumed, &map, None, false),
             None
         );
         assert!(consumed.is_empty());
@@ -14566,6 +14075,7 @@ mod tests {
             &mut BTreeSet::new(),
             &map,
             None,
+            false,
         );
     }
 
@@ -14597,10 +14107,44 @@ mod tests {
                 &mut consumed,
                 &drop_ale_route_map(actor),
                 Some(expected.clone()),
+                false,
             ),
             Some(expected)
         );
         assert!(consumed.is_empty());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "schema-16 DropAle recorded as a quick action has no authoritative target-sector identity"
+    )]
+    fn current_schema_drop_ale_qa_rejects_actor_sector_as_a_fake_target_fallback() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let command = TraceCommand::DropAleAt {
+            actor,
+            target: TracePoint {
+                x: TraceFloat { bits: 0x44d7_a800 },
+                y: TraceFloat { bits: 0x4447_8000 },
+            },
+            running: false,
+        };
+        let fake_actor_goal = ReplayDropAleResolution {
+            goal: (SectorNumber::new(0), 0),
+            goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(0),
+            recorded_gate_path: None,
+        };
+
+        let _ = resolve_current_drop_ale(
+            &command,
+            &[],
+            &mut BTreeSet::new(),
+            &drop_ale_route_map(actor),
+            Some(fake_actor_goal),
+            true,
+        );
     }
 
     #[test]

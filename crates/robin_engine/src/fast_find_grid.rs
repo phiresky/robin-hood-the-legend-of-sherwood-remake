@@ -45,6 +45,8 @@ use geo::Rect;
 )]
 pub struct SectorIndex(pub nonmax::NonMaxU32);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(SectorIndex, u32);
+
 impl SectorIndex {
     #[inline]
     pub fn new(v: u32) -> Option<Self> {
@@ -131,7 +133,14 @@ pub const TACTICAL_HORSE_PARKING: u8 = 7;
 /// outside that wedge the corner doesn't contribute.  `is_concave` is
 /// set when the wedge spans more than 180°.
 #[derive(
-    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct LevelRepulsivePoint {
     pub position: MapPoint,
@@ -156,6 +165,8 @@ pub struct LevelRepulsivePoint {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ImpactType {
     #[default]
@@ -190,6 +201,8 @@ pub enum ImpactType {
     robin_state_hash_derive::StateHash,
 )]
 pub struct LineIndex(pub nonmax::NonMaxU32);
+
+crate::bitcode_adapters::impl_native_bitcode_index!(LineIndex, u32);
 
 impl LineIndex {
     #[inline]
@@ -227,7 +240,15 @@ impl std::fmt::Display for LineIndex {
 ///
 /// Pure static data — the runtime `active` toggle (set by patches) lives
 /// in [`FastFindGrid::line_active`] and is keyed by line index.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct GridLine {
     /// Complete serialized `RHlineType` mask. Actor LINE_CROSS collection and
     /// the double-elevation comparison depend on bits that have no callback
@@ -551,7 +572,15 @@ impl GridLine {
 /// We store the minimal data needed for `get_sector` / `get_sector_screen`
 /// queries: polygon vertices for point-in-polygon tests, type flags for
 /// filtering, and references to related objects (doors, lifts).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct GridSector {
     /// Polygon vertices defining this sector's boundary.
     pub points: Vec<MapPoint>,
@@ -818,7 +847,16 @@ impl SectorScreenResult {
 ///
 /// We store indices into the grid's flat line, sector, mask, sight
 /// obstacle, point and patch storage.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct GridBlock {
     /// Indices into `FastFindGrid::lines`.
     pub line_indices: Vec<LineIndex>,
@@ -835,7 +873,16 @@ pub struct GridBlock {
 // ─── Grid layer (per-layer storage) ─────────────────────────────
 
 /// Per-layer storage of object indices.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct GridLayer {
     /// All line indices belonging to this layer.
     pub line_indices: Vec<LineIndex>,
@@ -861,7 +908,16 @@ pub struct GridLayer {
 /// `EngineInner::initialize_from_*` via `Arc::make_mut`; once the level
 /// is up the Arc gets shared with rollback snapshots and is never
 /// mutated again.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LevelGrid {
     /// Grid dimensions in cells.
     pub grid_width: u16,
@@ -930,7 +986,15 @@ pub struct LevelGrid {
 
 /// Static subset of a door required for building-sector elevation lookup.
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct DoorProjectionInfo {
     pub point_in: MapPoint,
@@ -950,7 +1014,15 @@ pub struct DoorProjectionInfo {
 /// snapshots only carry the small per-lift map (most sectors aren't
 /// lifts and so have no entry).
 #[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct LiftRuntimeState {
     /// Number of `occupants` which are PCs. The Original retains this
@@ -1085,14 +1157,41 @@ struct FastFindGridSnapshotRef<'a> {
     sector_type_overlay: &'a std::collections::BTreeMap<u32, crate::sector::SectorType>,
 }
 
-#[derive(Deserialize)]
-struct FastFindGridSnapshot {
+#[derive(Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct FastFindGridSnapshot {
     line_active: Vec<bool>,
     sector_active: Vec<bool>,
     mask_active: Vec<bool>,
     lift_state: std::collections::BTreeMap<u32, LiftRuntimeState>,
     sector_type_overlay: std::collections::BTreeMap<u32, crate::sector::SectorType>,
 }
+
+impl crate::bitcode_adapters::NativeBitcode for FastFindGrid {
+    type Wire = FastFindGridSnapshot;
+
+    fn to_wire(&self) -> Self::Wire {
+        FastFindGridSnapshot {
+            line_active: self.line_active.clone(),
+            sector_active: self.sector_active.clone(),
+            mask_active: self.mask_active.clone(),
+            lift_state: self.lift_state.clone(),
+            sector_type_overlay: self.sector_type_overlay.clone(),
+        }
+    }
+
+    fn from_wire(snapshot: Self::Wire) -> Self {
+        Self {
+            level: std::sync::Arc::new(LevelGrid::default()),
+            line_active: snapshot.line_active,
+            sector_active: snapshot.sector_active,
+            mask_active: snapshot.mask_active,
+            lift_state: snapshot.lift_state,
+            sector_type_overlay: snapshot.sector_type_overlay,
+        }
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(FastFindGrid);
 
 impl Serialize for FastFindGrid {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct BoundingBox2D {
     pub min: ScreenPoint,
@@ -32,6 +34,8 @@ pub struct BoundingBox2D {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Material(pub u16);
 
@@ -46,6 +50,8 @@ pub struct Material(pub u16);
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SoundSourceId(pub u32);
 
@@ -57,7 +63,16 @@ pub struct SoundSourceId(pub u32);
 ///
 /// A "none" variant is not represented — a [`Change`] always carries valid data.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ChangeType {
     Mouse,
@@ -75,7 +90,15 @@ pub enum ChangeType {
 ///
 /// Variant-specific fields are only meaningful when `change_type` matches;
 /// constructors enforce this.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Change {
     pub change_type: ChangeType,
 
@@ -167,7 +190,16 @@ impl Change {
 // ---------------------------------------------------------------------------
 
 /// Ordered log of [`Change`]s.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ChangeLog {
     changes: Vec<Change>,
 }

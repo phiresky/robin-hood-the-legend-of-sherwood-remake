@@ -2630,7 +2630,7 @@ fn pending_drop_ale_seek(
     *flags |= MoveFlags::SEEK;
     let mut post_seek = Sequence::new();
     post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
-    *post_seek_sequence = Some(Box::new(post_seek));
+    *post_seek_sequence = Some(post_seek.into_post_seek());
     seek
 }
 
@@ -2788,12 +2788,9 @@ fn recorded_drop_ale_route_survives_binary_metadata_and_full_json_roundtrips() {
             )
             .is_ok()
     );
-    let encoded = bincode::serde::encode_to_vec(&route, bincode::config::standard())
-        .expect("encode recorded route metadata");
-    let (decoded_route, consumed): (crate::gate::RecordedGatePath, usize) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
-            .expect("decode recorded route metadata");
-    assert_eq!(consumed, encoded.len());
+    let encoded = bitcode::encode(&route);
+    let decoded_route: crate::gate::RecordedGatePath =
+        bitcode::decode(&encoded).expect("decode recorded route metadata");
     assert_eq!(decoded_route, route);
 
     let element_json = serde_json::to_string(manager.get_element(sequence, 0).unwrap())
@@ -2836,4 +2833,46 @@ fn recorded_drop_ale_route_survives_binary_metadata_and_full_json_roundtrips() {
         error.to_string().contains("point_seek_route_provenance"),
         "missing-provenance error named the wrong field: {error}"
     );
+}
+
+#[test]
+fn post_seek_sequence_is_one_level_and_native_bitcode_roundtrips() {
+    let owner = EntityId::Pc(crate::entity_id::PcId(1));
+    let mut continuation = Sequence::new();
+    continuation.append_element(SequenceElement::new(1, Command::CrouchDown, Some(owner)));
+
+    let mut seek = SequenceElement::new_movement(
+        1,
+        Command::Seek,
+        Some(owner),
+        crate::order::OrderType::WalkingUpright,
+    );
+    let SequenceElementData::Movement {
+        post_seek_sequence, ..
+    } = &mut seek.data
+    else {
+        unreachable!()
+    };
+    *post_seek_sequence = Some(continuation.into_post_seek());
+
+    let mut root = Sequence::new();
+    root.append_element(seek);
+    let bytes = bitcode::encode(&root);
+    let decoded: Sequence = bitcode::decode(&bytes).expect("decode one-level post-seek sequence");
+    let SequenceElementData::Movement {
+        post_seek_sequence: Some(decoded_continuation),
+        ..
+    } = &decoded.elements[0].data
+    else {
+        panic!("decoded Seek lost its continuation")
+    };
+    assert_eq!(
+        decoded_continuation.elements[0].command,
+        Command::CrouchDown
+    );
+
+    assert!(matches!(
+        decoded.try_into_post_seek(),
+        Err(SequenceInvariantError::NestedPostSeekSequence)
+    ));
 }

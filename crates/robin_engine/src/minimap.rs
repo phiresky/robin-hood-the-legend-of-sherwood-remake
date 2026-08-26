@@ -41,6 +41,8 @@ pub const NON_MAP_AREA: ScreenSize = ScreenSize { x: 14.0, y: 24.0 };
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u16)]
 pub enum CustomDot {
@@ -134,7 +136,16 @@ impl CustomDot {
 /// Each variant maps to a sprite in the `RHMAP_ITEMS` resource.
 /// The `as u16` value is the sprite frame index.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u16)]
 pub enum DotType {
@@ -176,6 +187,8 @@ pub enum DotType {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum UIState {
     #[default]
@@ -203,7 +216,15 @@ pub enum Camp {
 ///
 /// When a script calls `SetHighlighted`, the element is added here and
 /// revealed after a countdown, one at a time.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct HighlightedElement {
     /// Element index.
     pub element_index: u32,
@@ -234,7 +255,15 @@ pub struct MinimapV48State {
 ///
 /// We pre-compute the mask at load time so click-hit checks don't have to
 /// lock the surface and read a pixel each frame.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct HitMask {
     width: u16,
     height: u16,
@@ -277,7 +306,15 @@ impl HitMask {
 /// minimap exclusively through `PlayerCommand::Minimap*` variants via
 /// [`EngineInner::apply_command`].  Read access is provided by `pub fn`
 /// accessors (`is_displayed`, `map_box`, `button_box`, …).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MinimapState {
     // ── Serialized (save-game state) ──
     /// Whether the map should be opening (`true`) or closing (`false`).

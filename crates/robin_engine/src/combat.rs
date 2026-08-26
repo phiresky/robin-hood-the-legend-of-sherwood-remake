@@ -55,11 +55,22 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(SwordDamageResult, u32);
+
 // ─── Damage event ──────────────────────────────────────────────────
 
 /// Type of incoming damage.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DamageKind {
     /// Generic damage (e.g. falling, environmental).
@@ -79,7 +90,15 @@ pub enum DamageKind {
 }
 
 /// Describes incoming damage.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct DamageEvent {
     pub kind: DamageKind,
     pub damage: u16,
@@ -196,6 +215,8 @@ pub struct ConcussionContext {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ConcussionOutcome {
     /// No state change.

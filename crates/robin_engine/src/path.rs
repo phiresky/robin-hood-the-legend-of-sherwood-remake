@@ -4,7 +4,14 @@
 
 /// A single waypoint on a path.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Waypoint {
     pub x: f32,
@@ -15,7 +22,14 @@ pub struct Waypoint {
 
 /// A path consisting of an ordered series of waypoints, with a current position index.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Path {
     pub waypoints: Vec<Waypoint>,

@@ -9,22 +9,26 @@ use crate::{
 };
 
 /// Deterministic per-player selection, input-mode, and quick-action state.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct PlayerRuntime {
     pub(crate) seats: Vec<SeatState>,
     pub(crate) macro_store: MacroStore,
     /// Post-port Shift-click work. Kept separate from Original's three
     /// manual QA slots so queue advancement can never consume a saved macro.
     ///
-    /// SAVE53 stored automatic work as `MacroStore` overflow, so defaulting
-    /// this field is only for queue-free structured fixtures, not old-save
-    /// compatibility. This layout starts at SAVE54/NET18/REPLAY12.
-    #[serde(default)]
+    /// This layout starts at SAVE54/NET18/REPLAY12. Current structured
+    /// snapshots must carry it explicitly; older Rust snapshots are rejected.
     pub(crate) auto_queues: AutoQueueStore,
     pub(crate) user_locked: bool,
     /// Original `RHMessenger::mbLockView`, independently serialized from the
     /// engine's camera-follow locker.
-    #[serde(default)]
     pub(crate) view_locked: bool,
     pub(crate) selection_before_user_lock: Vec<EntityId>,
     pub(crate) qa_recording_for: Vec<EntityId>,
@@ -32,9 +36,7 @@ pub(crate) struct PlayerRuntime {
     pub(crate) action_before_recording_macro: Action,
     /// PCs whose Shift-click queue is waiting for its currently dispatched
     /// action (or pre-existing live work) to finish.
-    #[serde(default)]
     pub(crate) auto_queue_active: Vec<EntityId>,
-    #[serde(default)]
     pub(crate) allied: AlliedControlState,
 }
 
@@ -76,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_free_structured_fixture_defaults_missing_automatic_queue() {
+    fn queue_free_structured_fixture_rejects_missing_automatic_queue() {
         let encoded = serde_json::to_value(PlayerRuntime::new()).expect("serialize players");
         let mut legacy = encoded
             .as_object()
@@ -84,19 +86,15 @@ mod tests {
             .clone();
         legacy.remove("auto_queues");
 
-        let decoded: PlayerRuntime = serde_json::from_value(legacy.into())
-            .expect("deserialize state without automatic queue");
-
-        assert!(
-            decoded
-                .auto_queues
-                .get(EntityId::Pc(crate::entity_id::PcId(1)))
-                .is_none()
-        );
+        let error = match serde_json::from_value::<PlayerRuntime>(legacy.into()) {
+            Ok(_) => panic!("current player state requires its automatic queue"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("missing field `auto_queues`"));
     }
 
     #[test]
-    fn automatic_queue_json_and_bincode_roundtrip_and_participates_in_player_state_hash() {
+    fn automatic_queue_json_and_bitcode_roundtrip_and_participates_in_player_state_hash() {
         let pc = EntityId::Pc(crate::entity_id::PcId(1));
         let mut queued = PlayerRuntime::new();
         queued.auto_queues.push(
@@ -132,12 +130,9 @@ mod tests {
             robin_util::state_hash::compute(&PlayerRuntime::new())
         );
 
-        let bytes = bincode::serde::encode_to_vec(&queued, bincode::config::standard())
-            .expect("encode queued multiplayer snapshot state");
-        let (binary, consumed): (PlayerRuntime, usize) =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .expect("decode queued multiplayer snapshot state");
-        assert_eq!(consumed, bytes.len());
+        let bytes = bitcode::encode(&queued);
+        let binary: PlayerRuntime =
+            bitcode::decode(&bytes).expect("decode queued multiplayer snapshot state");
         assert_eq!(binary.auto_queues.len(pc), 1);
         assert_eq!(binary.auto_queue_active, vec![pc]);
         assert_eq!(

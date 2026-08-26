@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ElementKind {
     // Actors
@@ -122,6 +124,8 @@ impl ElementKind {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Condition {
     #[default]
@@ -142,6 +146,8 @@ pub enum Condition {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Focus {
     #[default]
@@ -176,6 +182,8 @@ pub enum Focus {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u8)]
 pub enum OutlineColorName {
@@ -261,6 +269,8 @@ pub mod outline_colors {
     Default,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Posture {
@@ -403,6 +413,8 @@ pub fn direction_vector_16(sector: i16) -> (f32, f32) {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ListenPhase {
     #[default]
@@ -429,6 +441,8 @@ pub enum ListenPhase {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ReceivePursePhase {
     #[default]
@@ -451,6 +465,8 @@ pub enum ReceivePursePhase {
     Default,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum ActionState {
@@ -578,6 +594,8 @@ impl ActionState {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MotionState {
     #[default]
@@ -602,6 +620,8 @@ pub enum MotionState {
     Default,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum MotionMethod {
@@ -629,6 +649,8 @@ pub enum MotionMethod {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Camp {
     Royalists,
@@ -665,6 +687,8 @@ impl Camp {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum BowTarget {
     Valid,
@@ -685,6 +709,8 @@ pub enum BowTarget {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Priority {
     NonInterruptable,
@@ -712,6 +738,8 @@ pub enum Priority {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum PriorityDecision {
     Abandon,
@@ -732,6 +760,8 @@ pub enum PriorityDecision {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ObjectType {
     #[default]
@@ -803,6 +833,8 @@ impl ObjectType {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum BonusItemType {
     Arrow,
@@ -921,6 +953,8 @@ impl ObjectType {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum RenderingProperties {
     #[default]
@@ -940,6 +974,8 @@ pub enum RenderingProperties {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DetectableType {
     Enemy,
@@ -968,6 +1004,8 @@ impl DetectableType {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Alert {
     #[default]
@@ -988,6 +1026,8 @@ pub enum Alert {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Detection {
     #[default]
@@ -1009,6 +1049,8 @@ pub enum Detection {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Attitude {
     Friendly,
@@ -1031,6 +1073,8 @@ pub enum Attitude {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ViewCone {
     #[default]
@@ -1066,6 +1110,8 @@ pub enum ViewCone {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Curiosity {
     Shot,
@@ -1088,6 +1134,8 @@ pub enum Curiosity {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u8)]
 pub enum NpcCustomValue {
@@ -1119,6 +1167,8 @@ impl NpcCustomValue {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum QuickAction {
     #[default]
@@ -1140,6 +1190,8 @@ pub enum QuickAction {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ShootType {
     #[default]
@@ -1162,6 +1214,8 @@ pub enum ShootType {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum WorkIcon {
     Arrows,
@@ -1191,6 +1245,8 @@ pub enum WorkIcon {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum NoiseType {
     Plouf,
@@ -1222,6 +1278,8 @@ pub enum NoiseType {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum GameMaterial {
     #[default]
@@ -1311,6 +1369,8 @@ impl GameMaterial {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum TargetType {
     Pc,
@@ -1331,6 +1391,8 @@ pub enum TargetType {
     Default,
     num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(i32)]
 #[allow(missing_docs)]
@@ -1547,6 +1609,8 @@ pub enum Command {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SendMessageCommand {
     pub message: i32,
@@ -1580,6 +1644,8 @@ impl SendMessageCommand {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequenceCommand {
     SendMessage(SendMessageCommand),
@@ -1705,6 +1771,11 @@ bitflags! {
         const TAKE   = 0x0400;
     }
 }
+
+crate::bitcode_adapters::impl_native_bitcode_flags!(ExitActionStateFlags, u32);
+crate::bitcode_adapters::impl_native_bitcode_flags!(EnterActionStateFlags, u32);
+crate::bitcode_adapters::impl_native_bitcode_flags!(ChangePostureFlags, u32);
+crate::bitcode_adapters::impl_native_bitcode_flags!(TargetFilter, u32);
 
 #[cfg(test)]
 mod tests {

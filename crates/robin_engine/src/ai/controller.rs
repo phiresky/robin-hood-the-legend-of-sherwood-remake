@@ -215,7 +215,15 @@ pub(crate) struct GotoActionStateTeardown {
 
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiController {
     // -- Owner --
     /// The NPC that owns this brain (legacy u32 handle).
@@ -304,6 +312,7 @@ pub struct AiController {
     /// bookkeeping.
     #[serde(skip)]
     #[state_hash(skip)]
+    #[bitcode(skip)]
     pub open_end_think_frames: u8,
     /// Subset of `open_end_think_frames` whose completion verdict is still
     /// owned by the engine-side movement drain.  Original constructs a path
@@ -312,6 +321,7 @@ pub struct AiController {
     /// before the matching recursive EVENT_COULDNT_REACHPOINT is known.
     #[serde(skip)]
     #[state_hash(skip)]
+    #[bitcode(skip)]
     pub engine_deferred_end_think_frames: u8,
     /// Whether the engine has actually settled the movement/order verdict
     /// owned by `engine_deferred_end_think_frames`.
@@ -324,6 +334,7 @@ pub struct AiController {
     /// that consumed the order may close the deferred EndThink frames.
     #[serde(skip)]
     #[state_hash(skip)]
+    #[bitcode(skip)]
     pub engine_completion_verdict_resolved: bool,
 
     // -- Macro system --

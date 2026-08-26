@@ -38,7 +38,15 @@ use crate::repulsive::{RepulsiveLine, RepulsivePoint};
 /// The full plane lives on the sight obstacle; we cache only the
 /// coefficients needed by the position math here.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PlaneZCoeffs {
     pub az: f32,
@@ -159,6 +167,9 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(PositionComputed, u8);
+crate::bitcode_adapters::impl_native_bitcode_flags!(IncrementComputed, u8);
+
 impl robin_util::state_hash::StateHash for PositionComputed {
     fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         robin_util::state_hash::StateHash::state_hash(&self.bits(), state);
@@ -181,6 +192,8 @@ impl robin_util::state_hash::StateHash for PositionComputed {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Posture {
@@ -246,6 +259,8 @@ impl Posture {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Layer(u16);
 
@@ -318,6 +333,8 @@ impl std::fmt::Display for Layer {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Direction(u8);
 
@@ -407,6 +424,24 @@ pub struct SectorHandle {
     arena: Option<crate::fast_find_grid::SectorIndex>,
 }
 
+impl crate::bitcode_adapters::NativeBitcode for SectorHandle {
+    type Wire = (u16, Option<crate::fast_find_grid::SectorIndex>);
+
+    fn to_wire(&self) -> Self::Wire {
+        (self.public.get(), self.arena)
+    }
+
+    fn from_wire((public, arena): Self::Wire) -> Self {
+        Self {
+            public: nonmax::NonMaxU16::new(public)
+                .expect("native bitcode decoded the reserved sector sentinel"),
+            arena,
+        }
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(SectorHandle);
+
 impl SectorHandle {
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
@@ -465,13 +500,17 @@ impl Serialize for SectorHandle {
     where
         S: serde::Serializer,
     {
-        match self.arena {
-            Some(arena) => SectorHandleSerde::Exact {
-                public: self.public,
-                arena,
+        if serializer.is_human_readable() {
+            match self.arena {
+                Some(arena) => SectorHandleSerde::Exact {
+                    public: self.public,
+                    arena,
+                }
+                .serialize(serializer),
+                None => SectorHandleSerde::Legacy(self.public).serialize(serializer),
             }
-            .serialize(serializer),
-            None => SectorHandleSerde::Legacy(self.public).serialize(serializer),
+        } else {
+            (self.public.get(), self.arena).serialize(serializer)
         }
     }
 }
@@ -481,16 +520,24 @@ impl<'de> Deserialize<'de> for SectorHandle {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(match SectorHandleSerde::deserialize(deserializer)? {
-            SectorHandleSerde::Legacy(public) => Self {
-                public,
-                arena: None,
-            },
-            SectorHandleSerde::Exact { public, arena } => Self {
-                public,
-                arena: Some(arena),
-            },
-        })
+        if deserializer.is_human_readable() {
+            Ok(match SectorHandleSerde::deserialize(deserializer)? {
+                SectorHandleSerde::Legacy(public) => Self {
+                    public,
+                    arena: None,
+                },
+                SectorHandleSerde::Exact { public, arena } => Self {
+                    public,
+                    arena: Some(arena),
+                },
+            })
+        } else {
+            let (public, arena) =
+                <(u16, Option<crate::fast_find_grid::SectorIndex>)>::deserialize(deserializer)?;
+            let public = nonmax::NonMaxU16::new(public)
+                .ok_or_else(|| serde::de::Error::custom("reserved sector sentinel 65535"))?;
+            Ok(Self { public, arena })
+        }
     }
 }
 
@@ -538,6 +585,8 @@ impl std::fmt::Display for SectorHandle {
 )]
 pub struct ObstacleHandle(pub nonmax::NonMaxU16);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(ObstacleHandle, u16);
+
 impl ObstacleHandle {
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
@@ -581,6 +630,8 @@ impl std::fmt::Display for ObstacleHandle {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct DoorHandle(pub u32);
 impl DoorHandle {
@@ -602,6 +653,8 @@ impl DoorHandle {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ElementHandle(pub u32);
 impl ElementHandle {
@@ -682,7 +735,15 @@ pub struct TargetInfo {
 }
 
 /// Position, movement, direction, and collision component for a game entity.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PositionInterface {
     // -- Serialized lazy-computation state --
     computed_position: PositionComputed,
@@ -2188,7 +2249,15 @@ impl PositionInterface {
 // AnticollisionData — snapshot for save/restore
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AnticollisionData {
     pub map: MapPoint,
     pub increment_map: MapVec,
@@ -2333,6 +2402,35 @@ pub fn vector_normal_iso(x: f32, y: f32, direct: bool) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sector_handle_roundtrips_legacy_and_exact_forms_across_serde_formats() {
+        let legacy = SectorHandle::new(23).unwrap();
+        let exact = legacy.with_arena_index(crate::fast_find_grid::SectorIndex::new(41).unwrap());
+
+        assert_eq!(serde_json::to_string(&legacy).unwrap(), "23");
+        assert_eq!(
+            serde_json::to_string(&exact).unwrap(),
+            r#"{"public":23,"arena":41}"#
+        );
+        let legacy_from_json: SectorHandle = serde_json::from_str("23").unwrap();
+        let exact_from_json: SectorHandle =
+            serde_json::from_str(r#"{"public":23,"arena":41}"#).unwrap();
+        assert_eq!(legacy_from_json.get(), legacy.get());
+        assert_eq!(legacy_from_json.arena_index(), None);
+        assert_eq!(exact_from_json.get(), exact.get());
+        assert_eq!(exact_from_json.arena_index(), exact.arena_index());
+
+        let values = vec![legacy, exact];
+        let bytes = bitcode::encode(&values);
+        let restored: Vec<SectorHandle> =
+            bitcode::decode(&bytes).expect("decode mixed sector handles");
+        assert_eq!(restored.len(), values.len());
+        for (restored, value) in restored.into_iter().zip(values) {
+            assert_eq!(restored.get(), value.get());
+            assert_eq!(restored.arena_index(), value.arena_index());
+        }
+    }
 
     fn p3(x: f32, y: f32, z: f32) -> WorldPoint3D {
         WorldPoint3D::new(x, y, z)

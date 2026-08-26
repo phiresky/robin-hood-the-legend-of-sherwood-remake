@@ -36,7 +36,16 @@ pub const MT_STR_SPECIAL_PEASANT_C: usize = 252;
 /// The amount enum passed to the `PROP_NAME` script native (NAME_A/B/C).
 #[repr(u8)]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SpecialPeasantName {
     A = 0,
@@ -72,7 +81,16 @@ impl SpecialPeasantName {
 /// Names of the trainable combat skills.
 #[repr(u32)]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SkillName {
     HandToHand = 0,
@@ -90,6 +108,8 @@ pub enum SkillName {
     PartialEq,
     Eq,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Skill {
     pub experience: u32,
@@ -100,7 +120,16 @@ pub struct Skill {
 
 /// Dynamic combat stats shared by all human characters.
 #[derive(
-    Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct HumanStatus {
     pub hand_to_hand: Skill,
@@ -185,7 +214,15 @@ impl HumanStatus {
 
 /// Full dynamic state for a player character.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PcStatus {
     // ── Skills (from HumanStatus base) ──

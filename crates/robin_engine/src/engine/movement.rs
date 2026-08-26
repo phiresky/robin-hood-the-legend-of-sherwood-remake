@@ -151,7 +151,7 @@ fn actor_post_seek_interaction(
 ) -> Option<ActorPostSeekInteraction> {
     let element = actor
         .post_seek_sequence
-        .as_deref()
+        .as_ref()
         .and_then(|sequence| sequence.elements.first())?;
     let antagonist = match &element.data {
         crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
@@ -2646,7 +2646,13 @@ fn ai_move_goal_door(
 /// animation drives) until it is cancelled (halt / postpone) or the timeout
 /// elapses.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(crate) struct FailedPathRequest {
     pub(crate) owner: EntityId,
@@ -2678,7 +2684,13 @@ impl FailedPathRequest {
 /// most one request at the original `RHEngine::ProcessPathRequests` point per
 /// frame.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(crate) struct PendingPathRequest {
     /// This request was decoded from an Original v48 pending-path FIFO.
@@ -2775,7 +2787,13 @@ fn parity_path_request_state(
 }
 
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 struct ProcessedPathRequest {
     request: PendingPathRequest,
@@ -2799,7 +2817,14 @@ pub(crate) struct ParityPendingPathRequest {
 /// returns no result; a later READY call delivers it and starts the next
 /// request. `in_flight` preserves that one-call latency.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(crate) struct PendingPathRequestQueue {
     waiting: Vec<PendingPathRequest>,

@@ -44,7 +44,14 @@ mod entity_creation_order_pairs {
 /// The parallel collections remain stored in their original order. Validation
 /// checks their relationships at attachment/snapshot boundaries; it never
 /// rebuilds or reorders them from entity or level scans.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct WorldState {
     pub(crate) entities: Entities,
     /// Portrait/UI order, sorted by character-profile priority after loading.

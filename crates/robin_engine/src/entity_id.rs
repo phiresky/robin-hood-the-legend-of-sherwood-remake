@@ -18,6 +18,8 @@ use std::hash::{Hash, Hasher};
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum EntityIdKind {
     Pc,
@@ -45,6 +47,8 @@ macro_rules! entity_leaf_id {
             Serialize,
             Deserialize,
             robin_state_hash_derive::StateHash,
+            bitcode::Encode,
+            bitcode::Decode,
         )]
         pub struct $name(pub u32);
 
@@ -76,6 +80,8 @@ entity_leaf_id!(NetId);
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ActorId {
     Pc(PcId),
@@ -93,6 +99,8 @@ pub enum ActorId {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum HumanId {
     Pc(PcId),
@@ -110,6 +118,8 @@ pub enum HumanId {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum NpcId {
     Soldier(SoldierId),
@@ -126,6 +136,8 @@ pub enum NpcId {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ObjectId {
     Bonus(BonusId),
@@ -140,7 +152,16 @@ pub enum ObjectId {
 /// variant mirrors the concrete [`crate::element::Entity`] variant at that
 /// slot, making type mismatches visible in debug output and serialized state
 /// while still retaining the raw table index needed by script handles.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum EntityId {
     Pc(PcId),
     Soldier(SoldierId),

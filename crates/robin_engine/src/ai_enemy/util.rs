@@ -55,6 +55,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(GetNearestFlags, u16);
+
 // ---------------------------------------------------------------------------
 // Seek flags
 // ---------------------------------------------------------------------------
@@ -75,6 +77,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(SeekFlags, u16);
+
 // ---------------------------------------------------------------------------
 // Report update flags
 // ---------------------------------------------------------------------------
@@ -87,6 +91,8 @@ bitflags! {
         const UPDATE_TYPE    = 0x0004;
     }
 }
+
+crate::bitcode_adapters::impl_native_bitcode_flags!(ReportUpdateFlags, u16);
 
 // ---------------------------------------------------------------------------
 // Primary target flags
@@ -101,6 +107,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(PrimaryTargetFlags, u16);
+
 // ---------------------------------------------------------------------------
 // Condition flags (internal to ThinkExpectedEvent)
 // ---------------------------------------------------------------------------
@@ -113,12 +121,22 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(ConditionFlags, u16);
+
 // ---------------------------------------------------------------------------
 // Combat position
 // ---------------------------------------------------------------------------
 
 /// A proposed combat position for swordfight tactics.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct CombatPosition {
     pub attacker: HumanHandle,
     pub attacker_position: Position,
@@ -479,7 +497,16 @@ pub(crate) fn detects_position_180_raw(
 
 /// Snapshot of entity-level data (position, direction, sword range,
 /// opponents, etc.) read by combat AI evaluation.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FighterSnapshot {
     pub handle: HumanHandle,
     pub position: Position,
@@ -1548,6 +1575,8 @@ pub(super) fn calculate_opponent_nearest_to_rene<'a>(
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum AmbushPointStatus {

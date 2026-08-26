@@ -22,6 +22,8 @@
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Quad {
     pub operation: u8,
@@ -105,6 +107,8 @@ pub type Address = u32;
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Instruction {
     /// `Q_EMPTY` — an error marker; the interpreter treats it as fatal.
@@ -196,6 +200,8 @@ pub enum Instruction {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum BinaryOp {
     IAdd,

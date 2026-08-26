@@ -548,7 +548,7 @@ mod tests {
                 sim_config: engine_api::SimConfig::default(),
                 version: REPLAY_SCHEMA_VERSION,
                 total_frames: 1,
-                campaign: bitcode::serialize(&Campaign::default()).expect("campaign fixture"),
+                campaign: bitcode::encode(&Campaign::default()),
             },
             frames: BTreeMap::from([(
                 0,

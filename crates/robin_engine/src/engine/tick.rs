@@ -7917,7 +7917,7 @@ mod bow_command_body_parity_tests {
                 .actor_data_mut()
                 .unwrap();
             actor.seek_target = Some(owner);
-            actor.post_seek_sequence = Some(Box::new(crate::sequence::Sequence::new()));
+            actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
         }
         engine.orders.sequence_manager.element_interrupted(
             seq_id,
@@ -8013,7 +8013,7 @@ mod bow_command_body_parity_tests {
         // ladder/wall fall runs. Original's FallingLadderWall Execute arm owns
         // the single mulWaitTime scalar for the flight countdown in this state.
         actor.seek_target = Some(owner);
-        actor.post_seek_sequence = Some(Box::new(crate::sequence::Sequence::new()));
+        actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
         actor.seek_refresh_wait = 0;
         actor.wait_time = 2;
         actor.active_flight = Some(crate::element::ActiveFlight {

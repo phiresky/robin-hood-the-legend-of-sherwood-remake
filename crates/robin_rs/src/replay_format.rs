@@ -52,8 +52,6 @@ pub enum FormatError {
     Zstd(std::io::Error),
     #[error("bitcode decode failed: {0}")]
     Bitcode(#[from] bitcode::Error),
-    #[error("bitcode encode failed: {0}")]
-    Encode(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     #[error("jsonl decode failed: {0}")]
@@ -76,7 +74,7 @@ pub enum FormatError {
 /// callers normally pass [`ENGINE_VERSION_HASH`].
 pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatError> {
     let file: ReplayFile = data.into();
-    let bytes = bitcode::serialize(&file).map_err(|e| FormatError::Encode(format!("{e}")))?;
+    let bytes = bitcode::encode(&file);
     let zbytes = zstd::encode_all(&bytes[..], ZSTD_LEVEL).map_err(FormatError::Zstd)?;
     let b64 = BASE64.encode(&zbytes);
     Ok(format!("{COMPACT_PREFIX}{hash}-{b64}"))
@@ -93,7 +91,7 @@ pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
     let (hash, payload) = rest.split_once('-').ok_or(FormatError::MissingSeparator)?;
     let zbytes = BASE64.decode(payload.as_bytes())?;
     let bytes = zstd::decode_all(&zbytes[..]).map_err(FormatError::Zstd)?;
-    let file: ReplayFile = bitcode::deserialize(&bytes)?;
+    let file: ReplayFile = bitcode::decode(&bytes)?;
     let data = file.into();
     validate_replay_data(&data)?;
     Ok((hash.to_string(), data))
@@ -228,6 +226,17 @@ mod tests {
         assert_eq!(back.frame_count(), 8);
         assert_eq!(back.frame(0).expect("frame zero").input.commands.len(), 1);
         assert_eq!(back.frame(7).expect("frame seven").input.commands.len(), 2);
+    }
+
+    #[test]
+    fn schema_twelve_is_rejected_without_compatibility_decode() {
+        let mut data = sample_data();
+        data.header.version = 12;
+        let encoded = encode_compact(&data, ENGINE_VERSION_HASH).unwrap();
+        assert!(matches!(
+            decode_compact(&encoded),
+            Err(FormatError::UnsupportedVersion { version: 12 })
+        ));
     }
 
     #[test]

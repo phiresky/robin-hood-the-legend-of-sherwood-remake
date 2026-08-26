@@ -56,6 +56,8 @@ use crate::sound::ResolvedExclamation;
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(transparent)]
 pub struct SimulationTick(u32);
@@ -76,7 +78,15 @@ impl SimulationTick {
 /// [`PlayerCommand`] enum and the simulation-frame API. Raw platform/UI
 /// actions must be resolved before constructing it. Its transparent wire
 /// representation preserves the existing [`PlayerInput`] schema.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct SimCommand(PlayerInput);
 
@@ -118,7 +128,16 @@ impl From<SimCommand> for PlayerInput {
 
 /// Validation policy for a host sound-manager boundary.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SoundBoundaryPolicy {
@@ -131,7 +150,15 @@ pub enum SoundBoundaryPolicy {
 }
 
 /// The single sound-manager boundary which may precede a simulation frame.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundBoundary {
     /// Whether FIFO validation follows live Rust or Original replay rules.
     pub policy: SoundBoundaryPolicy,
@@ -145,7 +172,15 @@ pub struct SoundBoundary {
 /// may be several frames after the command created it. Parity adapters resolve
 /// the trace identity outside the engine, then admit the concrete result with
 /// the frame whose hourglass consumes it.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RecordedDropAleRoute {
     pub actor: EntityId,
     pub destination: crate::coordinates::MapPoint,
@@ -181,7 +216,16 @@ impl SoundBoundary {
 /// put a director completion after sound or encode multiple sound boundaries
 /// (`original-code/RHgame.cpp:1867-1926`, `RHengine.cpp:4172`,
 /// `RHsound.cpp:2125-2250`).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ExternalFacts {
     /// Camera-director completions produced during the preceding refresh, in
     /// termination order.
@@ -241,7 +285,15 @@ impl ExternalFacts {
 /// execute an action immediately in its own no-hourglass admission to produce a
 /// synchronous reply, then place the same value in the enclosing host frame's
 /// journal record.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExternalAction {
     Native {
@@ -276,7 +328,15 @@ pub enum ExternalAction {
 }
 
 /// Serializable result of an admitted host action.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ExternalActionResult {
     Native(Result<i32, String>),
@@ -294,7 +354,15 @@ pub enum ExternalActionResult {
 }
 
 /// Owned/serializable form of [`ConsoleResponse`] used at the frame boundary.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum FrameConsoleResponse {
     Ok(String),
@@ -328,7 +396,15 @@ impl From<ConsoleResponse> for FrameConsoleResponse {
 /// gate; mission scripts/messages and the mission clock still advance. It must
 /// not represent a host iteration where `PerformHourglass` was skipped
 /// entirely; use `run_hourglass` for that host gate.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SimulationFrameInput {
     /// Ordered facts observed between the preceding tick and these commands.
     pub external_facts: ExternalFacts,
@@ -444,7 +520,19 @@ impl SimulationFrameInput {
 /// [`SideEffects`] remains the compatibility payload while callers migrate to
 /// the frame API. Keeping it behind this type makes the sim-to-host direction
 /// explicit without re-encoding or reordering any existing event fields.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+/// The host-local `SideEffects::pending_minimap_position` remains available in
+/// memory even though the `SideEffects` Serde representation deliberately
+/// skips it.
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct SimEvents(SideEffects);
 
@@ -475,7 +563,15 @@ impl From<SimEvents> for SideEffects {
 }
 
 /// Result of one admitted engine-hourglass transaction.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SimulationFrameOutput {
     /// Engine frame counter on entry.
     pub frame_before: u32,
@@ -503,7 +599,17 @@ impl SimulationFrameOutput {
 
 /// An authoritative external fact was incompatible with the current
 /// deterministic state.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum FrameAdvanceError {
     #[error("director completion {index} rejected {completion:?}: {reason}")]
     DirectorCompletionRejected {
@@ -580,6 +686,32 @@ mod tests {
             deterministic_hash(&replay_empty),
             "live and replay validation policy is authoritative"
         );
+    }
+
+    #[test]
+    fn native_frame_codec_preserves_console_external_actions() {
+        let action = ExternalAction::ConsoleCommand {
+            command: ConsoleCommand::GiveMoney {
+                amount: 1_000,
+                show_help: true,
+            },
+            selected_view_element: None,
+        };
+
+        let encoded = bitcode::encode(&action);
+        let decoded: ExternalAction =
+            bitcode::decode(&encoded).expect("decode native console external action");
+
+        assert!(matches!(
+            decoded,
+            ExternalAction::ConsoleCommand {
+                command: ConsoleCommand::GiveMoney {
+                    amount: 1_000,
+                    show_help: true,
+                },
+                selected_view_element: None,
+            }
+        ));
     }
 
     #[test]

@@ -35,6 +35,8 @@ use crate::sector::{LiftType, SectorNumber};
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct DoorIndex(pub u32);
 
@@ -77,6 +79,8 @@ impl std::fmt::Display for DoorIndex {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum GateType {
     #[default]
@@ -96,6 +100,8 @@ pub enum GateType {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DoorType {
     #[default]
@@ -156,6 +162,8 @@ pub struct ActorAuthInfo {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum GateState {
     /// Gate is fully closed — blocks passage.
@@ -218,7 +226,16 @@ pub const BODY_DOOR_BLOCK_SQUARE_RADIUS: f32 = 400.0;
 
 /// A link between two gates that share a sector. Used by the gate-graph
 /// A* to find multi-gate paths between sectors.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct GateLink {
     /// Index of the other door in the global door table.
     pub other_door: DoorIndex,
@@ -243,7 +260,15 @@ pub struct GateLink {
 ///
 /// Carries all serialized door state: lock flags per actor category,
 /// unlockability, and special PC authorisations.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Door {
     // -- Gate base fields (serialized by patches) --
     pub gate_type: GateType,
@@ -1009,7 +1034,16 @@ impl Door {
 /// `direct = true` means going from `point_out` (sector_out side) to
 /// `point_in` (sector_in side). `direct = false` means the reverse.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct GatePathStep {
     pub door_index: DoorIndex,
@@ -1022,7 +1056,15 @@ pub struct GatePathStep {
 /// successful gate chain and an observed `FindPathGates` failure instead of
 /// silently running a second search against reconstructed topology.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct RecordedGatePath {
     pub source_sector: crate::sector::SectorNumber,
@@ -1032,7 +1074,15 @@ pub struct RecordedGatePath {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum RecordedGateOutcome {
     Success(Vec<GatePathStep>),

@@ -336,7 +336,8 @@ impl LegacyCampaign {
                 CampaignValue::Custom18 => self.values[24],
                 CampaignValue::Custom19 => self.values[25],
                 CampaignValue::Custom20 => self.values[26],
-            },
+            }
+            .into(),
             ares: self.ares,
             missions,
             accessible_mission_indices,

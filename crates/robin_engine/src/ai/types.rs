@@ -21,7 +21,16 @@ pub type ObjectHandle = u32;
 pub type DoorHandle = u32;
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum CharlySeekerTarget {
     SelfNpc,
@@ -29,7 +38,16 @@ pub enum CharlySeekerTarget {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum AiStateChangeSource {
     SelfActor,
@@ -48,7 +66,16 @@ impl AiStateChangeSource {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum EnterSwordfightRequest {
     RaiseSword,
@@ -81,6 +108,8 @@ bitflags! {
         const FREEZE = 0x04;
     }
 }
+
+crate::bitcode_adapters::impl_native_bitcode_flags!(AiLockFlags, u8);
 
 // ---------------------------------------------------------------------------
 // GoTo flags
@@ -116,6 +145,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(GotoFlags, u16);
+
 // ---------------------------------------------------------------------------
 // Duty flags
 // ---------------------------------------------------------------------------
@@ -128,6 +159,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(DutyFlags, u16);
+
 // ---------------------------------------------------------------------------
 // Alert flags
 // ---------------------------------------------------------------------------
@@ -139,6 +172,8 @@ bitflags! {
         const ONLY_MUSIC           = 0x0002;
     }
 }
+
+crate::bitcode_adapters::impl_native_bitcode_flags!(AlertFlags, u16);
 
 // ---------------------------------------------------------------------------
 // Speech flags
@@ -159,6 +194,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(SpeechFlags, u16);
+
 // ---------------------------------------------------------------------------
 // Remark-target flags
 // ---------------------------------------------------------------------------
@@ -175,6 +212,8 @@ bitflags! {
         const ALL_NPC        = Self::CIVILIANS.bits() | Self::VILLAINS.bits();
     }
 }
+
+crate::bitcode_adapters::impl_native_bitcode_flags!(RemarkTargetFlags, u16);
 
 // ---------------------------------------------------------------------------
 // Attention value constants

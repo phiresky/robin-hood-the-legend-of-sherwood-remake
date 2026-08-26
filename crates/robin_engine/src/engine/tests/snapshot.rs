@@ -1,5 +1,10 @@
 use super::*;
 
+fn native_round_trip(engine: &EngineInner) -> EngineInner {
+    let bytes = super::super::snapshot::encode_native_engine_inner(engine);
+    super::super::snapshot::decode_native_engine_inner(&bytes).expect("decode native engine")
+}
+
 fn engine_snapshot_fixture() -> EngineInner {
     let mut engine = EngineInner::new();
 
@@ -92,12 +97,7 @@ fn engine_state_hash_is_deterministic_within_the_current_build() {
         crate::replay::state_hash(&clone)
     );
 
-    let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
-        .expect("encode compatibility fixture");
-    let (restored, consumed): (EngineInner, usize) =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-            .expect("decode compatibility fixture");
-    assert_eq!(consumed, bytes.len());
+    let restored = native_round_trip(&engine);
     assert_eq!(
         crate::replay::state_hash(&engine),
         crate::replay::state_hash(&restored)
@@ -160,11 +160,7 @@ fn simulation_gates_survive_rollback_restore_and_replay() {
     original.set_actors_frozen(true);
     original.set_fade_freeze_frames_remaining(2);
 
-    let bytes =
-        bincode::serde::encode_to_vec(&original, bincode::config::standard()).expect("encode");
-    let (mut replay, consumed): (EngineInner, usize) =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).expect("decode");
-    assert_eq!(consumed, bytes.len());
+    let mut replay = native_round_trip(&original);
     assert!(replay.engine_locked());
     assert!(replay.actors_frozen());
     assert_eq!(replay.fade_freeze_frames_remaining(), 2);
@@ -209,12 +205,7 @@ fn engine_camera_zoom_gate_ignores_host_display_during_rollback_tick() {
     live.feedback.cutscene_camera.zoom_init_done = true;
     live.send_simple_message(crate::messenger::SimpleMessage::LockAlt);
 
-    let bytes = bincode::serde::encode_to_vec(&live, bincode::config::standard())
-        .expect("encode active camera transition");
-    let (mut replay, consumed): (EngineInner, usize) =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-            .expect("decode active camera transition");
-    assert_eq!(consumed, bytes.len());
+    let mut replay = native_round_trip(&live);
 
     let mut live_display = HostDisplayState::default();
     live_display.background_transform.zoom_to_up = false;
@@ -258,12 +249,7 @@ fn rng_snapshot_restores_next_gameplay_draw_and_state_hash() {
             .expect("positive script bound");
     });
 
-    let bytes = bincode::serde::encode_to_vec(&live, bincode::config::standard())
-        .expect("encode RNG snapshot");
-    let (mut restored, consumed): (EngineInner, usize) =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-            .expect("decode RNG snapshot");
-    assert_eq!(consumed, bytes.len());
+    let mut restored = native_round_trip(&live);
     assert_eq!(
         crate::replay::state_hash(&live),
         crate::replay::state_hash(&restored)

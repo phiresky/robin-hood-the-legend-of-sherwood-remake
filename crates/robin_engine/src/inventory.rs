@@ -182,7 +182,15 @@ fn apply_difficulty_scaling(base: u16, difficulty: DifficultyLevel) -> u16 {
 // ═══════════════════════════════════════════════════════════════════
 
 /// State of a PC's 3 quick-action slots.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActionSlots {
     /// Currently selected action.
     pub current_action: Action,

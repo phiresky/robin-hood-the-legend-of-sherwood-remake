@@ -31,6 +31,8 @@ use crate::sbfile::SbFile;
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum FrameKind {
     Character,
@@ -54,6 +56,8 @@ pub enum FrameKind {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum Ambiance {
@@ -101,7 +105,15 @@ pub const UNMAPPED: u16 = 0xFFFF;
 ///
 /// Each row corresponds to one action/direction combination loaded from an
 /// `.rhs` profile.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SpriteScript {
     /// Action ID this row implements (from `RowHeader::action_id`). Kept
     /// per-row so each script can identify its action even when multiple
@@ -156,7 +168,15 @@ impl SpriteScript {
 // ---------------------------------------------------------------------------
 
 /// A loaded sprite profile containing all animation rows and their mapping.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SpriteInfo {
     /// All animation rows for this profile.
     /// Arc-shared so entities with the same profile share one copy.
@@ -364,7 +384,16 @@ impl FrameHeader {
 ///
 /// Loads `.rhs` binary files containing named animation profiles, parses
 /// their rows and frames, and caches results keyed by `filename + profile`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SpriteScriptor {
     cache: HashMap<String, SpriteInfo>,
 }

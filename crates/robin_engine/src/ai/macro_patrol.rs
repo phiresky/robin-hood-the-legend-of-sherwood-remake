@@ -23,6 +23,8 @@ use super::*;
 )]
 pub struct PathId(pub nonmax::NonMaxU16);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(PathId, u16);
+
 impl PathId {
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
@@ -59,7 +61,15 @@ impl std::fmt::Display for PathId {
 /// Wraps a reference to a `RawHikingPath` (by index into `EngineInner::hiking_paths`)
 /// with the current waypoint index and traversal direction. Uses ping-pong
 /// traversal: when the end is reached, direction flips instead of wrapping.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PatrolPath {
     /// Index into `EngineInner::hiking_paths`.
     pub hiking_path_index: PathId,
@@ -78,7 +88,15 @@ pub struct PatrolPath {
 /// Exact serialized `RHPath::SerializeStatus` state retained while no hiking
 /// path is attached. `RHPath::Init(-1)` only clears the path pointer/index; it
 /// deliberately preserves these cursor, direction, and history values.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct DetachedPatrolPathStatus {
     pub hiking_path_index: Option<PathId>,
     pub current_waypoint_index: u8,
@@ -398,7 +416,15 @@ impl PatrolPath {
 /// One entry in the patrol chief's position history, recording where the
 /// chief walked.  Used by `compute_patrol_positions` to place minions
 /// behind the chief in formation.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PathHistoryEntry {
     pub position: Position,
     pub direction: u8,
@@ -424,7 +450,15 @@ pub const PATROL_SPEED_DIVISOR: f32 = 30.0;
 /// Sector is currently an opaque handle; once the sector system is fully
 /// integrated this will reference it properly.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Position {
     pub x: f32,
@@ -451,7 +485,16 @@ impl Default for Position {
 // ---------------------------------------------------------------------------
 
 /// Predicted destination of a target actor for AI pursuit.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ForecastedDestination {
     pub position: Position,
     pub direction: u16,
@@ -460,7 +503,15 @@ pub struct ForecastedDestination {
 /// RNG-free destination forecast prepared from live actor/door state.
 /// Building exits remain alternatives until the exact AI consumer resolves
 /// the forecast, preserving Original draw ownership.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PreparedForecastDestination {
     fallback: ForecastedDestination,
     building_gates: Vec<ForecastedDestination>,

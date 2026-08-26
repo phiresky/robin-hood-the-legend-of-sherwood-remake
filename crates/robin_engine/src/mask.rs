@@ -42,6 +42,8 @@ use crate::level_data::{MASK_CHARACTER, MASK_OBSTACLE, MASK_PROJECTILE, RawMask}
 )]
 pub struct MaskIndex(pub nonmax::NonMaxU32);
 
+crate::bitcode_adapters::impl_native_bitcode_index!(MaskIndex, u32);
+
 impl MaskIndex {
     #[inline]
     pub fn new(v: u32) -> Option<Self> {
@@ -71,7 +73,15 @@ impl std::fmt::Display for MaskIndex {
 }
 
 /// Runtime form of a building/occlusion mask.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RuntimeMask {
     /// Layer this mask belongs to.
     pub layer: u16,

@@ -11,7 +11,16 @@ use crate::{
 
 /// Polymorphic `RHSector*` retained by Original while refreshing a seek.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ActorSeekSector {
     Position(SectorHandle),
@@ -19,7 +28,16 @@ pub enum ActorSeekSector {
 }
 
 /// Actor-owned continuation state serialized by `RHElementActor::Serialize`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActorContinuationState {
     pub about_to_surrender: bool,
     pub surrendering: bool,

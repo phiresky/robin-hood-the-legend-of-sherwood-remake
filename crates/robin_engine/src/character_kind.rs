@@ -37,6 +37,8 @@ use crate::resource_ids;
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum CharacterKind {
     /// Robin Hood — forest (`"Robin des bois"`, is_town=false) and town

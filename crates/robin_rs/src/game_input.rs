@@ -20,7 +20,7 @@ use robin_engine::element::{
 };
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::player_command::{PlayerCommand, PlayerId};
+use robin_engine::player_command::{PlayerCommand, PlayerId, QueuedQuickActionCommand};
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::Action;
 use robin_engine::sector as engine_sector;
@@ -478,7 +478,7 @@ pub fn queue_shift_click_commands(
             | PlayerCommand::CrouchDown
             | PlayerCommand::StandUp) => Some(PlayerCommand::QueueQuickAction {
                 action,
-                command: Box::new(command),
+                command: QueuedQuickActionCommand::from(command),
             }),
             PlayerCommand::MakePcFast { pc_id } => {
                 Some(PlayerCommand::MakeQueuedActionFast { pc_id })

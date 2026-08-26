@@ -9,7 +9,14 @@ use super::super::{PendingScrollAmulet, TimerEntry, movement};
 /// Owning these values together does not make their effects asynchronous:
 /// every queue is still drained at its pre-existing point in the ten-phase
 /// tick, and sequence/script callbacks remain same-call operations.
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct OrderRuntime {
     pub(crate) next_order_id: u32,
     pub(crate) messenger: Messenger,
@@ -91,6 +98,11 @@ impl OrderRuntime {
     /// (`original-code/RHartificialmalignity.cpp:15502-15570`). Both survive
     /// until the sequence-manager hourglass instructs them in launch order.
     pub(crate) fn validate_invariants(&self) -> Result<(), String> {
+        for (owner, intent) in &self.pending_move_requests {
+            intent
+                .validate_queued_move_topology()
+                .map_err(|detail| format!("pending AI move for {owner:?}: {detail}"))?;
+        }
         Ok(())
     }
 }
@@ -128,13 +140,46 @@ mod tests {
     fn pending_move_queue_accepts_two_intents_from_one_think() {
         let mut orders = OrderRuntime::new();
         let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
-        let intent =
+        let mut intent =
             crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0);
+        intent.source_position = Some(crate::coordinates::MapPoint::new(1.0, 2.0));
+        intent.source_layer = Some(0);
 
         orders.pending_move_requests.push((owner, intent.clone()));
         orders.pending_move_requests.push((owner, intent));
 
         assert!(orders.validate_invariants().is_ok());
         assert_eq!(orders.pending_move_requests.len(), 2);
+    }
+
+    #[test]
+    fn pending_move_queue_rejects_missing_call_time_topology() {
+        let mut orders = OrderRuntime::new();
+        let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
+        orders.pending_move_requests.push((
+            owner,
+            crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0),
+        ));
+
+        let error = orders.validate_invariants().unwrap_err();
+        assert!(error.contains("call-time source position"), "{error}");
+    }
+
+    #[test]
+    fn pending_move_queue_rejects_inconsistent_exact_sector_identity() {
+        let mut orders = OrderRuntime::new();
+        let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
+        let mut intent =
+            crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0);
+        intent.source_position = Some(crate::coordinates::MapPoint::new(1.0, 2.0));
+        intent.source_layer = Some(0);
+        intent.source_sector = crate::position_interface::SectorHandle::new(3).map(|sector| {
+            sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(3).unwrap())
+        });
+        intent.source_sector_index = crate::fast_find_grid::SectorIndex::new(4);
+        orders.pending_move_requests.push((owner, intent));
+
+        let error = orders.validate_invariants().unwrap_err();
+        assert!(error.contains("source sector identity"), "{error}");
     }
 }

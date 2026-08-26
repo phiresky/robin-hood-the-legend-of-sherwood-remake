@@ -16,6 +16,8 @@ use crate::{coordinates::MapPoint, element::EntityId};
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum AlliedStance {
     /// Do not acquire targets or leave the assigned position.
@@ -47,6 +49,8 @@ impl AlliedStance {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum AlliedFormation {
     #[default]
@@ -70,14 +74,32 @@ impl AlliedFormation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum AlliedDuty {
     Hold { anchor: MapPoint },
     Patrol { points: [MapPoint; 2], next: u8 },
     Follow { hero: EntityId, offset: MapPoint },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AlliedSoldierOrder {
     pub stance: AlliedStance,
     pub formation: AlliedFormation,
@@ -97,7 +119,15 @@ pub struct AlliedSoldierOrder {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AlliedPinnedGroup {
     pub id: u32,
@@ -105,7 +135,16 @@ pub struct AlliedPinnedGroup {
 }
 
 #[derive(
-    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AlliedSeatState {
     pub selection: Vec<EntityId>,
@@ -113,7 +152,15 @@ pub struct AlliedSeatState {
     pub first_visible_portrait: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AlliedControlState {
     pub seats: Vec<AlliedSeatState>,
     #[serde(with = "serde_json_any_key::any_key_map_sized")]

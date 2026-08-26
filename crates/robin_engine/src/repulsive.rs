@@ -23,7 +23,9 @@ use crate::rhline;
 /// `SetForce` — see [`rhline::repulsive_set_force`].  The stored
 /// `action_radius` **includes** `radius`
 /// (`action_radius = radius + action_radius_input`).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct RepulsivePoint {
     pub position: MapPoint,
     pub radius: f32,
@@ -123,7 +125,9 @@ impl RepulsivePoint {
 ///
 /// `action_radius` **includes** `radius` (same convention as
 /// [`RepulsivePoint`]).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct RepulsiveLine {
     pub a: MapPoint,
     pub b: MapPoint,

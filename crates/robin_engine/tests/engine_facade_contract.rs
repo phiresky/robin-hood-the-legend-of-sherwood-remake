@@ -177,7 +177,7 @@ fn engine_inner_is_a_borrow_only_projection() {
 
     assert!(
         offenders.is_empty(),
-        "EngineInner may only be borrowed through Engine; production clone/default/deserialization implementations and public owned-value constructors are forbidden: {offenders:?}"
+        "EngineInner may only be borrowed through Engine; production clone/default/codec implementations and public owned-value constructors are forbidden: {offenders:?}"
     );
 }
 
@@ -337,7 +337,7 @@ struct EngineInnerOwnershipVisitor<'a> {
 impl Visit<'_> for EngineInnerOwnershipVisitor<'_> {
     fn visit_item_struct(&mut self, item_struct: &syn::ItemStruct) {
         if item_struct.ident == "EngineInner" {
-            for forbidden in ["Clone", "Default", "Deserialize"] {
+            for forbidden in ["Clone", "Default", "Deserialize", "Encode", "Decode"] {
                 if derives_trait(&item_struct.attrs, forbidden) {
                     self.offenders.push(format!(
                         "EngineInner derives {forbidden} in {}",
@@ -357,7 +357,7 @@ impl Visit<'_> for EngineInnerOwnershipVisitor<'_> {
 
         if let Some((_, trait_path, _)) = &item_impl.trait_
             && let Some(trait_name) = trait_path.segments.last()
-            && ["Clone", "Default", "Deserialize"]
+            && ["Clone", "Default", "Deserialize", "Encode", "Decode"]
                 .iter()
                 .any(|forbidden| trait_name.ident == forbidden)
             && !is_test_only(&item_impl.attrs)
@@ -426,7 +426,7 @@ fn return_type_mentions_owned_engine_inner(output: &ReturnType) -> bool {
 fn engine_inner_guards_detect_mutation_and_ownership_escapes() {
     let syntax = syn::parse_file(
         r#"
-        #[derive(Clone)]
+        #[derive(Clone, bitcode::Encode, bitcode::Decode)]
         struct EngineInner;
 
         impl EngineInner {
@@ -460,11 +460,21 @@ fn engine_inner_guards_detect_mutation_and_ownership_escapes() {
         offenders: &mut ownership_offenders,
     };
     ownership_visitor.visit_file(&syntax);
-    assert_eq!(ownership_offenders.len(), 2);
+    assert_eq!(ownership_offenders.len(), 4);
     assert!(
         ownership_offenders
             .iter()
             .any(|offender| offender.contains("derives Clone"))
+    );
+    assert!(
+        ownership_offenders
+            .iter()
+            .any(|offender| offender.contains("derives Encode"))
+    );
+    assert!(
+        ownership_offenders
+            .iter()
+            .any(|offender| offender.contains("derives Decode"))
     );
     assert!(
         ownership_offenders

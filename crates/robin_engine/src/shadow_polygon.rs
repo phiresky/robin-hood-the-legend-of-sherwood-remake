@@ -22,7 +22,15 @@ pub const NORMAL_HALF_APERTURE: f32 = 0.5;
 pub const CHARACTER_HEIGHT: f32 = 40.0;
 
 // ── ViewParameters ────────────────────────────────────────────────
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ViewParameters {
     pub direction: [f32; 2],
     pub half_aperture: f32,
@@ -41,6 +49,7 @@ pub struct ViewParameters {
     /// original `RHShadowPolygon` renders one slice per projection area
     /// and clips the slice to that area's projected polygon.
     #[serde(skip)]
+    #[bitcode(skip)]
     pub projection_obstacle: Option<crate::position_interface::ObstacleHandle>,
 }
 

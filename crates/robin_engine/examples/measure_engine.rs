@@ -57,29 +57,21 @@ fn allocated_bytes() -> usize {
     ALLOCATED.load(Ordering::Relaxed)
 }
 
-fn bincode_len<T: Serialize>(value: &T) -> usize {
-    bincode::serde::encode_to_vec(value, bincode::config::standard())
-        .expect("bincode serialize")
-        .len()
-}
-
 fn json_len<T: Serialize>(value: &T) -> usize {
     serde_json::to_vec(value).expect("json serialize").len()
 }
 
 fn add_component<T: Serialize>(
-    totals: &mut BTreeMap<&'static str, (usize, usize)>,
+    totals: &mut BTreeMap<&'static str, usize>,
     name: &'static str,
     value: &T,
 ) {
-    let entry = totals.entry(name).or_default();
-    entry.0 += bincode_len(value);
-    entry.1 += json_len(value);
+    *totals.entry(name).or_default() += json_len(value);
 }
 
 fn measure_element_details(
     element: &robin_engine::element::ElementData,
-    totals: &mut BTreeMap<&'static str, (usize, usize)>,
+    totals: &mut BTreeMap<&'static str, usize>,
 ) {
     add_component(totals, "element.sprite", &element.sprite);
     add_component(
@@ -118,7 +110,7 @@ fn measure_element_details(
 
 fn measure_npc_details(
     npc: &robin_engine::element::NpcData,
-    totals: &mut BTreeMap<&'static str, (usize, usize)>,
+    totals: &mut BTreeMap<&'static str, usize>,
 ) {
     add_component(totals, "npc.detectable_lists", &npc.detectable_lists);
     add_component(totals, "npc.ai_brain", &npc.ai_brain);
@@ -163,8 +155,8 @@ fn measure_npc_details(
 
 fn measure_entity_components(
     entity: &Entity,
-    totals: &mut BTreeMap<&'static str, (usize, usize)>,
-    detail_totals: &mut BTreeMap<&'static str, (usize, usize)>,
+    totals: &mut BTreeMap<&'static str, usize>,
+    detail_totals: &mut BTreeMap<&'static str, usize>,
 ) {
     match entity {
         Entity::Pc(e) => {
@@ -381,8 +373,6 @@ fn main() {
     );
 
     let json = serde_json::to_string(&engine).expect("serialize");
-    let bincode = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
-        .expect("bincode serialize");
     let n_ser = 1;
     let start = Instant::now();
     for _ in 0..n_ser {
@@ -394,7 +384,6 @@ fn main() {
 
     eprintln!("\n=== Serialization ===");
     eprintln!("JSON size: {:.1} KB", json.len() as f64 / 1024.0);
-    eprintln!("Bincode size: {:.1} KB", bincode.len() as f64 / 1024.0);
     eprintln!("Serialize time: {:.1} µs", ser_us);
     if let Ok(serde_json::Value::Object(fields)) = serde_json::to_value(&engine) {
         let mut sizes: Vec<(String, usize)> = fields
@@ -411,69 +400,55 @@ fn main() {
         }
     }
 
-    let mut by_kind: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
-    let mut largest_entities: Vec<(u32, String, usize, usize)> = Vec::new();
-    let mut component_totals: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
-    let mut detail_totals: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
+    let mut by_kind: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut largest_entities: Vec<(u32, String, usize)> = Vec::new();
+    let mut component_totals: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut detail_totals: BTreeMap<&'static str, usize> = BTreeMap::new();
     for (id, entity) in engine.entities_iter().enumerate() {
         let kind = format!("{:?}", entity.kind());
-        let entity_bincode = bincode_len(entity);
         let entity_json = json_len(entity);
         let entry = by_kind.entry(kind.clone()).or_default();
         entry.0 += 1;
-        entry.1 += entity_bincode;
-        entry.2 += entity_json;
-        largest_entities.push((id as u32, kind, entity_bincode, entity_json));
+        entry.1 += entity_json;
+        largest_entities.push((id as u32, kind, entity_json));
         measure_entity_components(entity, &mut component_totals, &mut detail_totals);
     }
-    largest_entities.sort_by_key(|(_, _, bytes, _)| std::cmp::Reverse(*bytes));
+    largest_entities.sort_by_key(|(_, _, bytes)| std::cmp::Reverse(*bytes));
 
-    eprintln!("Entity bincode by kind:");
+    eprintln!("Entity JSON by kind:");
     let mut by_kind_vec: Vec<_> = by_kind.into_iter().collect();
-    by_kind_vec.sort_by_key(|(_, (_, bytes, _))| std::cmp::Reverse(*bytes));
-    for (kind, (count, bin_bytes, json_bytes)) in by_kind_vec {
+    by_kind_vec.sort_by_key(|(_, (_, bytes))| std::cmp::Reverse(*bytes));
+    for (kind, (count, json_bytes)) in by_kind_vec {
         eprintln!(
-            "  {:20} {:>4} {:>10.1} KB bin {:>10.1} KB json",
+            "  {:20} {:>4} {:>10.1} KB json",
             kind,
             count,
-            bin_bytes as f64 / 1024.0,
             json_bytes as f64 / 1024.0
         );
     }
 
-    eprintln!("Largest entities by bincode:");
-    for (id, kind, bin_bytes, json_bytes) in largest_entities.into_iter().take(16) {
+    eprintln!("Largest entities by JSON:");
+    for (id, kind, json_bytes) in largest_entities.into_iter().take(16) {
         eprintln!(
-            "  #{:<4} {:20} {:>10.1} KB bin {:>10.1} KB json",
+            "  #{:<4} {:20} {:>10.1} KB json",
             id,
             kind,
-            bin_bytes as f64 / 1024.0,
             json_bytes as f64 / 1024.0
         );
     }
 
     eprintln!("Entity component totals:");
     let mut component_vec: Vec<_> = component_totals.into_iter().collect();
-    component_vec.sort_by_key(|(_, (bin_bytes, _))| std::cmp::Reverse(*bin_bytes));
-    for (name, (bin_bytes, json_bytes)) in component_vec {
-        eprintln!(
-            "  {:20} {:>10.1} KB bin {:>10.1} KB json",
-            name,
-            bin_bytes as f64 / 1024.0,
-            json_bytes as f64 / 1024.0
-        );
+    component_vec.sort_by_key(|(_, json_bytes)| std::cmp::Reverse(*json_bytes));
+    for (name, json_bytes) in component_vec {
+        eprintln!("  {:20} {:>10.1} KB json", name, json_bytes as f64 / 1024.0);
     }
 
     eprintln!("Entity detail totals:");
     let mut detail_vec: Vec<_> = detail_totals.into_iter().collect();
-    detail_vec.sort_by_key(|(_, (bin_bytes, _))| std::cmp::Reverse(*bin_bytes));
-    for (name, (bin_bytes, json_bytes)) in detail_vec {
-        eprintln!(
-            "  {:32} {:>10.1} KB bin {:>10.1} KB json",
-            name,
-            bin_bytes as f64 / 1024.0,
-            json_bytes as f64 / 1024.0
-        );
+    detail_vec.sort_by_key(|(_, json_bytes)| std::cmp::Reverse(*json_bytes));
+    for (name, json_bytes) in detail_vec {
+        eprintln!("  {:32} {:>10.1} KB json", name, json_bytes as f64 / 1024.0);
     }
 
     eprintln!("\n══════════════════════════════════");
@@ -481,7 +456,6 @@ fn main() {
     eprintln!("  Heap per clone:  {:.1} KB", clone_heap as f64 / 1024.0);
     eprintln!("  Clone time:      {:.1} µs", clone_us);
     eprintln!("  JSON size:       {:.1} KB", json.len() as f64 / 1024.0);
-    eprintln!("  Bincode size:    {:.1} KB", bincode.len() as f64 / 1024.0);
     eprintln!("  Serialize time:  {:.1} µs", ser_us);
     eprintln!("──────────────────────────────────");
     eprintln!("  250 snapshots (10s @ 25fps):");

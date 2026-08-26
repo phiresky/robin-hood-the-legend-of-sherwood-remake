@@ -25,6 +25,8 @@ use crate::entity_id::EntityId;
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u16)]
 pub enum SimpleMessage {
@@ -105,6 +107,8 @@ pub enum SimpleMessage {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u16)]
 pub enum MouseMessage {
@@ -130,6 +134,8 @@ pub enum MouseMessage {
     num_enum::TryFromPrimitive,
     num_enum::IntoPrimitive,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u16)]
 pub enum PcMessage {
@@ -212,6 +218,8 @@ pub enum PcMessage {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MessageType {
     Simple(SimpleMessage),
@@ -231,7 +239,15 @@ pub enum MessageType {
 /// `value` is the generic parameter; `arg1`/`arg2` carry additional
 /// context passed via `send_with_args`.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Message {
     pub msg_type: MessageType,
@@ -290,7 +306,15 @@ impl Message {
 ///
 /// A simple FIFO queue that consumers poll, replacing the original
 /// pub/sub singleton's forwarding model.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Messenger {
     queue: VecDeque<Message>,
     /// Serialized Original singleton state. The queue itself is deliberately
@@ -299,7 +323,16 @@ pub struct Messenger {
     legacy_v48: Option<LegacyV48MessengerState>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct LegacyV48MessengerState {
     pub(crate) lock_view: bool,
     pub(crate) setting_watch: bool,

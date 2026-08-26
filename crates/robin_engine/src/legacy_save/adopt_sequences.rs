@@ -763,7 +763,15 @@ fn convert_element(
                         sequence_ids,
                         element_refs,
                     )
-                    .map(Box::new)
+                    .and_then(|sequence| {
+                        sequence.try_into_post_seek().map_err(|_| {
+                            invalid(
+                                "movement.post_seek_sequence",
+                                "nested continuation",
+                                "at most one post-seek level",
+                            )
+                        })
+                    })
                 })
                 .transpose()?;
             let linked_seek = if manager_owned {

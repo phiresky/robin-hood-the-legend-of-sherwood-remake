@@ -57,7 +57,15 @@ const MASS_CHARACTER: f32 = 0.7;
 /// the step to the target across the animation's duration.
 /// If `None`, the animation plays in place (transition crouch up/down,
 /// waiting↔jumping transitions, etc.).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct JumpStep {
     /// The animation to play during this step.
     pub anim: OrderType,
@@ -76,7 +84,15 @@ pub struct JumpStep {
 }
 
 /// Tracks the currently-executing step.  Stored inside [`ActiveJump`].
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct CurrentStepState {
     pub start_x: f32,
     pub start_y: f32,
@@ -99,7 +115,15 @@ pub struct CurrentStepState {
 ///
 /// Created by [`EngineInner::start_jump`] from a `Command::JumpCmd` sequence
 /// element and drained by [`EngineInner::tick_active_jump_for`].
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ActiveJump {
     /// Remaining steps to execute.
     pub steps: VecDeque<JumpStep>,

@@ -670,30 +670,19 @@ async fn handle_incoming_peer(
                 .clone()
             {
                 let encode_start = web_time::Instant::now();
-                match bincode::serde::encode_to_vec(&engine, bincode::config::standard()) {
-                    Ok(bytes) => {
-                        tracing::info!(
-                            seat = assigned_seat_u8,
-                            frame,
-                            bytes = bytes.len(),
-                            encode_us = encode_start.elapsed().as_micros(),
-                            "sending initial snapshot to peer"
-                        );
-                        let _ = sender.send(NetMsg::InitialSnapshot {
-                            frame,
-                            engine_bytes: bytes,
-                        });
-                        Some(frame)
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            seat = assigned_seat_u8,
-                            frame,
-                            "failed to serialize initial snapshot for peer: {e}"
-                        );
-                        None
-                    }
-                }
+                let bytes = engine.encode_native_snapshot();
+                tracing::info!(
+                    seat = assigned_seat_u8,
+                    frame,
+                    bytes = bytes.len(),
+                    encode_us = encode_start.elapsed().as_micros(),
+                    "sending initial snapshot to peer"
+                );
+                let _ = sender.send(NetMsg::InitialSnapshot {
+                    frame,
+                    engine_bytes: bytes,
+                });
+                Some(frame)
             } else {
                 None
             };

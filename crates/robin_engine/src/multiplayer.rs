@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 19;
+pub const NET_PROTOCOL_VERSION: u32 = 21;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -61,7 +61,7 @@ pub const STATE_HASH_INTERVAL: u32 = 25;
 
 /// One on-the-wire message.  Encoded as a bitcode binary blob inside
 /// each WebSocket frame.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub enum NetMsg {
     /// Client → server: opening handshake.
     Hello {
@@ -109,7 +109,7 @@ pub enum NetMsg {
         ms_until_next_frame: Option<u32>,
     },
     /// Server → newly-handshaking peer: an authoritative engine
-    /// snapshot for mid-mission joins.  `engine_bytes` is bincode 2.
+    /// snapshot for mid-mission joins. `engine_bytes` uses native bitcode.
     InitialSnapshot { frame: u32, engine_bytes: Vec<u8> },
     /// Client → server: this peer has loaded the mission, installed
     /// the host snapshot, and is ready to enter the synchronized sim.
@@ -254,18 +254,13 @@ impl NetChannels {
 
     /// Cache an authoritative host snapshot and push it to peers
     /// that already handshook before the cache was populated.
-    pub fn publish_initial_snapshot(
-        &self,
-        frame: u32,
-        engine: &Engine,
-    ) -> Result<(), bincode::error::EncodeError> {
+    pub fn publish_initial_snapshot(&self, frame: u32, engine: &Engine) {
         self.set_initial_snapshot(frame, engine);
-        let engine_bytes = bincode::serde::encode_to_vec(engine, bincode::config::standard())?;
+        let engine_bytes = engine.encode_native_snapshot();
         let _ = self.outgoing.send(NetOutbound::InitialSnapshot {
             frame,
             engine_bytes,
         });
-        Ok(())
     }
 
     /// Announce that this process has loaded the mission, adopted any
@@ -347,12 +342,12 @@ impl NetChannels {
 
 /// Encode a [`NetMsg`] as a binary WebSocket payload.
 pub fn encode_msg(msg: &NetMsg) -> Vec<u8> {
-    bitcode::serialize(msg).expect("NetMsg serialization is infallible")
+    bitcode::encode(msg)
 }
 
 /// Decode a binary WebSocket payload into a [`NetMsg`].
 pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, bitcode::Error> {
-    bitcode::deserialize(bytes)
+    bitcode::decode(bytes)
 }
 
 #[cfg(test)]
@@ -360,8 +355,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_requires_resolved_moves_and_point_seek_provenance() {
-        assert_eq!(NET_PROTOCOL_VERSION, 19);
+    fn protocol_version_includes_native_full_frame_snapshot_contract() {
+        // Version 21 combines native bitcode with the resolved-route and
+        // point-Seek provenance snapshot contract. Older peers fail before
+        // decoding bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 21);
     }
 
     #[test]

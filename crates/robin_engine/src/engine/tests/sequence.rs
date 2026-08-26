@@ -1891,7 +1891,7 @@ fn post_seek_handoff_clears_selected_movement_goal() {
         .unwrap()
         .actor_data_mut()
         .unwrap()
-        .post_seek_sequence = Some(Box::new(post_seek));
+        .post_seek_sequence = Some(post_seek.into_post_seek());
 
     let seek =
         SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
@@ -1959,7 +1959,7 @@ fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
         .expect("post-seek owner remains live")
         .actor_data_mut()
         .expect("PC has actor state")
-        .post_seek_sequence = Some(Box::new(post_seek));
+        .post_seek_sequence = Some(post_seek.into_post_seek());
 
     assert!(engine.start_post_seek_sequence(
         &crate::sim_rng::test_context(),
@@ -2388,7 +2388,7 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
             .unwrap();
         actor.seek_target = Some(target);
         actor.seek_distance = 4.0;
-        actor.post_seek_sequence = Some(Box::new(post_seek));
+        actor.post_seek_sequence = Some(post_seek.into_post_seek());
     }
 
     // Gate traversal rewrites the original Seek as a trailing Move while

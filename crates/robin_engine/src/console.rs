@@ -22,6 +22,8 @@
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ConsoleCommand {
     // ── Campaign / mission flow ──

@@ -25,7 +25,14 @@ pub struct DisplayedNoise {
 /// minimap and macro UI lives in [`HostDisplayState`] and must not feed
 /// back into the rollback-safe engine tick.
 #[derive(
-    Clone, Debug, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct CameraDisplayState {
     pub background_transform: BackgroundTransform,
@@ -41,7 +48,9 @@ pub struct CameraDisplayState {
 /// per-frame input scratch.  Script/director camera transition state lives in
 /// [`CameraDisplayState`] instead so rollback replay never depends on host
 /// viewport scratch.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct HostDisplayState {
     pub background_transform: BackgroundTransform,
     pub display_op: DisplayOpCode,
@@ -245,12 +254,16 @@ impl HostDisplayState {
     }
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 pub struct MacroUiState {
     entries: Vec<(EntityId, PcMacroUiState)>,
 }
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 struct PcMacroUiState {
     shift_phase: [f32; NUMBER_OF_QA_MEMORY],
     last_step_count: [usize; NUMBER_OF_QA_MEMORY],

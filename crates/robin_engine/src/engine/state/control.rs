@@ -7,7 +7,14 @@ use crate::engine::{SimConfig, SimulationGateState, SimulationRng};
 ///
 /// This owns state only; [`crate::engine::EngineInner`] remains responsible for
 /// phase ordering and lifecycle orchestration.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct SimulationControl {
     pub(crate) frame_counter: u32,
     pub(crate) simulation_gates: SimulationGateState,
@@ -42,6 +49,7 @@ pub(crate) struct SimulationControl {
     /// frame only.
     #[serde(skip)]
     #[state_hash(skip)]
+    #[bitcode(skip)]
     pub(crate) original_impossible_action_done_deadlines: BTreeMap<(u32, u32), VecDeque<i16>>,
 }
 

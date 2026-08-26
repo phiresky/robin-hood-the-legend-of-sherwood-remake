@@ -30,7 +30,15 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 
 /// Header metadata for a replay file.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ReplayHeader {
     /// Mission identifier: the mission's base `.rhm` filename without
     /// extension (e.g. `"Dem_Lei_MP"`, `"Sherwood"`). Used by the
@@ -56,22 +64,29 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 12 replaced the command-only frame
-/// payload with a complete [`SimulationFrameInput`]. External facts/actions,
-/// pre/post command phases, the hourglass/body gates, and `PostInitialize` are
-/// therefore recorded exactly as admitted, including automatic quick-action
-/// queue commands and their independent serialized store. Version 13 requires
-/// exact route identity for every stored movement quick action and explicit
-/// point-Seek route provenance in every serialized engine snapshot, so an old
-/// Rust replay cannot silently re-run spatial placement or live gate search.
-/// There is deliberately no Rust-schema compatibility adapter: earlier
-/// incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 13;
+/// On-disk replay schema version. Version 14 is the combined full-frame/native
+/// bitcode boundary: every admitted [`SimulationFrameInput`] and host control
+/// is explicit, serialized command chains are non-recursive, stored movement
+/// actions carry exact routes, and point-Seek state carries explicit route
+/// provenance. Two pre-merge formats independently used version 13, so neither
+/// is accepted by this build. There is deliberately no Rust-schema
+/// compatibility adapter: earlier incompatible layouts are rejected at the
+/// header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 14;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ReplayLoadBack {
     /// Earlier save-marker frame whose captured state must be restored.
@@ -82,7 +97,16 @@ pub struct ReplayLoadBack {
 
 /// State pinned by an in-mission save at one replay host ordinal.
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ReplaySaveMarker {
     pub state_hash: u64,
@@ -91,7 +115,15 @@ pub struct ReplaySaveMarker {
 
 /// Presentation-side input needed to reproduce host-loop behavior but which
 /// must never be smuggled into [`SimulationFrameInput`] as an engine command.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReplayHostControl {
     ModalDismiss {
@@ -102,7 +134,15 @@ pub enum ReplayHostControl {
 
 /// One complete recorded host frame: the authoritative engine transaction and
 /// its explicitly separate presentation controls.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ReplayFrame {
     /// Lockstep/history frame on entry and after host commit. They are
     /// deliberately distinct from the dense replay ordinal.
@@ -115,7 +155,15 @@ pub struct ReplayFrame {
 /// One JSONL line. Carries one complete frame input, a periodic engine-state
 /// hash used for desync detection on replay, and/or in-mission
 /// save-marker / load-back timeline records.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(deny_unknown_fields)]
 struct FrameRecord {
     /// Dense replay host-frame ordinal (0-based), distinct from the lockstep
@@ -164,7 +212,7 @@ pub struct ReplayData {
 /// payload for the compact `rhrec-{hash}-{base64}` sharing format.
 /// Kept separate from `ReplayData` so the in-memory representation
 /// can evolve without breaking binary compatibility.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ReplayFile {
     pub header: ReplayHeader,
     pub frames: BTreeMap<u32, ReplayFrame>,
@@ -450,7 +498,7 @@ impl ReplayRecorder {
         campaign: &crate::campaign::Campaign,
     ) -> std::io::Result<Self> {
         let mut writer = std::io::BufWriter::new(writer);
-        let campaign = bitcode::serialize(campaign).map_err(std::io::Error::other)?;
+        let campaign = bitcode::encode(campaign);
         let header = ReplayHeader {
             mission_id,
             rng_seed,
@@ -730,8 +778,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_requires_resolved_moves_and_point_seek_provenance() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 13);
+    fn replay_schema_version_identifies_current_full_frame_native_codec() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 14);
     }
 
     fn unique_replay_path(label: &str) -> String {
@@ -830,15 +878,18 @@ mod tests {
     }
 
     #[test]
-    fn old_schema_jsonl_is_rejected() {
-        let input = r#"{"mission_id":"old","rng_seed":7,"version":10,"total_frames":0,"campaign":null}
-"#;
-        let error = ReplayData::from_reader(std::io::Cursor::new(input))
-            .expect_err("old replay schemas are not current snapshots");
-        assert!(
-            error.contains("unsupported replay schema version 10"),
-            "{error}"
-        );
+    fn every_pre_merge_jsonl_schema_is_rejected() {
+        for version in [10, 12, 13] {
+            let input = format!(
+                "{{\"mission_id\":\"old\",\"rng_seed\":7,\"version\":{version},\"total_frames\":0,\"campaign\":null}}\n"
+            );
+            let error = ReplayData::from_reader(std::io::Cursor::new(input))
+                .expect_err("pre-merge replay schemas are not current snapshots");
+            assert!(
+                error.contains(&format!("unsupported replay schema version {version}")),
+                "{error}"
+            );
+        }
     }
 
     #[test]
@@ -849,7 +900,7 @@ mod tests {
             "sim_config": crate::engine::SimConfig::default(),
             "version": REPLAY_SCHEMA_VERSION,
             "total_frames": 0,
-            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+            "campaign": bitcode::encode(&crate::campaign::Campaign::default()),
         });
         let input = format!(
             "{header}\n{}\n",
@@ -867,30 +918,30 @@ mod tests {
     }
 
     #[test]
-    fn schema_twelve_rejects_command_only_frame_records() {
+    fn current_schema_rejects_command_only_frame_records() {
         let header = serde_json::json!({
             "mission_id": "old-command-frame",
             "rng_seed": 7,
             "sim_config": crate::engine::SimConfig::default(),
             "version": REPLAY_SCHEMA_VERSION,
             "total_frames": 1,
-            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+            "campaign": bitcode::encode(&crate::campaign::Campaign::default()),
         });
         let input = format!("{header}\n{{\"f\":0,\"c\":[]}}\n");
         let error = ReplayData::from_reader(std::io::Cursor::new(input))
-            .expect_err("command-only records are not schema twelve frames");
+            .expect_err("command-only records are not current full frames");
         assert!(error.contains("unknown field `c`"), "{error}");
     }
 
     #[test]
-    fn schema_twelve_rejects_frame_without_host_controls() {
+    fn current_schema_rejects_frame_without_host_controls() {
         let header = serde_json::json!({
             "mission_id": "missing-host-controls",
             "rng_seed": 7,
             "sim_config": crate::engine::SimConfig::default(),
             "version": REPLAY_SCHEMA_VERSION,
             "total_frames": 1,
-            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+            "campaign": bitcode::encode(&crate::campaign::Campaign::default()),
         });
         let frame = serde_json::json!({
             "timeline_before": 0,
@@ -900,19 +951,19 @@ mod tests {
         let input = format!("{header}\n{}\n", serde_json::json!({ "f": 0, "i": frame }));
 
         let error = ReplayData::from_reader(std::io::Cursor::new(input))
-            .expect_err("schema-12 replay frames must explicitly include host controls");
+            .expect_err("current replay frames must explicitly include host controls");
         assert!(error.contains("missing field `host_controls`"), "{error}");
     }
 
     #[test]
-    fn schema_twelve_rejects_load_back_without_is_continue() {
+    fn current_schema_rejects_load_back_without_is_continue() {
         let header = serde_json::json!({
             "mission_id": "missing-is-continue",
             "rng_seed": 7,
             "sim_config": crate::engine::SimConfig::default(),
             "version": REPLAY_SCHEMA_VERSION,
             "total_frames": 0,
-            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+            "campaign": bitcode::encode(&crate::campaign::Campaign::default()),
         });
         let input = format!(
             "{header}\n{}\n",
@@ -920,7 +971,7 @@ mod tests {
         );
 
         let error = ReplayData::from_reader(std::io::Cursor::new(input))
-            .expect_err("schema-12 load-backs must identify Continue-slot behavior");
+            .expect_err("current load-backs must identify Continue-slot behavior");
         assert!(error.contains("missing field `is_continue`"), "{error}");
     }
 
@@ -1233,7 +1284,7 @@ mod tests {
 
         let replay = ReplayData::from_file(&path).unwrap();
         let replay_campaign: crate::campaign::Campaign =
-            bitcode::deserialize(&replay.header.campaign).unwrap();
+            bitcode::decode(&replay.header.campaign).unwrap();
         assert_eq!(replay_campaign.mission_team_indices, vec![0]);
         let (_, replay_assets, replay_loaded) = sherwood_fixture();
         let (reconstructed, _replay_assets) = construct_sherwood_frame_zero(
@@ -1280,7 +1331,7 @@ mod tests {
 
         let data = ReplayData::from_file(&path).unwrap();
         let bytes = &data.header.campaign;
-        let restored: Campaign = bitcode::deserialize(bytes).unwrap();
+        let restored: Campaign = bitcode::decode(bytes).unwrap();
         assert_eq!(restored.values[CampaignValue::Score], 12_345);
         assert_eq!(restored.ares, 4);
         assert_eq!(data.frame(0).expect("frame zero").input.commands.len(), 1);
@@ -1547,7 +1598,7 @@ mod tests {
             "sim_config": crate::engine::SimConfig::default(),
             "version": REPLAY_SCHEMA_VERSION,
             "total_frames": 0,
-            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+            "campaign": bitcode::encode(&crate::campaign::Campaign::default()),
         });
         let input =
             format!("{header}\n{{\"f\":30,\"lb\":{{\"to_frame\":10,\"is_continue\":false}}}}\n");
@@ -1582,7 +1633,7 @@ mod tests {
                 sim_config: crate::engine::SimConfig::default(),
                 version: REPLAY_SCHEMA_VERSION,
                 total_frames: 1,
-                campaign: bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+                campaign: bitcode::encode(&crate::campaign::Campaign::default()),
             },
             frames,
             hashes: BTreeMap::new(),

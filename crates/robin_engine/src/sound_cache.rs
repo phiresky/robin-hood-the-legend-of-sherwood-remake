@@ -67,6 +67,8 @@ pub const MENU_SOUND_BANK_FILE: &str = "/Menu/menu.fxg";
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Material {
     Ground = 0,
@@ -109,7 +111,16 @@ pub const IMPACT_FX_LIST: &[&str] = &[
 
 #[repr(u32)]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SoundGroupType {
     MaterialGroup = 0,
@@ -137,7 +148,16 @@ impl SoundGroupType {
 /// Stores the raw PCM bytes and metadata. The actual audio backend
 /// handle is managed externally; `sample_data` being `Some` means
 /// "loaded".
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundCacheEntry {
     pub file_name: String,
     /// Raw sample bytes (None = not loaded).
@@ -194,7 +214,15 @@ impl SoundCacheEntry {
 
 /// A group of sound entries that can be selected by material, randomly, or
 /// as a single FX.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundGroup {
     pub group_type: SoundGroupType,
     /// Indices into the owning `IndexedCache::entries` vec.
@@ -207,7 +235,16 @@ pub struct SoundGroup {
 // Cache statistics
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct CacheStats {
     pub hits: u32,
     pub misses: u32,
@@ -221,7 +258,16 @@ pub struct CacheStats {
 /// A cache where entries are stored in a contiguous `Vec` and referenced
 /// by index. Sound groups map IDs to groups whose entry lists contain
 /// indices into `entries`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct IndexedCache {
     pub entries: Vec<SoundCacheEntry>,
     pub groups: BTreeMap<u32, SoundGroup>,
@@ -438,7 +484,16 @@ impl IndexedCache {
 
 /// A cache where entries are stored in a `BTreeMap<u32, SoundCacheEntry>`
 /// keyed by sample ID.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MappedCache {
     pub entries: BTreeMap<u32, SoundCacheEntry>,
     pub stats: CacheStats,
@@ -530,7 +585,15 @@ impl MappedCache {
 // ---------------------------------------------------------------------------
 
 /// Parsed element from an FX bank file.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FxBankElement {
     pub element_type: SoundGroupType,
     pub element_id: u32,
@@ -540,7 +603,15 @@ pub struct FxBankElement {
     pub gaps_count: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FxBankSubElement {
     pub element_type: u32,
     pub group_id: u32,
@@ -770,7 +841,15 @@ fn read_fx_filename(data: &[u8], pos: &mut usize) -> Result<String, String> {
 
 /// The main sound cache manager, holding multiple sub-caches for different
 /// sound categories.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundCache {
     /// FX cache (vector-indexed, with sound groups).
     pub fx_cache: IndexedCache,

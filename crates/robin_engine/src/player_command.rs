@@ -3,7 +3,8 @@
 //! Every sim-affecting player action flows through [`PlayerCommand`].
 //! The game session resolves raw platform input against read-only engine
 //! state to produce fully-resolved commands, then feeds them to
-//! [`EngineInner::apply_commands`].  The input system never holds `&mut EngineInner`.
+//! [`crate::engine::Engine::advance_frame`]. The input system never holds
+//! mutable access to the engine's internal state.
 //!
 //! Commands are **resolved** — they carry entity IDs, map positions,
 //! and command types determined at resolution time.  During replay,
@@ -17,8 +18,311 @@ use crate::profiles::Action;
 use crate::sequence::Field;
 use serde::{Deserialize, Serialize};
 
+/// The deliberately restricted command payload accepted by
+/// [`PlayerCommand::QueueQuickAction`]. Keeping this as a separate enum makes
+/// the player-command wire graph non-recursive and prevents queue commands
+/// from nesting other queue commands.
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum QueuedQuickActionCommand {
+    GroupMove {
+        actors: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+        show_marker: bool,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        door_route_override: Option<bool>,
+        recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
+        recorded_failed_gate_routes: Vec<EntityId>,
+    },
+    LaunchInteraction {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+    },
+    LaunchGroundTarget {
+        actor: EntityId,
+        target_pos: WorldPoint3D,
+        command: Command,
+        target_field: Field,
+        titbit_layer: u16,
+    },
+    LaunchSelfAbility {
+        actor: EntityId,
+        command: Command,
+    },
+    LaunchScrollRead {
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    },
+    EnterSwordfight {
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    },
+    SwordStrikeCmd {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        with_seek: bool,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        seek_distance: Option<f32>,
+    },
+    DropAleAt {
+        actor: EntityId,
+        target_pos: MapPoint,
+        running: bool,
+        already_authorized: bool,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    },
+    CrouchDown,
+    StandUp,
+}
+
+impl QueuedQuickActionCommand {
+    pub fn from_player_command(command: PlayerCommand) -> Option<Self> {
+        use PlayerCommand::*;
+        Some(match command {
+            GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            } => Self::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            },
+            LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            } => Self::LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            },
+            LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            } => Self::LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            },
+            LaunchSelfAbility { actor, command } => Self::LaunchSelfAbility { actor, command },
+            LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => Self::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            },
+            EnterSwordfight {
+                actor,
+                target,
+                running,
+            } => Self::EnterSwordfight {
+                actor,
+                target,
+                running,
+            },
+            SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            } => Self::SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            },
+            DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            } => Self::DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            },
+            CrouchDown => Self::CrouchDown,
+            StandUp => Self::StandUp,
+            _ => return None,
+        })
+    }
+
+    pub fn to_player_command(&self) -> PlayerCommand {
+        use QueuedQuickActionCommand::*;
+        match self.clone() {
+            GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            } => PlayerCommand::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            },
+            LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            } => PlayerCommand::LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            },
+            LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            } => PlayerCommand::LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            },
+            LaunchSelfAbility { actor, command } => {
+                PlayerCommand::LaunchSelfAbility { actor, command }
+            }
+            LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            },
+            EnterSwordfight {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::EnterSwordfight {
+                actor,
+                target,
+                running,
+            },
+            SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            } => PlayerCommand::SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                with_seek,
+                seek_distance,
+            },
+            DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            } => PlayerCommand::DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            },
+            CrouchDown => PlayerCommand::CrouchDown,
+            StandUp => PlayerCommand::StandUp,
+        }
+    }
+}
+
+impl From<PlayerCommand> for QueuedQuickActionCommand {
+    fn from(command: PlayerCommand) -> Self {
+        Self::from_player_command(command)
+            .expect("unsupported PlayerCommand used as a queued quick action")
+    }
+}
+
 /// A single player-issued command that affects simulation state.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum PlayerCommand {
     /// No-op — signals that the input was consumed (e.g. an
     /// unrecognised swordfight gesture) without producing an action.
@@ -443,7 +747,7 @@ pub enum PlayerCommand {
     /// advances subsequent slots as each dispatched action completes.
     QueueQuickAction {
         action: Action,
-        command: Box<PlayerCommand>,
+        command: QueuedQuickActionCommand,
     },
     /// Double-click acceleration for Shift-planned movement.  If the newest
     /// pending QA is a move it becomes a run; otherwise the active actor is
@@ -717,6 +1021,59 @@ mod tests {
     use crate::element::EntityIdKind;
 
     #[test]
+    fn queued_quick_action_is_non_recursive_and_native_bitcode_roundtrips() {
+        let actor = EntityId::new(3, EntityIdKind::Pc);
+        let command = PlayerCommand::QueueQuickAction {
+            action: Action::Whistle,
+            command: PlayerCommand::LaunchSelfAbility {
+                actor,
+                command: Command::WhistleCmd,
+            }
+            .into(),
+        };
+        let bytes = bitcode::encode(&command);
+        let decoded: PlayerCommand = bitcode::decode(&bytes).expect("decode queued command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::QueueQuickAction {
+                action: Action::Whistle,
+                command: QueuedQuickActionCommand::LaunchSelfAbility {
+                    actor: decoded_actor,
+                    command: Command::WhistleCmd,
+                },
+            } if decoded_actor == actor
+        ));
+    }
+
+    #[test]
+    fn queued_quick_action_rejects_truncated_current_payloads() {
+        let command = PlayerCommand::QueueQuickAction {
+            action: Action::Hit,
+            command: PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: Command::SwordstrikeThrustA,
+                with_seek: true,
+                seek_distance: Some(63.0),
+            }
+            .into(),
+        };
+        let mut encoded = serde_json::to_value(command).expect("serialize queued sword command");
+        encoded
+            .get_mut("QueueQuickAction")
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|outer| outer.get_mut("command"))
+            .and_then(|command| command.get_mut("SwordStrikeCmd"))
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged queued sword command")
+            .remove("seek_distance");
+        assert!(
+            serde_json::from_value::<PlayerCommand>(encoded).is_err(),
+            "a queued Rust sword command without seek_distance must not enter the current schema"
+        );
+    }
+
+    #[test]
     fn sword_seek_distance_roundtrips_and_rejects_legacy_field_omission() {
         let command = PlayerCommand::SwordStrikeCmd {
             actor: EntityId::new(3, EntityIdKind::Pc),
@@ -758,7 +1115,16 @@ mod tests {
 /// (short-briefings pane, other mission-state popups) share the same
 /// pattern — add new variants as they get wired up.
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DebriefingTextId {
     Lose { index: usize },
@@ -776,7 +1142,15 @@ impl DebriefingTextId {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ModalKind {
     /// Two-button dialogue window (`show_dialogue`), keyed by the
@@ -800,7 +1174,15 @@ pub enum ModalKind {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MissionStateModalKind {
     /// First-time mission-won prompt asking whether to leave now.
@@ -816,7 +1198,16 @@ pub enum MissionStateModalKind {
 /// play-through-all-sentences OK from an early Stop / Escape
 /// (currently just `show_dialogue`).
 #[derive(
-    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DialogResult {
     /// Player saw every sentence / pressed OK / pressed Return.
@@ -847,6 +1238,8 @@ pub enum DialogResult {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PlayerId(pub u8);
 
@@ -881,7 +1274,15 @@ impl Default for PlayerId {
 /// requested; the wrapper records *who* requested it so replay,
 /// rollback, network sync, and (eventually) per-seat state mutation
 /// all see the same authoritative tag.
-#[derive(Clone, Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PlayerInput {
     pub player_id: PlayerId,
     pub command: PlayerCommand,
@@ -913,7 +1314,16 @@ impl From<PlayerCommand> for PlayerInput {
 }
 
 /// All player commands for a single frame.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FrameCommands {
     pub commands: Vec<PlayerInput>,
 }

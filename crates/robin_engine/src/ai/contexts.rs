@@ -1068,7 +1068,7 @@ pub struct AiPerTickData {
 /// detection pass. These are explicit live values rather than a bare
 /// persistent handle so stale `list_them` entries still have to pass
 /// the member's current LOS/radius test.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct PhalanxEnemySnapshot {
     pub handle: HumanHandle,
     pub position: Position,
@@ -1095,7 +1095,7 @@ pub struct PhalanxEnemySnapshot {
 /// One phalanx member's live viewer state and enemy inputs. Equivalent
 /// to recursing into
 /// `right_combat_neighbour->PhalanxReinitializeThemList`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct PhalanxMemberThemList {
     /// Member's element handle (matches `FighterSnapshot::handle`).
     pub handle: HumanHandle,
@@ -1277,7 +1277,15 @@ impl AiPerTickData {
 
 /// Cached info for a reinforcement door, used by `MerryManForestCassos`
 /// to find the nearest map exit and animate running to its PointOut.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ReinforcementDoorInfo {
     /// Inner position of the door (where the NPC walks *to*).
     pub position_in: Position,
@@ -1312,7 +1320,16 @@ pub struct ReinforcementDoorInfo {
 /// code can ask "who's inside?" without scanning all entities, and
 /// their door indices so pursuers / investigators can pick the right
 /// gate to enter / exit through.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct House {
     /// Sector index (into `FastFindGrid::sectors`) of the building's
     /// interior motion area.
@@ -1387,7 +1404,16 @@ impl House {
 /// Where NPCs regroup after exiting a building before resuming patrol.
 /// Built in `InitAI()` at a fixed `AI_DOOR_RALLY_POINT_DISTANCE` from
 /// each building door's `PointOut`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct DoorRallyPoint {
     /// World position (outside the door).
     pub position: Position,
@@ -1403,7 +1429,15 @@ pub struct DoorRallyPoint {
 pub const AI_DOOR_RALLY_POINT_DISTANCE: f32 = 100.0;
 
 /// Global / shared AI state, conceptually module-static.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiGlobalState {
     pub green_alert_soldiers: u16,
     pub yellow_alert_soldiers: u16,
@@ -1497,8 +1531,10 @@ pub struct AiGlobalState {
     /// this scratch field; a loaded session bootstraps from its live actors,
     /// then preserves owner-ordered mutations.
     #[serde(skip)]
+    #[bitcode(skip)]
     pub primary_target_multiplicity_scratch: std::collections::BTreeMap<HumanHandle, u32>,
     #[serde(skip)]
+    #[bitcode(skip)]
     pub primary_target_multiplicity_initialized: bool,
 }
 

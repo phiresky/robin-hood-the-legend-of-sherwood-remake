@@ -42,11 +42,6 @@ dirs = { version = "6", optional = true }
 ffmpeg-next = { version = "9", optional = true }
 png = "0.18"
 bitcode.workspace = true
-# Engine snapshots for multiplayer mid-mission joins.  Bitcode caps
-# enum variants at 256; some sim enums exceed that, so the snapshot
-# path uses bincode instead (no enum-size limit, slightly larger
-# wire payload — fine for a one-shot send at handshake time).
-bincode.workspace = true
 zstd.workspace = true
 base64 = "0.22"
 sha2 = "0.11"
@@ -82,7 +77,6 @@ web-time.workspace = true
 
 # Native-only: tiny blocking HTTP server for the script-RPC endpoint.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-fs2 = "0.4"
 librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
 tiny_http = "0.12"
 # Multiplayer transport: peer-to-peer QUIC with relay fallback and
@@ -157,6 +151,11 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 [dev-dependencies]
 qoi = "0.4"
 robin_engine = { workspace = true, features = ["test-helpers"] }
+# The parity-native v67 wire format is authoritative and remains on 0.6.9.
+# Only the parity example needs it; production game formats use the workspace
+# codec and should not compile two bitcode packages.
+bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"] }
+fs2 = "0.4"
 
 [features]
 default = ["native-fs", "audio", "video"]

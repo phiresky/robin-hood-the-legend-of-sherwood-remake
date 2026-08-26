@@ -2,6 +2,14 @@
 
 use std::num::NonZeroU32;
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    serde::Deserialize::deserialize(deserializer)
+}
+
 // ---------------------------------------------------------------------------
 // OrderType
 // ---------------------------------------------------------------------------
@@ -17,10 +25,12 @@ use std::num::NonZeroU32;
     PartialEq,
     Eq,
     Hash,
-    serde::Serialize,
-    serde::Deserialize,
     num_enum::TryFromPrimitive,
+    strum_macros::Display,
+    strum_macros::EnumString,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[repr(u32)]
 pub enum OrderType {
@@ -442,6 +452,34 @@ pub enum OrderType {
     RefreshingSeek,
 }
 
+impl serde::Serialize for OrderType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&self.to_string())
+        } else {
+            serializer.serialize_u32(*self as u32)
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OrderType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let name = <String as serde::Deserialize>::deserialize(deserializer)?;
+            name.parse().map_err(serde::de::Error::custom)
+        } else {
+            let discriminant = <u32 as serde::Deserialize>::deserialize(deserializer)?;
+            Self::try_from(discriminant).map_err(serde::de::Error::custom)
+        }
+    }
+}
+
 impl OrderType {
     /// Alias used by the patch system.
     pub const PATCH_INITIAL: Self = Self::TransitionRunningAlertedWaitingAlerted;
@@ -474,6 +512,8 @@ impl OrderType {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum OrderCompletion {
     /// Default: `do_next_order` pops this order and advances /
@@ -510,7 +550,13 @@ pub enum OrderCompletion {
 /// Fields that are not yet needed are omitted; add them as more of the
 /// sequence system is ported.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct Order {
     pub order_type: OrderType,
@@ -687,7 +733,13 @@ pub fn alloc_order_id(counter: &mut u32) -> NonZeroU32 {
 /// Same shape as [`Order`] minus `order_id` and `completion` (AI
 /// orders always use the default `AdvanceElement` completion).
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AiOrderIntent {
     pub order_type: OrderType,
@@ -695,63 +747,63 @@ pub struct AiOrderIntent {
     pub target_y: f32,
     /// Authored GoTo topology. `None` means this is a local positional
     /// order rather than a full AI `RHposition` destination.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub target_sector: Option<crate::position_interface::SectorHandle>,
     /// Exact live `RHSector*` analogue for the destination.  The public
     /// handle above is intentionally retained because scripts and authored
     /// data address sectors by number, while route construction compares
     /// arena object identity.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub target_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub target_layer: Option<u16>,
     /// Actor topology captured when the AI's synchronous `GoTo` call reaches
     /// the engine boundary. Sequence construction may be deferred until a
     /// non-interruptible element yields, but Original constructs the route
     /// against this call-time source rather than the actor's later position.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub source_position: Option<crate::coordinates::MapPoint>,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub source_sector: Option<crate::position_interface::SectorHandle>,
     /// Exact live arena sector captured with `source_sector`.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub source_layer: Option<u16>,
     /// Original compares `RHSector*` identity, not the public sector number,
     /// when deciding whether GoTo must use AppendMoveToSequence. Distinct
     /// motion sectors can share one number; this call-time bit preserves that
     /// distinction after the AI intent is deferred.
-    #[serde(default)]
     pub source_target_sector_identity_differs: bool,
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     /// Keep this ordinary actor command on `SequenceManager`'s deferred
     /// instruction queue. Common AI handlers launch these turns inline in
     /// C++, but `LaunchSequenceElement` does not call `Go` until the manager's
     /// later Hourglass pass.
-    #[serde(default)]
     pub defer_instruction: bool,
     /// This GoTo was reached through the tail of another GoTo while the actor
     /// still reported `MOVE_WAITING`. Original launches the replacement and
     /// then immediately executes GoTo's `IsComputingPath()` tail `Halt`, which
     /// removes the just-registered movement before manager instruction.
-    #[serde(default)]
     pub halt_after_launch_for_path_waiter: bool,
     /// Earliest universal frame at which an engine-owned movement intent may
     /// be promoted to a sequence. Runtime-authored intents normally leave
     /// this unset; synchronous continuations use it to preserve a manager
     /// boundary that has already passed in the current frame.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub not_before_frame: Option<u32>,
     /// This Face was authored after a same-call SetState changed attentive
     /// mode. The engine must apply that attentive transition before
     /// instructing the Turn.
-    #[serde(default)]
     pub after_attentive_mode: bool,
     /// `Face(..., true)` requests the same turn geometry with a
     /// `TurnFast` sequence command.
     pub fast_turn: bool,
     /// Authored sector for `FaceTo(UWORD)`. Positional facing leaves this
     /// unset and derives the sector from `target_x/y` instead.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub explicit_direction: Option<i16>,
     pub tolerance: f32,
     /// Inert legacy `RHOrder::bLockAI` value carried through order intents for
@@ -768,7 +820,6 @@ pub struct AiOrderIntent {
     /// sword action state receives a non-sword movement. Keeping this on the
     /// intent preserves that sequence barrier through the deferred engine
     /// drain.
-    #[serde(default)]
     pub quit_swordfight_before_move: bool,
     /// `GOTO_SWORD` issued while the actor is *not* in a sword action state
     /// prepends an `EnterSwordfight` (raise-sword, no opponent) element to
@@ -779,29 +830,27 @@ pub struct AiOrderIntent {
     /// then arbitrate against the actor's already-postponed work in its own
     /// right and interrupt it, instead of waiting behind the raise-sword
     /// element at the next command level.
-    #[serde(default)]
     pub enter_swordfight_before_move: bool,
     /// A non-sword GoTo issued while menacing carries `StopMenace` as the
     /// first element of the same sequence, ahead of the movement.
-    #[serde(default)]
     pub stop_menace_before_move: bool,
     /// The same sequence also carries a `LowerShield` element ahead of
     /// the movement whenever the actor is in a shield action state.
     /// Because it shares the movement's sequence, the shield element is
     /// never the sequence's last real action, so the movement displacing
     /// it must not report a finished action back to the AI.
-    #[serde(default)]
     pub lower_shield_before_move: bool,
     /// `GOTO_SPECIAL_ACTION` appends a Turn to the NPC's authored initial
     /// direction and then SitDown / EnterLeisure to the same movement
     /// sequence. Preserve the authored flag across the AI/engine drain
     /// boundary; the engine samples the NPC's initial direction and
     /// special-action posture while constructing the sequence.
-    #[serde(default)]
     pub append_special_action_tail: bool,
     /// Cached selected-movement goal that survives an implicit GoTo
     /// replacement until the new movement installs a concrete order.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub antagonist: Option<crate::element::EntityId>,
     /// When set, the engine drain runs
     /// `FastFindGrid::find_authorized_position` against the actor's
@@ -867,6 +916,60 @@ impl AiOrderIntent {
         intent.compute_direction = false;
         intent.explicit_direction = Some(direction);
         intent
+    }
+
+    /// Validate the call-time topology required after a movement intent has
+    /// crossed the engine enqueue boundary.
+    ///
+    /// Original constructs `RHSequence::AppendMoveToSequence` from
+    /// `mpMe->GetPositionMap()/GetSector()/GetLayer()` synchronously in
+    /// `RHArtificialIntelligence::GoTo`; it has no later fallback that
+    /// reconstructs an absent source from the actor's then-current state.
+    pub(crate) fn validate_queued_move_topology(&self) -> Result<(), String> {
+        if self.source_position.is_none() {
+            return Err("queued AI move is missing its call-time source position".into());
+        }
+        if self.source_layer.is_none() {
+            return Err("queued AI move is missing its call-time source layer".into());
+        }
+
+        let source_handle_index = self.source_sector.and_then(|sector| sector.arena_index());
+        if self.source_sector.is_none() && self.source_sector_index.is_some()
+            || source_handle_index.is_some() && self.source_sector_index != source_handle_index
+        {
+            return Err(format!(
+                "queued AI move has inconsistent source sector identity: sector={:?}, handle={source_handle_index:?}, companion={:?}",
+                self.source_sector, self.source_sector_index
+            ));
+        }
+
+        // An omitted authored target sector means the captured source sector.
+        // `launch_ai_move` materializes the companion index for that effective
+        // target before the intent enters the scheduler queue.
+        let target_handle_index = self.target_sector.and_then(|sector| sector.arena_index());
+        let target_identity_inconsistent = if self.target_sector.is_none() {
+            self.target_sector_index != self.source_sector_index
+        } else {
+            target_handle_index.is_some() && self.target_sector_index != target_handle_index
+        };
+        if target_identity_inconsistent {
+            return Err(format!(
+                "queued AI move has inconsistent target sector identity: sector={:?}, handle={target_handle_index:?}, companion={:?}",
+                self.target_sector, self.target_sector_index
+            ));
+        }
+
+        let identity_differs = matches!(
+            (self.source_sector_index, self.target_sector_index),
+            (Some(source), Some(target)) if source != target
+        );
+        if self.source_target_sector_identity_differs != identity_differs {
+            return Err(format!(
+                "queued AI move has inconsistent source/target identity bit: stored={}, derived={identity_differs}",
+                self.source_target_sector_identity_differs
+            ));
+        }
+        Ok(())
     }
 
     /// Stamp an allocated `order_id` onto this intent to produce a
@@ -972,6 +1075,17 @@ mod tests {
     }
 
     #[test]
+    fn high_order_type_uses_stable_human_and_nonhuman_serde_forms() {
+        let value = OrderType::ShootingWithBowAnonymous;
+        let json = serde_json::to_string(&value).expect("serialize order JSON");
+        assert_eq!(json, "\"ShootingWithBowAnonymous\"");
+        assert_eq!(serde_json::from_str::<OrderType>(&json).unwrap(), value);
+
+        let bytes = bitcode::encode(&value);
+        assert_eq!(bitcode::decode::<OrderType>(&bytes).unwrap(), value);
+    }
+
+    #[test]
     fn order_type_patch_aliases() {
         assert_eq!(
             OrderType::PATCH_INITIAL,
@@ -1011,5 +1125,29 @@ mod tests {
         assert_eq!(back.target_x, 100.0);
         assert_eq!(back.target_y, 200.0);
         assert_eq!(back.target_actor, Some(7));
+    }
+
+    #[test]
+    fn ai_order_intent_rejects_pre_topology_snapshot_json() {
+        let encoded =
+            serde_json::to_value(AiOrderIntent::new(OrderType::WalkingUpright, 100.0, 200.0))
+                .unwrap();
+
+        for required in [
+            "target_sector_index",
+            "source_position",
+            "source_sector",
+            "source_sector_index",
+            "source_layer",
+            "source_target_sector_identity_differs",
+        ] {
+            let mut obsolete = encoded.clone();
+            obsolete.as_object_mut().unwrap().remove(required);
+            let error = serde_json::from_value::<AiOrderIntent>(obsolete).unwrap_err();
+            assert!(
+                error.to_string().contains("missing field"),
+                "{required}: {error}"
+            );
+        }
     }
 }

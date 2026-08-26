@@ -112,6 +112,8 @@ pub fn next_docking_place(place: u8, direct: bool) -> u8 {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum PathFinderStatus {
     #[default]
@@ -134,6 +136,8 @@ pub enum PathFinderStatus {
     Deserialize,
     Default,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum PathFinderSpeed {
     Fast = 0,
@@ -149,7 +153,7 @@ pub enum PathFinderSpeed {
 /// the request and when `ProcessPathRequests` delivers its result. The two
 /// snapshots can legitimately differ because `MakeFast`, `MakeSlow`, and the
 /// posture rewrites mutate a request while it waits for delivery.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ParityPathRequest {
     pub actor: EntityId,
     pub antagonist: Option<EntityId>,
@@ -169,7 +173,7 @@ pub struct ParityPathRequest {
 /// One failed-path timeout entry retained across frame boundaries. `sector`
 /// is the Original request's otherwise-unused raw sector member; `time` is
 /// the universal frame at which the request entered the timeout list.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ParityFailedPathRequest {
     pub request: ParityPathRequest,
     pub sector: u16,
@@ -177,7 +181,7 @@ pub struct ParityFailedPathRequest {
 }
 
 /// One ordered pathfinder boundary observed while parity capture is active.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub enum ParityPathEvent {
     Queued(ParityPathRequest),
     Completed {
@@ -255,6 +259,8 @@ pub(crate) fn record_parity_path_event(event: ParityPathEvent) {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct NodeIdx(pub u32);
 
@@ -269,6 +275,8 @@ pub struct NodeIdx(pub u32);
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct LinkIdx(pub u32);
 
@@ -283,13 +291,23 @@ pub struct LinkIdx(pub u32);
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ConfigIdx(pub u32);
 
 // ─── Graph data structures ───────────────────────────────────────
 
 /// Configuration of a link for a specific unit size.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PathGraphLinkConfig {
     /// Combined bitmask of valid start docking places.
     pub start_configurations: u8,
@@ -302,7 +320,15 @@ pub struct PathGraphLinkConfig {
 }
 
 /// A link between two nodes in the pathfinding graph.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PathGraphLink {
     /// Node at the "next" end of this link.
     pub next_node: NodeIdx,
@@ -317,7 +343,15 @@ pub struct PathGraphLink {
 }
 
 /// A node in the pathfinding graph (placed at an obstacle corner).
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PathGraphNode {
     /// Map-space position of this graph corner.
     pub position: MapPoint,
@@ -360,7 +394,15 @@ pub struct PathGraphNode {
 ///
 /// The `active` flag swaps between active and alternative as
 /// `set_state_area` is called; the polygon itself is fixed.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MotionObstacle {
     /// Required-state bits. The obstacle is active when
     /// `(state_id & current_state) == state_id`.
@@ -423,7 +465,16 @@ pub struct MotionArea {
 }
 
 /// Sector-to-area conversion entry.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SectorToArea {
     pub sector: u16,
     pub area: u16,
@@ -955,7 +1006,14 @@ pub struct PathFinderRuntime {
 /// deterministic engine movement queues, so the remaining pathfinder
 /// snapshot is just the attempt count plus per-area obstacle state
 /// table.
-#[derive(Debug, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PathFinder {
     pub number_of_attempts: u16,
     pub states: Vec<Vec<u32>>,
@@ -967,6 +1025,7 @@ pub struct PathFinder {
     /// snapshots, hashing, and clones; a restored `PathFinder` simply
     /// rebuilds it on the next query.
     #[serde(skip)]
+    #[bitcode(skip)]
     cache: Option<Box<PathFinderCache>>,
 }
 

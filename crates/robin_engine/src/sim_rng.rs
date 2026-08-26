@@ -90,7 +90,7 @@ impl SimulationContext {
 /// This is a diagnostic execution mode, not a replacement saved-game RNG.
 /// Every Rust authoritative draw consumes exactly one value in global order;
 /// the parity runner checks the cursor at every original frame boundary.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct OriginalRngReplay {
     draws: Vec<u32>,
     cursor: usize,
@@ -103,7 +103,16 @@ pub struct OriginalRngReplay {
 ///
 /// This deliberately uses display strings instead of engine-owned VM types so
 /// the simulation RNG remains independent of the script driver's internals.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScriptVmDiagnosticContext {
     pub vm_key: String,
     pub class_name: String,
@@ -111,7 +120,16 @@ pub struct ScriptVmDiagnosticContext {
     pub native_max: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScriptZoneQueryDiagnostic {
     /// RNG cursor at the instant the query ran. This associates a query with
     /// the ScriptRand draw it can conditionally enable without consuming RNG.
@@ -121,7 +139,16 @@ pub struct ScriptZoneQueryDiagnostic {
     pub occupant_handles: Vec<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct OriginalRngDiagnostics {
     pub script_rand_contexts: Vec<Option<ScriptVmDiagnosticContext>>,
     pub script_zone_queries: Vec<ScriptZoneQueryDiagnostic>,
@@ -253,7 +280,16 @@ pub(crate) fn test_context() -> SimulationContext {
 /// `docs/RNG_AUDIT.md`, so adding or moving gameplay randomness requires an
 /// explicit review rather than an unlabelled call to a generic RNG helper.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum_macros::EnumIter,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum_macros::EnumIter,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum RngSite {
     LuaMathRandom,

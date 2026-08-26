@@ -12,7 +12,15 @@ use serde::{Deserialize, Serialize};
 /// view-cone flag, display-titbits flag, then resolution X/Y as floats).
 /// Additional fields are appended for the Rust-side feature set.
 #[repr(C)]
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct GraphicConfig {
     // --- ABI-compatible fields (must remain first, in this order) ---
     pub display_anim: bool,
@@ -57,6 +65,8 @@ pub struct GraphicConfig {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum TextureScaleMode {

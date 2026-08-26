@@ -28,7 +28,13 @@ const SLOWERATOR: u32 = 3;
 /// per-mark `{ render; advance; retire }` body must run as one
 /// indivisible unit — see `tick` for the sequencing.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct GroundMarkEntry {
     pub x: f32,
@@ -48,7 +54,14 @@ pub struct GroundMarkEntry {
 
 /// Manager for the list of active destination markers.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct GroundMark {
     pub marks: Vec<GroundMarkEntry>,
@@ -192,7 +205,14 @@ impl GroundMark {
 
 /// Global animation state for the rotating selection circle.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SelectionMark {
     pub forward: bool,

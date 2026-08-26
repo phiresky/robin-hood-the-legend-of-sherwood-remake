@@ -26,7 +26,9 @@ use crate::element::{Entity, EntityId};
 /// Scroll reveal status. Persisted in the canonical script-domain scroll state
 /// (keyed by actor script handle); the script natives
 /// `GetScrollStatus` / `SetScrollStatus` read/write it directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
 #[repr(i32)]
 pub enum ScrollStatus {
     Invisible = 0,
@@ -64,7 +66,15 @@ impl ScrollStatus {
 /// Drained by [`EngineInner::drain_pending_scroll_amulets`].  The
 /// scroll's position, layer, sector, direction, obstacle, and material
 /// are copied onto the spawned amulet.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PendingScrollAmulet {
     pub position_map: MapPoint,
     pub layer: u16,

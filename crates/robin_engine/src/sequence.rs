@@ -37,6 +37,18 @@ use crate::element::{
 };
 use crate::order::{Order, OrderType};
 
+/// Deserialize an explicitly present optional value.
+///
+/// Serde otherwise maps an absent `Option<T>` field to `None`, which would
+/// silently admit an obsolete or truncated Rust snapshot.
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  IDs and references
 // ═══════════════════════════════════════════════════════════════════
@@ -54,6 +66,8 @@ use crate::order::{Order, OrderType};
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SequenceId(pub u32);
 
@@ -78,6 +92,8 @@ pub struct SequenceId(pub u32);
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SequenceElementRef {
     pub sequence_id: SequenceId,
@@ -108,6 +124,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(CascadeFlags, u16);
+
 // ═══════════════════════════════════════════════════════════════════
 //  State & priority enums
 // ═══════════════════════════════════════════════════════════════════
@@ -124,6 +142,8 @@ bitflags! {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequenceState {
     Terminated,
@@ -151,6 +171,8 @@ pub enum SequenceState {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequencePriority {
     NonInterruptable,
@@ -280,7 +302,16 @@ pub fn decide_priorities(current: SequencePriority, new: SequencePriority) -> Pr
 /// These represent high-level script actions that are built on top of
 /// the core sequence infrastructure.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequenceElementKind {
     // Camera
@@ -368,6 +399,8 @@ bitflags! {
     }
 }
 
+crate::bitcode_adapters::impl_native_bitcode_flags!(MoveFlags, u32);
+
 // ═══════════════════════════════════════════════════════════════════
 //  Script recording session
 // ═══════════════════════════════════════════════════════════════════
@@ -375,7 +408,16 @@ bitflags! {
 /// Cached origin for an actor that already has an in-flight script
 /// move target (point + sector + level).  Used by
 /// `RecordingSession::moving_actors`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RecordingMotionTarget {
     pub x: f32,
     pub y: f32,
@@ -391,7 +433,15 @@ pub struct RecordingMotionTarget {
 /// Each `Then()` bumps the level, so the next batch of `Record*` calls gets
 /// a higher level (executed sequentially after the previous level completes).
 /// Elements added at the *same* level execute in parallel.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct RecordingSession {
     /// Current command level (starts at 1 after `Start()`, incremented by `Then()`).
     pub command_level: u16,
@@ -499,6 +549,8 @@ impl RecordingSession {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Field {
     Direction,
@@ -605,7 +657,16 @@ impl Field {
 }
 
 /// Polymorphic value stored in a generic sequence element's property map.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum FieldValue {
     Bool(bool),
     Integer(u32),
@@ -649,6 +710,7 @@ pub enum SequenceInvariantError {
     LegacyCommandRequiresGenericData { command: Command },
     MissingLegacyCommandField { command: Command, field: Field },
     InvalidLegacyCommandFieldType { command: Command, field: Field },
+    NestedPostSeekSequence,
 }
 
 impl fmt::Display for SequenceInvariantError {
@@ -678,6 +740,10 @@ impl fmt::Display for SequenceInvariantError {
                 formatter,
                 "legacy command {command:?} has the wrong value type for field {field:?}"
             ),
+            Self::NestedPostSeekSequence => write!(
+                formatter,
+                "post-seek sequences cannot themselves contain post-seek sequences"
+            ),
         }
     }
 }
@@ -690,8 +756,16 @@ impl std::error::Error for SequenceInvariantError {}
 
 /// Element subtypes — variants for simple, movement, generic, damage,
 /// and interaction elements.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub enum SequenceElementData {
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum SequenceElementData<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Base type with no extra data.
     Simple,
 
@@ -724,7 +798,7 @@ pub enum SequenceElementData {
         /// here.
         ///
         /// **Ownership invariant for `Clone`:** the auto-derived
-        /// `Clone` on `SequenceElement` deep-clones this `Box<Sequence>`,
+        /// `Clone` on `SequenceElement` deep-clones this continuation,
         /// which is fine for `Engine`-level rollback snapshots (each
         /// clone is an independent timeline) but is semantically wrong
         /// for "duplicate this element within the same engine" — both
@@ -735,7 +809,10 @@ pub enum SequenceElementData {
         /// future caller needs ownership-transfer semantics, replace
         /// the `clone()` call with a hand-written
         /// `create_copy(&mut self)` that `mem::take`s this field.
-        post_seek_sequence: Option<Box<Sequence>>,
+        /// Root elements use `Option<PostSeekSequence>` here. Elements inside
+        /// a `PostSeekSequence` instantiate this generic with `()`, making the
+        /// representation structurally non-recursive.
+        post_seek_sequence: P,
     },
 
     /// Generic property-bag element.
@@ -756,7 +833,7 @@ pub enum SequenceElementData {
         /// sequence-manager phase so the victim's final facing can be read
         /// after damage translation. Runtime projectiles remain as
         /// tombstones long enough for this reference to stay valid.
-        #[serde(default)]
+        #[serde(deserialize_with = "deserialize_required_option")]
         projectile: Option<EntityId>,
         /// Raw damage value (for generic/arrow/stone).
         damage: u16,
@@ -776,6 +853,63 @@ pub enum SequenceElementData {
         /// The entity to interact with.
         antagonist: Option<EntityId>,
     },
+}
+
+impl<P: robin_util::state_hash::StateHash> SequenceElementData<P> {
+    fn try_map_post_seek<Q: robin_util::state_hash::StateHash, E>(
+        self,
+        map: impl FnOnce(P) -> Result<Q, E>,
+    ) -> Result<SequenceElementData<Q>, E> {
+        Ok(match self {
+            Self::Simple => SequenceElementData::Simple,
+            Self::Movement {
+                destination,
+                layer,
+                sector,
+                gate_id,
+                line_id,
+                element,
+                flags,
+                tolerance,
+                direction,
+                action,
+                speed_factor,
+                post_seek_sequence,
+            } => SequenceElementData::Movement {
+                destination,
+                layer,
+                sector,
+                gate_id,
+                line_id,
+                element,
+                flags,
+                tolerance,
+                direction,
+                action,
+                speed_factor,
+                post_seek_sequence: map(post_seek_sequence)?,
+            },
+            Self::Generic { properties } => SequenceElementData::Generic { properties },
+            Self::Damage {
+                origin,
+                projectile,
+                damage,
+                concussion,
+                sword_strike,
+                sword_profile_idx,
+                is_harder_hit,
+            } => SequenceElementData::Damage {
+                origin,
+                projectile,
+                damage,
+                concussion,
+                sword_strike,
+                sword_profile_idx,
+                is_harder_hit,
+            },
+            Self::Interaction { antagonist } => SequenceElementData::Interaction { antagonist },
+        })
+    }
 }
 
 impl SequenceElementData {
@@ -862,8 +996,16 @@ impl SequenceElementData {
 ///  └──→ Interrupted
 ///  └──→ Impossible
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub struct SequenceElement {
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Unique ID.
     pub id: u32,
 
@@ -907,7 +1049,7 @@ pub struct SequenceElement {
 
     /// Replay-only authoritative gate-search result retained until a point
     /// Seek reaches its cross-sector expansion boundary.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub recorded_gate_path: Option<crate::gate::RecordedGatePath>,
 
     /// Selects who owns gate-path resolution for this point Seek.
@@ -925,7 +1067,7 @@ pub struct SequenceElement {
     pub orders: VecDeque<Order>,
 
     /// Subtype-specific data.
-    pub data: SequenceElementData,
+    pub data: SequenceElementData<P>,
 
     /// Index of a postponed element (within the same sequence) that should be
     /// restarted when this element finishes.
@@ -966,12 +1108,88 @@ pub struct SequenceElement {
     pub(crate) legacy_v48: Option<LegacyV48SequenceElementState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
+    fn try_map_post_seek<Q: robin_util::state_hash::StateHash, E>(
+        self,
+        map: impl FnOnce(P) -> Result<Q, E>,
+    ) -> Result<SequenceElement<Q>, E> {
+        let Self {
+            id,
+            command,
+            command_level,
+            owner,
+            state,
+            priority,
+            script_driven,
+            posture_after_transition,
+            action_state_after_transition,
+            num_transition_orders,
+            retained_movement_goal,
+            recorded_gate_path,
+            point_seek_route_provenance,
+            orders,
+            data,
+            postponed_element_index,
+            cross_postponed,
+            next_link_severed,
+            legacy_v48,
+        } = self;
+        Ok(SequenceElement {
+            id,
+            command,
+            command_level,
+            owner,
+            state,
+            priority,
+            script_driven,
+            posture_after_transition,
+            action_state_after_transition,
+            num_transition_orders,
+            retained_movement_goal,
+            recorded_gate_path,
+            point_seek_route_provenance,
+            orders,
+            data: data.try_map_post_seek(map)?,
+            postponed_element_index,
+            cross_postponed,
+            next_link_severed,
+            legacy_v48,
+        })
+    }
+}
+
+impl SequenceElement<()> {
+    /// Generic property access for elements in a flat post-seek sequence.
+    pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
+        match &self.data {
+            SequenceElementData::Generic { properties } => properties.get(&field),
+            _ => None,
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct LegacyV48OrderState {
     pub legacy_id: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct LegacyV48SequenceElementState {
     pub deleted: bool,
     pub script_driven: bool,
@@ -1577,6 +1795,8 @@ impl SequenceElement {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PointSeekRouteProvenance {
@@ -1637,13 +1857,21 @@ impl TryFrom<&SequenceElement> for SequenceCommand {
 /// Level 2: [Pass door]                     ← waits for level 1 to finish
 /// Level 3: [Move to goal]                  ← waits for level 2 to finish
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub struct Sequence {
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct Sequence<P: robin_util::state_hash::StateHash = Option<PostSeekSequence>> {
     /// Unique ID.
     pub id: SequenceId,
 
     /// All elements in this sequence, ordered by command level.
-    pub elements: Vec<SequenceElement>,
+    pub elements: Vec<SequenceElement<P>>,
 
     /// Index of the next element to start.
     cursor: usize,
@@ -1659,6 +1887,112 @@ pub struct Sequence {
 
     /// Whether `launch()` has been called.
     started: bool,
+}
+
+/// A continuation attached to a root movement element.
+///
+/// Its elements instantiate the post-seek slot with `()`, so they cannot
+/// attach another continuation. This matches every live construction path in
+/// the Original while keeping native bitcode's coder graph finite.
+pub type PostSeekSequence = Sequence<()>;
+
+impl Sequence {
+    /// Convert a newly built or legacy-decoded sequence into a one-level
+    /// continuation. Nested continuations are rejected explicitly.
+    pub fn try_into_post_seek(self) -> Result<PostSeekSequence, SequenceInvariantError> {
+        let Self {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        } = self;
+        let elements = elements
+            .into_iter()
+            .map(|element| {
+                element.try_map_post_seek(|post_seek| {
+                    if post_seek.is_some() {
+                        Err(SequenceInvariantError::NestedPostSeekSequence)
+                    } else {
+                        Ok(())
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PostSeekSequence {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        })
+    }
+
+    /// Infallible convenience for gameplay-authored continuations. A nested
+    /// continuation here is a construction bug, not recoverable input.
+    pub fn into_post_seek(self) -> PostSeekSequence {
+        self.try_into_post_seek()
+            .unwrap_or_else(|error| panic!("invalid gameplay post-seek sequence: {error}"))
+    }
+}
+
+impl PostSeekSequence {
+    pub fn len(&self) -> usize {
+        self.elements.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&SequenceElement<()>> {
+        self.elements.get(index)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut SequenceElement<()>> {
+        self.elements.get_mut(index)
+    }
+
+    pub fn last(&self) -> Option<&SequenceElement<()>> {
+        self.elements.last()
+    }
+
+    /// Promote a detached continuation to an ordinary sequence immediately
+    /// before it is launched.
+    pub fn into_sequence(self) -> Sequence {
+        let Self {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        } = self;
+        let elements = elements
+            .into_iter()
+            .map(|element| {
+                element
+                    .try_map_post_seek(|()| {
+                        Ok::<_, std::convert::Infallible>(None::<PostSeekSequence>)
+                    })
+                    .expect("infallible post-seek promotion")
+            })
+            .collect();
+        Sequence {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
+        }
+    }
 }
 
 impl Sequence {
@@ -1968,7 +2302,15 @@ pub(crate) fn take_goal_owner_terminal_provenance(
 
 /// Result of a state change on a sequence element.
 /// The caller (SequenceManager) must process these effects.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct StateChangeEffects {
     /// Loaded movement element's exact `mpsqeLinkedSeekSequenceElement`.
     /// Original interrupts this target with `CASCADE_FOLLOWING` before the
@@ -2522,7 +2864,15 @@ impl Sequence {
 /// An action the engine needs to perform on behalf of the sequence system.
 /// Returned by [`SequenceManager::hourglass`].
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SequenceAction {
     /// Dispatch this element to its owner entity via `Instruct()`.
@@ -2570,7 +2920,15 @@ pub enum SequenceAction {
 /// follow.  Draining the buffer resumes the loop at exactly the point the
 /// original call stack would have returned to.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum PendingSyncEntry {
     /// An action the engine must dispatch.
@@ -2606,6 +2964,90 @@ impl PendingSyncEntry {
 /// - Maintains a deferred "to go" queue processed each frame
 /// - Handles launching, termination, and cleanup
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(transparent)]
+struct OrderedSequences(IndexMap<SequenceId, Sequence>);
+
+impl std::ops::Deref for OrderedSequences {
+    type Target = IndexMap<SequenceId, Sequence>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for OrderedSequences {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<IndexMap<SequenceId, Sequence>> for OrderedSequences {
+    fn from(sequences: IndexMap<SequenceId, Sequence>) -> Self {
+        Self(sequences)
+    }
+}
+
+impl IntoIterator for OrderedSequences {
+    type Item = (SequenceId, Sequence);
+    type IntoIter = indexmap::map::IntoIter<SequenceId, Sequence>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a OrderedSequences {
+    type Item = (&'a SequenceId, &'a Sequence);
+    type IntoIter = indexmap::map::Iter<'a, SequenceId, Sequence>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut OrderedSequences {
+    type Item = (&'a SequenceId, &'a mut Sequence);
+    type IntoIter = indexmap::map::IterMut<'a, SequenceId, Sequence>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl crate::bitcode_adapters::NativeBitcode for OrderedSequences {
+    type Wire = Vec<(SequenceId, Sequence)>;
+
+    fn to_wire(&self) -> Self::Wire {
+        self.0
+            .iter()
+            .map(|(&id, sequence)| (id, sequence.clone()))
+            .collect()
+    }
+
+    fn from_wire(wire: Self::Wire) -> Self {
+        let mut sequences = IndexMap::with_capacity(wire.len());
+        for (id, sequence) in wire {
+            assert!(
+                !sequences.contains_key(&id),
+                "native bitcode snapshot contains duplicate sequence id {id:?}"
+            );
+            sequences.insert(id, sequence);
+        }
+        Self(sequences)
+    }
+}
+
+crate::bitcode_adapters::impl_native_bitcode!(OrderedSequences);
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SequenceManager {
     /// All active sequences, keyed by `SequenceId` in Original manager
     /// insertion order. `IndexMap` preserves that scan order while retaining
@@ -2617,7 +3059,7 @@ pub struct SequenceManager {
     /// Fresh sequences normally have monotonic IDs, but loaded Original
     /// managers can legitimately contain non-monotonic IDs in launch order.
     /// Several first-match scans depend on preserving that order exactly.
-    sequences: IndexMap<SequenceId, Sequence>,
+    sequences: OrderedSequences,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// live (`Todo`, `InProgress`, or `Postponed`) and owned by that
@@ -2655,7 +3097,6 @@ pub struct SequenceManager {
     /// arbitrate against the incoming element even though it has not reached
     /// `InProgress` yet. Entries only exist inside that callback boundary and
     /// are empty at stable frame/save boundaries.
-    #[serde(default)]
     actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
 
     /// Actor selection held across the accepted element's command
@@ -2670,7 +3111,7 @@ pub struct SequenceManager {
     /// `SendCondolationCard` while still selected, which is what performs
     /// the actor-base movement-goal cleanup. Set for the duration of one
     /// command dispatch; empty at stable frame/save boundaries.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     actor_translating: Option<(EntityId, SequenceElementRef)>,
 
     /// Deferred queue of elements to start. Processed in `hourglass()`.
@@ -2741,7 +3182,16 @@ pub(crate) struct SequenceManagerV48State {
 
 /// Pending entity cleanup emitted by the sequence manager when an
 /// element finishes.  Drained by the engine after each `hourglass`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PendingCondolation {
     pub owner: EntityId,
     pub command: Command,
@@ -2756,7 +3206,6 @@ pub struct PendingCondolation {
     /// Whether this element was the actor's selected `mpSequenceElement`
     /// at the synchronous `SetState -> SendCondolationCard` boundary.
     /// Captured before terminal elements leave the in-progress index.
-    #[serde(default)]
     pub was_selected: bool,
     /// `true` if this condolation was queued while the owning NPC's
     /// `inside_halt_method` flag was set — i.e. the sequence was torn
@@ -2774,7 +3223,7 @@ pub struct PendingCondolation {
     /// `MOVE_WAITING` element. The engine removes this owner's pending and
     /// failed requests immediately before this card's callback. This can
     /// differ from `owner` when a movement interrupts its linked Seek first.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub cancel_path_request_owner: Option<EntityId>,
 }
 
@@ -2782,7 +3231,15 @@ pub struct PendingCondolation {
 /// performs only after `SendCondolationCard` returns.  Keeping the
 /// continuation beside the card preserves the depth-first order across
 /// Rust's borrow-safe dispatch boundary.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PendingCondolationDispatch {
     pub card: PendingCondolation,
     effects_after_card: StateChangeEffects,
@@ -2848,7 +3305,7 @@ impl SequenceManager {
 
     pub fn new() -> Self {
         Self {
-            sequences: IndexMap::new(),
+            sequences: IndexMap::new().into(),
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
@@ -2870,7 +3327,8 @@ impl SequenceManager {
                 .sequences
                 .into_iter()
                 .map(|sequence| (sequence.id, sequence))
-                .collect(),
+                .collect::<IndexMap<_, _>>()
+                .into(),
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
@@ -6395,3 +6853,18 @@ pub fn make_crouched_element(elem: &mut SequenceElement) {
 #[cfg(test)]
 #[path = "sequence/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod native_bitcode_tests {
+    use super::{OrderedSequences, Sequence, SequenceId};
+    use crate::bitcode_adapters::NativeBitcode;
+
+    #[test]
+    #[should_panic(expected = "native bitcode snapshot contains duplicate sequence id")]
+    fn ordered_sequences_reject_duplicate_ids() {
+        let id = SequenceId(7);
+        let wire = vec![(id, Sequence::new()), (id, Sequence::new())];
+
+        let _ = OrderedSequences::from_wire(wire);
+    }
+}

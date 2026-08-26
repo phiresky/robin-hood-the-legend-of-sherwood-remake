@@ -17,7 +17,14 @@
 ///   Rust host/sim split's deterministic representation of those blocked
 ///   simulation frames.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(crate) struct SimulationGateState {
     /// Whether sequence/camera state locks the engine's post-counter work.

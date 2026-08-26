@@ -22,6 +22,7 @@
 use std::ops::Deref;
 
 use super::SimConfig;
+use super::commands::SelectionCommandBatchMode;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
     ExternalFacts, FrameAdvanceError, FrameConsoleResponse, LevelAssets, LevelLoadStaging,
@@ -40,7 +41,9 @@ use crate::player_command::PlayerInput;
 /// Canonical gameplay-authoritative engine scalars emitted by schema-13
 /// Original parity traces. Presentation camera/surface/backend state is
 /// deliberately absent.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, bitcode::Encode, bitcode::Decode,
+)]
 pub struct ParityEngineState {
     pub cheat_used_flags: u32,
     pub next_creation_order: u32,
@@ -127,6 +130,23 @@ impl<'de> serde::Deserialize<'de> for Engine {
         D: serde::Deserializer<'de>,
     {
         super::snapshot::deserialize_engine_inner(deserializer).map(|inner| Self { inner })
+    }
+}
+
+impl Engine {
+    /// Encode a native engine snapshot through the bounded-stack facade codec.
+    pub fn encode_native_snapshot(&self) -> Vec<u8> {
+        super::snapshot::encode_native_engine_inner(&self.inner)
+    }
+
+    /// Decode an owned native engine snapshot without exposing an owned
+    /// [`EngineInner`] to downstream crates.
+    ///
+    /// The returned engine still has to cross the normal save/network adoption
+    /// boundary before replacing a live engine, so level attachment and world
+    /// invariants are validated separately from byte decoding.
+    pub fn decode_native_snapshot(bytes: &[u8]) -> Result<Self, bitcode::Error> {
+        super::snapshot::decode_native_engine_inner(bytes).map(|inner| Self { inner })
     }
 }
 
@@ -1181,8 +1201,8 @@ impl Engine {
                         "titbit": pc.titbits[slot],
                         "button": pc.quick_action_buttons[slot],
                         "interactor": pc.quick_action_interactors[slot].map_or(Value::Null, entity_ref),
-                        "action_size": pc.quick_action_sequences[slot].as_ref().map(crate::sequence::Sequence::len),
-                        "seek_size": pc.quick_seek_sequences[slot].as_ref().map(crate::sequence::Sequence::len),
+                        "action_size": pc.quick_action_sequences[slot].as_ref().map(|sequence| sequence.len()),
+                        "seek_size": pc.quick_seek_sequences[slot].as_ref().map(|sequence| sequence.len()),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -3159,6 +3179,19 @@ impl Engine {
         assets: &LevelAssets,
         frame: SimulationFrameInput,
     ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        self.advance_frame_with_command_batch_mode(
+            assets,
+            frame,
+            SelectionCommandBatchMode::InferNestedSelection,
+        )
+    }
+
+    fn advance_frame_with_command_batch_mode(
+        &mut self,
+        assets: &LevelAssets,
+        frame: SimulationFrameInput,
+        command_batch_mode: SelectionCommandBatchMode,
+    ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
         self.require_live_campaign("advancing a simulation frame");
 
         let frame_before = self.inner.control.frame_counter;
@@ -3191,7 +3224,8 @@ impl Engine {
 
         let commands: Vec<PlayerInput> = commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
-        self.inner.apply_frame_commands(&sim, assets, &commands);
+        self.inner
+            .apply_frame_commands_with_mode(&sim, assets, &commands, command_batch_mode);
 
         let side_effects = if run_hourglass {
             self.inner
@@ -3211,7 +3245,7 @@ impl Engine {
         let post_commands: Vec<PlayerInput> = post_commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
         self.inner
-            .apply_frame_commands(&sim, assets, &post_commands);
+            .apply_frame_commands_with_mode(&sim, assets, &post_commands, command_batch_mode);
 
         let post_initialize_events = run_post_initialize
             .then(|| self.inner.perform_frame_post_initialize(assets))
@@ -3712,6 +3746,26 @@ impl Engine {
 }
 
 impl ParityReplaySetup<'_> {
+    /// Advance a frame whose commands were independently recorded by the
+    /// Original parity tracer.
+    ///
+    /// `RHParity::ShouldRecordNestedSelection` retains raw-mouse depth-2
+    /// messages while omitting the depth-3 restitution emitted by `SelectPc`.
+    /// Consequently adjacent recorded commands are siblings, not a root and
+    /// its nested callback. Keeping this policy behind the explicit parity
+    /// capability prevents it from changing live or rollback semantics.
+    pub fn advance_frame(
+        &mut self,
+        assets: &LevelAssets,
+        frame: SimulationFrameInput,
+    ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        self.engine.advance_frame_with_command_batch_mode(
+            assets,
+            frame,
+            SelectionCommandBatchMode::IndependentRecordedMessages,
+        )
+    }
+
     #[doc(hidden)]
     pub fn has_pending_recorded_drop_ale_route(
         &self,
@@ -3830,6 +3884,30 @@ mod tests {
         (engine, assets)
     }
 
+    #[test]
+    fn native_snapshot_decodes_through_the_engine_facade() {
+        let (mut engine, _) = frame_api_fixture();
+        engine.inner.feedback.cutscene_camera.old_view_position =
+            crate::coordinates::MapPoint::new(73.0, 91.0);
+        engine.inner.feedback.cutscene_camera.old_zoom_factor = 2.0;
+        let expected_hash = crate::replay::state_hash(&engine);
+        let bytes = engine.encode_native_snapshot();
+
+        let decoded = Engine::decode_native_snapshot(&bytes)
+            .expect("decode the native Engine wire layout through the facade");
+
+        assert_eq!(crate::replay::state_hash(&decoded), expected_hash);
+        assert_eq!(
+            decoded.inner.feedback.cutscene_camera.old_view_position,
+            crate::coordinates::MapPoint::ZERO,
+            "bitcode-skipped presentation position must restore its canonical default"
+        );
+        assert_eq!(
+            decoded.inner.feedback.cutscene_camera.old_zoom_factor, 1.0,
+            "bitcode-skipped presentation zoom must restore its canonical default"
+        );
+    }
+
     fn pending_drop_ale_seek(
         owner: EntityId,
         destination: crate::coordinates::MapPoint,
@@ -3863,7 +3941,7 @@ mod tests {
         *flags |= MoveFlags::SEEK;
         let mut post_seek = Sequence::new();
         post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
-        *post_seek_sequence = Some(Box::new(post_seek));
+        *post_seek_sequence = Some(post_seek.into_post_seek());
         seek
     }
 
@@ -3885,6 +3963,134 @@ mod tests {
                 outcome: crate::gate::RecordedGateOutcome::Failure,
             },
         }
+    }
+
+    fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequence::SequenceId)
+    {
+        let (mut engine, mut assets) = frame_api_fixture();
+        let mut actions =
+            [crate::profiles::Action::NoAction; crate::profiles::NUMBER_OF_PC_ACTIONS];
+        actions[0] = crate::profiles::Action::Net;
+        let mut maximum_ammo = [0; crate::profiles::NUMBER_OF_PC_ACTIONS];
+        maximum_ammo[0] = 1;
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .missions
+            .push(crate::profiles::MissionProfile::default());
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            actions,
+            action_max_ammo: maximum_ammo,
+            ..Default::default()
+        });
+        assets.profile_manager = std::sync::Arc::new(profiles);
+
+        engine
+            .inner
+            .mission_domain
+            .campaign
+            .characters
+            .push(crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                instanced: true,
+                ..Default::default()
+            });
+        let pc_id = engine
+            .inner
+            .add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorPc,
+                    active: true,
+                    posture: crate::element::Posture::Upright,
+                    ..Default::default()
+                },
+                actor: crate::element::ActorData::default(),
+                human: crate::element::HumanData::default(),
+                pc: crate::element::PcData {
+                    profile_index: crate::profiles::CharacterProfileIdx(0),
+                    campaign_description_index: Some(0),
+                    life_points: 50,
+                    current_action: crate::profiles::Action::Net,
+                    ..Default::default()
+                },
+            }));
+
+        let mut wait = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::WaitTimer,
+            Some(pc_id),
+        );
+        wait.priority = crate::sequence::SequencePriority::Wait;
+        let wait_sequence = engine.inner.orders.sequence_manager.launch_element(wait);
+        engine
+            .inner
+            .orders
+            .sequence_manager
+            .element_in_progress(wait_sequence, 0);
+        (engine, assets, pc_id, wait_sequence)
+    }
+
+    fn adjacent_select_and_cancel(pc_id: EntityId) -> Vec<SimCommand> {
+        vec![
+            SimCommand::from(PlayerCommand::SelectPc {
+                pc_id,
+                append: false,
+            }),
+            SimCommand::from(PlayerCommand::CancelAction { pc_id }),
+        ]
+    }
+
+    #[test]
+    fn original_parity_frame_preserves_pre_and_post_command_boundaries() {
+        for post_hourglass in [false, true] {
+            let (mut engine, assets, pc_id, wait_sequence) = selection_boundary_fixture();
+            let commands = adjacent_select_and_cancel(pc_id);
+            let frame = if post_hourglass {
+                SimulationFrameInput::no_hourglass().with_post_commands(commands)
+            } else {
+                SimulationFrameInput::new(commands).with_hourglass(false)
+            };
+            engine
+                .parity_replay_setup()
+                .advance_frame(&assets, frame)
+                .expect("advance Original parity frame");
+
+            assert_eq!(
+                engine
+                    .inner
+                    .orders
+                    .sequence_manager
+                    .get_element(wait_sequence, 0)
+                    .expect("interrupted wait remains inspectable")
+                    .state,
+                crate::sequence::SequenceState::Interrupted,
+                "{}-hourglass commands must remain independent recorded siblings",
+                if post_hourglass { "post" } else { "pre" },
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_frame_keeps_live_nested_selection_inference() {
+        let (mut engine, assets, pc_id, wait_sequence) = selection_boundary_fixture();
+
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(adjacent_select_and_cancel(pc_id)).with_hourglass(false),
+            )
+            .expect("advance ordinary frame");
+
+        assert_eq!(
+            engine
+                .inner
+                .orders
+                .sequence_manager
+                .get_element(wait_sequence, 0)
+                .expect("live wait remains inspectable")
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "ordinary admission must retain its existing nested-selection heuristic",
+        );
     }
 
     #[test]

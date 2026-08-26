@@ -14,7 +14,16 @@ use crate::player_profile::DifficultyLevel;
 /// game context.  The engine receives a copy before ticking and never reaches
 /// back into the process-global player-profile manager.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SimConfig {
     pub difficulty: DifficultyLevel,
@@ -65,7 +74,15 @@ impl Default for SimConfig {
 
 /// Application-wide startup options.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct GlobalOptions {
     pub major_version: u16,

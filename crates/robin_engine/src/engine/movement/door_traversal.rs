@@ -1072,12 +1072,11 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("posture-recovery PC {pc_id:?} has no actor state"));
         let action_state = actor.action_state;
 
-        // Drill into the SEEK element's post-seek sub-sequence when
-        // the inbound sequence ends with `Command::Seek`; allocate a
-        // fresh sub-sequence if none was attached yet, then append the
-        // recovery command to it.  This way recovery fires only on
-        // successful seek completion, not on seek abort.
-        let target_sequence: &mut crate::sequence::Sequence = if sequence
+        // Drill into the SEEK element's post-seek sub-sequence when the
+        // inbound sequence ends with `Command::Seek`. Promote the flat
+        // continuation temporarily, reuse the ordinary append logic, then
+        // validate and store it as a one-level continuation again.
+        if sequence
             .last()
             .is_some_and(|last| last.command == Command::Seek)
         {
@@ -1085,28 +1084,29 @@ impl EngineInner {
                 .elements
                 .last_mut()
                 .expect("Sequence::last() returned Some above");
-            if let crate::sequence::SequenceElementData::Movement {
+            let crate::sequence::SequenceElementData::Movement {
                 post_seek_sequence, ..
             } = &mut last_elem.data
-            {
-                post_seek_sequence
-                    .get_or_insert_with(|| Box::new(crate::sequence::Sequence::new()))
-                    .as_mut()
-            } else {
-                sequence
-            }
-        } else {
-            sequence
-        };
+            else {
+                panic!("Seek sequence element does not contain movement data");
+            };
+            let mut continuation = post_seek_sequence
+                .take()
+                .map(crate::sequence::PostSeekSequence::into_sequence)
+                .unwrap_or_default();
+            self.append_posture_recovery(pc_id, &mut continuation);
+            *post_seek_sequence = Some(continuation.into_post_seek());
+            return;
+        }
 
-        let (level, last_command) = match target_sequence.last() {
+        let (level, last_command) = match sequence.last() {
             None => (1u16, None),
             Some(last) => (last.command_level.saturating_add(1), Some(last.command)),
         };
 
         // "Shoot once then stop".
         if last_command == Some(Command::ShootBow) && !action_state.is_bow() {
-            if let Some(last_mut) = target_sequence.elements.last_mut() {
+            if let Some(last_mut) = sequence.elements.last_mut() {
                 last_mut.command = Command::ShootBowOnce;
             }
             return;
@@ -1114,28 +1114,28 @@ impl EngineInner {
 
         match posture {
             crate::element::Posture::Upright if action_state.is_bow() => {
-                target_sequence.append_element(crate::sequence::SequenceElement::new(
+                sequence.append_element(crate::sequence::SequenceElement::new(
                     level,
                     Command::EquipBow,
                     Some(pc_id),
                 ));
             }
             crate::element::Posture::Crouched if last_command != Some(Command::CrouchUp) => {
-                target_sequence.append_element(crate::sequence::SequenceElement::new(
+                sequence.append_element(crate::sequence::SequenceElement::new(
                     level,
                     Command::CrouchDown,
                     Some(pc_id),
                 ));
             }
             crate::element::Posture::HelpingToClimb => {
-                target_sequence.append_element(crate::sequence::SequenceElement::new(
+                sequence.append_element(crate::sequence::SequenceElement::new(
                     level,
                     Command::EnterHelpingClimb,
                     Some(pc_id),
                 ));
             }
             crate::element::Posture::SimulatingBeggar => {
-                target_sequence.append_element(crate::sequence::SequenceElement::new(
+                sequence.append_element(crate::sequence::SequenceElement::new(
                     level,
                     Command::EnterBeggar,
                     Some(pc_id),

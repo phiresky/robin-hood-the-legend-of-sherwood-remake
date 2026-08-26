@@ -3,7 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::ai::AiGlobalState;
 
 /// Deterministic global AI state and mission-configured vision defaults.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct AiRuntime {
     pub(crate) global: AiGlobalState,
     pub(crate) standard_view_polygon_radius: u16,

@@ -76,6 +76,8 @@ pub enum MovementResult {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ActiveMovement {
     pub sequence_id: Option<SequenceId>,
@@ -129,6 +131,8 @@ impl ActiveMovement {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ActiveShot {
     pub sequence_id: Option<SequenceId>,
@@ -173,7 +177,14 @@ impl ActiveShot {
 /// `rotation_per_frame`, and pending victims whose direction from the
 /// attacker falls within the swept arc receive damage.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SweepState {
     /// Entities not yet hit by the sweep.
@@ -214,6 +225,8 @@ pub struct SweepState {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum AbilityKind {
     /// Little John picks up an unconscious/dead body.
@@ -323,7 +336,14 @@ impl AbilityKind {
 /// Similar to [`ActiveShot`] for bow shots. Set by `abilities::begin_*`
 /// functions and consumed by owner-local `abilities::tick_ability`.
 #[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct ActiveAbility {
     /// Which ability is playing, or `None` if idle.

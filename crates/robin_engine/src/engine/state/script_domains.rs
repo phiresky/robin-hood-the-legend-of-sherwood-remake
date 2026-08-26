@@ -2,12 +2,28 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct ZoneState {
     pub(crate) scripts: Vec<crate::sector::ScriptSectorData>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct BuildingState {
     pub(crate) occupants: Vec<Vec<i32>>,
     pub(crate) arrow_reserves: Vec<bool>,
@@ -16,7 +32,15 @@ pub(crate) struct BuildingState {
     pub(crate) gates: Vec<Vec<i32>>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct InteractableState {
     pub(crate) doors: Vec<crate::gate::Door>,
     pub(crate) patches: Vec<crate::patch::Patch>,
@@ -27,7 +51,14 @@ pub(crate) struct InteractableState {
 /// These values are queried or mutated by both ordinary engine systems and
 /// script natives, so the native adapter only leases this single owner during
 /// a callback. Presentation changes derived from the values remain effects.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct MissionUiState {
     pub(crate) outline_display: bool,
     pub(crate) force_check: bool,
@@ -84,7 +115,15 @@ impl MissionUiState {
 }
 
 /// Deterministic scroll state shared by engine systems and script natives.
-#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub(crate) struct ScrollState {
     pub(crate) status: BTreeMap<i32, i32>,
     pub(crate) attachments: BTreeMap<i32, i32>,
@@ -95,7 +134,15 @@ pub(crate) struct ScrollState {
 ///
 /// `EngineInner` lends each native resume a typed mutable borrow. It is never
 /// copied or parked in `ScriptEffects`.
-#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 /// Canonical deterministic state shared by the engine and script natives.
 ///
 /// The fields remain engine-internal; the public type lets external native

@@ -39,7 +39,16 @@ const VOLUME_CUT_THRESHOLD: f32 = 0.01;
 
 /// Sound type — determines how a sound is processed.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SoundType {
     None,
@@ -63,7 +72,16 @@ pub enum SoundType {
 
 /// Altitude classification for sound sources.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SoundSourceAltitude {
     Ground,
@@ -77,7 +95,15 @@ pub enum SoundSourceAltitude {
 
 /// Defines the attenuation range for a sound.
 /// Between inner and outer distance, volume interpolates linearly.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundRange {
     pub outer_distance: f32,
     pub outer_volume: f32,
@@ -88,7 +114,15 @@ pub struct SoundRange {
 /// Describes a sound source's geometry — either a global source or a
 /// shape made of multiple points. This is the data `SoundGeometry`
 /// needs from a sound source to compute spatial audio params.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundSourceInfo {
     pub is_global: bool,
     pub altitude: SoundSourceAltitude,
@@ -101,7 +135,15 @@ pub struct SoundSourceInfo {
 
 /// Sound settings passed to `get_logical_playing_params`.  The union
 /// fields are modelled as an enum variant in `SoundSettingsSource`.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundSettings {
     pub sound_type: SoundType,
     pub position: MapPoint,
@@ -110,7 +152,15 @@ pub struct SoundSettings {
 }
 
 /// Discriminated source variant for `SoundSettings`.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum SoundSettingsSource {
     /// Sound from a multi-point source.
     SoundSource {
@@ -122,7 +172,15 @@ pub enum SoundSettingsSource {
 }
 
 /// Logical + final playing parameters.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PlayingParameters {
     // Logical settings (float, -1..1 for panning/fading, 0..1 for volume)
     pub volume: f32,
@@ -159,7 +217,15 @@ impl Default for PlayingParameters {
 /// Main sound geometry processor.
 /// Computes volume, panning, and fading based on listener position,
 /// zoom level, and sound source geometry.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundGeometry {
     /// Current listener position in level coordinates.
     listen_point: MapPoint,

@@ -10,7 +10,16 @@ use crate::sound_source::SoundSourceManager;
 /// Sim-state portion of the sound system. Owned by `EngineInner`, included in
 /// rollback snapshots. Host-side `SoundManager` (in robin_rs) tracks the
 /// non-sim playback machinery (channels, cache, music backend).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct SoundSimState {
     pub sources: SoundSourceManager,
     /// Exact v48 sound director/backend snapshot retained across save import.
@@ -64,7 +73,15 @@ pub struct SoundSimState {
     pub suspended_active_sources: Vec<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct LegacyV48SoundState {
     pub sound_system_ready: bool,
     pub three_d_sound: bool,
@@ -87,14 +104,30 @@ pub struct LegacyV48SoundState {
 /// A scheduled exclamation finish. `actor_id` and `exclamation_id`
 /// match the `(actor_id, excl_id)` tuple the AI MYTALK handler reads
 /// out of `finished_exclamations`.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PlayingExclamation {
     pub actor_id: u32,
     pub exclamation_id: u32,
     pub finish_frame: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PendingExclamation {
     pub actor_id: u32,
     pub group: ExclamationGroup,
@@ -103,7 +136,15 @@ pub struct PendingExclamation {
     pub variant: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ResolvedExclamation {
     pub actor_id: u32,
     pub identifier: u32,
@@ -115,7 +156,15 @@ pub struct ResolvedExclamation {
 /// `SoundSimState::sources`; `finish_frame` is the sim frame on which
 /// the drain inside `perform_hourglass` will apply the kind-specific
 /// finish transition.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PlayingSource {
     pub source_index: u32,
     pub finish_frame: u32,
@@ -133,6 +182,8 @@ pub struct PlayingSource {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum MusicMode {
     Quiet = 0,
@@ -153,6 +204,8 @@ pub enum MusicMode {
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ExclamationGroup {
     Pc,
@@ -163,7 +216,16 @@ pub enum ExclamationGroup {
 
 /// Strike type for combat FX.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum StrikeKind {
     Swipe = 0,
@@ -173,7 +235,16 @@ pub enum StrikeKind {
 
 /// Impact type for combat FX.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ImpactKind {
     LightArmor = 0,
@@ -190,6 +261,8 @@ pub enum ImpactKind {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum Jingle {
     NewPeasantCalled = 0,

@@ -30,6 +30,8 @@ use crate::sound_config::SoundConfig;
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum DifficultyLevel {
     Easy,
@@ -133,7 +135,15 @@ pub fn profile_save_subdirectory(profile_id: u32) -> String {
 }
 
 /// A single player profile containing settings and gameplay state.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PlayerProfile {
     pub name: String,
     pub id: u32,
@@ -185,7 +195,15 @@ impl PlayerProfile {
 ///
 /// Profiles are persisted as a JSON file (`profiles.json`) inside
 /// `save_directory`.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct PlayerProfileManager {
     pub profiles: Vec<PlayerProfile>,
     /// Index of the active profile, or `None` if no profile is active.

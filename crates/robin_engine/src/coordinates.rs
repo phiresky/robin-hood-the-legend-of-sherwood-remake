@@ -26,7 +26,7 @@ macro_rules! coord2 {
             Serialize,
             Deserialize,
             robin_state_hash_derive::StateHash,
-        )]
+        bitcode::Encode, bitcode::Decode)]
         pub struct $name {
             pub x: f32,
             pub y: f32,
@@ -177,6 +177,8 @@ coord2!(
 )]
 pub struct ScreenBBox(pub Option<Rect<f32>>);
 
+crate::bitcode_adapters::impl_native_bitcode_rect!(ScreenBBox);
+
 impl Default for ScreenBBox {
     fn default() -> Self {
         Self::new()
@@ -192,6 +194,8 @@ impl Default for ScreenBBox {
     Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct MapBBox(pub Option<Rect<f32>>);
+
+crate::bitcode_adapters::impl_native_bitcode_rect!(MapBBox);
 
 impl Default for MapBBox {
     fn default() -> Self {
@@ -209,6 +213,8 @@ impl Default for MapBBox {
 )]
 pub struct GroundBBox(pub Option<Rect<f32>>);
 
+crate::bitcode_adapters::impl_native_bitcode_rect!(GroundBBox);
+
 impl Default for GroundBBox {
     fn default() -> Self {
         Self::new()
@@ -224,6 +230,8 @@ impl Default for GroundBBox {
     Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct MoveBox(pub Option<Rect<f32>>);
+
+crate::bitcode_adapters::impl_native_bitcode_rect!(MoveBox);
 
 impl Default for MoveBox {
     fn default() -> Self {
@@ -602,7 +610,15 @@ impl ScreenBBox {
 /// game projection `(x, y - z)`. This type is for actual 3D positions; use
 /// [`MapPoint`] for already-projected 2D map coordinates.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct WorldPoint3D {
     pub x: f32,
@@ -704,7 +720,15 @@ impl std::ops::Sub<WorldVec3D> for WorldPoint3D {
 /// added to points, but they are not positions and should not be projected or
 /// stored as entity locations.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct WorldVec3D {
     pub x: f32,

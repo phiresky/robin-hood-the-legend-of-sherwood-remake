@@ -6148,7 +6148,7 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
     let (mut engine, assets, actor) = setup_ai_state_native_probe("MoveSentinelProbe", 3);
     let pending =
         crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 333.0, 444.0);
-    engine.orders.pending_move_requests.push((actor, pending));
+    engine.launch_ai_move(actor, &pending);
 
     let mut deferred = crate::sequence::SequenceElement::new_movement(
         1,

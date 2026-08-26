@@ -215,7 +215,13 @@ fn anim_ordinal_to_order_type(anim: i32, native: &str) -> OrderType {
 /// simulation barrier must never overtake an earlier command from another
 /// domain.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum ScriptEffect {
     Presentation(EngineCommand),
@@ -227,7 +233,13 @@ pub enum ScriptEffect {
 /// Native-local mutations never enter this enum: only work that needs the
 /// owning `EngineInner` boundary belongs here.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum SimulationEffect {
     Engine(EngineCommand),
@@ -237,7 +249,14 @@ pub enum SimulationEffect {
 /// Serialized script output shell. This is an effect buffer, not a host and
 /// not a world owner; deterministic state queried by natives lives in the
 /// engine capabilities borrowed by [`NativeContext`].
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct ScriptEffects {
     pub ordered: std::collections::VecDeque<ScriptEffect>,
 }

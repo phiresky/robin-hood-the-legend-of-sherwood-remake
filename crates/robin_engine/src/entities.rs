@@ -23,7 +23,16 @@ macro_rules! typed_entity_accessors {
     };
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(transparent)]
 pub struct Entities(
     Vec<Option<Entity>>,
@@ -34,6 +43,7 @@ pub struct Entities(
     /// describe cache freshness, not gameplay state.
     #[serde(skip)]
     #[state_hash(skip)]
+    #[bitcode(skip)]
     Vec<u64>,
 );
 
@@ -48,6 +58,17 @@ impl Entities {
     /// loaders, compatibility DTOs, and parity fixtures should manufacture
     /// raw slots. Runtime code should use typed IDs and entity accessors.
     pub fn from_legacy_slots(slots: Vec<Option<Entity>>) -> Self {
+        let generations = vec![0; slots.len()];
+        Self(slots, generations)
+    }
+
+    /// Exact sparse slots used by the current native engine snapshot codec.
+    pub(crate) fn snapshot_slots(&self) -> &[Option<Entity>] {
+        &self.0
+    }
+
+    /// Restore exact sparse slots from the current native snapshot codec.
+    pub(crate) fn from_snapshot_slots(slots: Vec<Option<Entity>>) -> Self {
         let generations = vec![0; slots.len()];
         Self(slots, generations)
     }
@@ -551,7 +572,16 @@ impl Entities {
 /// wrote is its authoritative value, and recomputing the other one back rounds.
 /// Recording the pair keeps a later reader on the same value the element
 /// itself would have reported.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct BoundaryPosition {
     pub map: crate::coordinates::MapPoint,
     pub world: crate::coordinates::WorldPoint3D,

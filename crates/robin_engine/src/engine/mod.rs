@@ -189,13 +189,14 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// This type is public only because [`Engine`](rollback_safe::Engine) exposes
 /// it as a borrowed, read-only `Deref` target. Its fields, constructors, and
 /// mutators are crate-private, and production builds deliberately do not
-/// implement `Clone` or `Deserialize` for it. Whole-state ownership belongs to
-/// the `Engine` facade.
+/// implement `Clone`, Serde `Deserialize`, or native bitcode codecs for it.
+/// Whole-state ownership and snapshot encoding/decoding belong to the `Engine`
+/// facade.
 ///
 /// `Serialize` and `StateHash` follow the current nested ownership layout.
 /// Multiplayer peers, rollback, and current-format replays therefore observe
-/// the same deterministic state boundaries. Unit tests retain a test-only
-/// `Clone` implementation for low-level engine fixtures.
+/// the same deterministic state boundaries. Unit tests retain test-only
+/// `Clone` implementations for low-level engine fixtures.
 #[cfg_attr(test, derive(Clone))]
 #[derive(robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
@@ -307,7 +308,13 @@ pub type SourceDurations = std::sync::Arc<std::collections::BTreeMap<u32, u32>>;
 /// patch just transitioned. `restore_only = true` removes the decal
 /// without adding the current frame.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PendingBgBlit {
     pub entity_id: EntityId,
@@ -323,7 +330,13 @@ pub struct PendingBgBlit {
 /// result without mutating the live sprite; the hardware renderer consumes
 /// the concrete frame id and destination later.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct PendingBgBlitDecal {
     pub bank_id: u32,
@@ -3860,7 +3873,7 @@ impl EngineInner {
         // avoid re-entrant borrows, so explicitly close this owner's terminal
         // stack before launching the post-seek tail.
         self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
-        self.launch_sequence(*post_seek);
+        self.launch_sequence(post_seek.into_sequence());
         true
     }
 

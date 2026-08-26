@@ -1,7 +1,7 @@
 //! Full game save payload — captures a snapshot of Engine + Campaign state.
 //!
 //! Logical fields are serialized through serde.  The format is JSON today
-//! for debuggability; switching to a compact binary format (e.g. bincode)
+//! for debuggability; switching to a compact binary format (e.g. bitcode)
 //! is a future option once the set of serialized fields stabilizes.  A
 //! 4-byte "RHSG" magic plus a format version are stored in the header.
 //! Readers validate that header before deserializing the version-specific
@@ -453,9 +453,9 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   the final report-before-formation barrier.
 /// - **v53** (2026-08-26, automatic quick-action queue): player state records
 ///   the active automatic queue and its serialized commands.
-/// - **v54** (2026-08-26, independent quick-action stores): automatic work is
-///   separated from the three manual slots and manual replacement state is
-///   represented explicitly.
+/// - **v54** (2026-08-26, resolved quick-action state): records shield danger
+///   geometry, independent automatic queues, resolved group-move routes, and
+///   resolved DropAle routes.
 /// - **v55** (2026-08-26, exact movement-route ownership): every stored quick
 ///   action move requires its resolved per-PC destination-sector identity, and
 ///   sequence point Seeks require explicit live-versus-Original route

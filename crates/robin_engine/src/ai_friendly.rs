@@ -15,7 +15,16 @@ use crate::parameters_ai::{
 
 /// Caller tail to run only when both synchronous `AlertSoldier` route
 /// attempts fail.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub enum AlertSoldierFailureContinuation {
     PanicWithRemark,
     Panic,
@@ -63,12 +72,12 @@ pub const BEGGAR_NO_RANDOM_TALK_DISTANCE: i32 = 100;
 /// Truthful engine snapshot for the only cross-entity per-tick value consumed
 /// by Friendly AI. Deliberately has no `Default`/`stub`: handlers that require
 /// a patrol chief must demand the live snapshot contextually.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(crate) struct FriendlyPerTickData {
     patrol_chief: Option<FriendlyPatrolChief>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct FriendlyPatrolChief {
     position: Position,
     state: AiState,
@@ -97,7 +106,15 @@ impl FriendlyPerTickData {
 // ---------------------------------------------------------------------------
 
 /// Civilian AI state. Extends [`AiController`] with civilian-specific fields.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FriendlyAi {
     /// Base AI controller (contains all common state).
     pub base: AiController,

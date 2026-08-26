@@ -100,6 +100,8 @@ pub fn points_near(a: GeoPoint2D, b: GeoPoint2D, epsilon: f32) -> bool {
 )]
 pub struct BBox2D(pub Option<Rect<f32>>);
 
+crate::bitcode_adapters::impl_native_bitcode_rect!(BBox2D);
+
 impl BBox2D {
     /// Empty box ("hyperspace" — bounds not set).
     pub fn new() -> Self {

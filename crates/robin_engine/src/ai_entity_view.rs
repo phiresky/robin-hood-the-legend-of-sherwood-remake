@@ -56,7 +56,13 @@ fn patrol_path_view_fields(
 /// Snapshot of a single entity's AI-facing state at the top of the
 /// current tick.
 #[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct AiEntityView {
     /// Original `RHElement::GetCreationOrder()`. Runtime entity slots are not
@@ -301,7 +307,14 @@ pub struct AiEntityView {
 /// distance ranking and the straight-movement authorisation check),
 /// and radius (for the `radius + 15` goal distance).
 #[derive(
-    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct NetCoverInfo {
     /// Entity slot index of the covering net.  Stored into
@@ -325,6 +338,8 @@ pub struct NetCoverInfo {
     serde::Serialize,
     serde::Deserialize,
     robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub enum EntityKind {
     /// No view / unknown / non-actor prop.  Matches the
