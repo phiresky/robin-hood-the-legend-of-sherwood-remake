@@ -2982,7 +2982,9 @@ struct TraceAiForecastEvent {
 struct TraceAlertEligibility {
     rank: bool,
     able_to_help: Option<bool>,
-    #[serde(rename = "stay_on_post", alias = "allowed_to_leave_post")]
+    #[serde(default)]
+    stay_on_post: Option<bool>,
+    #[serde(default)]
     allowed_to_leave_post: Option<bool>,
     can_call: Option<bool>,
     max_radius: Option<bool>,
@@ -14331,24 +14333,33 @@ mod tests {
     }
 
     #[test]
-    fn alert_eligibility_round_trip_preserves_original_stay_on_post_key() {
+    fn alert_eligibility_round_trip_preserves_distinct_post_keys() {
         let original = serde_json::json!({
             "rank": true,
             "stay_on_post": true,
+            "allowed_to_leave_post": false,
         });
         let eligibility: TraceAlertEligibility = serde_json::from_value(original.clone()).unwrap();
         let serialized = serde_json::to_value(&eligibility).unwrap();
         assert_eq!(serialized["stay_on_post"], serde_json::json!(true));
-        assert!(serialized.get("allowed_to_leave_post").is_none());
+        assert_eq!(
+            serialized["allowed_to_leave_post"],
+            serde_json::json!(false)
+        );
+        assert_eq!(eligibility.stay_on_post, Some(true));
+        assert_eq!(eligibility.allowed_to_leave_post, Some(false));
 
-        let legacy: TraceAlertEligibility = serde_json::from_value(serde_json::json!({
-            "rank": true,
-            "allowed_to_leave_post": false,
-        }))
-        .unwrap();
-        assert_eq!(legacy.allowed_to_leave_post, Some(false));
+        let mut frame_json = minimal_frame_json();
+        frame_json["alert_formation_events"] = serde_json::json!([{
+            "ordinal": 0,
+            "stage": "candidate",
+            "invocation": 9,
+            "scan_index": 2,
+            "candidate": {"kind": "soldier", "index": 8},
+            "eligibility": original,
+        }]);
 
-        let line = minimal_frame_json().to_string();
+        let line = frame_json.to_string();
         let frame: TraceFrame = serde_json::from_str(&line).unwrap();
         verify_trace_line_roundtrip(&frame, &line, 3);
     }
