@@ -48,6 +48,12 @@
 /.zshrc
 /tmp/
 /.codex-tmp/
+/.agent-debug/
+/.codex-target/
+/.codex-worktrees/
+/.diagnostics/
+/.rng-runtime-audit-commit/
+/schema14/
 /binaries
 /.codex
 
