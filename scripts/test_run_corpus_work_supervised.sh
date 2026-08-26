@@ -45,7 +45,8 @@ child_pid_file=$test_root/child.pid
 CORPUS_WORK_HEARTBEAT_SECONDS=1 \
     "$repo/scripts/run_corpus_work_supervised.sh" \
     "$db" test/corpus convert worker-signal test "$test_root/audit-signal" \
-    60 signal -- bash -c 'printf "%s\n" "$$" >"$1"; exec sleep 300' bash "$child_pid_file" \
+    60 signal -- bash -c \
+        'timeout 300 sleep 300 & printf "%s\n" "$!" >"$1"; wait' bash "$child_pid_file" \
     >/dev/null &
 supervisor_pid=$!
 for attempt in $(seq 1 50); do

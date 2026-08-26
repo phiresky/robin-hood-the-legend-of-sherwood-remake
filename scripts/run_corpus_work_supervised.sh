@@ -32,14 +32,19 @@ claim_token=
 child_pid=
 
 terminate_child_group() {
-    local attempt
+    local attempt session_pids
     [[ -n "$child_pid" ]] || return 0
-    kill -TERM -- "-$child_pid" 2>/dev/null || true
+    # `timeout` deliberately creates additional process groups.  They still
+    # belong exclusively to the session created for the wrapped command, so
+    # signal the exact child session rather than only its initial group.
+    session_pids=$(ps -eo pid=,sid= | awk -v sid="$child_pid" '$2 == sid {print $1}')
+    [[ -z "$session_pids" ]] || kill -TERM $session_pids 2>/dev/null || true
     for attempt in $(seq 1 30); do
-        kill -0 "$child_pid" 2>/dev/null || { child_pid=; return 0; }
+        session_pids=$(ps -eo pid=,sid= | awk -v sid="$child_pid" '$2 == sid {print $1}')
+        [[ -z "$session_pids" ]] && { child_pid=; return 0; }
         sleep 1
     done
-    kill -KILL -- "-$child_pid" 2>/dev/null || true
+    kill -KILL $session_pids 2>/dev/null || true
     wait "$child_pid" 2>/dev/null || true
     child_pid=
 }
