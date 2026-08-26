@@ -749,6 +749,126 @@ mod tests {
     }
 
     #[test]
+    fn shield_macro_and_player_command_roundtrip_all_formats_and_hash_geometry() {
+        let protected_pc = EntityId::new(11, crate::element::EntityIdKind::Pc);
+        let step = QuickActionStep {
+            action: Action::Shield,
+            position: MapPoint::new(120.0, 180.0),
+            replay: QaReplayCommand::ShieldRaise {
+                protected_pc,
+                danger_point: crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0),
+                danger_point_layer: 6,
+            },
+        };
+
+        let json = serde_json::to_value(step).expect("serialize shield macro as JSON");
+        let from_json: QuickActionStep =
+            serde_json::from_value(json).expect("roundtrip shield macro JSON");
+        assert_eq!(from_json, step);
+
+        let encoded = bitcode::serialize(&step).expect("serialize shield macro as bitcode");
+        let from_bitcode: QuickActionStep =
+            bitcode::deserialize(&encoded).expect("roundtrip shield macro bitcode");
+        assert_eq!(from_bitcode, step);
+        assert_eq!(
+            bitcode::serialize(&from_bitcode).expect("re-encode shield macro bitcode"),
+            encoded
+        );
+
+        let bincode_config = bincode::config::standard();
+        let encoded = bincode::serde::encode_to_vec(step, bincode_config)
+            .expect("serialize shield macro as bincode");
+        let (from_bincode, consumed): (QuickActionStep, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode_config)
+                .expect("roundtrip shield macro bincode");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(from_bincode, step);
+        assert_eq!(
+            bincode::serde::encode_to_vec(from_bincode, bincode_config)
+                .expect("re-encode shield macro bincode"),
+            encoded
+        );
+
+        let command = crate::player_command::PlayerCommand::RaiseShieldWithDanger {
+            actor: EntityId::new(10, crate::element::EntityIdKind::Pc),
+            protected_pc,
+            danger_point: crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0),
+            danger_point_layer: 6,
+        };
+        let json = serde_json::to_value(&command).expect("serialize shield command as JSON");
+        let from_json: crate::player_command::PlayerCommand =
+            serde_json::from_value(json).expect("roundtrip shield command JSON");
+        assert!(matches!(
+            &from_json,
+            crate::player_command::PlayerCommand::RaiseShieldWithDanger {
+                actor,
+                protected_pc: decoded_protected,
+                danger_point,
+                danger_point_layer: 6,
+            } if *actor == EntityId::new(10, crate::element::EntityIdKind::Pc)
+                && *decoded_protected == protected_pc
+                && *danger_point == crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0)
+        ));
+
+        let encoded = bitcode::serialize(&command).expect("serialize shield command as bitcode");
+        let from_bitcode: crate::player_command::PlayerCommand =
+            bitcode::deserialize(&encoded).expect("roundtrip shield command bitcode");
+        assert_eq!(
+            bitcode::serialize(&from_bitcode).expect("re-encode shield command bitcode"),
+            encoded
+        );
+
+        let encoded = bincode::serde::encode_to_vec(&command, bincode_config)
+            .expect("serialize shield command as bincode");
+        let (from_bincode, consumed): (crate::player_command::PlayerCommand, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode_config)
+                .expect("roundtrip shield command bincode");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            bincode::serde::encode_to_vec(&from_bincode, bincode_config)
+                .expect("re-encode shield command bincode"),
+            encoded
+        );
+
+        let changed_layer = QuickActionStep {
+            replay: QaReplayCommand::ShieldRaise {
+                protected_pc,
+                danger_point: crate::coordinates::WorldPoint3D::new(120.0, 205.0, 25.0),
+                danger_point_layer: 7,
+            },
+            ..step
+        };
+        let changed_height = QuickActionStep {
+            replay: QaReplayCommand::ShieldRaise {
+                protected_pc,
+                danger_point: crate::coordinates::WorldPoint3D::new(120.0, 206.0, 26.0),
+                danger_point_layer: 6,
+            },
+            ..step
+        };
+        let baseline_hash = robin_util::state_hash::compute(&step);
+        assert_ne!(
+            robin_util::state_hash::compute(&changed_layer),
+            baseline_hash
+        );
+        assert_ne!(
+            robin_util::state_hash::compute(&changed_height),
+            baseline_hash
+        );
+
+        let changed_command = crate::player_command::PlayerCommand::RaiseShieldWithDanger {
+            actor: EntityId::new(10, crate::element::EntityIdKind::Pc),
+            protected_pc,
+            danger_point: crate::coordinates::WorldPoint3D::new(120.0, 206.0, 26.0),
+            danger_point_layer: 7,
+        };
+        assert_ne!(
+            robin_util::state_hash::compute(&command),
+            robin_util::state_hash::compute(&changed_command)
+        );
+    }
+
+    #[test]
     fn adopted_legacy_sequence_is_a_live_macro_and_clears_atomically() {
         let pc = EntityId::new(7, crate::element::EntityIdKind::Pc);
         let mut sequence = Sequence::new();
