@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 pub struct GameplayConfig {
     /// Use the intended Hard-difficulty reaction-time multiplier instead of
     /// the Easy multiplier selected by the original game's copy-paste bug.
-    #[serde(default = "default_true")]
+    // A missing field identifies a profile written before this opt-in existed;
+    // retain the original game's reaction-time behaviour for that profile.
+    #[serde(default)]
     pub fix_hard_reaction_times: bool,
 
     /// Allow direct selection and command of Royalist soldier NPCs.
@@ -18,10 +20,6 @@ pub struct GameplayConfig {
     /// retain the shipped game's input behaviour until the player opts in.
     #[serde(default)]
     pub control_allied_soldiers: bool,
-}
-
-const fn default_true() -> bool {
-    true
 }
 
 impl Default for GameplayConfig {
@@ -43,9 +41,9 @@ mod tests {
     }
 
     #[test]
-    fn profiles_without_the_setting_enable_the_fix() {
+    fn profiles_without_the_setting_retain_original_reaction_times() {
         let config: GameplayConfig = serde_json::from_str("{}").expect("gameplay config");
-        assert!(config.fix_hard_reaction_times);
+        assert!(!config.fix_hard_reaction_times);
         assert!(!config.control_allied_soldiers);
     }
 }
