@@ -75,11 +75,11 @@ impl AudioDurationCache {
     /// datadirs) bypass the cache — those reads are already in-memory.
     pub fn duration_ms(
         &mut self,
-        base_dir: &Path,
+        resolver: &SampleResolver,
         file_name: &str,
         loader: &SampleLoader,
     ) -> Option<u32> {
-        let Some((native, size, mtime_ms)) = resolve_native_sample(base_dir, file_name) else {
+        let Some((native, size, mtime_ms)) = resolver.resolve(file_name) else {
             return loader(file_name).map(|(_, _, duration_ms)| duration_ms);
         };
         let key = native.to_string_lossy().into_owned();
@@ -165,39 +165,64 @@ fn cache_file_path() -> Option<PathBuf> {
     None
 }
 
-/// Mirror the sample loader's candidate order on the native filesystem
-/// and return the winning file's identity for cache keying: the name
-/// under `base_dir`, then under `base_dir/Exclamations`, each with
-/// case-insensitive fallback.
-fn resolve_native_sample(base_dir: &Path, file_name: &str) -> Option<(PathBuf, u64, u64)> {
-    let normalised = file_name.replace('\\', "/");
-    let direct = Path::new(&normalised);
-    let candidates = if direct.is_absolute() {
-        vec![direct.to_path_buf()]
-    } else {
-        vec![
-            base_dir.join(&normalised),
-            base_dir.join("Exclamations").join(&normalised),
-        ]
-    };
-    let resolved = candidates.into_iter().find_map(|candidate| {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        robin_engine::sbfile::resolve_case_insensitive(&candidate)
-            .or_else(|| {
-                candidate
-                    .to_str()
-                    .and_then(robin_engine::sbfile::resolve_data_path)
+/// Memoizes the expensive per-directory half of sample path resolution:
+/// the case-insensitive / overlay-aware lookup of the sample base
+/// directories runs once, after which each sample costs one `stat` of
+/// `<resolved dir>/<name>` instead of a full fallback walk. The rare
+/// per-file case mismatch still falls back to the full resolution.
+pub struct SampleResolver {
+    /// Resolved native candidate roots, in loader candidate order
+    /// (`base_dir`, then `base_dir/Exclamations`).
+    roots: Vec<PathBuf>,
+}
+
+impl SampleResolver {
+    pub fn new(base_dir: &Path) -> Self {
+        // Datadir layering (overlays, primary, language-folder
+        // alternates, case folding) is sbfile's domain — resolve each
+        // loader candidate directory across the layers once, in loader
+        // candidate order (the name under the base dir first, then
+        // under base/Exclamations). After that each sample costs one
+        // stat.
+        let roots = if base_dir.is_absolute() {
+            vec![base_dir.to_path_buf()]
+        } else {
+            let rel = base_dir.to_string_lossy();
+            let mut roots = robin_engine::sbfile::SbFile::resolve_data_dir_layers(&rel);
+            roots.extend(robin_engine::sbfile::SbFile::resolve_data_dir_layers(
+                &format!("{rel}/Exclamations"),
+            ));
+            roots
+        };
+        Self { roots }
+    }
+
+    /// Mirror the sample loader's candidate order on the native
+    /// filesystem and return the winning file's identity for cache
+    /// keying.
+    fn resolve(&self, file_name: &str) -> Option<(PathBuf, u64, u64)> {
+        let normalised = file_name.replace('\\', "/");
+        let direct = Path::new(&normalised);
+        let resolved = if direct.is_absolute() {
+            direct.is_file().then(|| direct.to_path_buf())
+        } else {
+            self.roots.iter().find_map(|root| {
+                let candidate = root.join(&normalised);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+                // Case mismatch below the resolved root — rare, so the
+                // full per-file walk is acceptable here.
+                robin_engine::sbfile::resolve_case_insensitive(&candidate).filter(|p| p.is_file())
             })
-            .filter(|p| p.is_file())
-    })?;
-    let meta = std::fs::metadata(&resolved).ok()?;
-    let mtime_ms = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_millis() as u64;
-    Some((resolved, meta.len(), mtime_ms))
+        }?;
+        let meta = std::fs::metadata(&resolved).ok()?;
+        let mtime_ms = meta
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as u64;
+        Some((resolved, meta.len(), mtime_ms))
+    }
 }
