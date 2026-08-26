@@ -5146,6 +5146,76 @@ fn waking_up_done_clears_target_concussion_and_waits() {
     assert_ne!(fresh_wait, stale_wait);
 }
 
+#[test]
+fn waking_up_done_publishes_transient_lying_corpse_intersection() {
+    use super::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
+    use crate::combat::CONCUSSION_THRESHOLD;
+    use crate::element::Posture;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_entity(make_test_soldier(Posture::Upright));
+    let neighbour = engine.add_entity(make_test_soldier(Posture::Tied));
+
+    {
+        let target_entity = engine.get_entity_mut(target).expect("target present");
+        let human = target_entity.human_data_mut().expect("target is human");
+        human.unconscious = true;
+        human.concussion_of_the_brain = CONCUSSION_THRESHOLD;
+        human.last_is_lying_for_corpse_intersection = Some(false);
+        target_entity
+            .npc_data_mut()
+            .expect("target is NPC")
+            .life_points = 30;
+    }
+    engine
+        .get_entity_mut(neighbour)
+        .expect("neighbour present")
+        .human_data_mut()
+        .expect("neighbour is human")
+        .last_is_lying_for_corpse_intersection = Some(true);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .soldiers
+        .resize_with(1, crate::profiles::SoldierProfile::default);
+
+    engine.process_anim_completion_outcomes(
+        &sim,
+        AnimCompletionOutcomes {
+            execute_sides: ExecuteSideOutcomes {
+                waking_up_done: vec![(rescuer, target)],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        &assets,
+    );
+
+    for id in [target, neighbour] {
+        assert!(
+            engine
+                .get_entity(id)
+                .expect("human remains present")
+                .human_data()
+                .expect("entity remains human")
+                .small_repulsive_radius,
+            "WakingUp's synchronous SetPosture(Lying) must publish the overlap for {id:?}"
+        );
+    }
+    assert_eq!(
+        engine
+            .get_entity(target)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .last_is_lying_for_corpse_intersection,
+        Some(true)
+    );
+}
+
 /// `Point` → `Pointing` animation.
 #[test]
 fn npc_translate_point_books_pointing_anim() {
