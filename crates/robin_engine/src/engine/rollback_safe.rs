@@ -24,6 +24,7 @@ use std::ops::Deref;
 #[cfg(test)]
 use super::DirectorCompletion;
 use super::SimConfig;
+use super::commands::SelectionCommandBatchMode;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
     ExternalFact, FrameAdvanceError, FrameConsoleResponse, InputState, LevelAssets,
@@ -3109,6 +3110,52 @@ impl Engine {
         dev: &mut DevState,
         frame: SimulationFrameInput,
     ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        self.advance_frame_with_command_batch_mode(
+            display,
+            input,
+            assets,
+            dev,
+            frame,
+            SelectionCommandBatchMode::InferNestedSelection,
+        )
+    }
+
+    /// Advance a frame whose commands were independently recorded by the
+    /// Original parity tracer.
+    ///
+    /// `RHParity::ShouldRecordNestedSelection` retains raw-mouse depth-2
+    /// messages while omitting the depth-3 restitution emitted by `SelectPc`.
+    /// Consequently adjacent recorded commands are siblings, not a root and
+    /// its nested callback. This explicit admission seam is intentionally
+    /// separate from [`Self::advance_frame`]: it is not serialized into
+    /// [`SimulationFrameInput`] and cannot change live or rollback semantics.
+    pub fn advance_original_parity_frame(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        frame: SimulationFrameInput,
+    ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        self.advance_frame_with_command_batch_mode(
+            display,
+            input,
+            assets,
+            dev,
+            frame,
+            SelectionCommandBatchMode::IndependentRecordedMessages,
+        )
+    }
+
+    fn advance_frame_with_command_batch_mode(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        frame: SimulationFrameInput,
+        command_batch_mode: SelectionCommandBatchMode,
+    ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
         self.require_live_campaign("advancing a simulation frame");
 
         let frame_before = self.inner.control.frame_counter;
@@ -3152,8 +3199,14 @@ impl Engine {
 
         let commands: Vec<PlayerInput> = commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
-        self.inner
-            .apply_commands(&sim, display, input, assets, &commands);
+        self.inner.apply_commands_with_mode(
+            &sim,
+            display,
+            input,
+            assets,
+            &commands,
+            command_batch_mode,
+        );
 
         let side_effects = if run_hourglass {
             self.inner.perform_hourglass_with_body_gate(
@@ -3176,8 +3229,14 @@ impl Engine {
 
         let post_commands: Vec<PlayerInput> = post_commands.into_iter().map(Into::into).collect();
         let sim = self.inner.control.simulation_context();
-        self.inner
-            .apply_commands(&sim, display, input, assets, &post_commands);
+        self.inner.apply_commands_with_mode(
+            &sim,
+            display,
+            input,
+            assets,
+            &post_commands,
+            command_batch_mode,
+        );
 
         let post_initialize_events = run_post_initialize
             .then(|| self.inner.perform_post_initialize(display, assets))
@@ -3807,6 +3866,143 @@ mod tests {
         )
         .expect("construct frame API fixture");
         (engine, assets)
+    }
+
+    fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequence::SequenceId)
+    {
+        let (mut engine, mut assets) = frame_api_fixture();
+        let mut actions =
+            [crate::profiles::Action::NoAction; crate::profiles::NUMBER_OF_PC_ACTIONS];
+        actions[0] = crate::profiles::Action::Net;
+        let mut maximum_ammo = [0; crate::profiles::NUMBER_OF_PC_ACTIONS];
+        maximum_ammo[0] = 1;
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .missions
+            .push(crate::profiles::MissionProfile::default());
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            actions,
+            action_max_ammo: maximum_ammo,
+            ..Default::default()
+        });
+        assets.profile_manager = std::sync::Arc::new(profiles);
+
+        engine
+            .inner
+            .mission_domain
+            .campaign
+            .characters
+            .push(crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                instanced: true,
+                ..Default::default()
+            });
+        let pc_id = engine
+            .inner
+            .add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorPc,
+                    active: true,
+                    posture: crate::element::Posture::Upright,
+                    ..Default::default()
+                },
+                actor: crate::element::ActorData::default(),
+                human: crate::element::HumanData::default(),
+                pc: crate::element::PcData {
+                    profile_index: crate::profiles::CharacterProfileIdx(0),
+                    campaign_description_index: Some(0),
+                    life_points: 50,
+                    current_action: crate::profiles::Action::Net,
+                    ..Default::default()
+                },
+            }));
+
+        let mut wait = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::WaitTimer,
+            Some(pc_id),
+        );
+        wait.priority = crate::sequence::SequencePriority::Wait;
+        let wait_sequence = engine.inner.orders.sequence_manager.launch_element(wait);
+        engine
+            .inner
+            .orders
+            .sequence_manager
+            .element_in_progress(wait_sequence, 0);
+        (engine, assets, pc_id, wait_sequence)
+    }
+
+    fn adjacent_select_and_cancel(pc_id: EntityId) -> Vec<SimCommand> {
+        vec![
+            SimCommand::from(PlayerCommand::SelectPc {
+                pc_id,
+                append: false,
+            }),
+            SimCommand::from(PlayerCommand::CancelAction { pc_id }),
+        ]
+    }
+
+    #[test]
+    fn original_parity_frame_preserves_pre_and_post_command_boundaries() {
+        for post_hourglass in [false, true] {
+            let (mut engine, assets, pc_id, wait_sequence) = selection_boundary_fixture();
+            let commands = adjacent_select_and_cancel(pc_id);
+            let frame = if post_hourglass {
+                SimulationFrameInput::no_hourglass().with_post_commands(commands)
+            } else {
+                SimulationFrameInput::new(commands).with_hourglass(false)
+            };
+            let mut display = super::super::HostDisplayState::default();
+            let mut input = InputState::default();
+            let mut dev = DevState::default();
+
+            engine
+                .advance_original_parity_frame(&mut display, &mut input, &assets, &mut dev, frame)
+                .expect("advance Original parity frame");
+
+            assert_eq!(
+                engine
+                    .inner
+                    .orders
+                    .sequence_manager
+                    .get_element(wait_sequence, 0)
+                    .expect("interrupted wait remains inspectable")
+                    .state,
+                crate::sequence::SequenceState::Interrupted,
+                "{}-hourglass commands must remain independent recorded siblings",
+                if post_hourglass { "post" } else { "pre" },
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_frame_keeps_live_nested_selection_inference() {
+        let (mut engine, assets, pc_id, wait_sequence) = selection_boundary_fixture();
+        let mut display = super::super::HostDisplayState::default();
+        let mut input = InputState::default();
+        let mut dev = DevState::default();
+
+        engine
+            .advance_frame(
+                &mut display,
+                &mut input,
+                &assets,
+                &mut dev,
+                SimulationFrameInput::new(adjacent_select_and_cancel(pc_id)).with_hourglass(false),
+            )
+            .expect("advance ordinary frame");
+
+        assert_eq!(
+            engine
+                .inner
+                .orders
+                .sequence_manager
+                .get_element(wait_sequence, 0)
+                .expect("live wait remains inspectable")
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "ordinary admission must retain its existing nested-selection heuristic",
+        );
     }
 
     #[test]

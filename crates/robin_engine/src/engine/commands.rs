@@ -21,6 +21,18 @@ enum QuickActionRecordingStore {
     Automatic,
 }
 
+/// Interpretation of adjacency inside one already-resolved command batch.
+///
+/// Live/runtime batches may contain a recursively forwarded selection action,
+/// while Original parity traces contain only independently recorded messages:
+/// `RHParity::ShouldRecordNestedSelection` records raw-mouse depth-2 messages
+/// but omits the depth-3 restitution emitted by `SelectPc` itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SelectionCommandBatchMode {
+    InferNestedSelection,
+    IndependentRecordedMessages,
+}
+
 #[inline]
 /// Original `RHElementActorPC::AppendPostureRecovery` rewrites a terminal
 /// `SHOOT_BOW` to `SHOOT_BOW_ONCE` when the actor was not already aiming.
@@ -211,6 +223,25 @@ impl EngineInner {
         assets: &LevelAssets,
         commands: &[PlayerInput],
     ) {
+        self.apply_commands_with_mode(
+            sim,
+            display,
+            input,
+            assets,
+            commands,
+            SelectionCommandBatchMode::InferNestedSelection,
+        );
+    }
+
+    pub(crate) fn apply_commands_with_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        commands: &[PlayerInput],
+        mode: SelectionCommandBatchMode,
+    ) {
         for (index, inp) in commands.iter().enumerate() {
             let seat = self.ensure_seat(inp.player_id);
             // Original RHMessenger::ForwardMessage is recursive. The parity
@@ -220,21 +251,23 @@ impl EngineInner {
             // recorded child is authoritative; synthesizing it again inside
             // SelectPC can launch work from stale hidden action state before
             // the recorded child corrects that state.
-            let recorded_nested_selection_action = matches!(
-                (&inp.command, commands.get(index + 1)),
-                (
-                    PlayerCommand::SelectPc {
-                        pc_id: selected,
-                        append: false,
-                    },
-                    Some(PlayerInput {
-                        player_id,
-                        command:
-                            PlayerCommand::SelectResolvedAction { pc_id: nested, .. }
-                            | PlayerCommand::CancelAction { pc_id: nested },
-                    }),
-                ) if *player_id == inp.player_id && selected == nested
-            );
+            let recorded_nested_selection_action = mode
+                == SelectionCommandBatchMode::InferNestedSelection
+                && matches!(
+                    (&inp.command, commands.get(index + 1)),
+                    (
+                        PlayerCommand::SelectPc {
+                            pc_id: selected,
+                            append: false,
+                        },
+                        Some(PlayerInput {
+                            player_id,
+                            command:
+                                PlayerCommand::SelectResolvedAction { pc_id: nested, .. }
+                                | PlayerCommand::CancelAction { pc_id: nested },
+                        }),
+                    ) if *player_id == inp.player_id && selected == nested
+                );
             self.apply_command_for_seat_with_replay_context(
                 sim,
                 display,
@@ -10832,6 +10865,64 @@ mod tests {
                     element.owner == Some(pc_id) && element.command == Command::EquipBow
                 }),
             "the root SelectPc must not synthesize stale EquipBow before its recorded nested CancelAction"
+        );
+    }
+
+    #[test]
+    fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        use crate::player_command::{PlayerCommand, PlayerInput};
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Net, 1)]);
+        let mut input = InputState::default();
+        let mut display = HostDisplayState::default();
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .current_action = Action::Net;
+
+        let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(pc_id));
+        wait.priority = crate::sequence::SequencePriority::Wait;
+        let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(wait_sequence, 0);
+
+        engine.apply_commands_with_mode(
+            sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &[
+                PlayerInput::host(PlayerCommand::SelectPc {
+                    pc_id,
+                    append: false,
+                }),
+                PlayerInput::host(PlayerCommand::CancelAction { pc_id }),
+            ],
+            SelectionCommandBatchMode::IndependentRecordedMessages,
+        );
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(wait_sequence, 0)
+                .expect("interrupted wait remains inspectable")
+                .state,
+            crate::sequence::SequenceState::Interrupted,
+            "the SelectPc restitution must run before the independent cancel"
+        );
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::pc_data)
+                .expect("test PC data")
+                .current_action,
+            Action::NoAction,
+            "the following independent cancel remains authoritative"
         );
     }
 

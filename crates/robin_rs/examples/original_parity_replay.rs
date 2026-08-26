@@ -5270,7 +5270,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 )
                 .with_simulation_body_allowed(frame.simulation_body_ran);
             engine
-                .advance_frame(&mut display, &mut input, &assets, &mut dev, frame_input)
+                // RHMessenger records raw-mouse depth-2 messages but omits
+                // SelectPc's depth-3 restitution. Preserve those independently
+                // recorded command boundaries in both admission phases.
+                .advance_original_parity_frame(
+                    &mut display,
+                    &mut input,
+                    &assets,
+                    &mut dev,
+                    frame_input,
+                )
                 .unwrap_or_else(|error| {
                     panic!("admit original frame {}: {error}", frame.frame_before)
                 })

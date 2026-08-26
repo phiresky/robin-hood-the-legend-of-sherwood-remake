@@ -1680,6 +1680,35 @@ mod tests {
     }
 
     #[test]
+    fn mission_frame_adapter_preserves_pre_and_post_command_batches() {
+        let mut frame = MissionFrame::new(777);
+        frame.adopt_authoritative_input(
+            robin_engine::engine::SimulationFrameInput::new(vec![
+                robin_engine::engine::SimCommand::from(
+                    PlayerCommand::SetMenToBlazonConversionMode { on: true },
+                ),
+            ])
+            .with_post_commands(vec![robin_engine::engine::SimCommand::from(
+                PlayerCommand::QuitMissionRequested,
+            )]),
+        );
+
+        let recorded = frame.authoritative_input();
+        let pre = recorded.player_inputs();
+        let post = recorded.post_player_inputs();
+        assert_eq!(pre.len(), 1);
+        assert!(matches!(
+            pre[0].command,
+            PlayerCommand::SetMenToBlazonConversionMode { on: true }
+        ));
+        assert_eq!(post.len(), 1);
+        assert!(matches!(
+            post[0].command,
+            PlayerCommand::QuitMissionRequested
+        ));
+    }
+
+    #[test]
     fn graphical_execution_trace_keeps_original_refresh_sound_post_initialize_tail() {
         let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
         timeline.begin_execution_trace(FrameContractStage::NetworkIngress);
