@@ -2215,7 +2215,7 @@ impl EngineInner {
         let step_count = steps.len();
         let mut posture_recovery_embedded = false;
         for (step_index, step) in steps.into_iter().enumerate() {
-            let cmd = match step.replay {
+            let mut cmd = match step.replay {
                 crate::macro_store::QaReplayCommand::Move {
                     destination,
                     running,
@@ -2415,6 +2415,30 @@ impl EngineInner {
                     continue;
                 }
             };
+            // Original `StartQuickAction` builds one sequence and then calls
+            // `AppendPostureRecovery`. If its tail is ShootBow while the PC
+            // was not already aiming, that helper rewrites the tail to
+            // ShootBowOnce. The one-shot translation includes the terminal
+            // bow-unload/unequip animation; leaving this as ShootBow reloads
+            // the bow and strands the PC in an aiming action state.
+            //
+            // Modern QA replay dispatches commands individually, so its
+            // later empty recovery sequence cannot see or rewrite this tail.
+            // Preserve the source behavior explicitly before dispatch.
+            if step_index + 1 == step_count
+                && let PlayerCommand::LaunchInteraction { command, .. } = &mut cmd
+                && *command == Command::ShootBow
+            {
+                let was_aiming = self
+                    .get_entity(pc)
+                    .and_then(|entity| entity.actor_data())
+                    .unwrap_or_else(|| panic!("quick-action owner {pc:?} has no actor state"))
+                    .action_state
+                    .is_bow();
+                if !was_aiming {
+                    *command = Command::ShootBowOnce;
+                }
+            }
             // Original StartQuickAction clones the recorded elements into a
             // single sequence and appends posture recovery to that sequence
             // before launching it.  Keep the final TakeCorpse interaction
@@ -5702,7 +5726,7 @@ mod tests {
     }
 
     #[test]
-    fn queued_bow_shot_starts_after_real_work_ends_despite_postponed_card() {
+    fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
         let target = spawn_pc_at(&mut engine, 90.0, 10.0);
         let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
@@ -5750,10 +5774,76 @@ mod tests {
                 .orders
                 .sequence_manager
                 .has_live_element_for_actor_matching(pc_id, |command| {
+                    command == Command::ShootBowOnce
+                }),
+            "a queued bow interaction from an unequipped posture must launch as one shot"
+        );
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc_id, |command| {
                     command == Command::ShootBow
                 }),
-            "the queued bow interaction must launch when only dormant work remains"
+            "ordinary ShootBow reloads and leaves the bow equipped"
         );
+    }
+
+    #[test]
+    fn queued_pickup_moves_following_bow_preview_origin_to_pickup_target() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 2)]);
+        let pickup = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
+        let pickup_position = MapPoint::new(420.0, 730.0);
+        engine
+            .get_entity_mut(pickup)
+            .expect("pickup")
+            .element_data_mut()
+            .set_position_map(pickup_position);
+        let bow_target = spawn_pc_at(&mut engine, 900.0, 730.0);
+
+        let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(busy_sequence, 0);
+
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        for (action, command) in [
+            (
+                Action::NoAction,
+                PlayerCommand::LaunchInteraction {
+                    actor: pc_id,
+                    target: pickup,
+                    command: Command::Take,
+                    running: false,
+                },
+            ),
+            (
+                Action::Bow,
+                PlayerCommand::LaunchInteraction {
+                    actor: pc_id,
+                    target: bow_target,
+                    command: Command::ShootBow,
+                    running: false,
+                },
+            ),
+        ] {
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::QueueQuickAction {
+                    action,
+                    command: Box::new(command),
+                },
+            );
+        }
+
+        assert_eq!(engine.planned_action_origin(pc_id), Some(pickup_position));
     }
 
     #[test]

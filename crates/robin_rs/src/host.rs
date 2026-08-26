@@ -590,6 +590,10 @@ pub struct HostFrontend {
     // ── Input ────────────────────────────────────────────────────
     pub input: InputState,
 
+    /// Platform click count captured on right-button down. The matching
+    /// release event has no click-count field, so portrait input consumes it.
+    pub right_double_click_pending: bool,
+
     /// Active profile's opt-in allied-soldier control setting. Host-local
     /// because resolved player commands, rather than UI preferences, cross
     /// replay and multiplayer boundaries.
