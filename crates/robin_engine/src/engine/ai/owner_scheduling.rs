@@ -1061,12 +1061,13 @@ impl EngineInner {
 
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
-            self.drain_pending_for_npc_mode(
+            self.drain_pending_for_npc_boundary_mode(
                 sim,
                 npc_id,
                 assets,
                 owner_local_no_forecast,
                 defer_turn_instruction,
+                surface_completion,
             );
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);

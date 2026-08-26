@@ -3470,6 +3470,25 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) {
+        self.drain_ai_owner_work_for_boundary_mode(
+            sim,
+            assets,
+            owner,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+            true,
+        );
+    }
+
+    pub(super) fn drain_ai_owner_work_for_boundary_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
+        surface_completion: bool,
+    ) {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum OwnerAiKind {
             Enemy,
@@ -4236,13 +4255,23 @@ impl EngineInner {
                     } else {
                         // Ordinary ReturnToDuty resumes on the same call stack
                         // and recursively closes its completion callbacks.
-                        self.drain_direct_ai_owner_boundary_mode(
-                            sim,
-                            owner,
-                            assets,
-                            owner_local_no_forecast,
-                            defer_turn_instruction,
-                        );
+                        if surface_completion {
+                            self.drain_direct_ai_owner_boundary_mode(
+                                sim,
+                                owner,
+                                assets,
+                                owner_local_no_forecast,
+                                defer_turn_instruction,
+                            );
+                        } else {
+                            self.drain_direct_ai_owner_prefix_boundary_mode(
+                                sim,
+                                owner,
+                                assets,
+                                owner_local_no_forecast,
+                                defer_turn_instruction,
+                            );
+                        }
                     }
                     continue;
                 }
