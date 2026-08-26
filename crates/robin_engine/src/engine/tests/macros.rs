@@ -49,7 +49,7 @@ fn seed_macro_slot(
     pc: crate::element::EntityId,
     slot: u8,
     steps: Vec<(f32, f32)>,
-) {
+) -> crate::titbit::TitbitId {
     use crate::coordinates::WorldPoint3D;
     use crate::macro_store::{QaReplayCommand, QuickActionStep};
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
@@ -87,10 +87,132 @@ fn seed_macro_slot(
         });
     }
     state.stop_recording();
-    state.set_slot_titbit(
-        slot as usize,
-        crate::titbit::TitbitId::new(titbit_id).unwrap(),
+    let titbit = crate::titbit::TitbitId::new(titbit_id).unwrap();
+    state.set_slot_titbit(slot as usize, titbit);
+    titbit
+}
+
+#[test]
+fn stop_recording_macro_restores_occupied_slot_before_refreshing_portrait() {
+    let mut engine = EngineInner::new();
+    let pc = add_test_pc(&mut engine);
+    let slot = 1;
+    let titbit = seed_macro_slot(&mut engine, pc, slot, vec![(10.0, 20.0)]);
+
+    engine
+        .players
+        .macro_store
+        .get_mut(pc)
+        .unwrap()
+        .begin_recording(slot);
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .portrait
+        .quick_icons[slot as usize] = Default::default();
+    engine.players.qa_recording_slot = slot;
+    engine.players.qa_recording_for = vec![pc];
+
+    engine.stop_recording_macro();
+
+    let state = engine.players.macro_store.get(pc).unwrap();
+    assert!(state.has_macro(slot as usize));
+    assert_eq!(state.get_slot_titbit(slot as usize), Some(titbit));
+    let icon = engine
+        .get_entity(pc)
+        .unwrap()
+        .pc_data()
+        .unwrap()
+        .portrait
+        .quick_icons[slot as usize];
+    assert_eq!(
+        icon.titbit_id,
+        u32::from(engine.feedback.titbit_manager.get_phase(titbit))
     );
+    assert_eq!(
+        icon.running,
+        engine.feedback.titbit_manager.is_running_for_qa(titbit)
+    );
+    assert!(engine.players.qa_recording_for.is_empty());
+}
+
+#[test]
+fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
+    use crate::coordinates::MapPoint;
+    use crate::macro_store::{QaReplayCommand, QuickActionStep};
+
+    let mut engine = EngineInner::new();
+    let empty_pc = add_test_pc(&mut engine);
+    let recorded_pc = add_test_pc(&mut engine);
+    let slot = 2;
+    let titbit = seed_macro_slot(&mut engine, recorded_pc, slot, vec![(1.0, 1.0)]);
+
+    engine
+        .players
+        .macro_store
+        .get_or_insert(empty_pc)
+        .begin_recording(slot);
+    let state = engine.players.macro_store.get_mut(recorded_pc).unwrap();
+    state.begin_recording(slot);
+    let destination = MapPoint::new(30.0, 40.0);
+    state.append_if_recording(QuickActionStep {
+        action: crate::profiles::Action::NoAction,
+        position: destination,
+        replay: QaReplayCommand::Move {
+            destination,
+            running: false,
+        },
+    });
+    state.set_slot_titbit(slot as usize, titbit);
+    engine.players.qa_recording_slot = slot;
+    engine.players.qa_recording_for = vec![empty_pc, recorded_pc];
+
+    engine.stop_recording_macro();
+
+    assert!(
+        !engine
+            .players
+            .macro_store
+            .get(empty_pc)
+            .unwrap()
+            .has_macro(slot as usize)
+    );
+    let empty_icon = engine
+        .get_entity(empty_pc)
+        .unwrap()
+        .pc_data()
+        .unwrap()
+        .portrait
+        .quick_icons[slot as usize];
+    assert_eq!(empty_icon.titbit_id, u32::MAX);
+    assert!(!empty_icon.running);
+
+    assert!(
+        engine
+            .players
+            .macro_store
+            .get(recorded_pc)
+            .unwrap()
+            .has_macro(slot as usize)
+    );
+    let recorded_icon = engine
+        .get_entity(recorded_pc)
+        .unwrap()
+        .pc_data()
+        .unwrap()
+        .portrait
+        .quick_icons[slot as usize];
+    assert_eq!(
+        recorded_icon.titbit_id,
+        u32::from(engine.feedback.titbit_manager.get_phase(titbit))
+    );
+    assert_eq!(
+        recorded_icon.running,
+        engine.feedback.titbit_manager.is_running_for_qa(titbit)
+    );
+    assert!(engine.players.qa_recording_for.is_empty());
 }
 
 /// `EngineInner::has_quick_action` reports whether a PC has a macro in a slot.
