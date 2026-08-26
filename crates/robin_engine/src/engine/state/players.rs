@@ -107,6 +107,7 @@ mod tests {
                 replay: QaReplayCommand::Move {
                     destination: MapPoint::new(10.0, 20.0),
                     running: false,
+                    route: None,
                 },
             },
         );

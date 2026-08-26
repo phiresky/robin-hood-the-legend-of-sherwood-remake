@@ -334,23 +334,10 @@ impl EngineInner {
                 recorded_gate_routes,
                 recorded_failed_gate_routes,
             } => {
-                let live_actors: Vec<_> = actors
-                    .iter()
-                    .copied()
-                    .filter(|actor| !self.players.qa_recording_for.contains(actor))
-                    .collect();
-                if live_actors.len() != actors.len() {
-                    // The shared recorder captured each armed PC above. A
-                    // manually recorded move must not also move that live PC.
-                    self.stop_recording_macro();
-                }
-                if live_actors.is_empty() {
-                    return;
-                }
                 self.perform_group_move(
                     sim,
                     assets,
-                    &live_actors,
+                    actors,
                     *destination,
                     *running,
                     *show_marker,
@@ -366,7 +353,10 @@ impl EngineInner {
                 // helper has no access to `LevelAssets`; this is the
                 // command-dispatch entry point where the assets are in
                 // scope.
-                for &pc_id in &live_actors {
+                for &pc_id in actors {
+                    if self.players.qa_recording_for.contains(&pc_id) {
+                        continue;
+                    }
                     if group_move_actor_accepts_command(pc_id, recorded_failed_gate_routes) {
                         self.hero_speaking(
                             assets,
@@ -1452,6 +1442,12 @@ impl EngineInner {
         if matches!(cmd, PlayerCommand::SwordStrikeCmd { .. }) {
             return;
         }
+        // GroupMove recording belongs inside PerformGroupMove's per-PC
+        // formation/authorization pass. Recording the common click here loses
+        // the adjusted slot and exact route goal that Original retains.
+        if matches!(cmd, PlayerCommand::GroupMove { .. }) {
+            return;
+        }
         // When multiple PCs are armed for recording, each one receives
         // its own macro step.  Snapshot the set up-front so we can
         // re-borrow `self` inside the per-PC loop.
@@ -1462,10 +1458,41 @@ impl EngineInner {
                 cmd,
                 recording_pc,
                 None,
+                None,
                 assets,
                 QuickActionRecordingStore::Manual,
             );
         }
+    }
+
+    pub(in crate::engine) fn record_resolved_group_move_step(
+        &mut self,
+        recording_pc: EntityId,
+        destination: MapPoint,
+        running: bool,
+        route: crate::macro_store::RecordedQaMoveRoute,
+        assets: &LevelAssets,
+    ) {
+        let command = PlayerCommand::GroupMove {
+            actors: vec![recording_pc],
+            destination,
+            running,
+            show_marker: false,
+            goal_override: None,
+            goal_sector_index_override: None,
+            door_route_override: None,
+            recorded_gate_routes: Vec::new(),
+            recorded_failed_gate_routes: Vec::new(),
+        };
+        self.record_macro_step_for_pc(
+            0,
+            &command,
+            recording_pc,
+            None,
+            Some(route),
+            assets,
+            QuickActionRecordingStore::Manual,
+        );
     }
 
     fn record_macro_step_for_pc(
@@ -1474,6 +1501,7 @@ impl EngineInner {
         cmd: &PlayerCommand,
         recording_pc: EntityId,
         action_override: Option<crate::profiles::Action>,
+        resolved_move_route: Option<crate::macro_store::RecordedQaMoveRoute>,
         assets: &LevelAssets,
         recording_store: QuickActionRecordingStore,
     ) {
@@ -1550,6 +1578,7 @@ impl EngineInner {
                     QaReplayCommand::Move {
                         destination: *destination,
                         running: *running,
+                        route: resolved_move_route,
                     },
                 )
             }
@@ -2028,6 +2057,7 @@ impl EngineInner {
                 command,
                 actor,
                 Some(action),
+                None,
                 assets,
                 QuickActionRecordingStore::Automatic,
             );
@@ -2242,6 +2272,76 @@ impl EngineInner {
 
     /// Replay one PC's macro slot — the per-PC half of [`apply_start_macro`].
     /// Extracted so the iteration above can re-borrow `self` between steps.
+    fn launch_recorded_group_move_qa(
+        &mut self,
+        pc: EntityId,
+        destination: MapPoint,
+        running: bool,
+        route: crate::macro_store::RecordedQaMoveRoute,
+        append_recovery: bool,
+    ) {
+        use crate::sequence::{Sequence, SequenceElement, SequenceElementData};
+
+        let action = if running {
+            crate::order::OrderType::RunningUpright
+        } else {
+            crate::order::OrderType::WalkingUpright
+        };
+        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(pc), action);
+        let mut post_seek = Sequence::new();
+        post_seek.append_element(SequenceElement::new(
+            1,
+            Command::SpeakHeroReachDestination,
+            Some(pc),
+        ));
+        if append_recovery {
+            self.append_posture_recovery(pc, &mut post_seek);
+        }
+        let SequenceElementData::Movement {
+            destination: seek_destination,
+            layer,
+            sector,
+            post_seek_sequence,
+            ..
+        } = &mut seek.data
+        else {
+            unreachable!("new_movement must create movement data")
+        };
+        let exact_goal = self
+            .world
+            .fast_grid
+            .level
+            .sectors
+            .get(usize::from(route.goal_sector_index))
+            .unwrap_or_else(|| {
+                panic!(
+                    "recorded QA group-move goal index {} is absent from the current level",
+                    route.goal_sector_index
+                )
+            });
+        assert_eq!(
+            exact_goal.sector_number, route.goal_sector,
+            "recorded QA group-move exact goal disagrees with its public sector"
+        );
+        let goal_sector =
+            crate::position_interface::SectorHandle::new(u16::from(route.goal_sector))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "recorded QA group move has invalid public sector {}",
+                        route.goal_sector
+                    )
+                })
+                .with_arena_index(route.goal_sector_index);
+        *seek_destination = destination;
+        *layer = route.goal_layer;
+        *sector = Some(goal_sector);
+        *post_seek_sequence = Some(Box::new(post_seek));
+
+        let mut sequence = Sequence::new();
+        sequence.append_element(seek);
+        self.launch_sequence(sequence);
+    }
+
     fn replay_macro_slot(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2328,6 +2428,27 @@ impl EngineInner {
                 crate::macro_store::QaReplayCommand::Move {
                     destination,
                     running,
+                    route: Some(route),
+                } => {
+                    // `PerformMove(..., bRecordQA=true)` retained this exact
+                    // SEEK/post-seek shape. Launch it directly rather than
+                    // re-entering formation placement with a one-PC group.
+                    self.launch_recorded_group_move_qa(
+                        pc,
+                        destination,
+                        running,
+                        route,
+                        step_index + 1 == step_count,
+                    );
+                    if step_index + 1 == step_count {
+                        posture_recovery_embedded = true;
+                    }
+                    continue;
+                }
+                crate::macro_store::QaReplayCommand::Move {
+                    destination,
+                    running,
+                    route: None,
                 } => PlayerCommand::GroupMove {
                     actors: vec![pc],
                     destination,
@@ -6339,6 +6460,7 @@ mod tests {
             replay: QaReplayCommand::Move {
                 destination: MapPoint::new(123.0, 456.0),
                 running: false,
+                route: None,
             },
         };
         let manual = engine.players.macro_store.get_or_insert(pc_id);

@@ -85,6 +85,21 @@ pub fn action_to_qa_frame(action: Action) -> Option<u16> {
 /// Re-exported here for the macro-chain renderer.
 pub use crate::titbit::DISTANCE_DOT;
 
+/// Source-resolved movement geometry retained by a recorded group move.
+///
+/// Original `PerformMove(..., bRecordQA=true)` stores a concrete coordinate
+/// `SEEK` against the already-resolved `RHSector*`, plus a post-seek arrival
+/// speech.  It does not save the common click and run formation placement a
+/// second time when the quick action is played.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+)]
+pub struct RecordedQaMoveRoute {
+    pub goal_sector: crate::sector::SectorNumber,
+    pub goal_sector_index: crate::fast_find_grid::SectorIndex,
+    pub goal_layer: u16,
+}
+
 /// The specific player command captured at a macro step — enough to
 /// rebuild a [`PlayerCommand`](crate::player_command::PlayerCommand) at
 /// playback time.  Replay clones each recorded sequence element and
@@ -98,6 +113,11 @@ pub enum QaReplayCommand {
     Move {
         destination: MapPoint,
         running: bool,
+        /// Absent only in saves written before resolved group-move recording
+        /// was ported. Those legacy Rust saves retain their old spatial
+        /// re-resolution playback behavior.
+        #[serde(default)]
+        route: Option<RecordedQaMoveRoute>,
     },
     /// Interaction with a specific target entity (attack, heal, tie, …).
     ///
@@ -688,6 +708,7 @@ mod tests {
             replay: QaReplayCommand::Move {
                 destination: MapPoint::new(x, y),
                 running: false,
+                route: None,
             },
         }
     }
@@ -866,6 +887,53 @@ mod tests {
             robin_util::state_hash::compute(&command),
             robin_util::state_hash::compute(&changed_command)
         );
+    }
+
+    #[test]
+    fn group_move_route_roundtrips_binary_and_defaults_legacy_json() {
+        let exact = crate::fast_find_grid::SectorIndex::new(37).unwrap();
+        let replay = QaReplayCommand::Move {
+            destination: MapPoint::new(125.0, 250.0),
+            running: true,
+            route: Some(RecordedQaMoveRoute {
+                goal_sector: crate::sector::SectorNumber::new(421),
+                goal_sector_index: exact,
+                goal_layer: 6,
+            }),
+        };
+
+        let json = serde_json::to_value(replay).expect("serialize recorded group move");
+        assert_eq!(
+            serde_json::from_value::<QaReplayCommand>(json.clone())
+                .expect("roundtrip recorded group move JSON"),
+            replay
+        );
+        let bitcode = bitcode::serialize(&replay).expect("serialize recorded group move bitcode");
+        assert_eq!(
+            bitcode::deserialize::<QaReplayCommand>(&bitcode)
+                .expect("roundtrip recorded group move bitcode"),
+            replay
+        );
+        let config = bincode::config::standard();
+        let bincode = bincode::serde::encode_to_vec(replay, config)
+            .expect("serialize recorded group move bincode");
+        let (decoded, consumed): (QaReplayCommand, usize) =
+            bincode::serde::decode_from_slice(&bincode, config)
+                .expect("roundtrip recorded group move bincode");
+        assert_eq!(consumed, bincode.len());
+        assert_eq!(decoded, replay);
+
+        let mut legacy = json;
+        legacy
+            .get_mut("Move")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged group move")
+            .remove("route");
+        assert!(matches!(
+            serde_json::from_value::<QaReplayCommand>(legacy)
+                .expect("deserialize legacy group move"),
+            QaReplayCommand::Move { route: None, .. }
+        ));
     }
 
     #[test]
