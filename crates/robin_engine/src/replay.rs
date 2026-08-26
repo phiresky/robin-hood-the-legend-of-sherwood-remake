@@ -74,7 +74,6 @@ pub struct ReplayLoadBack {
     /// Earlier save-marker frame whose captured state must be restored.
     pub to_frame: u32,
     /// Whether the source slot was the Continue auto-save.
-    #[serde(default)]
     pub is_continue: bool,
 }
 
@@ -107,7 +106,6 @@ pub struct ReplayFrame {
     pub timeline_before: u32,
     pub timeline_after: u32,
     pub input: SimulationFrameInput,
-    #[serde(default)]
     pub host_controls: Vec<ReplayHostControl>,
 }
 
@@ -879,6 +877,48 @@ mod tests {
         let error = ReplayData::from_reader(std::io::Cursor::new(input))
             .expect_err("command-only records are not schema twelve frames");
         assert!(error.contains("unknown field `c`"), "{error}");
+    }
+
+    #[test]
+    fn schema_twelve_rejects_frame_without_host_controls() {
+        let header = serde_json::json!({
+            "mission_id": "missing-host-controls",
+            "rng_seed": 7,
+            "sim_config": crate::engine::SimConfig::default(),
+            "version": REPLAY_SCHEMA_VERSION,
+            "total_frames": 1,
+            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+        });
+        let frame = serde_json::json!({
+            "timeline_before": 0,
+            "timeline_after": 1,
+            "input": SimulationFrameInput::default(),
+        });
+        let input = format!("{header}\n{}\n", serde_json::json!({ "f": 0, "i": frame }));
+
+        let error = ReplayData::from_reader(std::io::Cursor::new(input))
+            .expect_err("schema-12 replay frames must explicitly include host controls");
+        assert!(error.contains("missing field `host_controls`"), "{error}");
+    }
+
+    #[test]
+    fn schema_twelve_rejects_load_back_without_is_continue() {
+        let header = serde_json::json!({
+            "mission_id": "missing-is-continue",
+            "rng_seed": 7,
+            "sim_config": crate::engine::SimConfig::default(),
+            "version": REPLAY_SCHEMA_VERSION,
+            "total_frames": 0,
+            "campaign": bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
+        });
+        let input = format!(
+            "{header}\n{}\n",
+            serde_json::json!({ "f": 1, "lb": { "to_frame": 0 } })
+        );
+
+        let error = ReplayData::from_reader(std::io::Cursor::new(input))
+            .expect_err("schema-12 load-backs must identify Continue-slot behavior");
+        assert!(error.contains("missing field `is_continue`"), "{error}");
     }
 
     #[test]

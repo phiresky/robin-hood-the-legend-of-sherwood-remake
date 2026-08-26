@@ -333,42 +333,28 @@ pub struct SimulationFrameInput {
     /// Ordered facts observed between the preceding tick and these commands.
     pub external_facts: ExternalFacts,
     /// Host actions admitted before player commands and the hourglass.
-    #[serde(default)]
     pub external_actions: Vec<ExternalAction>,
     /// Commands admitted before `PerformHourglass`, in dispatch order.
     pub commands: Vec<SimCommand>,
     /// Host/native actions admitted after the hourglass and before late
     /// player commands. Live RPC adapters record actions here after executing
     /// them synchronously through a separate no-hourglass admission.
-    #[serde(default)]
     pub post_external_actions: Vec<ExternalAction>,
     /// Commands admitted after `PerformHourglass`, in dispatch order.
     ///
     /// Original parity uses this phase for input resolved by a nested refresh.
     /// Live host RPC/modal ingress also belongs here when it occurs after the
     /// main tick.
-    #[serde(default)]
     pub post_commands: Vec<SimCommand>,
     /// Whether this host iteration crosses `RHEngine::PerformHourglass`.
     /// Paused, console, modal-transition, load, and level-next iterations set
     /// this to false; this is distinct from `simulation_body_allowed`.
-    #[serde(default = "run_hourglass_default")]
     pub run_hourglass: bool,
-    #[serde(default = "simulation_body_allowed_default")]
     pub simulation_body_allowed: bool,
     /// Cross the one-shot mission `PostInitialize` stage after late commands.
     /// Graphical play normally does this in a separate no-hourglass admission
     /// after presentation; headless/reconstruction may combine it.
-    #[serde(default)]
     pub run_post_initialize: bool,
-}
-
-const fn run_hourglass_default() -> bool {
-    true
-}
-
-const fn simulation_body_allowed_default() -> bool {
-    true
 }
 
 impl Default for SimulationFrameInput {
@@ -594,5 +580,37 @@ mod tests {
             deterministic_hash(&replay_empty),
             "live and replay validation policy is authoritative"
         );
+    }
+
+    #[test]
+    fn simulation_frame_input_deserialization_requires_every_field() {
+        let complete = serde_json::to_value(SimulationFrameInput::default())
+            .expect("serialize complete frame input");
+
+        for field in [
+            "external_facts",
+            "external_actions",
+            "commands",
+            "post_external_actions",
+            "post_commands",
+            "run_hourglass",
+            "simulation_body_allowed",
+            "run_post_initialize",
+        ] {
+            let mut incomplete = complete.clone();
+            incomplete
+                .as_object_mut()
+                .expect("frame input serializes as an object")
+                .remove(field);
+
+            let error = serde_json::from_value::<SimulationFrameInput>(incomplete)
+                .expect_err("schema-12 frame inputs must include every current field");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("missing field `{field}`")),
+                "removing {field} produced unexpected error: {error}"
+            );
+        }
     }
 }
