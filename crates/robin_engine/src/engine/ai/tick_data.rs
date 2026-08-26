@@ -1456,6 +1456,7 @@ impl EngineInner {
                 patrol_chief: enemy_ai.base.patrol_chief,
                 antagonist: enemy_ai.base.antagonist,
                 detected_body: enemy_ai.base.detected_body,
+                blood_alcohol: enemy_ai.base.blood_alcohol,
                 duty_flag: enemy_ai.soldier_profile_duty,
                 is_tower_guard: enemy_ai.tower_guard,
                 company_number: enemy_ai.company_number,

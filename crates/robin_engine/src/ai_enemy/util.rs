@@ -253,6 +253,10 @@ pub struct CampSoldierInfo {
     /// conversation reads this from the officer before delivering
     /// `CALL_YOURTALK_2`.
     pub detected_body: HumanHandle,
+    /// Current blood-alcohol debility. Values above
+    /// `AI_DEBILITY_ALCOHOL_LIMIT` force `Q_SHALL_I_STAY_ON_MY_POST` true
+    /// before the active/outdoor branch is considered.
+    pub blood_alcohol: u8,
     /// Whether this soldier has the duty soldier-profile flag set.
     /// Combined with `is_tower_guard` and `company_number == 100` it drives
     /// `Q_SHALL_I_STAY_ON_MY_POST` / `IsAllowedToLeaveHisPost`.
