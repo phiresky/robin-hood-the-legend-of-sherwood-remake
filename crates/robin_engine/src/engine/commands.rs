@@ -1944,7 +1944,9 @@ impl EngineInner {
             let actor_busy = self
                 .orders
                 .sequence_manager
-                .has_live_element_for_actor_matching(actor, |command| command != Command::Wait);
+                .has_unpostponed_element_for_actor_matching(actor, |command| {
+                    command != Command::Wait
+                });
             if !was_active && !actor_busy {
                 self.start_auto_queue_front(sim, display, input, assets, actor);
             }
@@ -2064,7 +2066,7 @@ impl EngineInner {
             if self
                 .orders
                 .sequence_manager
-                .has_live_element_for_actor_matching(pc, |command| command != Command::Wait)
+                .has_unpostponed_element_for_actor_matching(pc, |command| command != Command::Wait)
             {
                 continue;
             }
@@ -5595,6 +5597,16 @@ mod tests {
             .sequence_manager
             .element_in_progress(idle_sequence, 0);
 
+        // Door/lift traversal can leave an interrupted command postponed after
+        // the movement itself has settled. A postponed card is dormant, not
+        // executable actor work, and must not pin the automatic queue forever.
+        let stale = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
+        engine
+            .orders
+            .sequence_manager
+            .postpone_element(stale_sequence, 0);
+
         engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
         assert!(engine.players.auto_queue_active.contains(&pc_id));
         assert!(!engine.has_quick_action(pc_id, 0));
@@ -5686,6 +5698,61 @@ mod tests {
         assert_eq!(
             state.slots().iter().filter(|slot| !slot.is_empty()).count(),
             6
+        );
+    }
+
+    #[test]
+    fn queued_bow_shot_starts_after_real_work_ends_despite_postponed_card() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
+        let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(busy_sequence, 0);
+
+        let stale = SequenceElement::new(1, Command::LeaveListen, Some(pc_id));
+        let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
+        engine
+            .orders
+            .sequence_manager
+            .postpone_element(stale_sequence, 0);
+
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::QueueQuickAction {
+                action: Action::Bow,
+                command: Box::new(PlayerCommand::LaunchInteraction {
+                    actor: pc_id,
+                    target,
+                    command: Command::ShootBow,
+                    running: false,
+                }),
+            },
+        );
+        assert!(engine.has_quick_action(pc_id, 0));
+
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(busy_sequence, 0);
+        engine.advance_auto_quick_action_queues(&sim, &mut display, &assets);
+
+        assert!(!engine.has_quick_action(pc_id, 0));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc_id, |command| {
+                    command == Command::ShootBow
+                }),
+            "the queued bow interaction must launch when only dormant work remains"
         );
     }
 
