@@ -89,7 +89,7 @@ fn global_options_default() {
 
 #[test]
 fn draw_fast_forward_skips() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.control.fast_forward = true;
     engine.control.frame_counter = 1; // Not a multiple of 32
@@ -99,7 +99,7 @@ fn draw_fast_forward_skips() {
 
 #[test]
 fn draw_fast_forward_every_32nd() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.control.fast_forward = true;
     engine.control.frame_counter = 32; // Multiple of 32
@@ -349,7 +349,7 @@ fn mission_stat_resets_on_new_mission() {
 
 #[test]
 fn resize_snaps_zoom() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(500.0, 400.0); // Small level
     engine.feedback.cutscene_camera.zoom_factor = 0.5;
@@ -540,7 +540,7 @@ fn is_sherwood_mission_no_mission() {
 
 #[test]
 fn perform_check_scroll_clamps_right() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
     engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(1500.0, 0.0);
@@ -555,7 +555,7 @@ fn perform_check_scroll_clamps_right() {
 
 #[test]
 fn perform_check_scroll_clamps_left() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
     engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(10.0, 0.0);
@@ -568,7 +568,7 @@ fn perform_check_scroll_clamps_left() {
 
 #[test]
 fn perform_check_scroll_valid() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 500.0);
@@ -654,7 +654,7 @@ fn win_respects_show_window_true() {
 
 #[test]
 fn zoom_change_state_updates_level() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     assert_eq!(display.background_transform.current_zoom_level, 1);
@@ -677,7 +677,7 @@ fn zoom_change_state_updates_level() {
 
 #[test]
 fn zoom_deferred_when_scrolling() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     // Simulate active scrolling
@@ -1822,7 +1822,7 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
 
 #[test]
 fn camera_slide_approaches_target() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 100.0);
@@ -1841,7 +1841,7 @@ fn camera_slide_approaches_target() {
 
 #[test]
 fn camera_slide_cancels_at_target() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 300.0);
@@ -1855,7 +1855,7 @@ fn camera_slide_cancels_at_target() {
 
 #[test]
 fn resize_aborts_zoom() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     display.display_op = DisplayOpCode::InZoom;
@@ -1934,7 +1934,7 @@ fn non_playable_pc_does_not_prevent_default_loss() {
 
 #[test]
 fn zoom_step_completes_after_8_steps() {
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     display.background_transform.zoom_to_up = true;

@@ -3807,15 +3807,9 @@ mod tests {
             .campaign()
             .get_value(crate::campaign::CampaignValue::Blazon);
 
-        let mut display = super::super::HostDisplayState::default();
-        let mut input = InputState::default();
-        let mut dev = DevState::default();
         let output = engine
             .advance_frame(
-                &mut display,
-                &mut input,
                 &assets,
-                &mut dev,
                 SimulationFrameInput::no_hourglass().with_external_actions(vec![
                     ExternalAction::CampaignBuyBlazon { mission_index: 0 },
                     ExternalAction::AcknowledgePseudoMissionDebrief,

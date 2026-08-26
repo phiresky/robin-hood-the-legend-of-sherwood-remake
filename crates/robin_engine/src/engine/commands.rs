@@ -6535,7 +6535,6 @@ mod tests {
             });
 
         engine.apply_enter_swordfight(&sim, &assets, pc_id, target_id, false);
-        let mut display = HostDisplayState::default();
         engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
 
         let route = engine

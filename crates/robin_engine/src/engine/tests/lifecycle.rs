@@ -3518,7 +3518,7 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
             .element_in_progress(sequence_id, 0);
     }
 
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     let assets = LevelAssets::new();
     engine.tick_ability_for(sim, &mut display, &assets, first);
 
@@ -3868,7 +3868,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             .map(|pc| pc.life_points);
         let assets = assets_with_test_pc_profile();
         let sim = crate::sim_rng::test_context();
-        let mut display = HostDisplayState::default();
+        let mut display = CameraDisplayState::default();
         for _ in 0..4 {
             engine.tick_ability_for(&sim, &mut display, &assets, healer);
             let ammo = engine.mission_domain.campaign.characters[healer_description]
@@ -4495,7 +4495,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         .actor_data_mut()
         .unwrap()
         .execute_order_initialising = true;
-    invalid.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, pc);
+    invalid.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, pc);
     assert_eq!(
         invalid
             .get_entity(pc)
@@ -4524,7 +4524,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         .actor_data_mut()
         .unwrap()
         .execute_order_initialising = true;
-    engine.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, pc);
+    engine.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, pc);
     assert_eq!(
         engine
             .get_entity(pc)
@@ -4635,7 +4635,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(8);
-    engine.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, pc);
+    engine.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, pc);
     assert_eq!(
         engine
             .get_entity(pc)
@@ -4669,7 +4669,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         for _ in 0..128 {
             invalid_completion.tick_ability_for(
                 &invalid_completion_sim,
-                &mut HostDisplayState::default(),
+                &mut CameraDisplayState::default(),
                 &assets,
                 pc,
             );
@@ -4744,7 +4744,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
     for _ in 0..128 {
         valid_completion.tick_ability_for(
             &valid_completion_sim,
-            &mut HostDisplayState::default(),
+            &mut CameraDisplayState::default(),
             &assets,
             pc,
         );
@@ -5207,7 +5207,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .unwrap()
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
-    invalid.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, attacker);
+    invalid.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, attacker);
     assert_eq!(
         invalid
             .orders
@@ -5243,7 +5243,8 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(0.0, 20.0));
     let live_facing = crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 20.0);
-    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    let mut camera_display = CameraDisplayState::default();
+    engine.tick_ability_for(&sim, &mut camera_display, &assets, attacker);
 
     let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
     assert!(
@@ -5442,7 +5443,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         .unwrap()
         .execute_order_initialising = true;
 
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     engine.tick_ability_for(&sim, &mut display, &assets, attacker);
     assert!(
         !engine
@@ -5476,7 +5477,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
 
     for branch in [&mut in_range, &mut out_of_range] {
         for _ in 0..10 {
-            branch.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, attacker);
+            branch.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, attacker);
             if branch
                 .get_entity(attacker)
                 .unwrap()
@@ -5634,7 +5635,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         .active_ability
         .strangle_initialized = true;
     engine.orders.sequence_manager.element_in_progress(seq, 0);
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
 
     for _ in 0..10 {
         engine.tick_ability_for(&sim, &mut display, &assets, attacker);
@@ -5969,7 +5970,7 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         )
     };
     engine.orders.sequence_manager.element_in_progress(seq, 0);
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
 
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
@@ -6362,7 +6363,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
             positions_before_movement[entity_id] =
                 Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
-        let mut display = HostDisplayState::default();
+        let mut display = CameraDisplayState::default();
         engine.tick_actor_owner_envelopes_with_display(
             &sim,
             &mut display,
@@ -6494,7 +6495,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         order_id.unwrap()
     );
 
-    let mut display = HostDisplayState::default();
+    let mut display = CameraDisplayState::default();
     for _ in 0..10 {
         engine.tick_ability_for(&sim, &mut display, &assets, owner);
         if !engine

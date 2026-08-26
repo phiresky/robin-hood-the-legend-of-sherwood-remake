@@ -5846,7 +5846,7 @@ impl EngineInner {
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
-        let mut display = HostDisplayState::default();
+        let mut display = CameraDisplayState::default();
         self.tick_actor_owner_envelopes_with_display(
             sim,
             &mut display,
