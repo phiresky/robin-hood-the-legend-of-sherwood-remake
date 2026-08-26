@@ -2057,10 +2057,11 @@ pub fn draw_panel(
 
                 for i in 0..num_buttons {
                     let is_active = active_idx == Some(i as u8);
-                    let is_disabled = entity.and_then(|e| e.pc_data()).is_some_and(|pc| {
-                        pc.disabled_actions.get(i).copied().unwrap_or(false)
-                            || pc.disabled_actions_temp.get(i).copied().unwrap_or(false)
-                    });
+                    let is_disabled = !shift_held
+                        && entity.and_then(|e| e.pc_data()).is_some_and(|pc| {
+                            pc.disabled_actions.get(i).copied().unwrap_or(false)
+                                || pc.disabled_actions_temp.get(i).copied().unwrap_or(false)
+                        });
                     let is_hovered = hovered_action == Some((slot as u8, i as u8));
 
                     let mut icon_drawn = false;
@@ -2207,7 +2208,10 @@ pub fn draw_panel(
                             .map(|id| engine.titbit_manager().get_phase(id))
                             .filter(|&p| p != 0xFFFF)
                     };
-                    let frame = frame_from_last_step.or_else(phase_from_slot_titbit);
+                    // The titbit phase is target/command-specific (Take,
+                    // BowOk, lever, pay, ...), while the recorded Action is
+                    // only a broad fallback for expired legacy titbits.
+                    let frame = phase_from_slot_titbit().or(frame_from_last_step);
                     // The per-slot `run` flag carries through into the
                     // shifting-titbit renderer, which then draws a second
                     // copy of the sprite offset by `(3, 0)`.  The flag is

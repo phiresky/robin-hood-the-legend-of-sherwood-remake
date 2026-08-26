@@ -178,6 +178,9 @@ pub enum PlayerCommand {
         pc_id: EntityId,
         action: Action,
     },
+    /// Clear only the Shift-held planned action, leaving the live PC action
+    /// and animation untouched.
+    CancelPlannedAction,
     /// Cancel the active action (set to NoAction).
     CancelAction {
         pc_id: EntityId,

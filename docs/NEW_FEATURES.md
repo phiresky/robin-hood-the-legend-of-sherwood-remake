@@ -7,11 +7,13 @@ A list of which additional features we have added, which ones we might still wan
 - **Shift-click quick-action queue.** Holding Shift switches the portrait
   action buttons, cursor, and projectile preview to a separate planning state:
   selecting Bow or an item does not equip it, stop the hero, or otherwise
-  mutate the live PC. World clicks are stored in the original three-slot QA
-  memory and execute in order. The first action starts as soon as the actor's
-  existing work finishes; its slot is consumed immediately, leaving up to
-  three later actions visible above the portrait. Shift-double-click upgrades
-  the newest pending movement to a run. Bow arcs are previewed from the last
+  mutate the live PC. World clicks use the QA macro system and execute in
+  order, with no three-action queue limit. The first action starts as soon as
+  the actor's existing work finishes; its slot is consumed immediately, while
+  the next three actions remain visible above the portrait. Shift-double-click upgrades
+  the newest pending movement to a run. Planned actions may be selected even
+  when their live ammo is empty, and releasing Shift or Shift-right-clicking
+  clears the planned action without touching the live PC. Bow arcs are previewed from the last
   queued or live movement destination, so targets can be planned from the
   position the hero will actually occupy.
 

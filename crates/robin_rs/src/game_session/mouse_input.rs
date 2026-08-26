@@ -130,7 +130,7 @@ pub(super) fn handle_mouse_input(
                     );
                 }
                 GameEvent::MouseDown(mx, my, 3, _) => {
-                    on_right_mouse_down(engine, host, mx, my);
+                    on_right_mouse_down(engine, host, mx, my, shift_held);
                 }
                 GameEvent::MouseMove { x, y, .. } => {
                     on_mouse_move(engine, host, assets, frame_cmds, x, y, shift_held);
@@ -161,6 +161,7 @@ pub(super) fn handle_mouse_input(
                         screen_height,
                         mx,
                         my,
+                        shift_held,
                     );
                 }
                 _ => {}
@@ -289,7 +290,7 @@ fn on_left_mouse_down(
 /// enables it, and only when not in swordfight, not Alt-held, and not
 /// Locker-latched — missing any of these guards caused right-drag to
 /// deselect PCs during swordfight, while an action was armed, etc.
-fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32) {
+fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32, shift_held: bool) {
     let local_seat = host.transport.local_seat;
     {
         host.input.right_mouse_down = true;
@@ -297,7 +298,10 @@ fn on_right_mouse_down(engine: &mut Engine, host: &mut Host, _mx: i32, _my: i32)
         // `has_focus` gate: a UI widget that grabbed
         // focus this frame blocks the deselection-drag
         // from starting.
-        let guard_ok = !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+        let cancelling_planned_action =
+            shift_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
+        let guard_ok = !cancelling_planned_action
+            && !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
             && !host.input.is_alt
             && !engine.view_locked()
@@ -921,23 +925,24 @@ fn on_portrait_click(
                         // dispatch decision read-only before emitting
                         // the command, so the live and replay paths
                         // agree on the fallback-select branch.
-                        let dispatched = engine.can_dispatch_pc_action(assets, pc_id, btn_idx);
+                        let profile_action = engine
+                            .get_entity(pc_id)
+                            .and_then(|entity| entity.pc_data())
+                            .and_then(|pc| {
+                                assets
+                                    .profile_manager
+                                    .get_character(pc.profile_index)
+                                    .and_then(|profile| profile.actions.get(btn_idx as usize))
+                            })
+                            .copied()
+                            .unwrap_or(Action::NoAction);
+                        let dispatched = portrait_action_dispatchable(
+                            shift_held,
+                            profile_action,
+                            engine.can_dispatch_pc_action(assets, pc_id, btn_idx),
+                        );
                         if dispatched {
-                            let planned_action = engine
-                                .get_entity(pc_id)
-                                .and_then(|entity| entity.pc_data())
-                                .and_then(|pc| {
-                                    assets
-                                        .profile_manager
-                                        .get_character(pc.profile_index)
-                                        .and_then(|profile| profile.actions.get(btn_idx as usize))
-                                })
-                                .copied()
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "enabled action button {btn_idx} for {pc_id:?} has no profile action"
-                                    )
-                                });
+                            let planned_action = profile_action;
                             let cmd = if shift_held {
                                 PlayerCommand::SelectPlannedAction {
                                     pc_id,
@@ -1038,6 +1043,30 @@ fn on_portrait_click(
     false
 }
 
+fn portrait_action_dispatchable(
+    shift_held: bool,
+    profile_action: Action,
+    live_action_enabled: bool,
+) -> bool {
+    if shift_held {
+        profile_action != Action::NoAction
+    } else {
+        live_action_enabled
+    }
+}
+
+#[cfg(test)]
+mod shift_planning_tests {
+    use super::*;
+
+    #[test]
+    fn hypothetical_action_can_be_selected_when_live_ammo_disables_it() {
+        assert!(portrait_action_dispatchable(true, Action::Bow, false));
+        assert!(!portrait_action_dispatchable(false, Action::Bow, false));
+        assert!(!portrait_action_dispatchable(true, Action::NoAction, false));
+    }
+}
+
 /// Left-mouse-up on the world (no portrait hit): swordfight-gesture
 /// commit or the regular left-click resolver.
 fn on_world_click(
@@ -1134,10 +1163,23 @@ fn on_right_mouse_up(
     screen_height: u16,
     mx: i32,
     my: i32,
+    shift_held: bool,
 ) {
     let local_seat = host.transport.local_seat;
     {
         host.input.right_mouse_down = false;
+
+        if shift_held && engine.planned_action_for_seat(local_seat) != Action::NoAction {
+            let cmd = PlayerCommand::CancelPlannedAction;
+            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+            host.input.cancel_multi_unselection();
+            host.input.accept_mouse_event(true, true);
+            host.input.next_left_double_is_simple = false;
+            host.input.multi_unselection_active = false;
+            host.input.multi_selection_active = false;
+            host.input.draw_multi_selection = false;
+            return;
+        }
 
         if host.allied_target_mode.take().is_some() {
             host.input.cancel_multi_unselection();
