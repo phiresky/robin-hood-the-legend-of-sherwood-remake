@@ -5404,8 +5404,7 @@ mod tests {
         };
         target_view.active = true;
         target_view.camp = crate::element::Camp::Royalists;
-        target_view.detection_position =
-            crate::coordinates::MapPoint::new(target_view.position.x, target_view.position.y);
+        target_view.detection_position = crate::coordinates::MapPoint::new(640.0, 1520.0);
         target_view.detection_position_world = crate::coordinates::WorldPoint3D::new(
             target_view.position.x,
             target_view.position.y,
@@ -5440,6 +5439,7 @@ mod tests {
         };
 
         let resolved = live_swordfight_target_position(TARGET, &ctx);
+        assert_eq!((resolved.x, resolved.y), (650.92444, 1537.1555));
         assert_eq!(resolved.sector, Some(exact_sector));
         assert_eq!(resolved.level, 2);
         assert_eq!(
@@ -5452,6 +5452,9 @@ mod tests {
             crate::position_interface::SectorHandle::new(88),
             "legacy number-only live views remain number-only; this boundary must not guess an arena slot"
         );
+        let literal = literal_swordfight_target_position(TARGET, &ctx);
+        assert_eq!((literal.x, literal.y), (640.0, 1520.0));
+        assert_eq!(literal.sector, Some(exact_sector));
 
         let number_only_target = Position {
             x: 650.92444,
