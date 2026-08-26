@@ -643,6 +643,21 @@ pub fn update_mouse(
 
     host.host_titbit_preview = None;
 
+    let cursor_action = if shift_held {
+        engine.planned_action_for_seat(host.transport.local_seat)
+    } else {
+        engine.selected_action_for_seat(host.transport.local_seat)
+    };
+    if host.trajectory_preview_shift_held != shift_held
+        || host.trajectory_preview_action != cursor_action
+    {
+        host.valid_trajectory = false;
+        host.trajectory_preview_points.clear();
+        host.time_no_mouse_move = 0;
+        host.trajectory_preview_shift_held = shift_held;
+        host.trajectory_preview_action = cursor_action;
+    }
+
     // Track mouse-no-move timer.  Used to delay trajectory preview
     // display.
     if mouse_map == host.mouse_map_prev {
@@ -830,7 +845,7 @@ pub fn update_mouse(
         return RHMOUSE_VIEW;
     }
 
-    let selected_action = engine.selected_action_for_seat(host.transport.local_seat);
+    let selected_action = cursor_action;
 
     match selected_action {
         // ── NoAction ───────────────
@@ -884,7 +899,7 @@ fn cursor_for_bow(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
+    shift_held: bool,
 ) -> i32 {
     use robin_engine::element::Camp;
     use robin_engine::resource_ids::*;
@@ -894,6 +909,30 @@ fn cursor_for_bow(
         }
         let mut cursor = RHMOUSE_BOW_NO;
         let pc_id = engine.seat_selection(host.transport.local_seat)[0];
+
+        // Shift planning previews the shot from the end of the actor's live
+        // movement / queued movement chain. It must not require the live bow
+        // equip/aim state, because selecting the planned action deliberately
+        // leaves the real PC untouched.
+        if shift_held {
+            host.input.mouse_opacity = 0;
+            host.input.mouse_shadow_color = 0;
+            if let Some(target_id) =
+                engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map_pt, Focus::Bow)
+            {
+                host.input.focused_entity_id = Some(target_id);
+                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+                if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY && !host.valid_trajectory {
+                    apply_trajectory_preview(
+                        host,
+                        engine.compute_planned_bow_trajectory_preview(assets, pc_id, target_id),
+                    );
+                }
+                return RHMOUSE_BOW_YES_LONG;
+            }
+            host.valid_trajectory = false;
+            return RHMOUSE_BOW_NO;
+        }
 
         // When recording a macro, take the shorter path — no
         // range/trajectory checks, just BOW_YES over any
@@ -1057,7 +1096,7 @@ fn cursor_for_apple(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
+    shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1067,7 +1106,7 @@ fn cursor_for_apple(
             .first()
             .copied();
 
-        if !engine.is_selected_pc_in_restricted_sector() {
+        if shift_held || !engine.is_selected_pc_in_restricted_sector() {
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
                 &host.draw_order.ids,
@@ -1078,15 +1117,16 @@ fn cursor_for_apple(
                 let target_pos = engine
                     .get_entity(target_id)
                     .map(|t| t.element_data().position_map());
-                let in_range = pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
-                    engine.is_in_range_for_projectile(
-                        assets,
-                        pid,
-                        tpos,
-                        Action::Apple,
-                        Some(target_id),
-                    )
-                });
+                let in_range = shift_held
+                    || pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
+                        engine.is_in_range_for_projectile(
+                            assets,
+                            pid,
+                            tpos,
+                            Action::Apple,
+                            Some(target_id),
+                        )
+                    });
 
                 if in_range {
                     host.input.focused_entity_id = Some(target_id);
@@ -1102,12 +1142,21 @@ fn cursor_for_apple(
                         && !host.valid_trajectory
                         && let Some(pid) = pc_id
                     {
-                        let preview = engine.compute_trajectory_preview(
-                            assets,
-                            pid,
-                            target_id,
-                            engine_weapons::ShootMode::Long,
-                        );
+                        let preview = if shift_held {
+                            engine.compute_planned_trajectory_preview(
+                                assets,
+                                pid,
+                                target_id,
+                                Action::Apple,
+                            )
+                        } else {
+                            engine.compute_trajectory_preview(
+                                assets,
+                                pid,
+                                target_id,
+                                engine_weapons::ShootMode::Long,
+                            )
+                        };
                         apply_trajectory_preview(host, preview);
                     }
                 } else {
@@ -1129,7 +1178,7 @@ fn cursor_for_stone(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
+    shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1139,7 +1188,7 @@ fn cursor_for_stone(
             .first()
             .copied();
 
-        if !engine.is_selected_pc_in_restricted_sector() {
+        if shift_held || !engine.is_selected_pc_in_restricted_sector() {
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
                 &host.draw_order.ids,
@@ -1149,15 +1198,16 @@ fn cursor_for_stone(
                 let target_pos = engine
                     .get_entity(target_id)
                     .map(|t| t.element_data().position_map());
-                let in_range = pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
-                    engine.is_in_range_for_projectile(
-                        assets,
-                        pid,
-                        tpos,
-                        Action::Stone,
-                        Some(target_id),
-                    )
-                });
+                let in_range = shift_held
+                    || pc_id.zip(target_pos).is_some_and(|(pid, tpos)| {
+                        engine.is_in_range_for_projectile(
+                            assets,
+                            pid,
+                            tpos,
+                            Action::Stone,
+                            Some(target_id),
+                        )
+                    });
 
                 if in_range {
                     host.input.focused_entity_id = Some(target_id);
@@ -1179,12 +1229,21 @@ fn cursor_for_stone(
                         && !host.valid_trajectory
                         && let Some(pid) = pc_id
                     {
-                        let preview = engine.compute_trajectory_preview(
-                            assets,
-                            pid,
-                            target_id,
-                            engine_weapons::ShootMode::Long,
-                        );
+                        let preview = if shift_held {
+                            engine.compute_planned_trajectory_preview(
+                                assets,
+                                pid,
+                                target_id,
+                                Action::Stone,
+                            )
+                        } else {
+                            engine.compute_trajectory_preview(
+                                assets,
+                                pid,
+                                target_id,
+                                engine_weapons::ShootMode::Long,
+                            )
+                        };
                         apply_trajectory_preview(host, preview);
                     }
                 } else {
@@ -1206,7 +1265,7 @@ fn cursor_for_purse(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
+    shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1217,12 +1276,13 @@ fn cursor_for_purse(
             .first()
             .copied();
 
-        if !engine.is_selected_pc_in_restricted_sector()
+        if (shift_held || !engine.is_selected_pc_in_restricted_sector())
             && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
         {
-            let in_range = pc_id.is_some_and(|pid| {
-                engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Purse, None)
-            });
+            let in_range = shift_held
+                || pc_id.is_some_and(|pid| {
+                    engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Purse, None)
+                });
             if in_range {
                 cursor = RHMOUSE_PURSE_YES;
 
@@ -1232,10 +1292,17 @@ fn cursor_for_purse(
                     && !host.valid_trajectory
                     && let Some(pid) = pc_id
                 {
-                    apply_trajectory_preview(
-                        host,
-                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
-                    );
+                    let preview = if shift_held {
+                        engine.compute_planned_trajectory_preview_ground(
+                            assets,
+                            pid,
+                            mouse_elem,
+                            Action::Purse,
+                        )
+                    } else {
+                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
+                    };
+                    apply_trajectory_preview(host, preview);
                 }
             } else {
                 host.valid_trajectory = false;
@@ -1274,7 +1341,7 @@ fn cursor_for_wasp_nest(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
+    shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1285,10 +1352,17 @@ fn cursor_for_wasp_nest(
             .first()
             .copied();
 
-        if !engine.is_selected_pc_in_restricted_sector() {
-            let in_range = pc_id.is_some_and(|pid| {
-                engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::WaspNest, None)
-            });
+        if shift_held || !engine.is_selected_pc_in_restricted_sector() {
+            let in_range = shift_held
+                || pc_id.is_some_and(|pid| {
+                    engine.is_in_range_for_projectile(
+                        assets,
+                        pid,
+                        mouse_elem,
+                        Action::WaspNest,
+                        None,
+                    )
+                });
             if in_range {
                 cursor = RHMOUSE_WASP_NEST_YES;
 
@@ -1297,10 +1371,17 @@ fn cursor_for_wasp_nest(
                     && !host.valid_trajectory
                     && let Some(pid) = pc_id
                 {
-                    apply_trajectory_preview(
-                        host,
-                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
-                    );
+                    let preview = if shift_held {
+                        engine.compute_planned_trajectory_preview_ground(
+                            assets,
+                            pid,
+                            mouse_elem,
+                            Action::WaspNest,
+                        )
+                    } else {
+                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
+                    };
+                    apply_trajectory_preview(host, preview);
                 }
             } else {
                 host.valid_trajectory = false;
@@ -1349,15 +1430,19 @@ fn cursor_for_shield(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
+    shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
-        let is_big =
-            engine.selected_action_for_seat(host.transport.local_seat) == Action::BigShield;
+        let action = if shift_held {
+            engine.planned_action_for_seat(host.transport.local_seat)
+        } else {
+            engine.selected_action_for_seat(host.transport.local_seat)
+        };
+        let is_big = action == Action::BigShield;
 
         // Check the shield-protected flag.
-        if engine.shield().is_protected {
+        if shift_held || engine.shield().is_protected {
             let focused = engine.find_focusable_pc(assets, mouse_map_pt, Focus::Shield);
             if let Some(eid) = focused {
                 host.input.focused_entity_id = Some(eid);
@@ -1388,7 +1473,7 @@ fn cursor_for_net(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
+    shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1399,12 +1484,13 @@ fn cursor_for_net(
             .seat_selection(host.transport.local_seat)
             .first()
             .copied();
-        if !engine.is_selected_pc_in_restricted_sector()
+        if (shift_held || !engine.is_selected_pc_in_restricted_sector())
             && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
         {
-            let in_range = pc_id.is_some_and(|pid| {
-                engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Net, None)
-            });
+            let in_range = shift_held
+                || pc_id.is_some_and(|pid| {
+                    engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Net, None)
+                });
             if in_range {
                 cursor = RHMOUSE_NET_YES;
 
@@ -1416,10 +1502,17 @@ fn cursor_for_net(
                     && !host.valid_trajectory
                     && let Some(pid) = pc_id
                 {
-                    apply_trajectory_preview(
-                        host,
-                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem),
-                    );
+                    let preview = if shift_held {
+                        engine.compute_planned_trajectory_preview_ground(
+                            assets,
+                            pid,
+                            mouse_elem,
+                            Action::Net,
+                        )
+                    } else {
+                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
+                    };
+                    apply_trajectory_preview(host, preview);
                 }
             } else {
                 host.valid_trajectory = false;

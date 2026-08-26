@@ -172,6 +172,15 @@ pub enum PlayerCommand {
         pc_id: EntityId,
         action: Action,
     },
+    /// Toggle an action for Shift-held quick-action planning without changing
+    /// the live PC's action, posture, animation, or current sequence.
+    SelectPlannedAction {
+        pc_id: EntityId,
+        action: Action,
+    },
+    /// Clear only the Shift-held planned action, leaving the live PC action
+    /// and animation untouched.
+    CancelPlannedAction,
     /// Cancel the active action (set to NoAction).
     CancelAction {
         pc_id: EntityId,
@@ -433,6 +442,19 @@ pub enum PlayerCommand {
     /// the same selected PCs against the new slot.
     ChangeQaMemory {
         slot: u8,
+    },
+    /// Record one already-resolved action into the next free QA memory slot.
+    /// The queue executor starts it immediately when the actor is idle and
+    /// advances subsequent slots as each dispatched action completes.
+    QueueQuickAction {
+        action: Action,
+        command: Box<PlayerCommand>,
+    },
+    /// Double-click acceleration for Shift-planned movement.  If the newest
+    /// pending QA is a move it becomes a run; otherwise the active actor is
+    /// accelerated, matching ordinary double-click behavior.
+    MakeQueuedActionFast {
+        pc_id: EntityId,
     },
     /// Toggle the permanent alt-lock flag.  When true, the engine
     /// behaves as though alt is always held, enabling the view cone

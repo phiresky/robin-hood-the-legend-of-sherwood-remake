@@ -1,10 +1,10 @@
 //! Per-PC quick-action macro storage and dotted-chain geometry.
 //!
-//! Two arrays per PC:
+//! Two parallel collections per PC:
 //!
-//! * `slots: [QuickActionSlot; NUMBER_OF_QA_MEMORY]` — up to 3 in-flight
-//!   recorded macro sequences.
-//! * `maul_titbits: [Option<TitbitId>; NUMBER_OF_QA_MEMORY]` — **one
+//! * `slots` — the three Original-compatible QA memory slots followed by
+//!   any number of automatic Shift-click queue entries.
+//! * `maul_titbits` — **one
 //!   titbit ID per QA slot**.  The id is produced by an
 //!   `AddTitbit(RHTITBIT_QUICKACTION, …)` call at the input-action site
 //!   when the macro was recorded.  The portrait widget blits a *single*
@@ -22,7 +22,10 @@ use crate::element_kinds::QuickAction;
 use crate::profiles::Action;
 use crate::sequence::{Field, Sequence};
 
-/// Maximum number of quick-action macros a single PC can hold.
+/// Number of Original-compatible, portrait-visible quick-action slots.
+///
+/// Automatic Shift-click queues may grow beyond this count; legacy saves and
+/// the portrait strip deliberately continue to expose exactly these slots.
 pub const NUMBER_OF_QA_MEMORY: usize = 3;
 
 /// Map an `Action` to its frame index inside the
@@ -274,19 +277,21 @@ impl QuickActionSlot {
 /// (`qa_recording_for == Some(this pc)`).  `None` means "not recording".
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash)]
 pub struct PcMacroState {
-    slots: [QuickActionSlot; NUMBER_OF_QA_MEMORY],
+    slots: Vec<QuickActionSlot>,
     /// One titbit ID per QA slot, `None` when empty.  Set at the
     /// `AddTitbit(RHTITBIT_QUICKACTION, …)` / `SetQuickActionSequence`
     /// site in the input-action flow.
-    maul_titbits: [Option<crate::titbit::TitbitId>; NUMBER_OF_QA_MEMORY],
+    maul_titbits: Vec<Option<crate::titbit::TitbitId>>,
     recording_slot: Option<u8>,
 }
 
 impl Default for PcMacroState {
     fn default() -> Self {
         Self {
-            slots: Default::default(),
-            maul_titbits: [None; NUMBER_OF_QA_MEMORY],
+            slots: (0..NUMBER_OF_QA_MEMORY)
+                .map(|_| QuickActionSlot::default())
+                .collect(),
+            maul_titbits: vec![None; NUMBER_OF_QA_MEMORY],
             recording_slot: None,
         }
     }
@@ -315,7 +320,7 @@ impl PcMacroState {
 
     /// Slots in recorded order.  Useful for "render every non-empty slot's
     /// icon strip next to the portrait".
-    pub fn slots(&self) -> &[QuickActionSlot; NUMBER_OF_QA_MEMORY] {
+    pub fn slots(&self) -> &[QuickActionSlot] {
         &self.slots
     }
 
@@ -325,6 +330,52 @@ impl PcMacroState {
 
     pub fn recording_slot(&self) -> Option<u8> {
         self.recording_slot
+    }
+
+    pub fn first_empty_slot(&self) -> Option<u8> {
+        self.slots
+            .iter()
+            .position(QuickActionSlot::is_empty)
+            .map(|slot| slot as u8)
+    }
+
+    /// Return a free slot for an automatic queue entry, extending storage
+    /// beyond Original's three visible slots when necessary.
+    pub fn next_auto_queue_slot(&mut self) -> u8 {
+        if let Some(slot) = self.first_empty_slot() {
+            return slot;
+        }
+        let slot = self.slots.len();
+        let slot_u8 = u8::try_from(slot)
+            .unwrap_or_else(|_| panic!("automatic quick-action queue exceeded 256 entries"));
+        self.slots.push(QuickActionSlot::default());
+        self.maul_titbits.push(None);
+        slot_u8
+    }
+
+    pub fn last_occupied_slot(&self) -> Option<u8> {
+        self.slots
+            .iter()
+            .rposition(|slot| !slot.is_empty())
+            .map(|slot| slot as u8)
+    }
+
+    /// Upgrade the newest queued movement to running. Returns whether a
+    /// pending move was found and changed.
+    pub fn make_last_move_running(&mut self) -> Option<u8> {
+        let Some(slot) = self.last_occupied_slot() else {
+            return None;
+        };
+        let Some(step) = self.slots[slot as usize].steps.last_mut() else {
+            return None;
+        };
+        match &mut step.replay {
+            QaReplayCommand::Move { running, .. } | QaReplayCommand::DropAle { running, .. } => {
+                *running = true;
+                Some(slot)
+            }
+            _ => None,
+        }
     }
 
     /// Read a slot's titbit id.  Returns `None` for an empty slot.
@@ -354,6 +405,19 @@ impl PcMacroState {
         self.slots[slot_idx as usize].legacy_seek_sequence = None;
         self.slots[slot_idx as usize].legacy_quickito = None;
         self.maul_titbits[slot_idx as usize] = None;
+        self.recording_slot = Some(slot_idx);
+    }
+
+    /// Begin an automatically queued recording. Unlike manual QA recording,
+    /// the slot may be in the expandable overflow behind the portrait strip.
+    pub fn begin_auto_queue_recording(&mut self, slot_idx: u8) {
+        let slot = usize::from(slot_idx);
+        assert!(
+            slot < self.slots.len(),
+            "automatic QA slot {slot_idx} was not allocated"
+        );
+        self.slots[slot] = QuickActionSlot::default();
+        self.maul_titbits[slot] = None;
         self.recording_slot = Some(slot_idx);
     }
 
@@ -387,8 +451,7 @@ impl PcMacroState {
         }
     }
 
-    /// Shift slots `slot_idx+1 .. NUMBER_OF_QA_MEMORY` down by one,
-    /// emptying the final slot.  Called once every PC has completed
+    /// Shift every later slot down by one. Called once every PC has completed
     /// a given macro slot so the remaining slots collapse forward.
     ///
     /// Shifted state: `steps` and `maul_titbits[i] = maul_titbits[i+1]`.
@@ -398,16 +461,21 @@ impl PcMacroState {
     /// "recording into slot N while slot N tetrises" race.  Kept as a
     /// guard against that invariant breaking.
     pub fn do_tetris(&mut self, slot_idx: usize) {
-        if slot_idx >= NUMBER_OF_QA_MEMORY {
+        if slot_idx >= self.slots.len() {
             return;
         }
-        for i in slot_idx..NUMBER_OF_QA_MEMORY - 1 {
+        for i in slot_idx..self.slots.len() - 1 {
             self.slots.swap(i, i + 1);
             self.maul_titbits[i] = self.maul_titbits[i + 1];
         }
-        let last = NUMBER_OF_QA_MEMORY - 1;
-        self.slots[last] = QuickActionSlot::default();
-        self.maul_titbits[last] = None;
+        if self.slots.len() > NUMBER_OF_QA_MEMORY {
+            self.slots.pop();
+            self.maul_titbits.pop();
+        } else {
+            let last = NUMBER_OF_QA_MEMORY - 1;
+            self.slots[last] = QuickActionSlot::default();
+            self.maul_titbits[last] = None;
+        }
         if let Some(rs) = self.recording_slot
             && (rs as usize) >= slot_idx
         {
@@ -674,6 +742,28 @@ mod tests {
         assert_eq!(s.slots[0].len(), 0);
         assert!(s.is_recording());
         assert!(s.get_slot_titbit(0).is_none());
+    }
+
+    #[test]
+    fn automatic_queue_expands_beyond_portrait_memory() {
+        let mut state = PcMacroState::default();
+        for index in 0..6 {
+            let slot = state.next_auto_queue_slot();
+            assert_eq!(usize::from(slot), index);
+            state.begin_auto_queue_recording(slot);
+            state.append_if_recording(step(Action::Bow, index as f32, 0.0));
+            state.stop_recording();
+        }
+
+        assert_eq!(state.slots().len(), 6);
+        assert!(state.slots().iter().all(|slot| !slot.is_empty()));
+
+        state.do_tetris(0);
+        assert_eq!(state.slots().len(), 5);
+        assert_eq!(
+            state.slot(0).expect("shifted front").steps[0].position.x,
+            1.0
+        );
     }
 
     #[test]
