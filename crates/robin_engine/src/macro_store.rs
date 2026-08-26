@@ -113,11 +113,11 @@ pub enum QaReplayCommand {
     Move {
         destination: MapPoint,
         running: bool,
-        /// Absent only in saves written before resolved group-move recording
-        /// was ported. Those legacy Rust saves retain their old spatial
-        /// re-resolution playback behavior.
-        #[serde(default)]
-        route: Option<RecordedQaMoveRoute>,
+        /// Exact resolved goal identity captured alongside the per-PC
+        /// formation destination. Replaying a raw click would run formation
+        /// placement a second time and can no longer reproduce the recorded
+        /// quick action. Required from SAVE55/NET19/REPLAY13 onward.
+        route: RecordedQaMoveRoute,
     },
     /// Interaction with a specific target entity (attack, heal, tie, …).
     ///
@@ -701,6 +701,15 @@ mod tests {
     use super::*;
     use crate::sequence::SequenceElement;
 
+    fn route() -> RecordedQaMoveRoute {
+        RecordedQaMoveRoute {
+            goal_sector: crate::sector::SectorNumber::new(1),
+            goal_sector_index: crate::fast_find_grid::SectorIndex::new(0)
+                .expect("valid test sector index"),
+            goal_layer: 0,
+        }
+    }
+
     fn step(action: Action, x: f32, y: f32) -> QuickActionStep {
         QuickActionStep {
             action,
@@ -708,7 +717,7 @@ mod tests {
             replay: QaReplayCommand::Move {
                 destination: MapPoint::new(x, y),
                 running: false,
-                route: None,
+                route: route(),
             },
         }
     }
@@ -890,16 +899,16 @@ mod tests {
     }
 
     #[test]
-    fn group_move_route_roundtrips_binary_and_defaults_legacy_json() {
+    fn group_move_route_roundtrips_and_rejects_unresolved_json() {
         let exact = crate::fast_find_grid::SectorIndex::new(37).unwrap();
         let replay = QaReplayCommand::Move {
             destination: MapPoint::new(125.0, 250.0),
             running: true,
-            route: Some(RecordedQaMoveRoute {
+            route: RecordedQaMoveRoute {
                 goal_sector: crate::sector::SectorNumber::new(421),
                 goal_sector_index: exact,
                 goal_layer: 6,
-            }),
+            },
         };
 
         let json = serde_json::to_value(replay).expect("serialize recorded group move");
@@ -929,11 +938,10 @@ mod tests {
             .and_then(serde_json::Value::as_object_mut)
             .expect("externally tagged group move")
             .remove("route");
-        assert!(matches!(
-            serde_json::from_value::<QaReplayCommand>(legacy)
-                .expect("deserialize legacy group move"),
-            QaReplayCommand::Move { route: None, .. }
-        ));
+        assert!(
+            serde_json::from_value::<QaReplayCommand>(legacy).is_err(),
+            "an unresolved Rust group move must not enter current QA state"
+        );
     }
 
     #[test]

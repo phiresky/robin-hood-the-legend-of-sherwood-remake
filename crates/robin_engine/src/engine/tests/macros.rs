@@ -81,6 +81,27 @@ fn add_group_move_test_sector(engine: &mut EngineInner) -> crate::fast_find_grid
 }
 
 #[cfg(test)]
+fn recorded_test_route(engine: &mut EngineInner) -> crate::macro_store::RecordedQaMoveRoute {
+    let goal_sector_index = engine
+        .world
+        .fast_grid
+        .level
+        .sectors
+        .iter()
+        .position(|sector| sector.sector_number == crate::sector::SectorNumber::new(1))
+        .map(|index| {
+            crate::fast_find_grid::SectorIndex::new(index as u32)
+                .expect("existing test sector index")
+        })
+        .unwrap_or_else(|| add_group_move_test_sector(engine));
+    crate::macro_store::RecordedQaMoveRoute {
+        goal_sector: crate::sector::SectorNumber::new(1),
+        goal_sector_index,
+        goal_layer: 0,
+    }
+}
+
+#[cfg(test)]
 fn arm_group_move_recording(engine: &mut EngineInner, pcs: &[crate::element::EntityId]) {
     for &pc in pcs {
         engine
@@ -106,6 +127,7 @@ fn seed_macro_slot(
     use crate::macro_store::{QaReplayCommand, QuickActionStep};
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
+    let route = recorded_test_route(engine);
     let pc_handle = ElementHandle(pc.index());
     let titbit_id = engine.feedback.titbit_manager.add_titbit(
         WorldPoint3D {
@@ -135,7 +157,7 @@ fn seed_macro_slot(
             replay: QaReplayCommand::Move {
                 destination: pos,
                 running: false,
-                route: None,
+                route,
             },
         });
     }
@@ -207,6 +229,7 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
         .macro_store
         .get_or_insert(empty_pc)
         .begin_recording(slot);
+    let route = recorded_test_route(&mut engine);
     let state = engine.players.macro_store.get_mut(recorded_pc).unwrap();
     state.begin_recording(slot);
     let destination = MapPoint::new(30.0, 40.0);
@@ -216,7 +239,7 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
         replay: QaReplayCommand::Move {
             destination,
             running: false,
-            route: None,
+            route,
         },
     });
     state.set_slot_titbit(slot as usize, titbit);
@@ -327,7 +350,7 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
     let QaReplayCommand::Move {
         destination,
         running,
-        route: Some(route),
+        route,
     } = step.replay
     else {
         panic!("group move did not retain its resolved route")
@@ -437,7 +460,7 @@ fn recorded_multi_pc_group_move_keeps_actor_order_and_individual_slots_without_l
         let QaReplayCommand::Move {
             destination,
             running,
-            route: Some(route),
+            route,
         } = steps[0].replay
         else {
             panic!("per-PC group move did not retain its resolved route")
@@ -557,7 +580,7 @@ fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual
         let QaReplayCommand::Move {
             destination,
             running,
-            route: Some(route),
+            route,
         } = entry.step.replay
         else {
             panic!("automatic GroupMove was not captured as a resolved move")

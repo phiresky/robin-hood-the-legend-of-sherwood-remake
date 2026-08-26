@@ -107,7 +107,12 @@ mod tests {
                 replay: QaReplayCommand::Move {
                     destination: MapPoint::new(10.0, 20.0),
                     running: false,
-                    route: None,
+                    route: crate::macro_store::RecordedQaMoveRoute {
+                        goal_sector: crate::sector::SectorNumber::new(1),
+                        goal_sector_index: crate::fast_find_grid::SectorIndex::new(0)
+                            .expect("valid test sector index"),
+                        goal_layer: 0,
+                    },
                 },
             },
         );

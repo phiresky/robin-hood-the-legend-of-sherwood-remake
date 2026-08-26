@@ -456,7 +456,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v54** (2026-08-26, independent quick-action stores): automatic work is
 ///   separated from the three manual slots and manual replacement state is
 ///   represented explicitly.
-pub const SAVE_FORMAT_VERSION: u32 = 54;
+/// - **v55** (2026-08-26, resolved quick-action movement): every stored move
+///   requires its exact per-PC destination-sector identity; unresolved moves
+///   from the obsolete Rust QA schema are rejected.
+pub const SAVE_FORMAT_VERSION: u32 = 55;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -710,8 +713,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_includes_auto_queue_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 54);
+    fn save_format_version_requires_resolved_quick_action_moves() {
+        assert_eq!(SAVE_FORMAT_VERSION, 55);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

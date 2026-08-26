@@ -1640,7 +1640,11 @@ impl EngineInner {
                     QaReplayCommand::Move {
                         destination: *destination,
                         running: *running,
-                        route: resolved_move_route,
+                        route: resolved_move_route.unwrap_or_else(|| {
+                            panic!(
+                                "group-move quick action for {recording_pc:?} has no resolved route"
+                            )
+                        }),
                     },
                 )
             }
@@ -2539,7 +2543,7 @@ impl EngineInner {
                 crate::macro_store::QaReplayCommand::Move {
                     destination,
                     running,
-                    route: Some(route),
+                    route,
                 } => {
                     // `PerformMove(..., bRecordQA=true)` retained this exact
                     // SEEK/post-seek shape. Launch it directly rather than
@@ -2556,23 +2560,6 @@ impl EngineInner {
                     }
                     continue;
                 }
-                crate::macro_store::QaReplayCommand::Move {
-                    destination,
-                    running,
-                    route: None,
-                } => PlayerCommand::GroupMove {
-                    actors: vec![pc],
-                    destination,
-                    running,
-                    show_marker: true,
-                    // Macro replay always re-resolves via spatial lookup;
-                    // patch redirects only fire from the live click path.
-                    goal_override: None,
-                    goal_sector_index_override: None,
-                    door_route_override: None,
-                    recorded_gate_routes: Vec::new(),
-                    recorded_failed_gate_routes: Vec::new(),
-                },
                 crate::macro_store::QaReplayCommand::Interaction {
                     target,
                     command,
@@ -6579,7 +6566,12 @@ mod tests {
             replay: QaReplayCommand::Move {
                 destination: MapPoint::new(123.0, 456.0),
                 running: false,
-                route: None,
+                route: crate::macro_store::RecordedQaMoveRoute {
+                    goal_sector: crate::sector::SectorNumber::new(1),
+                    goal_sector_index: crate::fast_find_grid::SectorIndex::new(0)
+                        .expect("valid test sector index"),
+                    goal_layer: 0,
+                },
             },
         };
         let manual = engine.players.macro_store.get_or_insert(pc_id);

@@ -56,14 +56,15 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 12 replaces the command-only frame
+/// On-disk replay schema version. Version 12 replaced the command-only frame
 /// payload with a complete [`SimulationFrameInput`]. External facts/actions,
 /// pre/post command phases, the hourglass/body gates, and `PostInitialize` are
 /// therefore recorded exactly as admitted, including automatic quick-action
-/// queue commands and their independent serialized store. There is deliberately
-/// no legacy compatibility adapter: incomplete schema-10 and both incompatible
-/// schema-11 frame layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 12;
+/// queue commands and their independent serialized store. Version 13 requires
+/// exact route identity for every stored movement quick action. There is
+/// deliberately no Rust-schema compatibility adapter: earlier incompatible
+/// frame layouts are rejected at the header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 13;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -727,8 +728,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_includes_auto_queue_commands() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 12);
+    fn replay_schema_version_requires_resolved_quick_action_moves() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 13);
     }
 
     fn unique_replay_path(label: &str) -> String {
