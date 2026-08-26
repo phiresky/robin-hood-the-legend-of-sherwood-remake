@@ -400,9 +400,14 @@ pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, Init
 
     // Load the shipping datadir if one exists. When present, subsystem
     // loaders prefer it over legacy disk I/O.
-    let shipping = assets_shipping_datadir::try_load(std::path::Path::new("Data"))
-        .map_err(|source| InitError::ContentShippingDatadir { source })?
-        .map(std::sync::Arc::new);
+    let shipping = if let Some(path) = robin_engine::sbfile::resolve_data_path("Data/datadir.bin") {
+        Some(std::sync::Arc::new(
+            assets_shipping_datadir::ShippingDatadir::load_from_file(&path)
+                .map_err(|source| InitError::ContentShippingDatadir { source })?,
+        ))
+    } else {
+        None
+    };
     if let Some(ref dd) = shipping {
         assets_shipping_datadir::install_global(dd.clone())
             .map_err(|source| InitError::PlatformShippingDatadirInstall { source })?;

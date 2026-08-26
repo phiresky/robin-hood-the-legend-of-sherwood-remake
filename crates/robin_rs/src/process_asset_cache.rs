@@ -23,6 +23,7 @@ use robin_engine::sbfile::SbFile;
 use robin_engine::sound_cache::FxBankElement;
 
 pub struct ProcessAssetCache {
+    shipping_mission: Option<String>,
     /// Pristine sprite bank (mmap-backed spans). Missions clone it and
     /// then append their runtime overlay sprites; the clone is cheap
     /// because bank sprites carry spans, not pixel data.
@@ -88,6 +89,13 @@ pub fn get_or_build(
     let mut state = STATE.lock().unwrap();
     match std::mem::replace(&mut *state, State::Idle) {
         State::Ready(cache) => {
+            let active = shipping.and_then(|datadir| datadir.active_mission_name());
+            if cache.shipping_mission != active {
+                drop(state);
+                let cache = Arc::new(build(shipping, profiles));
+                *STATE.lock().unwrap() = State::Ready(cache.clone());
+                return cache;
+            }
             *state = State::Ready(cache.clone());
             cache
         }
@@ -96,10 +104,14 @@ pub fn get_or_build(
             // builds redundantly instead of deadlocking; the game runs
             // single-threaded here so that never happens in practice).
             drop(state);
-            let cache = handle.join().unwrap_or_else(|_| {
+            let mut cache = handle.join().unwrap_or_else(|_| {
                 tracing::warn!("asset warm-up thread panicked; rebuilding synchronously");
                 Arc::new(build(shipping, profiles))
             });
+            let active = shipping.and_then(|datadir| datadir.active_mission_name());
+            if cache.shipping_mission != active {
+                cache = Arc::new(build(shipping, profiles));
+            }
             *STATE.lock().unwrap() = State::Ready(cache.clone());
             cache
         }
@@ -160,6 +172,7 @@ fn build(
     let exclamations = build_exclamations(shipping, profiles);
 
     ProcessAssetCache {
+        shipping_mission: shipping.and_then(|datadir| datadir.active_mission_name()),
         sprite_bank,
         fx_bank,
         menu_bank,

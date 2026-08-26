@@ -6,6 +6,8 @@ use std::time::Duration;
 use anyhow::Context as _;
 use winit::platform::android::activity::AndroidApp;
 
+static ANDROID_APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
+
 /// Entry point called by `android-activity`'s NativeActivity glue.
 ///
 /// This symbol uses the Rust ABI required by `android-activity`. It is not
@@ -45,6 +47,9 @@ fn android_main(app: AndroidApp) {
 }
 
 fn run_android(app: AndroidApp) -> anyhow::Result<i32> {
+    ANDROID_APP
+        .set(app.clone())
+        .map_err(|_| anyhow::anyhow!("Android asset manager was already installed"))?;
     install_android_paths(&app);
 
     let mut args = crate::main_entry::parse_cli();
@@ -176,18 +181,8 @@ fn set_env(key: &str, value: impl AsRef<Path>) {
 fn load_bundled_shipping_datadir(
     app: &AndroidApp,
 ) -> anyhow::Result<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>> {
-    use std::ffi::CString;
-    use std::io::Read;
-
-    let name = CString::new("Data/datadir.bin").expect("asset path has no interior nul");
-    let mut asset = app
-        .asset_manager()
-        .open(&name)
-        .ok_or_else(|| anyhow::anyhow!("Android APK asset Data/datadir.bin is missing"))?;
-    let mut bytes = Vec::with_capacity(asset.length());
-    asset
-        .read_to_end(&mut bytes)
-        .context("read APK asset Data/datadir.bin")?;
+    let _ = app;
+    let bytes = read_bundled_asset("Data/datadir.bin")?;
 
     let datadir = robin_assets::shipping_datadir::ShippingDatadir::from_compressed_bytes(&bytes)
         .context("decode APK asset Data/datadir.bin")?;
@@ -196,4 +191,23 @@ fn load_bundled_shipping_datadir(
         .context("install Android shipping datadir")?;
     tracing::info!("Loaded bundled Android shipping datadir from APK assets");
     Ok(datadir)
+}
+
+pub(crate) fn read_bundled_asset(path: &str) -> anyhow::Result<Vec<u8>> {
+    use std::ffi::CString;
+    use std::io::Read;
+
+    let app = ANDROID_APP
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("Android asset manager is not installed"))?;
+    let name = CString::new(path).context("APK asset path contains an interior nul")?;
+    let mut asset = app
+        .asset_manager()
+        .open(&name)
+        .ok_or_else(|| anyhow::anyhow!("Android APK asset {path} is missing"))?;
+    let mut bytes = Vec::with_capacity(asset.length());
+    asset
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read APK asset {path}"))?;
+    Ok(bytes)
 }

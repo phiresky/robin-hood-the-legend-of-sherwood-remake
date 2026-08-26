@@ -181,7 +181,14 @@ impl From<std::io::Error> for LoadError {
 /// bare name ("Dem_Lei_MP") — the corresponding proto-level is looked up
 /// in the campaign's mission profiles.
 pub fn load_from_datadir(datadir: &Path, mission_filename: &str) -> Result<ActorNames, LoadError> {
-    let profiles = load_profile_manager(datadir)?;
+    let data_dir = datadir.join("Data");
+    let shipping = crate::shipping_datadir::try_load(&data_dir)
+        .map_err(|error| LoadError::Level(format!("shipping datadir: {error:#}")))?;
+    let profiles = shipping
+        .as_ref()
+        .and_then(|datadir| datadir.profiles.clone())
+        .map(Ok)
+        .unwrap_or_else(|| load_profile_manager(datadir))?;
 
     let mission_profile = profiles
         .missions
@@ -201,14 +208,25 @@ pub fn load_from_datadir(datadir: &Path, mission_filename: &str) -> Result<Actor
 
     let level_dir = datadir.join("Data").join("Levels");
     let level_dir_str = level_dir.to_string_lossy().into_owned();
-    let loaded = load_level(
-        mission_filename,
-        &proto_filename,
-        &level_dir_str,
-        &is_beggar,
-        &mut |_| (),
-    )
-    .map_err(|e| LoadError::Level(format!("{e:?}")))?;
+    let loaded = if let Some(shipping) = shipping.as_ref() {
+        shipping
+            .load_mission_from_source(mission_filename)
+            .map_err(|error| LoadError::Level(format!("shipping mission: {error:#}")))?;
+        shipping.loaded_level(mission_filename).ok_or_else(|| {
+            LoadError::Level(format!(
+                "shipping mission '{mission_filename}' loaded without a level"
+            ))
+        })?
+    } else {
+        load_level(
+            mission_filename,
+            &proto_filename,
+            &level_dir_str,
+            &is_beggar,
+            &mut |_| (),
+        )
+        .map_err(|e| LoadError::Level(format!("{e:?}")))?
+    };
 
     let mut names = build_names(&loaded, &profiles);
     // Best-effort text loading — failures are logged and leave the

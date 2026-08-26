@@ -22,7 +22,7 @@ type BuildManifest = {
 
 type RobinWasmModule = {
     readonly default: (init?: { module_or_path?: string | URL | Request }) => Promise<unknown>;
-    readonly wasm_boot: (datadir: Uint8Array) => void;
+    readonly wasm_boot: (datadir: Uint8Array, dataBaseUrl: string) => void;
     readonly wasm_preload_asset?: (path: string, bytes: Uint8Array) => void;
     readonly rh_rpc?: <T = unknown>(request: { method: string; params: unknown }) => Promise<T>;
 };
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
 
     const rpc = installRpcClient(wasm);
 
-    wasm.wasm_boot(new Uint8Array(buf));
+    wasm.wasm_boot(new Uint8Array(buf), dataUrl.slice(0, dataUrl.lastIndexOf('/')));
     logOk('[handed off to Rust - winit drives rAF from here]');
     await waitForRpcBridge(rpc);
     if (shareReplayButton !== null) {

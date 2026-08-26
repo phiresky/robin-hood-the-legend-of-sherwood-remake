@@ -440,6 +440,13 @@ pub(crate) async fn run_mission_headless(
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
+    let mission_name = campaign.missions[mission_idx]
+        .profile(profiles)
+        .mission_filename
+        .clone();
+    if let Err(error) = ensure_shipping_mission(args, &mission_name).await {
+        return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
+    }
     let replay_restart = args
         .replay_data
         .as_ref()
@@ -918,6 +925,13 @@ async fn run_mission_with_seed(
     sim_config: engine_api::SimConfig,
     multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
 ) -> MissionOutcome {
+    let mission_name = campaign.missions[mission_idx]
+        .profile(profiles)
+        .mission_filename
+        .clone();
+    if let Err(error) = ensure_shipping_mission(args, &mission_name).await {
+        return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
+    }
     let campaign = establish_mission_restart_boundary(campaign, rng_seed, sim_config);
     let mut mission = match InteractiveMissionBuilder::build(
         window,
@@ -938,6 +952,30 @@ async fn run_mission_with_seed(
     };
     let outcome = mission.run(window, callbacks, profiles, args).await;
     mission.finish(outcome)
+}
+
+async fn ensure_shipping_mission(
+    args: &crate::main_entry::CliArgs,
+    mission: &str,
+) -> Result<(), String> {
+    let shipping = args.global_options.shipping_arc()?;
+    let Some(datadir) = shipping.as_ref() else {
+        return Ok(());
+    };
+    if !datadir.missions.is_empty()
+        && !datadir.has_mission(mission)
+        && !robin_engine::level_data::hackable_level_exists(mission)
+    {
+        return Err(format!(
+            "shipping manifest has no payload for required mission {mission}"
+        ));
+    }
+    if !datadir.has_mission(mission) {
+        return Ok(());
+    }
+    crate::shipping_mission::ensure_loaded(shipping.as_ref(), mission)
+        .await
+        .map_err(|error| format!("load mission assets for {mission}: {error:#}"))
 }
 
 #[cfg(test)]

@@ -33,6 +33,7 @@ jiff = "0.2"
 fastrand.workspace = true
 rand = "0.10"
 anyhow.workspace = true
+futures = "0.3"
 libc = "0.2"
 bytemuck = { workspace = true, features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
@@ -144,6 +145,7 @@ web-sys = { version = "0.3", features = [
     "HtmlCanvasElement",
     "Location",
     "Performance",
+    "Response",
     "Storage",
     "Url",
     "UrlSearchParams",

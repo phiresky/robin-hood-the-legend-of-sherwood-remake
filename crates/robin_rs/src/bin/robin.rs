@@ -204,16 +204,17 @@ fn wasm_log_level_from_query() -> (tracing::Level, Option<String>) {
     }
 }
 
-/// JS entry point.  Hand in the contents of `Data/datadir.bin` (the
-/// bitcode-serialised + zstd-compressed asset bundle the converter
-/// emits) — Rust decodes it, installs it as the asset bundle, then
+/// JS entry point. Hand in the contents of `Data/datadir.bin` (the
+/// bitcode-serialised + zstd-compressed boot manifest the converter emits)
+/// and its containing URL. Rust decodes it, installs its boot assets, then
 /// runs the game under winit's web backend.  Returns immediately on
 /// success; the game itself is driven by `requestAnimationFrame`.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub fn wasm_boot(datadir_bin: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
-    let dd = assets_shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
+pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_bindgen::JsValue> {
+    let mut dd = assets_shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("datadir decode: {e:#}")))?;
+    dd.set_remote_base_url(data_base_url);
     let dd = std::sync::Arc::new(dd);
     assets_shipping_datadir::install_global(dd.clone()).map_err(|e| {
         wasm_bindgen::JsValue::from_str(&format!("install shipping datadir: {e:#}"))
@@ -229,9 +230,9 @@ pub fn wasm_boot(datadir_bin: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
     Ok(())
 }
 
-/// Register one host-preloaded asset before `wasm_boot` starts the
-/// game loop.  The browser loader uses this for large per-level files
-/// kept outside `datadir.bin` while Rust keeps a synchronous read API.
+/// Register one host-preloaded asset before `wasm_boot` starts the game loop.
+/// The browser loader currently uses this for audio assets that retain a
+/// synchronous read API; mission data uses the asynchronous shipping loader.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn wasm_preload_asset(path: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {

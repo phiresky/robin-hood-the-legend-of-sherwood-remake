@@ -348,6 +348,51 @@ Extrapolating the `.bks` ratio to 565 MiB: ~141 MiB total for the full bank zstd
 3. **Default to `--zstd-window-log 30` for wasm shipping.** The 31-bit long-range window saves <0.02% over 30 on this data and 32-bit zstd builds (wasm32) refuse to decode windowLog=31 streams.
 4. **Don't add per-sprite/per-patch JXL.** The investigation made the case clearly: the bank's RLE/VQ + zstd pipeline is the right tool for pixel-art sprites. If we want substantial further sprite gains we'd need to go lossy (k-means palette quantisation, perceptually-weighted), and that's a format and tooling change that's out of scope here.
 
+## Mission-selective shipping layout
+
+Shipping format v4 applies the trimming recommendation without breaking the
+compression properties measured above. The converter now emits a file tree:
+
+```
+Data/datadir.bin
+Data/missions/<mission>-<content-hash>.rhmission.zst
+Data/rhs/<rhs>-<content-hash>.rhmission.zst
+```
+
+`datadir.bin` is the boot manifest: profiles, shared UI/text resources, level
+descriptors, the sprite-bank dictionary/index shape, and a mission dependency
+graph. Each mission file contains its parsed level and script, terrain/minimap,
+and loading resources. Each RHS file contains that character/accessory's RHS
+metadata, raw compatibility copy, and only its reachable sprite-bank slots.
+
+RHS payloads are intentionally **not** split into one file per sprite. The
+measurements in this document show that hundreds of small related sprites gain
+substantially from cross-sprite zstd matching, and a file per sprite would also
+pay format and HTTP overhead for every frame. One zstd stream per RHS keeps
+those within-character matches while allowing heroes, accessories, and common
+effects to be shared by several mission dependency lists. Browser requests for
+a mission's missing files run concurrently, and decoded files stay cached for
+later missions. The content hash in each filename makes those cached files safe
+to reuse across shipping-manifest updates.
+
+A raw-map Leicester conversion (`--map-format raw --zstd-window-log 30`) gave
+this preliminary layout measurement:
+
+```
+boot manifest                 5,955,105 B
+mission core                  7,914,712 B
+52 shared RHS payloads       27,112,169 B
+all files                    40,981,986 B
+```
+
+That single-mission demo is about 6 MiB larger than the former monolith because
+separate zstd frames cannot match across the boot/core/RHS boundaries. This is
+an intentional latency and reuse tradeoff, not a compression-size win for a
+one-mission package. Full-game and replay use are the target: startup fetches a
+small manifest, a mission fetches only its dependency closure, and later
+missions reuse already cached RHS files. Production map artifacts should still
+use `--map-format jxl-q80` (or the selected quality) and window log 30 for wasm.
+
 ## Reproducing
 
 ```
@@ -372,7 +417,7 @@ cargo run --release --example sprite_size_bench -- \
     --anim-samples 10 --max-maps 4 \
     --all-codecs --av1
 
-# convert + inspect a shipping datadir.bin with JXL maps
+# convert + inspect a split shipping datadir with JXL maps
 cargo run --release --bin convert_datadir -- \
     --input datadirs/demo_leicester_ecoste --output /tmp/ship-q90 \
     --format shipping --map-format jxl-q90 --zstd-window-log 30

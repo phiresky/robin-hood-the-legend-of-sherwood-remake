@@ -960,7 +960,7 @@ pub(crate) fn detect_demo_mode_with_context(
         application_context
             .shipping()
             .expect("demo detection requires an initialized ApplicationContext")
-            .is_some_and(|dd| dd.levels.contains_key(mission))
+            .is_some_and(|dd| dd.has_mission(mission))
     };
     if resolve("Data/Levels/Dem_Lei_MP.rhm") || shipping_has_level("Dem_Lei_MP") {
         // Leicester demo — R=Robin, J=Jean, M=Marianne, T=Tuck, F=Ferris.
@@ -1002,7 +1002,7 @@ pub(crate) fn resolve_loading_pak(
         .shipping()
         .expect("loading pak resolution requires an initialized ApplicationContext");
     let data_asset_exists = |path: &str| {
-        if robin_engine::sbfile::resolve_data_path(path).is_some() {
+        if robin_engine::sbfile::SbFile::exists(path) {
             return true;
         }
         let normalized = path.replace('\\', "/").to_ascii_lowercase();

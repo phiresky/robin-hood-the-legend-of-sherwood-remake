@@ -1,15 +1,16 @@
 //! Quick smoke test: load a shipping `datadir.bin`, find every `.map` entry
-//! in `dd.raw`, and try to decode it via `Picture::load_terrain_from_bytes`.
+//! in the boot manifest and lazy mission files, and decode each one.
 //! Prints `key  WxH  jxl|sixteen  ok|err`.
 //!
 //!   cargo run --release --example jxl_map_roundtrip -- <path-to-datadir.bin>
 #![allow(clippy::print_stdout)]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use robin_assets::picture::Picture;
-use robin_assets::shipping_datadir::ShippingDatadir;
+use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
 
 fn main() -> Result<()> {
     let path = std::env::args()
@@ -27,14 +28,34 @@ fn main() -> Result<()> {
     let dd = ShippingDatadir::load_from_file(&path)?;
     println!("# loaded {} ({} raw entries)", path.display(), dd.raw.len());
 
-    let mut keys: Vec<&String> = dd
-        .raw
-        .keys()
-        .filter(|k| k.ends_with(".map") || k.ends_with(".min"))
-        .collect();
-    keys.sort();
-    if keys.is_empty() {
-        println!("# no .map/.min entries in dd.raw");
+    let mut terrain = BTreeMap::<String, Vec<u8>>::new();
+    terrain.extend(
+        dd.raw
+            .iter()
+            .filter(|(key, _)| key.ends_with(".map") || key.ends_with(".min"))
+            .map(|(key, bytes)| (key.clone(), bytes.clone())),
+    );
+    let root = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let mut seen_files = std::collections::BTreeSet::new();
+    for reference in dd.missions.values() {
+        for file in &reference.files {
+            if !seen_files.insert(file) {
+                continue;
+            }
+            let payload_path = root.join(file);
+            let compressed = std::fs::read(&payload_path)
+                .with_context(|| format!("read {}", payload_path.display()))?;
+            let payload = decode_mission_compressed(&compressed)?;
+            terrain.extend(
+                payload
+                    .raw
+                    .into_iter()
+                    .filter(|(key, _)| key.ends_with(".map") || key.ends_with(".min")),
+            );
+        }
+    }
+    if terrain.is_empty() {
+        println!("# no .map/.min entries in shipping files");
         return Ok(());
     }
 
@@ -42,8 +63,7 @@ fn main() -> Result<()> {
         "{:<48} {:>12} {:>9} {:>14} result",
         "key", "bytes", "format", "dims"
     );
-    for k in keys {
-        let bytes = dd.raw.get(k).unwrap();
+    for (k, bytes) in &terrain {
         let format = match bytes.first().copied() {
             Some(0xFF) if bytes.get(1) == Some(&0x0A) => "jxl",
             Some(0x00) if bytes.starts_with(b"\x00\x00\x00\x0CJXL ") => "jxl",

@@ -776,13 +776,13 @@ impl FrameHolder {
     ) -> Result<()> {
         // Shipping datadir short-circuits the entire .bks/.dic read.
         if let Some(dd) = shipping
-            && let Some(bank) = &dd.sprite_bank
+            && let Some(bank) = dd.active_sprite_bank()
         {
             tracing::info!(
                 "Sprite bank: loaded from shipping datadir ({} sprites)",
                 bank.sprites.len()
             );
-            self.load_from_shipping(bank);
+            self.load_from_shipping(&bank);
             progress(ProgressUpdate::Tick(1.0));
             return Ok(());
         }

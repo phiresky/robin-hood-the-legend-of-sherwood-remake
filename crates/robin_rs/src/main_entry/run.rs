@@ -43,10 +43,13 @@ pub async fn run_rust_game(
     // Warm the process asset cache (sprite bank, sound banks,
     // exclamations) on a background thread while the menu runs, so the
     // first mission load doesn't pay for process-global parsing.
-    crate::process_asset_cache::start_background_warmup(
-        application_context.shipping_arc().ok().flatten(),
-        profiles.clone(),
-    );
+    let shipping_for_warmup = application_context.shipping_arc().ok().flatten();
+    if !shipping_for_warmup
+        .as_ref()
+        .is_some_and(|datadir| !datadir.missions.is_empty())
+    {
+        crate::process_asset_cache::start_background_warmup(shipping_for_warmup, profiles.clone());
+    }
 
     // The headless code in `game_session` short-circuits the per-frame render
     // block. Window and GPU initialization still happen before this point.
@@ -552,10 +555,13 @@ pub async fn run_rust_game_headless(
     #[cfg(not(target_arch = "wasm32"))]
     crate::http_server::start_global(args.http_server)?;
 
-    crate::process_asset_cache::start_background_warmup(
-        application_context.shipping_arc().ok().flatten(),
-        profiles.clone(),
-    );
+    let shipping_for_warmup = application_context.shipping_arc().ok().flatten();
+    if !shipping_for_warmup
+        .as_ref()
+        .is_some_and(|datadir| !datadir.missions.is_empty())
+    {
+        crate::process_asset_cache::start_background_warmup(shipping_for_warmup, profiles.clone());
+    }
 
     tracing::info!("--headless: running without winit, wgpu, renderer, or audio backend");
 
