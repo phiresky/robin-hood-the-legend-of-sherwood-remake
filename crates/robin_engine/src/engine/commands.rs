@@ -119,6 +119,35 @@ fn action_to_quick_phase(action: Action, running: bool) -> QuickAction {
     }
 }
 
+/// Quick-action phases authored by an interaction's concrete Original call
+/// site rather than by the PC's currently selected portrait action.
+///
+/// These three paths all arrive through `RHParity::RecordInteraction`, but
+/// their subsequent `AddTitbit` calls deliberately choose their own phase:
+/// `ManageInputActionBow` uses `RHQUICK_BOW_OK`, while the two PC-on-PC
+/// contextual clicks in `RHElementActorPC::MouseClicked` use `RHQUICK_WALK`.
+/// The latter is true even though the acting PC owns Carry or Jump.
+fn recorded_interaction_quick_phase(command: Command) -> Option<QuickAction> {
+    match command {
+        Command::ShootBow => Some(QuickAction::BowOk),
+        Command::TakeCorpse | Command::ClimbUpOnShoulders => Some(QuickAction::Walk),
+        _ => None,
+    }
+}
+
+/// Layer passed to the Original ground-target `AddTitbit` call.
+///
+/// The captured command retains `muwSelectedLayer` because the thrown purse
+/// itself needs it, but `ManageInputActionPurse` authors its QA marker on
+/// literal layer zero. Wasp is the closely related exception that really
+/// does use the selected layer; Net also authors literal zero before capture.
+fn recorded_ground_target_titbit_layer(command: Command, captured_layer: u16) -> u16 {
+    match command {
+        Command::ThrowPurse | Command::ThrowNet => 0,
+        _ => captured_layer,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecordedInteractionIdentityError {
     MissingOrNonPcActor,
@@ -451,21 +480,25 @@ impl EngineInner {
                         .map(|pc| pc.current_action)
                         .expect("recorded interaction PC passed strict preflight");
                     // Pick the QuickAction ordinal.  Priority:
-                    //   1. `Command::Take` on an object target → Take.
-                    //   2. FX-target interaction → walk the target's
+                    //   1. A command-authored Original phase (direct Bow,
+                    //      TakeCorpse, or climb-up-on-shoulders).
+                    //   2. `Command::Take` on an object target → Take.
+                    //   3. FX-target interaction → walk the target's
                     //      filter ladder so levers, cut/handle/take
                     //      targets, pay-targets, bow targets, etc. pick
                     //      the per-filter icon instead of the
                     //      action-bar default.
-                    //   3. Action-specific icon when the PC is in an
+                    //   4. Action-specific icon when the PC is in an
                     //      armed action mode (bow, stone, etc.).
-                    //   4. Fallback `InteractPc` / `InteractNpc`.
+                    //   5. Fallback `InteractPc` / `InteractNpc`.
                     let fallback_quick = if tgt_is_pc {
                         crate::titbit::QuickAction::InteractPc as u16
                     } else {
                         crate::titbit::QuickAction::InteractNpc as u16
                     };
-                    let quick = if *command == Command::Take && tgt_is_object {
+                    let quick = if let Some(phase) = recorded_interaction_quick_phase(*command) {
+                        phase as u16
+                    } else if *command == Command::Take && tgt_is_object {
                         crate::titbit::QuickAction::Take as u16
                     } else if let Some(filter) = tgt_target_filter {
                         let pc_char_profile = self
@@ -522,12 +555,6 @@ impl EngineInner {
                     // `record_macro_step_for` helper which ran at the top
                     // of `apply_command`; no append here to avoid
                     // duplicating the dotted-chain step.
-                    //
-                    // TODO(parity): RHParity::RecordInteraction merges
-                    // command-specific Original recording sites. Audit their
-                    // authored RHQUICK phases, including direct ShootBow and
-                    // TakeCorpse, instead of deriving every phase from the
-                    // actor's current Action here.
                 }
                 if recording_interaction {
                     // AddInteractionWithSeek stores the constructed sequence
@@ -608,9 +635,11 @@ impl EngineInner {
                     let slot = self.players.qa_recording_slot;
                     self.remove_quick_action_titbits_for(*actor, slot);
                     let pc_handle = crate::titbit::ElementHandle(actor.index());
-                    // The titbit position and per-action layer (Net=0,
-                    // Wasp/Purse = selected layer) arrive pre-resolved
-                    // on the `PlayerCommand` so the handler just forwards.
+                    // The replay command retains the captured selected layer
+                    // needed by the thrown object. Original's marker layer is
+                    // authored separately: Purse and Net use literal zero,
+                    // while Wasp uses the selected layer.
+                    let marker_layer = recorded_ground_target_titbit_layer(*command, *titbit_layer);
                     let titbit_pos = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
@@ -618,7 +647,7 @@ impl EngineInner {
                     };
                     let titbit_id = self.feedback.titbit_manager.add_titbit(
                         titbit_pos,
-                        *titbit_layer,
+                        marker_layer,
                         crate::titbit::TitbitKind::QuickAction,
                         crate::titbit::ElementHandle::INVALID,
                         quick,
@@ -627,7 +656,7 @@ impl EngineInner {
                         crate::titbit::INVALID_ID,
                         true,
                         None,
-                        Some(*titbit_layer),
+                        None,
                     );
                     // Write the new titbit id into the slot.  Skip INVALID.
                     if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
@@ -1979,7 +2008,9 @@ impl EngineInner {
                 let target_entity = self.get_entity(*target).unwrap_or_else(|| {
                     panic!("quick-action interaction target {target:?} disappeared")
                 });
-                if *command == Command::Take
+                if let Some(phase) = recorded_interaction_quick_phase(*command) {
+                    phase as u16
+                } else if *command == Command::Take
                     && matches!(
                         target_entity,
                         crate::element::Entity::Bonus(_)
@@ -2039,8 +2070,12 @@ impl EngineInner {
             QaReplayCommand::GroundTarget {
                 target_pos,
                 titbit_layer,
+                command,
                 ..
-            } => (*target_pos, *titbit_layer),
+            } => (
+                *target_pos,
+                recorded_ground_target_titbit_layer(*command, *titbit_layer),
+            ),
             QaReplayCommand::ShieldRaise {
                 danger_point,
                 danger_point_layer,
@@ -8494,6 +8529,149 @@ mod tests {
             .get_slot_titbit(0)
             .expect("running Strangle records a replacement titbit");
         assert!(engine.feedback.titbit_manager.is_running_for_qa(titbit_id));
+    }
+
+    #[test]
+    fn recorded_native_interactions_use_their_original_authored_titbit_metadata() {
+        let cases = [
+            (Command::ShootBow, Action::Stone, QuickAction::BowOk),
+            (
+                Command::TakeCorpse,
+                Action::LittleJohnCarry,
+                QuickAction::Walk,
+            ),
+            (Command::ClimbUpOnShoulders, Action::Jump, QuickAction::Walk),
+        ];
+
+        for (command, selected_action, expected_phase) in cases {
+            let sim = crate::sim_rng::test_context();
+            let (mut engine, assets, pc_id, target_id) = setup_strangle_command_scene();
+            engine
+                .get_entity_mut(pc_id)
+                .expect("recording PC")
+                .pc_data_mut()
+                .expect("recording PC data")
+                .current_action = selected_action;
+            engine
+                .get_entity_mut(target_id)
+                .expect("recorded target")
+                .element_data_mut()
+                .set_layer(7);
+            let mut display = HostDisplayState::default();
+            let mut input = InputState::default();
+
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::StartRecordingMacro {
+                    pc: Some(pc_id),
+                    slot: 0,
+                },
+            );
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::LaunchInteraction {
+                    actor: pc_id,
+                    target: target_id,
+                    command,
+                    running: false,
+                },
+            );
+
+            assert_single_recorded_titbit(
+                &engine,
+                pc_id,
+                Some(target_id),
+                expected_phase,
+                WorldPoint3D::ZERO,
+                7,
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn recorded_ground_throws_keep_their_original_layer_and_supplier_metadata() {
+        let cases = [
+            (
+                Action::Purse,
+                Command::ThrowPurse,
+                Field::PurseTarget,
+                QuickAction::Purse,
+                9,
+                0,
+            ),
+            (
+                Action::Net,
+                Command::ThrowNet,
+                Field::NetTarget,
+                QuickAction::Net,
+                9,
+                0,
+            ),
+            (
+                Action::WaspNest,
+                Command::ThrowWaspNest,
+                Field::WaspNestTarget,
+                QuickAction::Wasp,
+                9,
+                9,
+            ),
+        ];
+
+        for (action, command, target_field, expected_phase, captured_layer, expected_layer) in cases
+        {
+            let sim = crate::sim_rng::test_context();
+            let (mut engine, assets, pc_id) = setup_pc_engine(&[(action, 1)]);
+            engine
+                .get_entity_mut(pc_id)
+                .expect("recording PC")
+                .pc_data_mut()
+                .expect("recording PC data")
+                .current_action = action;
+            let mut display = HostDisplayState::default();
+            let mut input = InputState::default();
+
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::StartRecordingMacro {
+                    pc: Some(pc_id),
+                    slot: 0,
+                },
+            );
+            let target_pos = WorldPoint3D::new(30.0, 40.0, 5.0);
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::LaunchGroundTarget {
+                    actor: pc_id,
+                    target_pos,
+                    command,
+                    target_field,
+                    titbit_layer: captured_layer,
+                },
+            );
+
+            assert_single_recorded_titbit(
+                &engine,
+                pc_id,
+                None,
+                expected_phase,
+                target_pos,
+                expected_layer,
+                false,
+            );
+        }
     }
 
     #[test]
