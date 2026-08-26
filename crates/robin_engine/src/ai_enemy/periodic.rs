@@ -30,6 +30,45 @@ impl EnemyAi {
         stuck_command_active: bool,
         sequence_null_about_to_launch: bool,
     ) {
+        if !self.the_16th_frame_before_stuck(
+            sim,
+            frame_phase,
+            ctx,
+            global,
+            tick,
+            grid,
+            is_idle,
+            receiving_wasp_sting,
+        ) {
+            return;
+        }
+        self.the_16th_frame_after_refresh(
+            frame_phase,
+            ctx,
+            stuck_command_active,
+            sequence_null_about_to_launch,
+        );
+    }
+
+    /// Run the prefix of `The16thFrame` through `RefreshArrowProtection`.
+    ///
+    /// The engine-facing caller closes the actions authored by the refresh
+    /// before calling [`Self::the_16th_frame_after_refresh`]. Original does
+    /// the same work synchronously: its subsequent stuck guard queries the
+    /// live sequence-manager queue populated by `GoTo`, not the queue as it
+    /// stood on entry (RHArtificialMalignity.cpp:9347-9427).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn the_16th_frame_before_stuck(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        frame_phase: u8,
+        ctx: &AiContext,
+        global: &AiGlobalState,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        is_idle: bool,
+        receiving_wasp_sting: bool,
+    ) -> bool {
         // Scotch — wasp stuck recovery.  The gate is on the NPC no
         // longer running the sting command at all, not on it having
         // fallen back to Wait: any other command means the sting is
@@ -88,9 +127,21 @@ impl EnemyAi {
 
         // Gate the rest on `frame_phase & 63`.
         if (frame_phase & 63) != 0 {
-            return;
+            return false;
         }
 
+        true
+    }
+
+    /// Finish the every-64/every-256-frame suffix after the refresh's
+    /// synchronous engine work has populated the live manager queue.
+    pub(crate) fn the_16th_frame_after_refresh(
+        &mut self,
+        frame_phase: u8,
+        ctx: &AiContext,
+        stuck_command_active: bool,
+        sequence_null_about_to_launch: bool,
+    ) {
         // ── Every-64-frame: stuck detector ───────────────────────────
         // Substates that are waiting on EVENT_REACHPOINT.
         // If the NPC sits idle for 3 consecutive 64-frame ticks without

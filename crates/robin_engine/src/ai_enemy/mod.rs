@@ -7463,6 +7463,38 @@ mod tests {
     }
 
     #[test]
+    fn periodic_post_refresh_queued_goto_suppresses_stuck_counter() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToPhalanx;
+        ai.base.stuck_counter = 2;
+
+        // RefreshArrowProtection has already launched a direct GoTo. At this
+        // exact Original statement boundary the movement element is on the
+        // manager's to-go list, so SequenceElementIsAboutToBeLaunched(owner,
+        // RHCOMMAND_NULL) is true and the watchdog resets rather than
+        // counting the actor's still-selected Wait command.
+        ai.the_16th_frame_after_refresh(0, &AiContext::default(), true, true);
+
+        assert_eq!(ai.base.stuck_counter, 0);
+    }
+
+    #[test]
+    fn periodic_post_refresh_without_queued_element_keeps_idle_increment() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToPhalanx;
+        ai.base.stuck_counter = 2;
+
+        // An already-on-point GoTo returns before LaunchSequence, while a
+        // denied route deletes its candidate sequence. Neither case leaves a
+        // manager element to suppress the live Wait/smalltalk arm.
+        ai.the_16th_frame_after_refresh(0, &AiContext::default(), true, false);
+
+        assert_eq!(ai.base.stuck_counter, 3);
+    }
+
+    #[test]
     fn periodic_phalanx_goto_does_not_hide_same_call_idle_actor() {
         // schema14 seed1000000, linux2/P002/Savegame_032/replay-008,
         // frame 17254. RefreshArrowProtection changes the soldier from
