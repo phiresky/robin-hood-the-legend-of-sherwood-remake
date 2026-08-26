@@ -2104,6 +2104,7 @@ impl EngineInner {
                 assets,
                 pc,
                 vec![entry.step.clone()],
+                QuickActionRecordingStore::Automatic,
             );
         if !launched {
             // Automatic queues cannot wait for a user to click a failed QA
@@ -2286,7 +2287,15 @@ impl EngineInner {
             .unwrap_or_default();
 
         if !self.check_quick_action_steps_validity(pc, &steps)
-            || !self.replay_quick_action_steps(sim, display, input, assets, pc, steps)
+            || !self.replay_quick_action_steps(
+                sim,
+                display,
+                input,
+                assets,
+                pc,
+                steps,
+                QuickActionRecordingStore::Manual,
+            )
         {
             return;
         }
@@ -2310,6 +2319,7 @@ impl EngineInner {
         assets: &LevelAssets,
         pc: EntityId,
         steps: Vec<crate::macro_store::QuickActionStep>,
+        replay_store: QuickActionRecordingStore,
     ) -> bool {
         let step_count = steps.len();
         let mut posture_recovery_embedded = false;
@@ -2597,7 +2607,14 @@ impl EngineInner {
                 );
                 posture_recovery_embedded = true;
             } else {
-                self.apply_command(sim, display, input, assets, &cmd);
+                self.apply_replayed_quick_action_command(
+                    sim,
+                    display,
+                    input,
+                    assets,
+                    &cmd,
+                    replay_store,
+                );
             }
         }
 
@@ -2633,6 +2650,34 @@ impl EngineInner {
         // so replay does not need an extra per-PC handoff here.
 
         true
+    }
+
+    /// Dispatch one replayed QA command through its normal live command path.
+    /// Automatic queue execution temporarily hides the independently armed
+    /// manual recorder: otherwise the nested command would be captured as a
+    /// new manual step (and specialized recording arms would stop recording)
+    /// before the automatic entry is retired.
+    fn apply_replayed_quick_action_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        command: &PlayerCommand,
+        replay_store: QuickActionRecordingStore,
+    ) {
+        if replay_store == QuickActionRecordingStore::Manual {
+            self.apply_command(sim, display, input, assets, command);
+            return;
+        }
+
+        let armed_manual_recorders = std::mem::take(&mut self.players.qa_recording_for);
+        self.apply_command(sim, display, input, assets, command);
+        assert!(
+            self.players.qa_recording_for.is_empty(),
+            "automatic quick-action replay unexpectedly changed manual recording targets"
+        );
+        self.players.qa_recording_for = armed_manual_recorders;
     }
 
     /// Replay the three non-sequence quick-action variants serialized by
@@ -6065,15 +6110,14 @@ mod tests {
             },
         );
 
-        let slot = engine
+        let entry = engine
             .players
-            .macro_store
+            .auto_queues
             .get(pc_id)
-            .and_then(|state| state.slot(0))
-            .expect("queued sword-strike slot");
-        assert_eq!(slot.steps.len(), 1);
+            .and_then(|queue| queue.first())
+            .expect("queued sword-strike entry");
         assert!(matches!(
-            slot.steps[0].replay,
+            entry.step.replay,
             QaReplayCommand::SwordStrike {
                 target: recorded_target,
                 command: Command::SwordstrikeThrustA,
@@ -6081,15 +6125,207 @@ mod tests {
                 seek_distance: Some(0.0),
             } if recorded_target == target
         ));
-        assert!(engine.has_quick_action(pc_id, 0));
+        assert!(entry.titbit.is_some());
+        assert!(engine.players.macro_store.get(pc_id).is_none());
+    }
+
+    #[test]
+    fn auto_launch_preserves_empty_manual_recording() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Whistle, 1)]);
+        engine.players.seats[0].selection.push(pc_id);
+        let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        busy.priority = crate::sequence::SequencePriority::Normal;
+        let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(busy_sequence, 0);
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::QueueQuickAction {
+                action: Action::Whistle,
+                command: Box::new(PlayerCommand::LaunchSelfAbility {
+                    actor: pc_id,
+                    command: Command::WhistleCmd,
+                }),
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 1,
+            },
+        );
+        let armed_state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("empty armed manual slot")
+            .clone();
+
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(busy_sequence, 0);
+        engine.advance_auto_quick_action_queues(&sim, &mut display, &assets);
+
+        assert_eq!(
+            engine.players.macro_store.get(pc_id),
+            Some(&armed_state),
+            "automatic execution must not capture into an empty armed manual slot"
+        );
+        assert!(engine.is_qa_recording_for(pc_id));
+        assert!(engine.players.auto_queues.is_empty(pc_id));
         assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc_id, |command| {
+                    command == Command::WhistleCmd
+                }),
+            "the automatic command must still launch"
+        );
+    }
+
+    #[test]
+    fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Whistle, 1)]);
+        engine.players.seats[0].selection.push(pc_id);
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchSelfAbility {
+                actor: pc_id,
+                command: Command::EnterListen,
+            },
+        );
+        let manual_titbit = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| state.get_slot_titbit(0))
+            .expect("occupied manual slot titbit");
+        let manual_icon = engine
+            .get_entity(pc_id)
+            .and_then(Entity::pc_data)
+            .expect("test PC")
+            .portrait
+            .quick_icons[0];
+
+        let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        busy.priority = crate::sequence::SequencePriority::Normal;
+        let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(busy_sequence, 0);
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::QueueQuickAction {
+                action: Action::Whistle,
+                command: Box::new(PlayerCommand::LaunchSelfAbility {
+                    actor: pc_id,
+                    command: Command::WhistleCmd,
+                }),
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        let armed_state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("occupied armed manual slot")
+            .clone();
+
+        let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
+            .expect("save engine with automatic and manual QA state");
+        let (mut engine, consumed): (EngineInner, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .expect("restore engine with automatic and manual QA state");
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(engine.players.macro_store.get(pc_id), Some(&armed_state));
+
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(busy_sequence, 0);
+        let mut restored_display = HostDisplayState::default();
+        engine.advance_auto_quick_action_queues(&sim, &mut restored_display, &assets);
+
+        assert_eq!(engine.players.macro_store.get(pc_id), Some(&armed_state));
+        assert!(engine.is_qa_recording_for(pc_id));
+        assert_eq!(
             engine
                 .players
                 .macro_store
                 .get(pc_id)
-                .expect("queued sword-strike state")
-                .get_slot_titbit(0)
-                .is_some()
+                .and_then(|state| state.get_slot_titbit(0)),
+            Some(manual_titbit)
+        );
+        assert!(
+            engine
+                .feedback
+                .titbit_manager
+                .titbits()
+                .iter()
+                .any(|titbit| titbit.id == manual_titbit.get())
+        );
+        let restored_icon = engine
+            .get_entity(pc_id)
+            .and_then(Entity::pc_data)
+            .expect("restored test PC")
+            .portrait
+            .quick_icons[0];
+        assert_eq!(restored_icon.titbit_id, manual_icon.titbit_id);
+        assert_eq!(restored_icon.running, manual_icon.running);
+        assert!(engine.players.auto_queues.is_empty(pc_id));
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc_id, |command| {
+                    command == Command::WhistleCmd
+                }),
+            "the restored automatic command must still launch"
         );
     }
 
@@ -6285,7 +6521,8 @@ mod tests {
                 }),
             },
         );
-        assert!(engine.has_quick_action(pc_id, 0));
+        assert_eq!(engine.players.auto_queues.len(pc_id), 1);
+        assert!(!engine.has_quick_action(pc_id, 0));
 
         engine
             .orders
@@ -6293,6 +6530,7 @@ mod tests {
             .element_terminated(busy_sequence, 0);
         engine.advance_auto_quick_action_queues(&sim, &mut display, &assets);
 
+        assert!(engine.players.auto_queues.is_empty(pc_id));
         assert!(!engine.has_quick_action(pc_id, 0));
         assert!(
             engine
