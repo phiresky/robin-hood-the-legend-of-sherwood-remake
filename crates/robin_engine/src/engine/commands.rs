@@ -2248,17 +2248,17 @@ impl EngineInner {
         else {
             return;
         };
-        let launched = self
-            .check_quick_action_steps_validity(pc, std::slice::from_ref(&entry.step))
-            && self.replay_quick_action_steps(
-                sim,
-                display,
-                input,
-                assets,
-                pc,
-                vec![entry.step.clone()],
-                QuickActionRecordingStore::Automatic,
-            );
+        let launched =
+            self.check_quick_action_steps_validity(assets, pc, std::slice::from_ref(&entry.step))
+                && self.replay_quick_action_steps(
+                    sim,
+                    display,
+                    input,
+                    assets,
+                    pc,
+                    vec![entry.step.clone()],
+                    QuickActionRecordingStore::Automatic,
+                );
         if !launched {
             // Automatic queues cannot wait for a user to click a failed QA
             // item. Fizzle once, discard the invalid front item, and leave
@@ -2509,7 +2509,7 @@ impl EngineInner {
             })
             .unwrap_or_default();
 
-        if !self.check_quick_action_steps_validity(pc, &steps)
+        if !self.check_quick_action_steps_validity(assets, pc, &steps)
             || !self.replay_quick_action_steps(
                 sim,
                 display,
@@ -2591,7 +2591,7 @@ impl EngineInner {
                     double_click,
                 } => {
                     // Runtime second-line-of-defence for the per-step
-                    // validity gate.  `check_quick_action_validity`
+                    // validity gate.  `check_quick_action_steps_validity`
                     // already pre-flighted missing-target steps, but a
                     // step earlier in the replay can have removed the
                     // target since.  Whole-sequence abort: bail out
@@ -3128,8 +3128,9 @@ impl EngineInner {
     /// Pre-flight validity gate for QA replay:
     ///
     ///   * empty slot → fail;
-    ///   * any step references a target entity that no longer exists →
-    ///     fail;
+    ///   * any step references a target entity that no longer exists, or an
+    ///     interaction target/owner no longer satisfies Original's
+    ///     per-command validity gate → fail;
     ///   * any non-MOVE/SEEK/POSTURE step while the PC is currently
     ///     swordfighting → fail.  `Move` (which expands to MOVE/SEEK
     ///     on dispatch) and `PostureToggle` survive the gate (the
@@ -3140,10 +3141,14 @@ impl EngineInner {
     /// Returns `true` to allow replay, `false` to fizzle.
     fn check_quick_action_steps_validity(
         &self,
+        assets: &LevelAssets,
         pc: EntityId,
         steps: &[crate::macro_store::QuickActionStep],
     ) -> bool {
         use crate::macro_store::QaReplayCommand;
+        if !self.get_entity(pc).is_some_and(Entity::is_pc) {
+            return false;
+        }
         if steps.is_empty() {
             return false;
         }
@@ -3170,6 +3175,35 @@ impl EngineInner {
             {
                 return false;
             }
+            // Semantic QA steps stand in for the cloned Original sequence
+            // element. Interactions may be materialised beneath a Seek at
+            // dispatch time, but StartQuickAction validates those nested
+            // post-seek elements before cloning, with position checks off.
+            // Reconstruct just that interaction element so changed-state
+            // target and owner rules (Hit/Strangle, Bow, Take, Search) run
+            // before any step can mutate the world.
+            if let QaReplayCommand::Interaction {
+                target, command, ..
+            }
+            | QaReplayCommand::TargetInteraction {
+                target, command, ..
+            } = &step.replay
+                && matches!(
+                    command,
+                    Command::HitCmd
+                        | Command::StrangleCmd
+                        | Command::ShootBow
+                        | Command::ShootBowOnce
+                        | Command::Take
+                        | Command::SearchCmd
+                )
+            {
+                let element =
+                    SequenceElement::new_interaction(1, *command, Some(pc), Some(*target));
+                if !self.check_sequence_element_validity(assets, pc, &element, false) {
+                    return false;
+                }
+            }
             // Per-element swordfight gate: while the PC is mid-fight,
             // only MOVE, SEEK, or PostureToggle may run.  `Move`
             // covers MOVE+SEEK on dispatch; `PostureToggle` enters
@@ -3177,7 +3211,7 @@ impl EngineInner {
             // gate, so it must also pass.
             if is_swordfighting
                 && !matches!(
-                    step.replay,
+                    &step.replay,
                     QaReplayCommand::Move { .. } | QaReplayCommand::PostureToggle { .. }
                 )
             {
@@ -6780,8 +6814,9 @@ mod tests {
 
     #[test]
     fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
-        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
+        let (mut engine, mut assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
         let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        configure_valid_bow_quick_action(&mut engine, &mut assets, pc_id, target);
         let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
         let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
         engine
@@ -11051,5 +11086,278 @@ mod tests {
         let active: Vec<u8> = engine.active_seats().map(|(p, _)| p.0).collect();
         // host (always) + connected peer 2; disconnected peer 1 is skipped.
         assert_eq!(active, vec![0, 2]);
+    }
+
+    fn record_interaction_quick_action(
+        engine: &mut EngineInner,
+        _assets: &LevelAssets,
+        pc: EntityId,
+        target: EntityId,
+        command: Command,
+    ) -> crate::titbit::TitbitId {
+        let target_entity = engine.get_entity(target).expect("QA target exists");
+        let target_position = target_entity.element_data().position_map();
+        let target_layer = target_entity.element_data().layer();
+        let state = engine.players.macro_store.get_or_insert(pc);
+        state.begin_recording(0);
+        state.append_if_recording(QuickActionStep {
+            action: Action::NoAction,
+            position: target_position,
+            replay: QaReplayCommand::Interaction {
+                target,
+                command,
+                double_click: false,
+            },
+        });
+        state.stop_recording();
+        let raw = engine.feedback.titbit_manager.add_titbit(
+            WorldPoint3D::new(target_position.x, target_position.y, 0.0),
+            target_layer,
+            TitbitKind::QuickAction,
+            ElementHandle(target.index()),
+            QuickAction::Default as u16,
+            ElementHandle(pc.index()),
+            false,
+            INVALID_ID,
+            true,
+            None,
+            Some(target_layer),
+        );
+        let titbit = crate::titbit::TitbitId::new(raw).expect("QA titbit allocation succeeds");
+        engine
+            .players
+            .macro_store
+            .get_mut(pc)
+            .expect("QA owner retains macro state")
+            .set_slot_titbit(0, titbit);
+        titbit
+    }
+
+    fn assert_invalid_quick_action_fizzles_without_consuming(
+        engine: &mut EngineInner,
+        assets: &LevelAssets,
+        pc: EntityId,
+        titbit: crate::titbit::TitbitId,
+    ) {
+        let slot_before = engine
+            .players
+            .macro_store
+            .get(pc)
+            .and_then(|state| state.slot(0))
+            .expect("recorded QA slot exists")
+            .clone();
+        let titbit_phase = engine.feedback.titbit_manager.get_phase(titbit);
+
+        start_macro(engine, assets, pc);
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        let state = engine
+            .players
+            .macro_store
+            .get(pc)
+            .expect("fizzled QA owner retains macro state");
+        assert_eq!(state.slot(0), Some(&slot_before));
+        assert_eq!(state.get_slot_titbit(0), Some(titbit));
+        assert_eq!(
+            engine.feedback.titbit_manager.get_phase(titbit),
+            titbit_phase
+        );
+        assert!(matches!(
+            engine.feedback.pending_side_effects.sounds.last(),
+            Some(crate::engine::SoundCommand::Jingle(
+                crate::sound::Jingle::QuickActionFailed
+            ))
+        ));
+    }
+
+    fn quick_action_slot_is_valid(
+        engine: &EngineInner,
+        assets: &LevelAssets,
+        pc: EntityId,
+    ) -> bool {
+        let Some(steps) = engine
+            .players
+            .macro_store
+            .get(pc)
+            .and_then(|state| state.slot(0))
+            .map(|slot| slot.steps.as_slice())
+        else {
+            return false;
+        };
+        engine.check_quick_action_steps_validity(assets, pc, steps)
+    }
+
+    fn configure_valid_bow_quick_action(
+        engine: &mut EngineInner,
+        assets: &mut LevelAssets,
+        pc: EntityId,
+        target: EntityId,
+    ) {
+        use crate::coordinates::{SpriteFrameOffset, SpriteLocalPoint};
+        use crate::profiles::{BowProfile, BowShootMode};
+        use crate::sprite_script::NONANIMATION_END;
+
+        engine.mission_domain.campaign.characters[0]
+            .status
+            .num_arrows = 10;
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.characters[0].shooting_weapon_id = 1;
+        profiles.characters[0].shooting = 100;
+        profiles.bows.push(BowProfile {
+            normal_shoot: BowShootMode {
+                range: 2000,
+                ..BowShootMode::default()
+            },
+            ..BowProfile::default()
+        });
+
+        let action = crate::order::OrderType::ShootingWithBow;
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        engine.get_entity_mut(pc).unwrap().element_data_mut().sprite = Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+
+        let target_position = engine
+            .get_entity(target)
+            .expect("bow target exists")
+            .element_data()
+            .position_map();
+        let target = engine.get_entity_mut(target).expect("bow target exists");
+        target
+            .pc_data_mut()
+            .expect("bow validity fixture target is a PC")
+            .life_points = 100;
+        target.element_data_mut().set_position(WorldPoint3D::new(
+            target_position.x,
+            target_position.y,
+            0.0,
+        ));
+    }
+
+    #[test]
+    fn quick_action_hit_and_strangle_recheck_allocated_target_state() {
+        for command in [Command::HitCmd, Command::StrangleCmd] {
+            let (mut engine, assets, pc, target) = setup_strangle_command_scene();
+            let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+                unreachable!("fixture target changed kind")
+            };
+            soldier.npc.life_points = 100;
+
+            let titbit = record_interaction_quick_action(&mut engine, &assets, pc, target, command);
+            assert!(quick_action_slot_is_valid(&engine, &assets, pc));
+
+            engine
+                .get_entity_mut(target)
+                .unwrap()
+                .human_data_mut()
+                .unwrap()
+                .unconscious = true;
+            assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
+            assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
+        }
+    }
+
+    #[test]
+    fn quick_action_take_rechecks_allocated_object_state() {
+        let (mut engine, assets, pc) = setup_pc_engine(&[(Action::Bow, 4)]);
+        let target = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
+        let titbit =
+            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::Take);
+        assert!(quick_action_slot_is_valid(&engine, &assets, pc));
+
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+        assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
+        assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
+    }
+
+    #[test]
+    fn quick_action_search_rechecks_nested_post_seek_target_state() {
+        let (mut engine, assets, pc) = setup_pc_engine(&[(Action::Search, 0)]);
+        let mut target = ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData {
+                unconscious: true,
+                ..HumanData::default()
+            },
+            npc: NpcData::default(),
+            soldier: SoldierData {
+                cached_camp: Camp::Lacklandists,
+                ..SoldierData::default()
+            },
+        };
+        target
+            .element
+            .set_position_map(crate::coordinates::MapPoint::new(500.0, 0.0));
+        let target = engine.add_entity(Entity::Soldier(target));
+        let titbit =
+            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::SearchCmd);
+        assert!(quick_action_slot_is_valid(&engine, &assets, pc));
+
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .active = false;
+        assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
+        assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
+    }
+
+    #[test]
+    fn quick_action_bow_rechecks_allocated_target_and_owner_state() {
+        let (mut engine, mut assets, pc) = setup_pc_engine(&[(Action::Bow, 10)]);
+        let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
+        configure_valid_bow_quick_action(&mut engine, &mut assets, pc, target);
+
+        let titbit =
+            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::ShootBow);
+        assert!(quick_action_slot_is_valid(&engine, &assets, pc));
+
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .blipped = true;
+        assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
+        assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
+
+        // The same Original arm also rechecks the recorded owner. Keep an
+        // independently recorded valid control, then invalidate only the PC.
+        let (mut engine, mut assets, pc) = setup_pc_engine(&[(Action::Bow, 10)]);
+        let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
+        configure_valid_bow_quick_action(&mut engine, &mut assets, pc, target);
+        let titbit =
+            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::ShootBow);
+        assert!(quick_action_slot_is_valid(&engine, &assets, pc));
+        engine
+            .get_entity_mut(pc)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .unconscious = true;
+        assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
+        assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
     }
 }
