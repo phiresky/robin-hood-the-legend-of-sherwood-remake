@@ -321,7 +321,7 @@ impl EngineInner {
     }
 
     /// Apply one admitted `DIES IRAE` action.
-    pub fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
+    pub(crate) fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
         if !self.can_ezekiel_instakill(id) {
             return false;
         }

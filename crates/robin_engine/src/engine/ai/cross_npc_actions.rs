@@ -313,7 +313,7 @@ impl EngineInner {
     /// noise stimuli.  Per-NPC subjective volume follows the
     /// `get_hear_volume` formula (volume×hearing_factor − iso-stretched
     /// distance − deafness).
-    pub fn broadcast_noise(
+    pub(crate) fn broadcast_noise(
         &mut self,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,

@@ -178,8 +178,18 @@ fn simulation_gates_survive_rollback_restore_and_replay() {
     let mut original_dev = DevState::default();
     let mut replay_dev = DevState::default();
     for _ in 0..4 {
-        original.perform_hourglass(&mut original_display, &assets, &mut original_dev);
-        replay.perform_hourglass(&mut replay_display, &assets, &mut replay_dev);
+        original.perform_hourglass(
+            &mut original_display,
+            &mut InputState::default(),
+            &assets,
+            &mut original_dev,
+        );
+        replay.perform_hourglass(
+            &mut replay_display,
+            &mut InputState::default(),
+            &assets,
+            &mut replay_dev,
+        );
         assert_eq!(
             crate::replay::state_hash(&original),
             crate::replay::state_hash(&replay)
@@ -215,8 +225,18 @@ fn engine_camera_zoom_gate_ignores_host_display_during_rollback_tick() {
     let mut live_dev = DevState::default();
     let mut replay_dev = DevState::default();
 
-    live.perform_hourglass(&mut live_display, &assets, &mut live_dev);
-    replay.perform_hourglass(&mut replay_display, &assets, &mut replay_dev);
+    live.perform_hourglass(
+        &mut live_display,
+        &mut InputState::default(),
+        &assets,
+        &mut live_dev,
+    );
+    replay.perform_hourglass(
+        &mut replay_display,
+        &mut InputState::default(),
+        &assets,
+        &mut replay_dev,
+    );
 
     assert!(
         !live.is_lock_alt(),

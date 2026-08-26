@@ -2263,7 +2263,7 @@ impl EngineInner {
     /// `Action::TakeScroll` dispatch) is not yet ported; this helper
     /// exists so whatever wires that up next can fire the
     /// script-bracketed `IsTaken` dispatch with a single call.
-    pub fn scroll_is_taken(
+    pub(crate) fn scroll_is_taken(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -2892,7 +2892,7 @@ impl EngineInner {
     ///
     /// Source actor is extracted from `stimulus.info`: `Human(h)` becomes
     /// a script actor handle; other info variants become 0 (originally NULL).
-    pub fn filter_stimulus(
+    pub(crate) fn filter_stimulus(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -7186,7 +7186,7 @@ impl EngineInner {
     ///
     /// When `this_actor` is `Some`, the standalone frame binds `ThisActor`
     /// for the duration of the call. Pass `None` for a receiver-free frame.
-    pub fn call_external_native(
+    pub(crate) fn call_external_native(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -7198,7 +7198,7 @@ impl EngineInner {
 
     /// Like [`Self::call_external_native`], but with an explicit
     /// `ThisActor` receiver installed in the transient call frame.
-    pub fn call_external_native_with_this(
+    pub(crate) fn call_external_native_with_this(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

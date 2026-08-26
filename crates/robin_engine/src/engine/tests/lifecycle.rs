@@ -257,7 +257,7 @@ fn hourglass_returns_in_progress() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelInProgress);
     assert_eq!(engine.control.frame_counter, 1);
@@ -272,7 +272,7 @@ fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
 
     begin_hourglass_phase_capture();
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     let phases = end_hourglass_phase_capture();
 
@@ -304,7 +304,7 @@ fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
 
     begin_hourglass_phase_capture();
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     let phases = end_hourglass_phase_capture();
 
@@ -341,7 +341,7 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
 
     begin_hourglass_phase_capture();
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     let phases = end_hourglass_phase_capture();
 
@@ -384,7 +384,7 @@ fn blocking_fade_frame_runs_before_rng_clock_and_phase_dispatch() {
 
     begin_hourglass_phase_capture();
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     let phases = end_hourglass_phase_capture();
 
@@ -420,7 +420,7 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
     let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let element = engine
         .orders
@@ -444,7 +444,7 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
         "an order dispatched by RHSequenceManager after the entity loop must not animate in that same frame"
     );
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(
         engine
             .get_entity(soldier_id)
@@ -528,7 +528,7 @@ fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
     let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let Some(Entity::Pc(victim)) = engine.get_entity(victim_id) else {
         panic!("victim PC missing after projectile frame");
@@ -835,6 +835,7 @@ fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_retention() 
     }));
     engine.perform_hourglass(
         &mut HostDisplayState::default(),
+        &mut InputState::default(),
         &LevelAssets::new(),
         &mut DevState::default(),
     );
@@ -859,6 +860,7 @@ fn inactive_unsupported_net_mapping_panics_before_owner_slot_retention() {
     }));
     engine.perform_hourglass(
         &mut HostDisplayState::default(),
+        &mut InputState::default(),
         &LevelAssets::new(),
         &mut DevState::default(),
     );
@@ -6650,7 +6652,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     let mut dev = DevState::default();
 
     for _ in 0..20 {
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         if engine
             .get_entity(owner)
             .unwrap()
@@ -6696,7 +6698,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     // LaunchSequenceElement only registers the element on the manager's
     // to-go queue; the owner Instruct boundary that arbitrates it against
     // the non-interruptable EnterListen runs at the next manager hourglass.
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     let leave = engine
         .orders
         .sequence_manager
@@ -6721,7 +6723,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
 
     let mut saw_enter_exit = false;
     for _ in 0..80 {
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         saw_enter_exit |= engine
             .orders
             .sequence_manager
@@ -6866,7 +6868,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
          (state: {leave_state:?})"
     );
     for _ in 0..20 {
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         if engine
             .orders
             .sequence_manager
@@ -7526,7 +7528,7 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
 
     for _ in 0..25 {
         let result = engine
-            .perform_hourglass(&mut display, &assets, &mut dev)
+            .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
             .code;
         assert_eq!(result, GameCode::LevelInProgress);
     }
@@ -7586,7 +7588,8 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
     // subsequent hourglass calls represents one more presentation, but is
     // not a simulation tick in the original game.
     for expected_remaining in (0..5).rev() {
-        let side_effects = engine.perform_hourglass(&mut display, &assets, &mut dev);
+        let side_effects =
+            engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         assert_eq!(side_effects.code, GameCode::LevelInProgress);
         assert!(!side_effects.skip_render);
         assert_eq!(engine.fade_freeze_frames_remaining(), expected_remaining);
@@ -7603,7 +7606,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
 
     // The next call is the first real simulation tick after the blocking
     // fade and resumes every clock from exactly its pre-fade value.
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(engine.control.frame_counter, 26);
     assert_eq!(engine.feedback.sound_sim.sources.get(0).unwrap().timer, 8);
 }
@@ -7667,7 +7670,7 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
 
     assert_eq!(result, GameCode::LevelInProgress);
@@ -7755,7 +7758,7 @@ fn enter_helping_climb_on_inactive_pc_terminates_at_init_validity() {
     // than the next hourglass.
     for _ in 0..2 {
         let result = engine
-            .perform_hourglass(&mut display, &assets, &mut dev)
+            .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
             .code;
         assert_eq!(result, GameCode::LevelInProgress);
     }
@@ -7784,7 +7787,7 @@ fn hourglass_quit_won() {
     let mut engine = EngineInner::new();
     engine.mission_domain.state.quit_won = true;
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelSucceeded);
 }
@@ -7797,7 +7800,7 @@ fn hourglass_quit_lost() {
     let mut engine = EngineInner::new();
     engine.mission_domain.state.quit_lost = true;
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelFailed);
 }
@@ -7810,7 +7813,7 @@ fn hourglass_quit_interrupted() {
     let mut engine = EngineInner::new();
     engine.mission_domain.state.quit_interrupted = true;
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelInterrupted);
 }
@@ -7826,7 +7829,7 @@ fn hourglass_locked_skips_logic() {
     // (actually, chorus timer IS decremented before the lock check)
     engine.control.chorus_timer = 5;
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelInProgress);
     // Chorus timer still decremented (it's before the lock check)
@@ -7874,7 +7877,7 @@ fn rollback_clone_stays_in_sync() {
 
     // Warm up a few ticks so the clone is taken from a non-initial state.
     for _ in 0..30 {
-        original.perform_hourglass(&mut display, &assets, &mut dev);
+        original.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
 
     // Snapshot now. This is the rollback-from point.
@@ -7883,8 +7886,8 @@ fn rollback_clone_stays_in_sync() {
     // Advance both copies by the same number of ticks.
     let mut replay = snapshot.clone();
     for _ in 0..50 {
-        original.perform_hourglass(&mut display, &assets, &mut dev);
-        replay.perform_hourglass(&mut display, &assets, &mut dev);
+        original.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        replay.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
 
     assert_eq!(original.control.frame_counter, replay.control.frame_counter);
@@ -7902,7 +7905,12 @@ fn rollback_clone_stays_in_sync() {
     // accidentally shared between the snapshot and the live engine).
     let mut second_replay = snapshot;
     for _ in 0..50 {
-        second_replay.perform_hourglass(&mut display, &assets, &mut dev);
+        second_replay.perform_hourglass(
+            &mut display,
+            &mut InputState::default(),
+            &assets,
+            &mut dev,
+        );
     }
     assert_eq!(
         second_replay.control.frame_counter,
@@ -7960,7 +7968,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(
         engine.control.frame_counter, 1,
         "the first simulation frame ran"

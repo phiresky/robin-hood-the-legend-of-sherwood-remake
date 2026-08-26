@@ -431,7 +431,7 @@ fn prepare_dynamic_candidate(
     assets: &LevelAssets,
     body: &LegacySaveBody,
 ) -> Result<(EngineInner, LegacyEntityFixups, u32), LegacyKnownAdoptionError> {
-    let mut candidate = engine.legacy_adoption_inner().clone();
+    let mut candidate = engine.legacy_adoption_inner().clone_authoritative_state();
     let static_topology = stage(
         "static element topology",
         derive_static_element_topology(&candidate, assets),

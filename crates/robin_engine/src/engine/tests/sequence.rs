@@ -3271,7 +3271,7 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let active = engine
         .orders
@@ -3314,7 +3314,7 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let active = engine
         .orders
@@ -3463,7 +3463,7 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let movement = engine
         .orders
@@ -4412,7 +4412,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     // `MakePostureTransition` translates the CROUCH_UP then the element's
     // `posture_after_transition` is Upright; the ENTER_ATTENTIVE_MODE
@@ -4924,7 +4924,7 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let elem_state = engine
         .orders
@@ -4956,7 +4956,7 @@ fn equip_bow_translate_plays_transition_orders() {
     let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let elem = engine
         .orders
@@ -5023,7 +5023,7 @@ fn assert_npc_translate_books(
     engine.ensure_wait_element(actor);
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
+    let _ = engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let (order_seq, _, order_type) = engine
         .orders
@@ -5078,7 +5078,7 @@ fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
     engine.ensure_wait_element(rescuer);
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
+    let _ = engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let (order_seq, order_elem, order) = engine
         .orders
@@ -5336,7 +5336,7 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let entity = engine.get_entity(victim).expect("victim still present");
     assert!(entity.is_dead());
@@ -5392,7 +5392,7 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     assets.profile_manager = std::sync::Arc::new(profiles);
     engine.mission_domain.campaign.values[CampaignValue::Amulets] = 1;
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let entity = engine.get_entity(victim).expect("victim still present");
     assert!(!entity.is_dead());
@@ -5415,7 +5415,7 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
         SequenceElement::new_interaction(1, Command::GetKilledAtBottom, Some(victim), Some(killer));
     engine.launch_element(elem);
     engine.ensure_wait_element(victim);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let entity = engine.get_entity(victim).expect("victim still present");
     assert!(!entity.is_dead());

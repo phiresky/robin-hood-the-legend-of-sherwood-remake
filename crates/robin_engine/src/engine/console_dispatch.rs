@@ -100,7 +100,7 @@ impl EngineInner {
     /// currently looking at" and some also clear the selection on
     /// success; the caller hands in a mutable reference so those cheats
     /// can write back.
-    pub fn dispatch_console_command(
+    pub(crate) fn dispatch_console_command(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

@@ -2322,11 +2322,16 @@ impl EngineInner {
     }
     // ─── Main update tick ────────────────────────────────────────
 
-    /// The main per-frame logic update.
+    /// Test-only adapter for the main per-frame logic update.
     ///
     /// Returns the game state code — normally `LevelInProgress`, but can
     /// return `LevelSucceeded`, `LevelFailed`, or `LevelInterrupted` to
     /// signal that the mission is over.
+    ///
+    /// Production callers must use [`super::rollback_safe::Engine::advance_frame`].
+    /// Low-level engine tests use this adapter to preserve the legacy
+    /// command/hourglass boundary while applying emitted host events to an
+    /// explicit caller-owned input state.
     ///
     /// Called once per frame from the game loop, gated by:
     /// - console not displayed
@@ -2340,9 +2345,11 @@ impl EngineInner {
     /// (deterministic across clients) and all audio is
     /// flushed *after* the sim is done (letting rollback replay the tick
     /// without duplicating playback).
-    pub fn perform_hourglass(
+    #[cfg(test)]
+    pub(crate) fn perform_hourglass(
         &mut self,
         display: &mut HostDisplayState,
+        input: &mut InputState,
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> super::SideEffects {
@@ -2350,7 +2357,7 @@ impl EngineInner {
         let effects = self.perform_hourglass_authoritative(&mut camera, assets, true);
         self.feedback.cutscene_camera.display = camera;
         for event in effects.host_events.iter().cloned() {
-            display.apply_host_event(&mut InputState::default(), event);
+            display.apply_host_event(input, event);
         }
         if dev.projectile_cheat_rain >= 0 {
             dev.projectile_cheat_rain = -1;
@@ -7575,7 +7582,7 @@ mod bow_command_body_parity_tests {
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         engine
     }
 
@@ -7660,7 +7667,7 @@ mod bow_command_body_parity_tests {
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
         let elem = engine
             .orders
@@ -7711,7 +7718,7 @@ mod bow_command_body_parity_tests {
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
         assert_eq!(engine.orders.timer_elements.len(), 1);
         assert_eq!(
@@ -7739,7 +7746,7 @@ mod bow_command_body_parity_tests {
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
         assert_eq!(engine.orders.timer_elements.len(), 1);
         assert_eq!(
@@ -8564,7 +8571,7 @@ mod bow_command_body_parity_tests {
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
         assert_eq!(engine.orders.timer_elements.len(), 1);
         assert_eq!(
@@ -9260,7 +9267,7 @@ mod soldier_take_drink_parity_tests {
         let mut dev = DevState::default();
         let mut display = HostDisplayState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         assert_eq!(
             engine
                 .get_entity(actor_id)
@@ -9270,7 +9277,7 @@ mod soldier_take_drink_parity_tests {
             0,
             "the sequence-manager dispatch follows the entity loop, so its new order cannot turn the actor on the launch frame"
         );
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         (engine, actor_id)
     }
 
@@ -9335,7 +9342,7 @@ mod soldier_take_drink_parity_tests {
         let mut dev = DevState::default();
         let mut display = HostDisplayState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
         let bonus = engine.get_entity(bonus_id).unwrap();
         assert!(bonus.element_data().active);
@@ -9476,7 +9483,7 @@ mod drop_ammo_merge_tests {
 
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
-        engine.perform_hourglass(&mut display, assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), assets, &mut dev);
     }
 
     #[test]
@@ -9500,7 +9507,7 @@ mod drop_ammo_merge_tests {
         let mut dev = DevState::default();
         // Translation installs the authored drop order; the bottle itself is
         // created only when that animation reaches its DONE action point.
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         let (_, _, order) = engine
             .orders
             .sequence_manager
@@ -9520,7 +9527,7 @@ mod drop_ammo_merge_tests {
         // exercises; directly injecting ExecuteSideOutcomes would miss a
         // dropped callback between generic Execute and Actor::Hourglass.
         for _ in 0..4 {
-            engine.perform_hourglass(&mut display, &assets, &mut dev);
+            engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         }
         assert_eq!(
             engine.mission_domain.campaign.characters[0]
@@ -9567,7 +9574,7 @@ mod drop_ammo_merge_tests {
 
         // The next frame resolves the appended slot through the real live
         // owner coordinator. A stale ObjectBonus label would panic here.
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         assert!(engine.get_entity(ale_id).is_some_and(Entity::is_active));
     }
 

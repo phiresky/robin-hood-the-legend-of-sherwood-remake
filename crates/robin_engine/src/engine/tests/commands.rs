@@ -183,7 +183,8 @@ fn mission_won_first_time_raises_mission_state_notice() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.mission_domain.state.mission_won_first_time = true;
-    let side_effects = engine.perform_hourglass(&mut display, &assets, &mut dev);
+    let side_effects =
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert!(!engine.mission_domain.state.mission_won_first_time);
     assert!(
         side_effects.pending_mission_state_notice,
@@ -285,7 +286,7 @@ fn ground_mark_hourglass_advances_and_retires_on_screen_marks() {
     // Plenty of ticks to burn through all NUMBER_OF_GROUND_FRAMES advances
     // (half of them gated off by odd frame counters) and retire the mark.
     for _ in 0..(2 * crate::markers::NUMBER_OF_GROUND_FRAMES as usize + 4) {
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
     assert!(
         engine.feedback.ground_mark.is_empty(),
@@ -314,7 +315,7 @@ fn ground_mark_hourglass_retires_off_screen_marks() {
         .add_mark(100_000.0, 100_000.0, 0);
 
     for _ in 0..(2 * crate::markers::NUMBER_OF_GROUND_FRAMES as usize + 4) {
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
     assert!(engine.feedback.ground_mark.is_empty());
 }
@@ -592,16 +593,16 @@ fn timer_tick_decrements_and_removes() {
     engine.add_timer(1, ref_b);
     assert_eq!(engine.orders.timer_elements.len(), 2);
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     // Timer 200 (remaining=1) should be removed, timer 100 decremented to 2
     assert_eq!(engine.orders.timer_elements.len(), 1);
     assert_eq!(engine.orders.timer_elements[0].remaining, 2);
     assert_eq!(engine.orders.timer_elements[0].element_ref, ref_a);
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(engine.orders.timer_elements[0].remaining, 1);
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert!(engine.orders.timer_elements.is_empty());
 }
 
@@ -630,7 +631,7 @@ fn timer_started_by_sequence_dispatch_ticks_on_its_launch_frame() {
     sequence.append_element(timer);
     engine.orders.sequence_manager.launch_sequence(sequence);
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
     assert_eq!(engine.orders.timer_elements[0].remaining, 1);
@@ -1895,7 +1896,7 @@ fn dead_pc_triggers_failure() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelFailed);
 }
@@ -1926,7 +1927,7 @@ fn non_playable_pc_does_not_prevent_default_loss() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
-        .perform_hourglass(&mut display, &assets, &mut dev)
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
         .code;
 
     assert_eq!(result, GameCode::LevelFailed);

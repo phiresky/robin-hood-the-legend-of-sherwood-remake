@@ -8936,7 +8936,7 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(engine.players.seats[0].selection, vec![second]);
     assert_eq!(

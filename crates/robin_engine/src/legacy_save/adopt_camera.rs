@@ -174,7 +174,7 @@ fn normalize_camera(
     saved_slide: LegacyPoint2,
     saved_wanted: LegacyPoint2,
 ) -> (MapPoint, MapPoint, f32) {
-    let mut probe = engine.clone();
+    let mut probe = engine.clone_authoritative_state();
     probe.feedback.cutscene_camera.zoom_factor = saved_zoom;
     let center = MapPoint::new(
         saved_view.x + DIRECTOR_WIDTH * 0.5 / saved_zoom,

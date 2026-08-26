@@ -806,7 +806,7 @@ impl LegacyStaticElementAdoption {
     /// [`Self::preflight`].  Callers should clone the initialized engine,
     /// preflight all save sections against it, apply all plans, then swap the
     /// complete candidate into service.
-    pub fn apply(self, engine: &mut EngineInner) {
+    pub(crate) fn apply(self, engine: &mut EngineInner) {
         if self.clear_ambush_points {
             clear_ambush_points_on_enemy_load(&mut engine.ai.global);
         }

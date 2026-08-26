@@ -186,13 +186,18 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 ///
 /// Fields are grouped by subsystem and annotated with serialization status.
 ///
-/// `Clone` is derived so rollback snapshots and the determinism test can
-/// copy the whole world cheaply.
+/// This type is public only because [`Engine`](rollback_safe::Engine) exposes
+/// it as a borrowed, read-only `Deref` target. Its fields, constructors, and
+/// mutators are crate-private, and production builds deliberately do not
+/// implement `Clone` or `Deserialize` for it. Whole-state ownership belongs to
+/// the `Engine` facade.
 ///
-/// `Serialize`, `Deserialize`, and `StateHash` all follow the current nested
-/// ownership layout. Multiplayer peers, rollback, and current-format replays
-/// therefore observe the same deterministic state boundaries.
-#[derive(Clone, robin_state_hash_derive::StateHash)]
+/// `Serialize` and `StateHash` follow the current nested ownership layout.
+/// Multiplayer peers, rollback, and current-format replays therefore observe
+/// the same deterministic state boundaries. Unit tests retain a test-only
+/// `Clone` implementation for low-level engine fixtures.
+#[cfg_attr(test, derive(Clone))]
+#[derive(robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
     /// Deterministic mission outcome, campaign, objective, and stats state.
     pub(crate) mission_domain: MissionDomain,
@@ -368,10 +373,26 @@ mod actor_order_type_tests {
 }
 
 impl EngineInner {
+    /// Copy authoritative state inside the crate without exposing ownership of
+    /// the read-only downstream projection.
+    pub(crate) fn clone_authoritative_state(&self) -> Self {
+        Self {
+            mission_domain: self.mission_domain.clone(),
+            control: self.control.clone(),
+            ai: self.ai.clone(),
+            world: self.world.clone(),
+            script_domains: self.script_domains.clone(),
+            orders: self.orders.clone(),
+            scripts: self.scripts.clone(),
+            players: self.players.clone(),
+            feedback: self.feedback.clone(),
+        }
+    }
+
     /// Queue concrete speech sample resolutions produced by the logical sound
     /// manager after the preceding engine frame.
     #[doc(hidden)]
-    pub fn queue_resolved_exclamations(
+    pub(crate) fn queue_resolved_exclamations(
         &mut self,
         resolutions: Vec<crate::sound::ResolvedExclamation>,
     ) {
@@ -386,7 +407,7 @@ impl EngineInner {
     /// request. The tick boundary preserves their completion timing without
     /// synthesizing a Rust speech latch.
     #[doc(hidden)]
-    pub fn queue_replay_resolved_exclamations(
+    pub(crate) fn queue_replay_resolved_exclamations(
         &mut self,
         resolutions: Vec<crate::sound::ResolvedExclamation>,
     ) {
@@ -4018,7 +4039,7 @@ impl EngineInner {
     /// Restore an Original parity-session boundary field that the v48 RHSG
     /// serializer omits. This is intentionally a replay-only seam: normal
     /// simulation updates the value in `RefreshDetection`.
-    pub fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
+    pub(crate) fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
         let entity = self
             .world
             .entities
@@ -4037,7 +4058,7 @@ impl EngineInner {
     /// Restore a dormant Original waypoint-macro pointer which survived an
     /// in-process v48 load even though that save omitted it because
     /// `mbHasPatrolPath` was false.
-    pub fn restore_parity_npc_dormant_macro_cursor(
+    pub(crate) fn restore_parity_npc_dormant_macro_cursor(
         &mut self,
         id: EntityId,
         path_id: crate::ai::PathId,
@@ -4144,7 +4165,7 @@ impl EngineInner {
     /// fresh seat, and a peer that leaves keeps its slot (their
     /// last-issued selection survives so the PCs stay where they
     /// were left, on autopilot).
-    pub fn ensure_seat(&mut self, player_id: crate::player_command::PlayerId) -> usize {
+    pub(crate) fn ensure_seat(&mut self, player_id: crate::player_command::PlayerId) -> usize {
         let idx = player_id.0 as usize;
         if idx >= self.players.seats.len() {
             self.players.seats.resize_with(idx + 1, SeatState::default);
@@ -4392,7 +4413,7 @@ impl EngineInner {
     /// drops every titbit whose id matches.  Returns `true` iff at
     /// least one titbit was removed (also `false` when the slot is
     /// empty).
-    pub fn remove_quick_action_titbits_for(&mut self, pc: EntityId, slot: u8) -> bool {
+    pub(crate) fn remove_quick_action_titbits_for(&mut self, pc: EntityId, slot: u8) -> bool {
         let Some(state) = self.players.macro_store.get(pc) else {
             return false;
         };
@@ -4417,7 +4438,7 @@ impl EngineInner {
     /// the slot's recorded steps + stored titbit id.  Returns `true` iff
     /// the slot had a macro before the call.
     ///
-    pub fn abort_quick_action(&mut self, pc: EntityId, slot: u8) -> bool {
+    pub(crate) fn abort_quick_action(&mut self, pc: EntityId, slot: u8) -> bool {
         if !self.has_quick_action(pc, slot) {
             return false;
         }
@@ -4651,7 +4672,7 @@ impl EngineInner {
     /// touching `self.orders.messenger` directly — the field is `pub(crate)`
     /// to keep the drain loop authoritative over which variants are
     /// observed.
-    pub fn send_simple_message(&mut self, msg: crate::messenger::SimpleMessage) {
+    pub(crate) fn send_simple_message(&mut self, msg: crate::messenger::SimpleMessage) {
         self.orders.messenger.send(crate::messenger::Message::new(
             crate::messenger::MessageType::Simple(msg),
         ));
@@ -5331,7 +5352,9 @@ impl EngineInner {
     /// `RollbackSafeEngine` invariant still holds — Lua sessions are
     /// single-player only (see `docs/lua.md`) and never run during
     /// rollback resimulation.
-    pub fn mission_script_effects_mut(&mut self) -> Option<&mut crate::natives::ScriptEffects> {
+    pub(crate) fn mission_script_effects_mut(
+        &mut self,
+    ) -> Option<&mut crate::natives::ScriptEffects> {
         self.scripts
             .mission
             .as_mut()
@@ -5407,7 +5430,7 @@ impl EngineInner {
     /// after the first frame) emits the `CashWon` jingle; SCORE credits
     /// to the per-mission added-score counter.  Other campaign values
     /// have no extra side effects.
-    pub fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
+    pub(crate) fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
         self.mission_domain.campaign.values[name] += amount;
         Self::apply_value_add_side_effects(
             &mut self.mission_domain.mission_stat,
@@ -5422,7 +5445,7 @@ impl EngineInner {
     /// RANSOM emits the `CashWon` jingle when the new value is greater
     /// than the old one (and the universal frame counter has advanced
     /// past 0).
-    pub fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
+    pub(crate) fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
         let old = self.mission_domain.campaign.values[name];
         self.mission_domain.campaign.values[name] = value;
         Self::apply_value_set_side_effects(
@@ -5623,7 +5646,12 @@ impl EngineInner {
 
     /// Test helper: set `mission_won` / `quit_won` / `quit_lost` flags.
     #[doc(hidden)]
-    pub fn test_set_mission_flags(&mut self, quit_won: bool, quit_lost: bool, mission_won: bool) {
+    pub(crate) fn test_set_mission_flags(
+        &mut self,
+        quit_won: bool,
+        quit_lost: bool,
+        mission_won: bool,
+    ) {
         self.mission_domain.state.quit_won = quit_won;
         self.mission_domain.state.quit_lost = quit_lost;
         self.mission_domain.state.mission_won = mission_won;
@@ -5631,14 +5659,14 @@ impl EngineInner {
 
     /// Test helper: seed `frame_counter` (save-round-trip tests).
     #[doc(hidden)]
-    pub fn test_set_frame_counter(&mut self, frame: u32) {
+    pub(crate) fn test_set_frame_counter(&mut self, frame: u32) {
         self.control.frame_counter = frame;
     }
 
     /// Test helper: seed miscellaneous scalar engine fields used by
     /// save-round-trip tests.
     #[doc(hidden)]
-    pub fn test_set_engine_scalars(
+    pub(crate) fn test_set_engine_scalars(
         &mut self,
         cheat_used_flags: u32,
         speed: f32,
@@ -5657,7 +5685,7 @@ impl EngineInner {
 
     /// Test helper: seed the mission stat without running a mission.
     #[doc(hidden)]
-    pub fn test_set_mission_stat(&mut self, stat: MissionStat) {
+    pub(crate) fn test_set_mission_stat(&mut self, stat: MissionStat) {
         self.mission_domain.mission_stat = stat;
     }
 
@@ -5695,7 +5723,7 @@ impl EngineInner {
     /// Restore the simulation RNG from a known seed.  Used when
     /// loading a replay or a save — replay/load is a mission-lifecycle
     /// boundary, outside the per-tick input pipeline.
-    pub fn restore_rng_from_seed(&mut self, seed: u64) {
+    pub(crate) fn restore_rng_from_seed(&mut self, seed: u64) {
         self.control.rng.reseed(seed);
     }
 }

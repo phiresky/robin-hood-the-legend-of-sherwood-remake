@@ -256,7 +256,7 @@ impl EngineInner {
     /// Public entry point for "player pressed the bow button on a
     /// target".  Launches a `Command::ShootBow` sequence element on the
     /// shooter and returns its sequence id.
-    pub fn shoot_bow_at(
+    pub(crate) fn shoot_bow_at(
         &mut self,
         assets: &LevelAssets,
         shooter: EntityId,
@@ -1859,7 +1859,7 @@ impl EngineInner {
     /// re-enabled.  This is the counterpart of `decrement_bow_ammo` /
     /// `decrement_ability_ammo` which disable the slot when ammo reaches
     /// 0.
-    pub fn increase_ammo_and_enable(
+    pub(crate) fn increase_ammo_and_enable(
         &mut self,
         assets: &LevelAssets,
         pc_id: EntityId,
@@ -1918,7 +1918,7 @@ impl EngineInner {
     /// returns the full [`PickupResult`] so callers can implement the
     /// three-way split (full pickup → remove / partial pickup → leave
     /// in world with reduced quantity / nothing taken → leave alone).
-    pub fn handle_bonus_pickup(
+    pub(crate) fn handle_bonus_pickup(
         &mut self,
         assets: &LevelAssets,
         pc_id: EntityId,

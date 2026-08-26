@@ -1919,7 +1919,7 @@ mod tests {
         // Process the pending element so the dispatcher runs.
         let mut dev = crate::engine::DevState::default();
         let mut display = crate::engine::HostDisplayState::default();
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
         let active_anim = engine
             .orders

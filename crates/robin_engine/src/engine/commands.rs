@@ -210,7 +210,7 @@ impl EngineInner {
     /// rollback path calls `apply_commands` in a batch; both paths
     /// must dedupe identically, and the display-state tick still needs
     /// to see which directions were pressed this frame.
-    pub fn apply_commands(
+    pub(crate) fn apply_commands(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
@@ -238,7 +238,7 @@ impl EngineInner {
     /// [`PlayerInput`]s with their `Host::local_seat` and call
     /// [`Self::apply_commands`] directly so the seat tag is
     /// data-driven.
-    pub fn apply_local_commands(
+    pub(crate) fn apply_local_commands(
         &mut self,
         display: &mut HostDisplayState,
         input: &mut InputState,
@@ -259,7 +259,7 @@ impl EngineInner {
     ///
     /// Thin wrapper around [`Self::apply_command_for_seat`] used by
     /// the single-player input path and by tests.
-    pub fn apply_command(
+    pub(crate) fn apply_command(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
@@ -281,7 +281,7 @@ impl EngineInner {
     /// `seat` is the index returned by [`Self::ensure_seat`].
     /// Selection-mutating handlers index `self.players.seats[seat]` so
     /// different players don't clobber each other's selections.
-    pub fn apply_command_for_seat(
+    pub(crate) fn apply_command_for_seat(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,

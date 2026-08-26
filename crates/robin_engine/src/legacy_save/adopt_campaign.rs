@@ -79,7 +79,7 @@ impl LegacyCampaignAdoptionPlan {
         Ok(Self { campaign, identity })
     }
 
-    pub fn apply(self, engine: &mut EngineInner) {
+    pub(crate) fn apply(self, engine: &mut EngineInner) {
         engine.mission_domain.campaign = self.campaign;
     }
 }

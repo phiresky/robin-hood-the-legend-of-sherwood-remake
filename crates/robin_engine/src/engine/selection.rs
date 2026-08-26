@@ -1408,7 +1408,7 @@ impl EngineInner {
     /// itself (vanishing ghost at `position_before_teleport` + appearing
     /// sprite at the current position) is rendered in
     /// `crates/robin_rs/src/game_render.rs::render_entities_gpu`.
-    pub fn tick_pc_teleport_fades(&mut self) {
+    pub(crate) fn tick_pc_teleport_fades(&mut self) {
         let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for pc_id in pc_ids {
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {

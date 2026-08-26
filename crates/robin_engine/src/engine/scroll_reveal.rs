@@ -306,7 +306,7 @@ impl EngineInner {
     /// spawned) inherits its `position_map` via
     /// [`PendingScrollAmulet::position_map`].  Returns `None` if the
     /// scroll is not revealable.
-    pub fn reveal_scroll(
+    pub(crate) fn reveal_scroll(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -363,7 +363,7 @@ impl EngineInner {
     ///
     /// Returns the chosen [`BeggarRemark`] for logging / telemetry —
     /// `None` if the entity isn't a civilian / beggar.
-    pub fn reveal_scrolls(
+    pub(crate) fn reveal_scrolls(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

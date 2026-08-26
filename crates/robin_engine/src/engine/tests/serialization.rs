@@ -16,7 +16,7 @@ fn serde_roundtrip_stays_in_sync() {
     original.restore_rng_from_seed(seed);
 
     for _ in 0..30 {
-        original.perform_hourglass(&mut display, &assets, &mut dev);
+        original.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
 
     // Serialize + deserialize — this is the capability we just landed.
@@ -28,8 +28,8 @@ fn serde_roundtrip_stays_in_sync() {
     let mut clone_ref = original.clone();
 
     for _ in 0..20 {
-        rehydrated.perform_hourglass(&mut display, &assets, &mut dev);
-        clone_ref.perform_hourglass(&mut display, &assets, &mut dev);
+        rehydrated.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        clone_ref.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
 
     assert_eq!(
@@ -187,7 +187,7 @@ fn host_display_scroll_does_not_mutate_script_camera() {
     display.display_op = DisplayOpCode::Scroll;
     display.background_transform.scrolling_vector = MapVec::new(25.0, 0.0);
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(
         engine.feedback.cutscene_camera.view_position,
@@ -212,7 +212,7 @@ fn camera_display_scroll_mutates_script_camera() {
         .background_transform
         .scrolling_vector = MapVec::new(25.0, 0.0);
 
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(
         engine.feedback.cutscene_camera.view_position,
@@ -372,8 +372,8 @@ fn sprite_serialization_surface_matches_v2_contract() {
     complete_test_runtime_fixture(&mut rehydrated, &mut assets);
     let mut clone = rehydrated.clone();
     for _ in 0..2 {
-        rehydrated.perform_hourglass(&mut display, &assets, &mut dev);
-        clone.perform_hourglass(&mut display, &assets, &mut dev);
+        rehydrated.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        clone.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
     assert_eq!(
         rehydrated.control.frame_counter,

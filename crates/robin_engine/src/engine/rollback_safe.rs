@@ -107,10 +107,27 @@ pub enum SnapshotRestoreError {
 /// Internally (inside `robin_engine`) code still uses `EngineInner`
 /// directly — the safety invariant is between the crate and its
 /// downstream consumers, not a per-module check.
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(serde::Serialize, robin_state_hash_derive::StateHash)]
 #[serde(transparent)]
 pub struct Engine {
     inner: EngineInner,
+}
+
+impl Clone for Engine {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone_authoritative_state(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Engine {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        super::snapshot::deserialize_engine_inner(deserializer).map(|inner| Self { inner })
+    }
 }
 
 /// Explicit capability for parity-tool reconstruction before/during replay.
@@ -3160,7 +3177,7 @@ impl Engine {
         // prefix so a corrupt later completion or sound resolution cannot
         // leave earlier director/sound mutations partially committed.
         if !external_facts.is_empty() {
-            let mut staged_inner = self.inner.clone();
+            let mut staged_inner = self.inner.clone_authoritative_state();
             Self::apply_frame_external_facts(&mut staged_inner, assets, external_facts)?;
             self.inner = staged_inner;
         } else {
@@ -3298,11 +3315,12 @@ impl Engine {
     pub(crate) fn perform_hourglass(
         &mut self,
         display: &mut super::HostDisplayState,
+        input: &mut InputState,
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> SideEffects {
         self.require_live_campaign("performing an engine tick");
-        self.inner.perform_hourglass(display, assets, dev)
+        self.inner.perform_hourglass(display, input, assets, dev)
     }
 
     /// Apply a batch of player commands, as used by the replay driver
@@ -3882,7 +3900,12 @@ mod tests {
         let mut legacy_input = InputState::default();
         let mut legacy_dev = DevState::default();
         legacy.apply_commands(&mut legacy_display, &mut legacy_input, &assets, &commands);
-        let legacy_events = legacy.perform_hourglass(&mut legacy_display, &assets, &mut legacy_dev);
+        let legacy_events = legacy.perform_hourglass(
+            &mut legacy_display,
+            &mut legacy_input,
+            &assets,
+            &mut legacy_dev,
+        );
         let legacy_hash = crate::replay::state_hash(&legacy);
 
         let output = framed

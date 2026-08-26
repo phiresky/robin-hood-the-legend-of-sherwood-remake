@@ -178,7 +178,7 @@ impl LegacyMobileAdoptionPlan {
         Ok(Self { records })
     }
 
-    pub fn apply(self, engine: &mut EngineInner) {
+    pub(crate) fn apply(self, engine: &mut EngineInner) {
         for saved in self.records {
             let mobile = &mut engine.world.mobile_elements[saved.mobile_index];
             let translation = saved.position - mobile.position;

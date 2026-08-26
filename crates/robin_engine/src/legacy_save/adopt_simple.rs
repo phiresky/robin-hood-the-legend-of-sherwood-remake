@@ -137,7 +137,7 @@ impl LegacySimpleAdoptionPlan {
     }
 
     /// Apply the preflighted engine-owned fields and return host-owned state.
-    pub fn apply(self, engine: &mut EngineInner) -> LegacySimpleHostState {
+    pub(crate) fn apply(self, engine: &mut EngineInner) -> LegacySimpleHostState {
         let seat = engine
             .players
             .seats

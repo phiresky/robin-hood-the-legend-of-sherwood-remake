@@ -8,7 +8,9 @@ use crate::element::{
     Command, ElementData, ElementKind, ElementTarget, Entity, FxData, Posture, TargetData,
     TargetFilter,
 };
-use crate::engine::{DevState, EngineInner, HostDisplayState, LevelAssets, MissionScript};
+use crate::engine::{
+    DevState, EngineInner, HostDisplayState, InputState, LevelAssets, MissionScript,
+};
 use crate::entity_id::EntityId;
 use crate::scb::{ClassEntry, Function, ScbFile};
 use crate::sequence::{SequenceElement, SequenceElementData};
@@ -282,7 +284,7 @@ fn activated_by_lever_fires_on_activation_command() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(
         host_global(&engine, GLOBAL_ID_LEVER),
@@ -303,7 +305,7 @@ fn activated_by_search_fires_on_activation_command() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_SEARCH), SENTINEL_SEARCH);
 }
@@ -320,7 +322,7 @@ fn activated_by_apple_fires_on_activation_command() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_APPLE), SENTINEL_APPLE);
 }
@@ -337,7 +339,7 @@ fn activated_by_arrow_fires_on_activation_command() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_ARROW), SENTINEL_ARROW);
 }
@@ -363,7 +365,7 @@ fn activation_without_matching_method_is_no_op() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     // None of the missing methods should have populated any global.
     assert_eq!(host_global(&engine, GLOBAL_ID_LEVER), 0);
@@ -398,7 +400,7 @@ fn hit_target_fires_activated_by_sword_when_defined() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     // No global gets set (method isn't defined on TestTarget).
     // Important: we don't panic or log an error for a missing method.
@@ -421,7 +423,7 @@ fn handle_target_and_take_target_both_route_to_activated_by_hand() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     // TestTarget doesn't define ActivatedByHand — this test just
     // verifies both commands dispatch without panic.
@@ -443,7 +445,7 @@ fn multiple_activations_in_one_tick_all_fire() {
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_LEVER), SENTINEL_LEVER);
     assert_eq!(host_global(&engine, GLOBAL_ID_SEARCH), SENTINEL_SEARCH);

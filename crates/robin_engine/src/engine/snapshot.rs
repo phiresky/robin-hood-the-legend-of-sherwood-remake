@@ -51,22 +51,33 @@ impl Serialize for EngineInner {
     }
 }
 
+pub(super) fn deserialize_engine_inner<'de, D>(deserializer: D) -> Result<EngineInner, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let snapshot = FlatEngineSnapshot::deserialize(deserializer)?;
+    Ok(EngineInner {
+        mission_domain: snapshot.mission_domain,
+        control: snapshot.control,
+        ai: snapshot.ai,
+        world: snapshot.world,
+        script_domains: snapshot.script_domains,
+        orders: snapshot.orders,
+        scripts: snapshot.scripts,
+        players: snapshot.players,
+        feedback: snapshot.feedback,
+    })
+}
+
+// Low-level unit tests intentionally exercise the wire representation without
+// going through the cross-crate facade. This implementation is absent from
+// normal library builds, where only `Engine` may own a decoded snapshot.
+#[cfg(test)]
 impl<'de> Deserialize<'de> for EngineInner {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let snapshot = FlatEngineSnapshot::deserialize(deserializer)?;
-        Ok(Self {
-            mission_domain: snapshot.mission_domain,
-            control: snapshot.control,
-            ai: snapshot.ai,
-            world: snapshot.world,
-            script_domains: snapshot.script_domains,
-            orders: snapshot.orders,
-            scripts: snapshot.scripts,
-            players: snapshot.players,
-            feedback: snapshot.feedback,
-        })
+        deserialize_engine_inner(deserializer)
     }
 }

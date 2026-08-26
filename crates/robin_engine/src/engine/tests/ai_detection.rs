@@ -72,7 +72,7 @@ fn primary_target_tracking_precedes_view_refresh() {
     }
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let expected = crate::position_interface::vector_to_sector_0_to_15_iso(
         target_pos.x - soldier_pos.x,
@@ -97,8 +97,9 @@ fn npc_hourglass_observes_exact_original_phase_order() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
-    let (_, phases) =
-        capture_npc_hourglass_phases(|| engine.perform_hourglass(&mut display, &assets, &mut dev));
+    let (_, phases) = capture_npc_hourglass_phases(|| {
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+    });
 
     assert_eq!(
         phases,
@@ -133,8 +134,9 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
-    let (_, trace) =
-        capture_actor_owner_envelope(|| engine.perform_hourglass(&mut display, &assets, &mut dev));
+    let (_, trace) = capture_actor_owner_envelope(|| {
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+    });
 
     assert_eq!(
         trace,
@@ -434,7 +436,12 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     let mut owner_display = HostDisplayState::default();
     let mut owner_dev = DevState::default();
     for expected_wait in [24, 23, 22, 21] {
-        owner_driven.perform_hourglass(&mut owner_display, &assets, &mut owner_dev);
+        owner_driven.perform_hourglass(
+            &mut owner_display,
+            &mut InputState::default(),
+            &assets,
+            &mut owner_dev,
+        );
         let owner_actor = owner_driven
             .get_entity(listener)
             .unwrap()
@@ -488,7 +495,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         pc.pc.fried_psykokwack = fried;
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
-        gated.perform_hourglass(&mut display, &assets, &mut dev);
+        gated.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         assert_eq!(
             gated
                 .get_entity(listener)
@@ -628,7 +635,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     for _ in 0..25 {
-        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     }
     crate::engine::ai::set_heard_callback_observer(None);
 

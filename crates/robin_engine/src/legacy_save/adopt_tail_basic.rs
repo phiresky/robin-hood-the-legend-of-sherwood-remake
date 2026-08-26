@@ -136,7 +136,7 @@ impl LegacyTailBasicAdoptionPlan {
         })
     }
 
-    pub fn apply(self, engine: &mut EngineInner) {
+    pub(crate) fn apply(self, engine: &mut EngineInner) {
         let runtime = &mut engine.ai.global;
         runtime.stupid_soldiers_cheat = self.global_ai.stupid_soldiers_cheat;
         for (point, (frame, interest, locked)) in runtime

@@ -179,7 +179,11 @@ impl LegacyPostLoadAdoptionPlan {
     /// Remark callbacks deliberately run before seed restoration: that is
     /// where they occur in Original's stream order. Produced noise is rebuilt
     /// last because it reads the fixed-up active order.
-    pub fn apply(self, engine: &mut EngineInner, assets: &LevelAssets) -> LegacyPostLoadHostOutput {
+    pub(crate) fn apply(
+        self,
+        engine: &mut EngineInner,
+        assets: &LevelAssets,
+    ) -> LegacyPostLoadHostOutput {
         engine.complete_legacy_loaded_remarks(&self.active_remark_completions, assets);
         engine.restore_loaded_active_movements();
         engine.restore_loaded_active_shots();

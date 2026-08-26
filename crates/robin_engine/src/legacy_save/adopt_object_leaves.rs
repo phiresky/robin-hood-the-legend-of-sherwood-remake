@@ -526,7 +526,7 @@ impl LegacyObjectLeafAdoptionPlan {
     }
 
     /// Apply a completely preflighted plan to the detached candidate.
-    pub fn apply(self, engine: &mut EngineInner) {
+    pub(crate) fn apply(self, engine: &mut EngineInner) {
         for record in self.records {
             match record {
                 PlannedLeaf::Object { entity, state } => {

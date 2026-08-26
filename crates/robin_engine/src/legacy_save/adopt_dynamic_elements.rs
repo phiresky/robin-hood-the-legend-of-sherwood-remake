@@ -304,7 +304,7 @@ impl LegacyDynamicElementAdoptionPlan {
     ///
     /// This is infallible: every allocation-independent dependency was
     /// resolved by [`Self::preflight`].
-    pub fn apply(self, engine: &mut EngineInner) -> LegacyEntityFixups {
+    pub(crate) fn apply(self, engine: &mut EngineInner) -> LegacyEntityFixups {
         engine.world.next_original_creation_order = self.saved_creation_counter;
 
         let mut by_creation_order = BTreeMap::new();

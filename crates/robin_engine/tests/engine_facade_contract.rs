@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use syn::visit::{self, Visit};
-use syn::{Fields, Item, ItemImpl, Type, UseTree, Visibility};
+use syn::{Fields, Item, ItemImpl, ReturnType, Type, UseTree, Visibility};
 
 fn parse_rust(relative_path: &str) -> syn::File {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
@@ -112,31 +112,23 @@ fn engine_has_one_private_inner_owner_and_no_ownership_escape() {
 
 #[test]
 fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
-    let syntax = parse_rust("src/engine/rollback_safe.rs");
-    let mut mutable_methods = Vec::new();
-    for item in &syntax.items {
-        let Item::Impl(item_impl) = item else {
-            continue;
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut source_files = Vec::new();
+    collect_rust_files(&manifest.join("src"), &mut source_files);
+
+    let mut mutable_engine_methods = Vec::new();
+    let mut mutable_inner_methods = Vec::new();
+    for path in source_files {
+        let syntax = parse_rust_path(&path);
+        let mut visitor = PublicMutableMethodVisitor {
+            path: &path,
+            mutable_engine_methods: &mut mutable_engine_methods,
+            mutable_inner_methods: &mut mutable_inner_methods,
         };
-        if !impl_is_for_engine(item_impl) {
-            continue;
-        }
-        for item in &item_impl.items {
-            let syn::ImplItem::Fn(method) = item else {
-                continue;
-            };
-            let Some(receiver) = method.sig.receiver() else {
-                continue;
-            };
-            if matches!(method.vis, Visibility::Public(_))
-                && receiver.reference.is_some()
-                && receiver.mutability.is_some()
-            {
-                mutable_methods.push(method.sig.ident.to_string());
-            }
-        }
+        visitor.visit_file(&syntax);
     }
-    mutable_methods.sort();
+    mutable_engine_methods.sort();
+    mutable_inner_methods.sort();
 
     let mut allowed = vec![
         "advance_frame",
@@ -153,9 +145,492 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
     allowed.sort();
 
     assert_eq!(
-        mutable_methods, allowed,
+        mutable_engine_methods, allowed,
         "new public &mut Engine methods must be crate-private, represented as frame input, or deliberately added as a capability opener/test helper"
     );
+    assert!(
+        mutable_inner_methods.is_empty(),
+        "EngineInner is a public read-only projection; public &mut EngineInner methods bypass the authoritative Engine facade: {mutable_inner_methods:?}"
+    );
+}
+
+#[test]
+fn engine_inner_is_a_borrow_only_projection() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut source_files = Vec::new();
+    collect_rust_files(&manifest.join("src"), &mut source_files);
+
+    let mut offenders = Vec::new();
+    for path in source_files {
+        let syntax = parse_rust_path(&path);
+        let mut visitor = EngineInnerOwnershipVisitor {
+            path: &path,
+            offenders: &mut offenders,
+        };
+        visitor.visit_file(&syntax);
+        let mut capability_visitor = PublicEngineInnerCapabilityVisitor {
+            path: &path,
+            offenders: &mut offenders,
+        };
+        capability_visitor.visit_file(&syntax);
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "EngineInner may only be borrowed through Engine; production clone/default/deserialization implementations and public owned-value constructors are forbidden: {offenders:?}"
+    );
+}
+
+struct PublicEngineInnerCapabilityVisitor<'a> {
+    path: &'a Path,
+    offenders: &'a mut Vec<String>,
+}
+
+impl Visit<'_> for PublicEngineInnerCapabilityVisitor<'_> {
+    fn visit_item_fn(&mut self, function: &syn::ItemFn) {
+        if matches!(function.vis, Visibility::Public(_)) {
+            self.check_signature(&function.sig, format!("function {}", function.sig.ident));
+        }
+        visit::visit_item_fn(self, function);
+    }
+
+    fn visit_item_impl(&mut self, item_impl: &ItemImpl) {
+        let owner = type_name(&item_impl.self_ty);
+        for item in &item_impl.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            if matches!(method.vis, Visibility::Public(_)) {
+                self.check_signature(&method.sig, format!("{owner}::{}", method.sig.ident));
+            }
+        }
+        visit::visit_item_impl(self, item_impl);
+    }
+}
+
+impl PublicEngineInnerCapabilityVisitor<'_> {
+    fn check_signature(&mut self, signature: &syn::Signature, label: String) {
+        if signature
+            .inputs
+            .iter()
+            .any(argument_exposes_mut_engine_inner)
+        {
+            self.offenders.push(format!(
+                "public {label} accepts mutable EngineInner in {}",
+                self.path.display()
+            ));
+        }
+        if return_type_contains_owned_engine_inner(&signature.output) {
+            self.offenders.push(format!(
+                "public {label} returns owned EngineInner in {}",
+                self.path.display()
+            ));
+        }
+    }
+}
+
+fn type_name(ty: &Type) -> String {
+    let Type::Path(path) = ty else {
+        return "unknown type".to_owned();
+    };
+    path.path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
+        .unwrap_or_else(|| "unknown type".to_owned())
+}
+
+fn argument_exposes_mut_engine_inner(argument: &syn::FnArg) -> bool {
+    let syn::FnArg::Typed(argument) = argument else {
+        return false;
+    };
+    let mut visitor = MutableEngineInnerReferenceVisitor { found: false };
+    visitor.visit_type(&argument.ty);
+    visitor.found
+}
+
+struct MutableEngineInnerReferenceVisitor {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for MutableEngineInnerReferenceVisitor {
+    fn visit_type_reference(&mut self, reference: &'ast syn::TypeReference) {
+        if reference.mutability.is_some() && type_mentions_ident(&reference.elem, "EngineInner") {
+            self.found = true;
+        }
+        visit::visit_type_reference(self, reference);
+    }
+}
+
+fn return_type_contains_owned_engine_inner(output: &ReturnType) -> bool {
+    let ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    let mut visitor = OwnedEngineInnerVisitor { found: false };
+    visitor.visit_type(ty);
+    visitor.found
+}
+
+struct OwnedEngineInnerVisitor {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for OwnedEngineInnerVisitor {
+    fn visit_type_reference(&mut self, _reference: &'ast syn::TypeReference) {
+        // Borrowed read-only projections are the supported public query API.
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        self.found |= path
+            .segments
+            .iter()
+            .any(|segment| segment.ident == "EngineInner");
+        visit::visit_path(self, path);
+    }
+}
+
+struct PublicMutableMethodVisitor<'a> {
+    path: &'a Path,
+    mutable_engine_methods: &'a mut Vec<String>,
+    mutable_inner_methods: &'a mut Vec<String>,
+}
+
+impl Visit<'_> for PublicMutableMethodVisitor<'_> {
+    fn visit_item_impl(&mut self, item_impl: &ItemImpl) {
+        let target = if impl_is_for_engine(item_impl) {
+            Some(&mut self.mutable_engine_methods)
+        } else if path_ends_with(&item_impl.self_ty, "EngineInner") {
+            Some(&mut self.mutable_inner_methods)
+        } else {
+            None
+        };
+        if let Some(methods) = target {
+            for item in &item_impl.items {
+                let syn::ImplItem::Fn(method) = item else {
+                    continue;
+                };
+                let Some(receiver) = method.sig.receiver() else {
+                    continue;
+                };
+                if matches!(method.vis, Visibility::Public(_))
+                    && receiver.reference.is_some()
+                    && receiver.mutability.is_some()
+                {
+                    let name = method.sig.ident.to_string();
+                    if impl_is_for_engine(item_impl) {
+                        methods.push(name);
+                    } else {
+                        methods.push(format!("{name} in {}", self.path.display()));
+                    }
+                }
+            }
+        }
+        visit::visit_item_impl(self, item_impl);
+    }
+}
+
+struct EngineInnerOwnershipVisitor<'a> {
+    path: &'a Path,
+    offenders: &'a mut Vec<String>,
+}
+
+impl Visit<'_> for EngineInnerOwnershipVisitor<'_> {
+    fn visit_item_struct(&mut self, item_struct: &syn::ItemStruct) {
+        if item_struct.ident == "EngineInner" {
+            for forbidden in ["Clone", "Default", "Deserialize"] {
+                if derives_trait(&item_struct.attrs, forbidden) {
+                    self.offenders.push(format!(
+                        "EngineInner derives {forbidden} in {}",
+                        self.path.display()
+                    ));
+                }
+            }
+        }
+        visit::visit_item_struct(self, item_struct);
+    }
+
+    fn visit_item_impl(&mut self, item_impl: &ItemImpl) {
+        if !path_ends_with(&item_impl.self_ty, "EngineInner") {
+            visit::visit_item_impl(self, item_impl);
+            return;
+        }
+
+        if let Some((_, trait_path, _)) = &item_impl.trait_
+            && let Some(trait_name) = trait_path.segments.last()
+            && ["Clone", "Default", "Deserialize"]
+                .iter()
+                .any(|forbidden| trait_name.ident == forbidden)
+            && !is_test_only(&item_impl.attrs)
+        {
+            self.offenders.push(format!(
+                "EngineInner implements {} in {}",
+                trait_name.ident,
+                self.path.display()
+            ));
+        } else if item_impl.trait_.is_none() {
+            for item in &item_impl.items {
+                let syn::ImplItem::Fn(method) = item else {
+                    continue;
+                };
+                if matches!(method.vis, Visibility::Public(_))
+                    && return_type_mentions_owned_engine_inner(&method.sig.output)
+                {
+                    self.offenders.push(format!(
+                        "EngineInner::{} returns an owned EngineInner in {}",
+                        method.sig.ident,
+                        self.path.display()
+                    ));
+                }
+            }
+        }
+
+        visit::visit_item_impl(self, item_impl);
+    }
+}
+
+fn derives_trait(attrs: &[syn::Attribute], expected: &str) -> bool {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("derive"))
+        .any(|attr| {
+            attr.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+            )
+            .is_ok_and(|traits| {
+                traits.iter().any(|path| {
+                    path.segments
+                        .last()
+                        .is_some_and(|item| item.ident == expected)
+                })
+            })
+        })
+}
+
+fn is_test_only(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        let syn::Meta::List(meta) = &attr.meta else {
+            return false;
+        };
+        meta.path.is_ident("cfg") && meta.tokens.to_string() == "test"
+    })
+}
+
+fn return_type_mentions_owned_engine_inner(output: &ReturnType) -> bool {
+    let ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    type_mentions_ident(ty, "EngineInner") || type_mentions_ident(ty, "Self")
+}
+
+#[test]
+fn engine_inner_guards_detect_mutation_and_ownership_escapes() {
+    let syntax = syn::parse_file(
+        r#"
+        #[derive(Clone)]
+        struct EngineInner;
+
+        impl EngineInner {
+            pub fn mutate(&mut self) {}
+            pub fn copy_out(&self) -> Self { Self }
+            pub fn query(&self) -> bool { true }
+        }
+
+        pub fn mutate_from_free_function(engine: &mut EngineInner) { let _ = engine; }
+        pub fn construct_from_free_function() -> Option<EngineInner> { None }
+        pub fn query_from_free_function(engine: &EngineInner) { let _ = engine; }
+        "#,
+    )
+    .expect("synthetic Rust source parses");
+
+    let mut mutable_engine_methods = Vec::new();
+    let mut mutable_inner_methods = Vec::new();
+    let mut mutable_visitor = PublicMutableMethodVisitor {
+        path: Path::new("synthetic.rs"),
+        mutable_engine_methods: &mut mutable_engine_methods,
+        mutable_inner_methods: &mut mutable_inner_methods,
+    };
+    mutable_visitor.visit_file(&syntax);
+    assert!(mutable_engine_methods.is_empty());
+    assert_eq!(mutable_inner_methods.len(), 1);
+    assert!(mutable_inner_methods[0].contains("mutate"));
+
+    let mut ownership_offenders = Vec::new();
+    let mut ownership_visitor = EngineInnerOwnershipVisitor {
+        path: Path::new("synthetic.rs"),
+        offenders: &mut ownership_offenders,
+    };
+    ownership_visitor.visit_file(&syntax);
+    assert_eq!(ownership_offenders.len(), 2);
+    assert!(
+        ownership_offenders
+            .iter()
+            .any(|offender| offender.contains("derives Clone"))
+    );
+    assert!(
+        ownership_offenders
+            .iter()
+            .any(|offender| offender.contains("copy_out"))
+    );
+
+    let mut capability_offenders = Vec::new();
+    let mut capability_visitor = PublicEngineInnerCapabilityVisitor {
+        path: Path::new("synthetic.rs"),
+        offenders: &mut capability_offenders,
+    };
+    capability_visitor.visit_file(&syntax);
+    assert_eq!(capability_offenders.len(), 2);
+    assert!(
+        capability_offenders
+            .iter()
+            .any(|offender| offender.contains("mutate_from_free_function"))
+    );
+    assert!(
+        capability_offenders
+            .iter()
+            .any(|offender| offender.contains("construct_from_free_function"))
+    );
+}
+
+#[test]
+fn legacy_hourglass_adapters_are_test_only_and_use_explicit_input() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut source_files = Vec::new();
+    collect_rust_files(&manifest.join("src"), &mut source_files);
+
+    let mut adapters = Vec::new();
+    let mut offenders = Vec::new();
+    for path in source_files {
+        let syntax = parse_rust_path(&path);
+        let mut visitor = HourglassAdapterVisitor {
+            path: &path,
+            adapters: &mut adapters,
+            offenders: &mut offenders,
+        };
+        visitor.visit_file(&syntax);
+    }
+    adapters.sort();
+
+    assert_eq!(
+        adapters,
+        [
+            "Engine::perform_hourglass",
+            "EngineInner::perform_hourglass"
+        ],
+        "the legacy command/hourglass test seam must not grow new entry points"
+    );
+    assert!(
+        offenders.is_empty(),
+        "legacy hourglass adapters must be cfg(test) pub(crate), accept explicit mutable InputState, and never fabricate a default input: {offenders:?}"
+    );
+}
+
+struct HourglassAdapterVisitor<'a> {
+    path: &'a Path,
+    adapters: &'a mut Vec<String>,
+    offenders: &'a mut Vec<String>,
+}
+
+impl Visit<'_> for HourglassAdapterVisitor<'_> {
+    fn visit_item_impl(&mut self, item_impl: &ItemImpl) {
+        let owner = if impl_is_for_engine(item_impl) {
+            Some("Engine")
+        } else if path_ends_with(&item_impl.self_ty, "EngineInner") {
+            Some("EngineInner")
+        } else {
+            None
+        };
+        let Some(owner) = owner else {
+            visit::visit_item_impl(self, item_impl);
+            return;
+        };
+
+        for item in &item_impl.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            if method.sig.ident != "perform_hourglass" {
+                continue;
+            }
+
+            let adapter = format!("{owner}::perform_hourglass");
+            self.adapters.push(adapter.clone());
+            if !is_test_only(&method.attrs) {
+                self.offenders.push(format!(
+                    "{adapter} is production-reachable in {}",
+                    self.path.display()
+                ));
+            }
+            if !is_pub_crate(&method.vis) {
+                self.offenders.push(format!(
+                    "{adapter} is not pub(crate) in {}",
+                    self.path.display()
+                ));
+            }
+            if !has_explicit_mut_input_state(&method.sig) {
+                self.offenders.push(format!(
+                    "{adapter} has no &mut InputState parameter in {}",
+                    self.path.display()
+                ));
+            }
+
+            let mut defaults = InputStateDefaultVisitor { found: false };
+            defaults.visit_block(&method.block);
+            if defaults.found {
+                self.offenders.push(format!(
+                    "{adapter} fabricates InputState::default() in {}",
+                    self.path.display()
+                ));
+            }
+        }
+
+        visit::visit_item_impl(self, item_impl);
+    }
+}
+
+fn is_pub_crate(visibility: &Visibility) -> bool {
+    matches!(
+        visibility,
+        Visibility::Restricted(restricted) if restricted.path.is_ident("crate")
+    )
+}
+
+fn has_explicit_mut_input_state(signature: &syn::Signature) -> bool {
+    signature.inputs.iter().any(|argument| {
+        let syn::FnArg::Typed(argument) = argument else {
+            return false;
+        };
+        matches!(
+            argument.ty.as_ref(),
+            Type::Reference(reference)
+                if reference.mutability.is_some()
+                    && type_mentions_ident(&reference.elem, "InputState")
+        )
+    })
+}
+
+struct InputStateDefaultVisitor {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for InputStateDefaultVisitor {
+    fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(function) = expression.func.as_ref()
+            && function.path.segments.len() >= 2
+            && function
+                .path
+                .segments
+                .iter()
+                .any(|segment| segment.ident == "InputState")
+            && function
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "default")
+        {
+            self.found = true;
+        }
+        visit::visit_expr_call(self, expression);
+    }
 }
 
 fn impl_is_for_engine(item: &ItemImpl) -> bool {
