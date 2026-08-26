@@ -796,8 +796,8 @@ pub(super) struct MissionSprites {
 /// Each subsystem fetches its surfaces from the shared interface bank.
 /// Also pushes the derived data into the engine
 /// (`setup_minimap_widget`, `set_ground_mark_sprite_data`,
-/// `set_titbit_row_frame_counts`, `set_peasant_names`) and bakes the
-/// ambience shadow key into the sprite dictionaries via Arno's Law.
+/// `set_titbit_row_frame_counts`, `set_peasant_names`). The frame-holder
+/// dictionaries were already finalized and published by the CPU loading phase.
 pub(super) fn load_mission_sprites(
     engine: &mut Engine,
     host: &mut Host,
@@ -919,16 +919,6 @@ pub(super) fn load_mission_sprites(
             tracing::warn!("Failed to load RHID_GROUND_FOCUS resource: {e}");
         }
     }
-
-    // ── Arno Law: bake ambience shadow color into sprite dictionaries ──
-    // Dictionary-compressed sprites store shadow pixels as `SHADOW_KEY`
-    // (0x001F, pure blue). Walk every loaded dictionary and replace
-    // those markers with the ambience-specific night-shadow color, so
-    // the GPU sprite cache can recognize shadow pixels via the
-    // per-ambience key (see `renderer::ensure_sprite_cached`). Without
-    // this call, dictionary sprite shadows render as opaque pure blue.
-    host.frame_holder_mut()
-        .apply_arno_law(engine.weather().night_color);
 
     // ── Selection mark renderer ──
     // Loads RHID_GROUND_SELECT (green idle) and RHID_GROUND_SELECT_SWORD
@@ -1314,10 +1304,6 @@ pub(super) fn load_level_and_sprite_bank(
     // Publish the sprite-bank signature into LevelAssets so engine-side
     // sprite-script loaders can detect bank changes.
     assets.bank_signature = host.frame_holder.signature();
-    // Hand the engine a pixel-opacity lookup so
-    // `Engine::is_point_on_sprite` can do transparent + night-shadow
-    // rejection without depending on `robin_assets`.
-    assets.pixel_opacity = Some(host.frame_holder.clone());
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
@@ -1581,10 +1567,18 @@ pub(super) fn load_level_and_sprite_bank(
         );
     }
 
-    // Generate night/fog variant dictionaries based on ambiance.
-    // Runs host-side because the engine crate doesn't reference
-    // `FrameHolder`.
+    // Original's RHengine.cpp ambiance setup regenerates the Night/Fog
+    // dictionaries and then immediately calls ApplyArnoLaw on that same
+    // mpFrameHolder; RHframeholder.cpp applies the key to base and variant
+    // dictionaries together. Preserve that single-generation boundary here:
+    // finish every dictionary mutation before publishing engine hit testing.
     crate::level_loading_host::initialize_sprite_variants(host, &engine);
+    host.frame_holder_mut()
+        .apply_arno_law(engine.weather().night_color);
+    // Engine cannot depend on robin_assets, so LevelAssets holds the trait
+    // publisher. Runtime ambiance rebinds replace the immutable generation
+    // inside it rather than leaving an Arc::make_mut copy detached.
+    assets.pixel_opacity = Some(host.publish_frame_holder_opacity());
     tick_progress(loading_screen, event_pump, 1.0);
 
     Ok(LoadedMissionCore {

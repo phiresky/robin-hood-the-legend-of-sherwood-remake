@@ -471,7 +471,7 @@ impl MissionPresentation {
         gpu: &crate::window::GpuContext,
         shadow_color: u16,
     ) {
-        host.frame_holder_mut().apply_arno_law(shadow_color);
+        host.rebind_frame_holder_shadow_color(shadow_color);
         self.sprites.selection_mark_renderer.load(
             &mut resources.cursor,
             &self.renderer,

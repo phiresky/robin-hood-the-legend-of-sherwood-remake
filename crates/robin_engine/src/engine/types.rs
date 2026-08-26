@@ -786,25 +786,17 @@ impl FadeToBlack {
 /// Wired at level-load time into [`LevelAssets::pixel_opacity`]: the host
 /// owns the `FrameHolder` with the packed sprite banks and implements
 /// this trait. The engine uses it to close the per-pixel sprite pick
-/// path (transparent-color and night-shadow rejection) without
+/// path (transparent-color and dictionary-owned shadow rejection) without
 /// depending on `robin_assets`.
 pub trait PixelOpacityLookup: Send + Sync {
     /// Return `true` if the pixel at local `(x, y)` within the sprite
     /// frame identified by `bank_id` is opaque.
     ///
-    /// `night_shadow_color` is the ambient night-shadow RGB565 value
-    /// (`Weather::night_color`); pixels matching it are treated as
-    /// transparent unless `blue_pixels_are_in` is `true` (the engine
-    /// passes the entity's `is_blipped` flag so blipped entities
-    /// remain clickable in their shadow area).
-    fn is_pixel_opaque(
-        &self,
-        bank_id: u32,
-        x: u16,
-        y: u16,
-        night_shadow_color: u16,
-        blue_pixels_are_in: bool,
-    ) -> bool;
+    /// The lookup owns the exact dictionary generation and its bound shadow
+    /// color. Shadow pixels are transparent unless `blue_pixels_are_in` is
+    /// `true` (the engine passes the entity's `is_blipped` flag so blipped
+    /// entities remain clickable in their shadow area).
+    fn is_pixel_opaque(&self, bank_id: u32, x: u16, y: u16, blue_pixels_are_in: bool) -> bool;
 }
 
 /// Immutable level assets loaded once per mission.
@@ -863,8 +855,10 @@ pub struct LevelAssets {
     // TODO(level-assets): migrate rendering, navigation, environment, and
     // audio fields into equivalent domain groups in focused follow-up slices.
     /// Host-provided per-pixel sprite hit-test callback. `None` before
-    /// the host wires it up; engine code that wants per-pixel sprite
-    /// pick behaviour falls back to bbox-only when missing.
+    /// the host publishes its final loaded dictionary generation; engine code
+    /// that wants per-pixel sprite pick behaviour falls back to bbox-only when
+    /// missing. The concrete host publisher synchronizes later ambiance
+    /// shadow-key generations across every cloned `LevelAssets` handle.
     pub pixel_opacity: Option<std::sync::Arc<dyn PixelOpacityLookup>>,
     /// Localized peasant firstname pool (menu text IDs 100-121). Used
     /// to build civilian display names by picking a random

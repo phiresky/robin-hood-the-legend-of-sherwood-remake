@@ -236,7 +236,7 @@ impl EngineInner {
     /// Builds a map-space AABB from
     /// `floor(position_map - sprite.center) + current_offset`, then checks
     /// containment and pixel-tests the packed sprite data against the
-    /// transparent color key and night shadow color.
+    /// transparent color key and the published dictionary's shadow color.
     ///
     /// When `blue_pixels_are_in` is `true`, night-shadow pixels count
     /// as opaque (used for blipped entities).
@@ -294,13 +294,7 @@ impl EngineInner {
         let lx = local_x as u16;
         let ly = local_y as u16;
         let bank_id = sprite.bank_id_for(sprite.current_row, sprite.current_frame);
-        lookup.is_pixel_opaque(
-            bank_id,
-            lx,
-            ly,
-            self.world.weather.night_color,
-            blue_pixels_are_in,
-        )
+        lookup.is_pixel_opaque(bank_id, lx, ly, blue_pixels_are_in)
     }
 
     /// Map-space fixed-AABB hit test for an object-class entity.

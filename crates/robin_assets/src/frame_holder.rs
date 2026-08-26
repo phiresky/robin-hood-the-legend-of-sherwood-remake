@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -442,6 +442,47 @@ pub struct FrameHolder {
     /// into the same set as the render path); replaced on bank reload.
     #[serde(skip)]
     usage: Arc<UsageTracker>,
+}
+
+/// Atomically published immutable [`FrameHolder`] generations for engine-side
+/// pixel hit testing.
+///
+/// Rendering reads the host's current `Arc<FrameHolder>` directly. The engine
+/// cannot own that concrete asset type, so [`PixelOpacityLookup`] points at this
+/// synchronized publisher instead. Ambiance shadow-key changes are applied to
+/// a new COW generation and then published here, keeping every cloned
+/// `LevelAssets` handle on the same dictionary generation as the renderer.
+///
+/// [`PixelOpacityLookup`]: robin_engine::engine::PixelOpacityLookup
+#[derive(Debug)]
+pub struct PublishedFrameHolder {
+    current: RwLock<Arc<FrameHolder>>,
+}
+
+impl PublishedFrameHolder {
+    pub fn new(current: Arc<FrameHolder>) -> Self {
+        Self {
+            current: RwLock::new(current),
+        }
+    }
+
+    /// Publish the renderer's new immutable frame-holder generation.
+    pub fn publish(&self, current: Arc<FrameHolder>) {
+        *self
+            .current
+            .write()
+            .expect("published frame-holder write lock poisoned") = current;
+    }
+
+    /// Snapshot the exact generation currently used by engine hit testing.
+    pub fn snapshot(&self) -> Arc<FrameHolder> {
+        Arc::clone(
+            &self
+                .current
+                .read()
+                .expect("published frame-holder read lock poisoned"),
+        )
+    }
 }
 
 /// Tracks which bank sprites have had their packed data read, and how many
@@ -1120,7 +1161,6 @@ impl FrameHolder {
         sprite_index: u32,
         x: u16,
         y: u16,
-        night_shadow_color: u16,
         blue_pixels_are_in: bool,
     ) -> bool {
         let idx = sprite_index as usize;
@@ -1153,12 +1193,14 @@ impl FrameHolder {
         if !blue_pixels_are_in {
             // RLE packed data still holds raw `SHADOW_KEY` markers (the
             // ArnoLaw replacement happens lazily inside
-            // `decompress_rle_arno_law`); dictionary sprites go through
-            // the variant dictionaries that have already been shadow-mapped.
+            // `decompress_rle_arno_law`). Dictionary opacity must use the
+            // dictionary's own bound shadow color: accepting a separate
+            // Weather color here lets a stale/partially-published ambiance
+            // generation turn shadow pixels opaque.
             let is_shadow = if sprite.dictionary_index == UNMAPPED_DICT {
                 pixel == SHADOW_KEY
             } else {
-                pixel == night_shadow_color
+                pixel == self.dictionaries[sprite.dictionary_index as usize].shadow_color()
             };
             if is_shadow {
                 return false;
@@ -1170,15 +1212,17 @@ impl FrameHolder {
 }
 
 impl robin_engine::engine::PixelOpacityLookup for FrameHolder {
-    fn is_pixel_opaque(
-        &self,
-        bank_id: u32,
-        x: u16,
-        y: u16,
-        night_shadow_color: u16,
-        blue_pixels_are_in: bool,
-    ) -> bool {
-        FrameHolder::is_pixel_opaque(self, bank_id, x, y, night_shadow_color, blue_pixels_are_in)
+    fn is_pixel_opaque(&self, bank_id: u32, x: u16, y: u16, blue_pixels_are_in: bool) -> bool {
+        FrameHolder::is_pixel_opaque(self, bank_id, x, y, blue_pixels_are_in)
+    }
+}
+
+impl robin_engine::engine::PixelOpacityLookup for PublishedFrameHolder {
+    fn is_pixel_opaque(&self, bank_id: u32, x: u16, y: u16, blue_pixels_are_in: bool) -> bool {
+        self.current
+            .read()
+            .expect("published frame-holder read lock poisoned")
+            .is_pixel_opaque(bank_id, x, y, blue_pixels_are_in)
     }
 }
 

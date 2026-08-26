@@ -6,7 +6,7 @@
 //! reconstructs its own from hardware context). Engine reaches host
 //! state only through input parameters and `SideEffects` outputs.
 
-use robin_assets::frame_holder::FrameHolder;
+use robin_assets::frame_holder::{FrameHolder, PublishedFrameHolder};
 use robin_assets::shipping_datadir::ShippingDatadir;
 use robin_engine::allied_control::AlliedFormation;
 use robin_engine::coordinates::{
@@ -668,6 +668,12 @@ pub struct HostFrontend {
     /// `Engine::clone` stays cheap.
     pub frame_holder: Arc<FrameHolder>,
 
+    /// Engine-side opacity view of [`Self::frame_holder`]. Installed only after
+    /// variant generation and the initial Arno-law bind are complete. Runtime
+    /// ambiance rebinds publish a new immutable generation through this shared
+    /// handle so cloned `LevelAssets` never retain a detached COW dictionary.
+    frame_holder_opacity: Option<Arc<PublishedFrameHolder>>,
+
     /// Shipping-datadir handle. Host-only (asset-layer type). Holds the
     /// path/resource layout for the currently-loaded shipping build so
     /// the resource manager can resolve relative lookups.
@@ -1018,9 +1024,41 @@ impl Host {
         }
     }
 
-    /// Mutable access to the frame holder during loading.
+    /// Mutable access to the frame holder before its opacity view is published.
+    /// Post-publication mutations must use
+    /// [`Self::rebind_frame_holder_shadow_color`] so the engine and renderer
+    /// switch generations together.
     pub fn frame_holder_mut(&mut self) -> &mut FrameHolder {
+        assert!(
+            self.frame_holder_opacity.is_none(),
+            "published frame holder cannot be mutated without synchronizing pixel opacity"
+        );
         Arc::make_mut(&mut self.frame_holder)
+    }
+
+    /// Publish the fully initialized frame-holder generation for engine hit
+    /// testing. This is a one-way loading boundary: subsequent dictionary
+    /// changes must go through [`Self::rebind_frame_holder_shadow_color`].
+    pub fn publish_frame_holder_opacity(&mut self) -> Arc<PublishedFrameHolder> {
+        assert!(
+            self.frame_holder_opacity.is_none(),
+            "frame-holder opacity was already published"
+        );
+        let published = Arc::new(PublishedFrameHolder::new(Arc::clone(&self.frame_holder)));
+        self.frame_holder_opacity = Some(Arc::clone(&published));
+        published
+    }
+
+    /// Apply an ambiance shadow-key change and publish the resulting immutable
+    /// generation to every engine-side opacity reader.
+    pub fn rebind_frame_holder_shadow_color(&mut self, shadow_color: u16) {
+        let published = Arc::clone(
+            self.frame_holder_opacity
+                .as_ref()
+                .expect("frame-holder opacity must be published before runtime rebinding"),
+        );
+        Arc::make_mut(&mut self.frame_holder).apply_arno_law(shadow_color);
+        published.publish(Arc::clone(&self.frame_holder));
     }
 
     /// Clear persistent decals that belonged to the previous level.
@@ -1320,7 +1358,14 @@ impl Host {
 #[cfg(test)]
 mod application_context_tests {
     use super::*;
+    use robin_assets::frame_holder::{SHADOW_KEY, SpriteVariant, TRANSPARENT_COLOR_16};
+    use robin_assets::shipping_datadir::{ShippingSprite, ShippingSpriteBank};
+    use robin_engine::campaign::Campaign;
+    use robin_engine::coordinates::{SpriteAnchor, SpriteFrameOffset};
+    use robin_engine::element::{ElementData, ElementFx, ElementKind, Entity};
     use robin_engine::player_profile::DifficultyLevel;
+    use robin_engine::sprite::Sprite;
+    use robin_engine::sprite_script::SpriteScript;
     use winit::keyboard::KeyCode;
 
     fn context(
@@ -1537,5 +1582,130 @@ mod application_context_tests {
         assert!(effects.take_signal(HostSignal::ResetInput));
         assert!(!effects.take_signal(HostSignal::ResetInput));
         assert!(effects.take_signal(HostSignal::ShowConsole));
+    }
+
+    fn dictionary_frame_holder(shadow_color: u16) -> FrameHolder {
+        let mut shipping = ShippingDatadir::default();
+        shipping.sprite_bank = Some(ShippingSpriteBank {
+            signature: 0x51A0_0001,
+            dictionaries: vec![robin_assets::frame_holder::FrameDictionary::from_raw(
+                1,
+                vec![SHADOW_KEY, 0x0841, TRANSPARENT_COLOR_16, 0x1234],
+            )],
+            sprites: vec![Some(ShippingSprite {
+                width: 4,
+                height: 1,
+                dictionary_index: 0,
+                packed_data: vec![0],
+            })],
+        });
+
+        let mut holder = FrameHolder::new();
+        holder
+            .initialize_sprite_bank_with_progress(".", &mut |_| {}, Some(&shipping))
+            .expect("load synthetic dictionary bank");
+        holder.generate_night_dictionaries();
+        holder.apply_arno_law(shadow_color);
+        holder
+    }
+
+    fn rendered_dictionary_pixel_is_opaque(
+        holder: &FrameHolder,
+        variant: SpriteVariant,
+        shadow_color: u16,
+        x: usize,
+    ) -> bool {
+        let mut pixels = [TRANSPARENT_COLOR_16; 4];
+        holder.uncompress_frame(&mut pixels, 4, 0, variant, shadow_color, 16);
+        let pixel = pixels[x];
+        pixel != TRANSPARENT_COLOR_16 && pixel != SHADOW_KEY && pixel != shadow_color
+    }
+
+    fn dictionary_sprite_entity() -> Entity {
+        let script = SpriteScript {
+            frame_ids: vec![0],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+            ..Default::default()
+        };
+        let mut element = ElementData {
+            kind: ElementKind::Fx,
+            sprite: Sprite {
+                current_width: 4,
+                current_height: 1,
+                scripts: Arc::new(vec![script]),
+                center: SpriteAnchor::ZERO,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        element.set_position_map(MapPoint::new(100.0, 100.0));
+        Entity::Fx(ElementFx {
+            element,
+            fx: Default::default(),
+        })
+    }
+
+    #[test]
+    fn ambiance_rebind_publishes_renderer_dictionary_generation_to_engine_hit_testing() {
+        const INITIAL_NIGHT_COLOR: u16 = 0x0040;
+        const REBOUND_NIGHT_COLOR: u16 = 0x0841;
+
+        let mut host = Host::scratch(1024.0, 768.0);
+        host.frame_holder = Arc::new(dictionary_frame_holder(INITIAL_NIGHT_COLOR));
+        let published = host.publish_frame_holder_opacity();
+
+        let mut assets = engine_api::LevelAssets::new();
+        assets.pixel_opacity = Some(published.clone());
+        let engine =
+            engine_api::Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
+                .expect("construct sprite-hit-test engine");
+        let entity = dictionary_sprite_entity();
+        let shadow_point = MapPoint::new(100.0, 100.0);
+        let solid_point = MapPoint::new(101.0, 100.0);
+
+        assert!(Arc::ptr_eq(&host.frame_holder, &published.snapshot()));
+        assert!(!rendered_dictionary_pixel_is_opaque(
+            &host.frame_holder,
+            SpriteVariant::Day,
+            INITIAL_NIGHT_COLOR,
+            0,
+        ));
+        assert!(!engine.is_point_on_sprite(&assets, &entity, shadow_point, false));
+        assert!(engine.is_point_on_sprite(&assets, &entity, shadow_point, true));
+        let cloned_assets = assets.clone();
+
+        // Mirrors a scripted Weather::night_color change observed by the
+        // runtime visual refresh: COW-rebind the renderer generation, then
+        // publish that exact Arc to the original and cloned LevelAssets
+        // opacity handles.
+        host.rebind_frame_holder_shadow_color(REBOUND_NIGHT_COLOR);
+
+        assert!(Arc::ptr_eq(&host.frame_holder, &published.snapshot()));
+        for variant in [SpriteVariant::Day, SpriteVariant::Night] {
+            let renderer_shadow = rendered_dictionary_pixel_is_opaque(
+                &host.frame_holder,
+                variant,
+                REBOUND_NIGHT_COLOR,
+                0,
+            );
+            let engine_shadow = engine.is_point_on_sprite(&assets, &entity, shadow_point, false);
+            assert_eq!(renderer_shadow, engine_shadow);
+            assert_eq!(
+                renderer_shadow,
+                engine.is_point_on_sprite(&cloned_assets, &entity, shadow_point, false)
+            );
+            assert!(!renderer_shadow);
+        }
+        assert!(rendered_dictionary_pixel_is_opaque(
+            &host.frame_holder,
+            SpriteVariant::Day,
+            REBOUND_NIGHT_COLOR,
+            1,
+        ));
+        assert!(engine.is_point_on_sprite(&assets, &entity, solid_point, false));
+        assert!(engine.is_point_on_sprite(&cloned_assets, &entity, solid_point, false));
     }
 }
