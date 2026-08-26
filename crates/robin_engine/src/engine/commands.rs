@@ -1441,6 +1441,17 @@ impl EngineInner {
         if self.players.qa_recording_for.is_empty() {
             return;
         }
+        // Original `RHEngine::PerformSwordfight` executes recognized strike
+        // gestures directly, without consulting `IsRecordingMacro` or
+        // installing a quick action (`original-code/RHengine.cpp:15771+`).
+        // Entering a swordfight through the soldier click path is recordable,
+        // but an attack made once the fight is active is not. Keep the lower
+        // per-PC recorder arm for the explicit `QueueQuickAction` extension,
+        // which calls it directly rather than passing through this manual
+        // recording hook.
+        if matches!(cmd, PlayerCommand::SwordStrikeCmd { .. }) {
+            return;
+        }
         // When multiple PCs are armed for recording, each one receives
         // its own macro step.  Snapshot the set up-front so we can
         // re-borrow `self` inside the per-PC loop.
@@ -2466,7 +2477,7 @@ impl EngineInner {
                     danger_point_layer,
                 } => {
                     if self.get_entity(protected_pc).is_none() {
-                        return;
+                        return false;
                     }
                     PlayerCommand::RaiseShieldWithDanger {
                         actor: pc,
@@ -5914,6 +5925,111 @@ mod tests {
                 .iter()
                 .all(|titbit| titbit.id != original_titbit.get()),
             "the first replacement append must retire the former titbit atomically"
+        );
+    }
+
+    #[test]
+    fn manual_sword_strike_executes_without_recording_a_quick_action() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 1)]);
+        let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::SwordStrikeCmd {
+                actor: pc_id,
+                target,
+                command: Command::SwordstrikeThrustA,
+                with_seek: false,
+                seek_distance: Some(0.0),
+            },
+        );
+
+        assert!(
+            engine.players.qa_recording_for.contains(&pc_id),
+            "a live strike does not finish or otherwise mutate macro recording"
+        );
+        assert!(!engine.has_quick_action(pc_id, 0));
+        assert!(engine.feedback.titbit_manager.titbits().is_empty());
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(pc_id, |command| {
+                    command == Command::SwordstrikeThrustA
+                }),
+            "the manual strike still executes while macro recording is armed"
+        );
+    }
+
+    #[test]
+    fn explicitly_queued_sword_strike_still_records_a_quick_action() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 1)]);
+        let target = spawn_pc_at(&mut engine, 90.0, 10.0);
+        let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
+        let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(busy_sequence, 0);
+
+        engine.apply_command(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &mut InputState::default(),
+            &assets,
+            &PlayerCommand::QueueQuickAction {
+                action: Action::Hit,
+                command: Box::new(PlayerCommand::SwordStrikeCmd {
+                    actor: pc_id,
+                    target,
+                    command: Command::SwordstrikeThrustA,
+                    with_seek: false,
+                    seek_distance: Some(0.0),
+                }),
+            },
+        );
+
+        let slot = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .and_then(|state| state.slot(0))
+            .expect("queued sword-strike slot");
+        assert_eq!(slot.steps.len(), 1);
+        assert!(matches!(
+            slot.steps[0].replay,
+            QaReplayCommand::SwordStrike {
+                target: recorded_target,
+                command: Command::SwordstrikeThrustA,
+                with_seek: false,
+                seek_distance: Some(0.0),
+            } if recorded_target == target
+        ));
+        assert!(engine.has_quick_action(pc_id, 0));
+        assert!(
+            engine
+                .players
+                .macro_store
+                .get(pc_id)
+                .expect("queued sword-strike state")
+                .get_slot_titbit(0)
+                .is_some()
         );
     }
 
