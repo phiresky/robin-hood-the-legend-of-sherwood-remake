@@ -161,14 +161,10 @@ impl RollbackChecker {
     fn check_and_trim(&mut self, host: &mut Host, current_engine: &Engine) {
         let check_start = Instant::now();
         self.reap_worker();
-        // Replay starting from the oldest snapshot.
-        //
-        // Replay uses a scratch `Host::default()` so replayed ticks
-        // can't scribble on the live host's input state, trajectory
-        // scratch, or UI-request queues. The live `host` is only
-        // referenced via this function's signature for API parity with
-        // the caller; the rollback replay itself runs against the
-        // throwaway copy.
+        // Replay starts from the oldest snapshot. The live `host` remains in
+        // this compatibility signature only for caller API parity; the worker
+        // reconstructs the serialized Engine directly from complete recorded
+        // SimulationFrameInputs and explicitly discards typed host output.
         let _ = host;
         if self.worker.is_some() {
             tracing::debug!(

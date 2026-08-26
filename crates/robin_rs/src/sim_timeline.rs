@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 use web_time::Instant;
 
 use crate::host::Host;
-use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
+use robin_engine::engine::{
+    DevState, Engine, HostDisplayState, LevelAssets, SimulationFrameOutput,
+};
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::PlayerInput;
 
@@ -84,9 +86,9 @@ pub enum RestorePolicy {
 /// commands or engine tick have run.
 ///
 /// `HostDisplayState` and `DevState` are intentionally excluded: they
-/// are host/display or developer overlay state. Replay uses scratch
-/// instances while reconstructing deterministic engine state; no field on
-/// either scratch owner is allowed to gate the Engine tick.
+/// are host/display or developer overlay state. Reconstruction advances the
+/// serialized Engine directly and returns its typed host output for the caller
+/// to collect or explicitly discard; it never fabricates presentation state.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SimSnapshot {
     pub frame: u32,
@@ -112,6 +114,19 @@ pub struct ReplayTiming {
 pub struct ReplayFrameTiming {
     pub apply_us: u128,
     pub tick_us: u128,
+}
+
+/// One reconstructed authoritative frame plus its profiling split.
+///
+/// Engine output is deliberately surfaced instead of being applied to a fake
+/// host/display/input owner. Reconstruction callers must either collect these
+/// host events for diagnostics or explicitly discard them; applying them to the
+/// live host would duplicate presentation work from the original frame.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[must_use = "reconstruction output must be explicitly collected or discarded"]
+pub struct ReplayFrameResult {
+    pub timing: ReplayFrameTiming,
+    pub output: SimulationFrameOutput,
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
@@ -615,22 +630,12 @@ pub fn replay_to_frame<'a>(
     validate_replay_boundary(snapshot.frame, target_frame)?;
     let start = Instant::now();
     let start_frame = snapshot.frame;
-    let mut scratch_host = Host::default();
-    let mut scratch_dev = DevState::default();
-    let mut scratch_display = HostDisplayState::default();
 
     while snapshot.frame < target_frame {
         let cmds = commands_for(snapshot.frame).ok_or(ReplayError::MissingCommands {
             frame: snapshot.frame,
         })?;
-        replay_one_frame(
-            &mut snapshot,
-            &mut scratch_display,
-            assets,
-            &mut scratch_host,
-            &mut scratch_dev,
-            cmds,
-        );
+        let _discarded_frame_output = replay_one_frame(&mut snapshot, assets, cmds).output;
     }
 
     Ok((
@@ -654,22 +659,13 @@ pub fn replay_frames_to_frame<'a>(
     validate_replay_boundary(snapshot.frame, target_frame)?;
     let start = Instant::now();
     let start_frame = snapshot.frame;
-    let mut scratch_host = Host::default();
-    let mut scratch_dev = DevState::default();
-    let mut scratch_display = HostDisplayState::default();
 
     while snapshot.frame < target_frame {
         let frame = frame_for(snapshot.frame).ok_or(ReplayError::MissingCommands {
             frame: snapshot.frame,
         })?;
-        replay_authoritative_frame(
-            &mut snapshot,
-            &mut scratch_display,
-            assets,
-            &mut scratch_host,
-            &mut scratch_dev,
-            frame,
-        );
+        let _discarded_frame_output =
+            replay_authoritative_frame(&mut snapshot, assets, frame).output;
     }
 
     Ok((
@@ -685,78 +681,49 @@ pub fn replay_frames_to_frame<'a>(
 /// next pre-tick frame.
 pub fn replay_one_frame(
     snapshot: &mut SimSnapshot,
-    display: &mut HostDisplayState,
     assets: &LevelAssets,
-    scratch_host: &mut Host,
-    scratch_dev: &mut DevState,
     cmds: &[PlayerInput],
-) {
-    let _ = replay_one_frame_profiled(snapshot, display, assets, scratch_host, scratch_dev, cmds);
-}
-
-/// Replay one frame and report the apply/tick split for callers that
-/// expose detailed rollback telemetry.
-pub fn replay_one_frame_profiled(
-    snapshot: &mut SimSnapshot,
-    display: &mut HostDisplayState,
-    assets: &LevelAssets,
-    scratch_host: &mut Host,
-    scratch_dev: &mut DevState,
-    cmds: &[PlayerInput],
-) -> ReplayFrameTiming {
+) -> ReplayFrameResult {
     let frame = robin_engine::engine::SimulationFrameInput::from_player_inputs(cmds.to_vec())
         .with_post_initialize(true);
-    replay_authoritative_frame_profiled(
-        snapshot,
-        display,
-        assets,
-        scratch_host,
-        scratch_dev,
-        &frame,
-    )
+    replay_authoritative_frame_profiled(snapshot, assets, &frame)
 }
 
 pub fn replay_authoritative_frame(
     snapshot: &mut SimSnapshot,
-    display: &mut HostDisplayState,
     assets: &LevelAssets,
-    scratch_host: &mut Host,
-    scratch_dev: &mut DevState,
     frame: &robin_engine::engine::SimulationFrameInput,
-) {
-    let _ = replay_authoritative_frame_profiled(
-        snapshot,
-        display,
-        assets,
-        scratch_host,
-        scratch_dev,
-        frame,
-    );
+) -> ReplayFrameResult {
+    replay_authoritative_frame_profiled(snapshot, assets, frame)
 }
 
+/// Advance one complete recorded frame against serialized simulation state.
+///
+/// This is intentionally a direct [`Engine::advance_frame`] call. Host output
+/// remains in the returned [`ReplayFrameResult`] and is never interpreted via
+/// fabricated `Host`, input, display, or developer-overlay state.
 pub fn replay_authoritative_frame_profiled(
     snapshot: &mut SimSnapshot,
-    display: &mut HostDisplayState,
     assets: &LevelAssets,
-    scratch_host: &mut Host,
-    scratch_dev: &mut DevState,
     frame: &robin_engine::engine::SimulationFrameInput,
-) -> ReplayFrameTiming {
+) -> ReplayFrameResult {
     let apply_start = Instant::now();
     let frame = frame.clone();
     let apply_us = apply_start.elapsed().as_micros();
     let tick_start = Instant::now();
-    run_engine_frame_core(
-        scratch_host,
-        display,
-        assets,
-        &mut snapshot.engine,
-        scratch_dev,
-        frame,
-    );
+    let output = snapshot
+        .engine
+        .advance_frame(assets, frame)
+        .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
     let tick_us = tick_start.elapsed().as_micros();
-    snapshot.frame += 1;
-    ReplayFrameTiming { apply_us, tick_us }
+    snapshot.frame = snapshot
+        .frame
+        .checked_add(1)
+        .expect("reconstruction timeline frame counter overflowed");
+    ReplayFrameResult {
+        timing: ReplayFrameTiming { apply_us, tick_us },
+        output,
+    }
 }
 
 /// Run one deterministic engine tick and drain engine-local side effects.

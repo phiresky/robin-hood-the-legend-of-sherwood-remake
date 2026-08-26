@@ -13,12 +13,14 @@
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{
     DevState, Engine, ExternalAction, ExternalActionResult, FrameConsoleResponse, HostDisplayState,
-    LevelAssets, SimConfig, SimulationFrameInput,
+    HostEvent, LevelAssets, SimConfig, SimulationFrameInput,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_engine::replay::state_hash;
 use robin_rs::Host;
-use robin_rs::sim_timeline::{SimSnapshot, replay_frames_to_frame, run_engine_frame_core};
+use robin_rs::sim_timeline::{
+    SimSnapshot, replay_authoritative_frame, replay_frames_to_frame, run_engine_frame_core,
+};
 
 #[test]
 fn production_drivers_do_not_bypass_advance_frame() {
@@ -75,6 +77,98 @@ fn production_drivers_do_not_bypass_advance_frame() {
     );
 }
 
+#[test]
+fn production_reconstruction_does_not_fabricate_host_state() {
+    fn function_source<'a>(source: &'a str, name: &str) -> &'a str {
+        let signature = format!("fn {name}");
+        let start = source
+            .find(&signature)
+            .unwrap_or_else(|| panic!("missing reconstruction function {name}"));
+        let body_start = source[start..]
+            .find('{')
+            .map(|offset| start + offset)
+            .unwrap_or_else(|| panic!("missing body for reconstruction function {name}"));
+        let mut depth = 0_u32;
+        for (offset, byte) in source.as_bytes()[body_start..].iter().enumerate() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &source[start..=body_start + offset];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unterminated body for reconstruction function {name}");
+    }
+
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let reconstruction_functions = [
+        ("src/rewind.rs", "rewind_to"),
+        ("src/sim_timeline.rs", "replay_to_frame"),
+        ("src/sim_timeline.rs", "replay_frames_to_frame"),
+        ("src/sim_timeline.rs", "replay_one_frame"),
+        ("src/sim_timeline.rs", "replay_authoritative_frame"),
+        ("src/sim_timeline.rs", "replay_authoritative_frame_profiled"),
+        (
+            "src/game_session/multiplayer.rs",
+            "rewind_from_recent_timeline_history",
+        ),
+        ("src/rollback_checker.rs", "run"),
+    ];
+    let forbidden = [
+        "Host::",
+        "HostDisplayState",
+        "InputState",
+        "DevState",
+        "run_engine_frame_core",
+    ];
+    let mut violations = Vec::new();
+    for (relative_path, function) in reconstruction_functions {
+        let source = std::fs::read_to_string(manifest.join(relative_path))
+            .unwrap_or_else(|error| panic!("read {relative_path}: {error}"));
+        let function_source = function_source(&source, function);
+        for needle in forbidden {
+            if function_source.contains(needle) {
+                violations.push(format!("{relative_path}::{function} contains {needle}"));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "production reconstruction must not fabricate or consume host state:\n{}",
+        violations.join("\n")
+    );
+
+    let timeline_source = std::fs::read_to_string(manifest.join("src/sim_timeline.rs"))
+        .expect("read timeline source");
+    let authoritative = function_source(&timeline_source, "replay_authoritative_frame_profiled");
+    assert!(
+        authoritative.contains(".advance_frame("),
+        "authoritative reconstruction must advance Engine directly"
+    );
+
+    let production_paths = [
+        ("src/rewind.rs", "rewind_to", "replay_authoritative_frame"),
+        (
+            "src/game_session/multiplayer.rs",
+            "rewind_from_recent_timeline_history",
+            "replay_authoritative_frame_profiled",
+        ),
+        ("src/rollback_checker.rs", "run", "replay_frames_to_frame"),
+    ];
+    for (relative_path, function, complete_frame_replay) in production_paths {
+        let source = std::fs::read_to_string(manifest.join(relative_path))
+            .unwrap_or_else(|error| panic!("read {relative_path}: {error}"));
+        assert!(
+            function_source(&source, function).contains(complete_frame_replay),
+            "{relative_path}::{function} must reconstruct complete recorded SimulationFrameInput values through {complete_frame_replay}"
+        );
+    }
+}
+
 fn fixture_engine(assets: &mut LevelAssets) -> Engine {
     Engine::new_for_test_with_simulation(
         800.0,
@@ -105,6 +199,29 @@ fn no_hourglass_admission_applies_commands_without_advancing_the_engine_clock() 
     assert_eq!(output.frame_before, before);
     assert_eq!(output.frame_after, before);
     assert!(engine.get_golden_eye_mode());
+}
+
+#[test]
+fn reconstruction_surfaces_host_events_as_typed_output() {
+    let mut assets = LevelAssets::new();
+    let initial = fixture_engine(&mut assets);
+    let mut snapshot = SimSnapshot::new(0, &initial);
+    let frame = SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+        PlayerCommand::MouseRightDown,
+    )]);
+
+    let replayed = replay_authoritative_frame(&mut snapshot, &assets, &frame);
+
+    assert_eq!(snapshot.frame, 1);
+    assert!(
+        replayed
+            .output
+            .events
+            .side_effects()
+            .host_events
+            .iter()
+            .any(|event| matches!(event, HostEvent::SetRightMouseDown { down: true }))
+    );
 }
 
 #[test]

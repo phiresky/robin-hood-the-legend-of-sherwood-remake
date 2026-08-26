@@ -599,9 +599,6 @@ fn rewind_from_recent_timeline_history(
     // reconstruction.
     let mut corrected_history = recent_timeline_history.clone();
     corrected_history.truncate_after(start_frame);
-    let mut scratch_host = Host::default();
-    let mut scratch_dev = engine_api::DevState::default();
-    let mut scratch_display = engine_api::HostDisplayState::default();
     let mut replay_remember_us = 0;
     let mut replay_command_lookup_us = 0;
     let mut replay_apply_us = 0;
@@ -614,16 +611,10 @@ fn rewind_from_recent_timeline_history(
         let command_lookup_start = web_time::Instant::now();
         let frame = rewind_buffer.frame_for(snapshot.frame)?;
         replay_command_lookup_us += command_lookup_start.elapsed().as_micros();
-        let frame_timing = replay_authoritative_frame_profiled(
-            &mut snapshot,
-            &mut scratch_display,
-            assets,
-            &mut scratch_host,
-            &mut scratch_dev,
-            frame,
-        );
-        replay_apply_us += frame_timing.apply_us;
-        replay_tick_us += frame_timing.tick_us;
+        let replayed_frame = replay_authoritative_frame_profiled(&mut snapshot, assets, frame);
+        replay_apply_us += replayed_frame.timing.apply_us;
+        replay_tick_us += replayed_frame.timing.tick_us;
+        let _discarded_frame_output = replayed_frame.output;
     }
     let remember_start = web_time::Instant::now();
     corrected_history.remember(snapshot.clone());

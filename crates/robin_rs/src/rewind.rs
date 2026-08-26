@@ -32,7 +32,7 @@ use crate::sim_timeline::{
     CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, TimelineHistory,
     replay_authoritative_frame,
 };
-use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
+use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerInput;
 
 /// How often (in sim frames) to take a snapshot.  Matches the cadence
@@ -135,8 +135,9 @@ impl RewindBuffer {
     /// along the way (shouldn't happen in practice, but guarded for
     /// safety).
     ///
-    /// Replay uses a scratch [`Host`] so it can't mutate the live host
-    /// state — same pattern as [`crate::rollback_checker`].
+    /// Replay advances only the snapshotted [`Engine`]. Typed host output is
+    /// explicitly discarded, so reconstruction neither mutates live host state
+    /// nor invents a second host/input/display owner.
     ///
     /// When a session is open (see [`Self::begin_session`]) every
     /// intermediate state produced by the replay loop is cached so
@@ -168,19 +169,10 @@ impl RewindBuffer {
             snapshot = cached.clone();
         }
 
-        let mut scratch_host = crate::host::Host::default();
-        let mut scratch_dev = DevState::default();
-        let mut scratch_display = HostDisplayState::default();
         while snapshot.frame < target_frame {
             let frame = self.history.frame_for(snapshot.frame)?;
-            replay_authoritative_frame(
-                &mut snapshot,
-                &mut scratch_display,
-                assets,
-                &mut scratch_host,
-                &mut scratch_dev,
-                frame,
-            );
+            let _discarded_frame_output =
+                replay_authoritative_frame(&mut snapshot, assets, frame).output;
             // Cache the state we just produced — it's the pre-tick
             // state for `frame + 1`.
             if let Some(cache) = &mut self.session {
@@ -277,7 +269,7 @@ mod tests {
     fn rewind_during_active_zoom_matches_uninterrupted_gameplay_gate() {
         use crate::sim_timeline::{run_engine_tick_core, run_post_initialize_stage};
         use robin_engine::campaign::Campaign;
-        use robin_engine::engine::EngineStateRequest;
+        use robin_engine::engine::{DevState, EngineStateRequest, HostDisplayState};
         use robin_engine::messenger::SimpleMessage;
         use robin_engine::player_command::PlayerCommand;
 
